@@ -1,0 +1,29 @@
+# Featherflow Quickstart Example
+name: quickstart_project
+version: "1.0.0"
+
+# Directory paths
+model_paths: ["models"]
+seed_paths: ["seeds"]
+target_path: "target"
+
+# Default materialization
+materialization: view
+
+# SQL dialect
+dialect: duckdb
+
+# Database connection
+database:
+  type: duckdb
+  path: "./quickstart.duckdb"
+
+# External tables (not managed by featherflow)
+external_tables:
+  - raw_events
+  - raw_users
+
+# Variables available in templates
+vars:
+  start_date: "2024-01-01"
+  environment: dev

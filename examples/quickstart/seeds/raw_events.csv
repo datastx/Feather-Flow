@@ -1,0 +1,6 @@
+id,user_id,event_type,event_timestamp,properties
+1,1,page_view,2024-01-15 10:00:00,{"page":"/home"}
+2,1,click,2024-01-15 10:05:00,{"button":"signup"}
+3,2,page_view,2024-01-15 11:00:00,{"page":"/products"}
+4,2,purchase,2024-01-15 11:30:00,{"product_id":123}
+5,1,page_view,2024-01-16 09:00:00,{"page":"/dashboard"}

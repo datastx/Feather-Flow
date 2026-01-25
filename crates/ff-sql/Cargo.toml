@@ -1,0 +1,12 @@
+[package]
+name = "ff-sql"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "SQL parsing layer for Featherflow - parser wrapper and table extraction"
+
+[dependencies]
+thiserror.workspace = true
+sqlparser.workspace = true
+
+[dev-dependencies]

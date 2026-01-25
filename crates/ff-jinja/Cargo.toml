@@ -1,0 +1,15 @@
+[package]
+name = "ff-jinja"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Jinja templating layer for Featherflow - config() and var() functions"
+
+[dependencies]
+thiserror.workspace = true
+minijinja.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+
+[dev-dependencies]
