@@ -1,0 +1,27 @@
+[package]
+name = "ff-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Featherflow CLI - a dbt-like tool for SQL templating and execution"
+
+[[bin]]
+name = "ff"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+tokio.workspace = true
+
+ff-core = { path = "../ff-core" }
+ff-sql = { path = "../ff-sql" }
+ff-jinja = { path = "../ff-jinja" }
+ff-db = { path = "../ff-db" }
+ff-test = { path = "../ff-test" }
+
+[dev-dependencies]
+tempfile = "3.10"

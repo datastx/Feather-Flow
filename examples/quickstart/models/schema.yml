@@ -1,0 +1,26 @@
+version: 1
+
+models:
+  - name: stg_events
+    columns:
+      - name: event_id
+        tests:
+          - unique
+          - not_null
+      - name: user_id
+        tests:
+          - not_null
+
+  - name: stg_users
+    columns:
+      - name: user_id
+        tests:
+          - unique
+          - not_null
+
+  - name: fct_user_events
+    columns:
+      - name: event_id
+        tests:
+          - unique
+          - not_null

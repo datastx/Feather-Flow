@@ -1,0 +1,23 @@
+name: sample_project
+version: "1.0.0"
+
+model_paths: ["models"]
+seed_paths: ["seeds"]
+target_path: "target"
+
+materialization: view
+schema: analytics
+dialect: duckdb
+
+database:
+  type: duckdb
+  path: ":memory:"
+
+external_tables:
+  - raw_orders
+  - raw_customers
+  - raw_products
+
+vars:
+  start_date: "2024-01-01"
+  environment: dev
