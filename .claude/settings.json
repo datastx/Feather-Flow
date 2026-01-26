@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cargo fmt --all -- --check 2>/dev/null || true"
+            "command": "make fmt-check 2>/dev/null || true"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cargo check -p $(dirname $FILE | xargs basename) 2>&1 | head -20"
+            "command": "make check 2>&1 | head -20"
           }
         ]
       }
