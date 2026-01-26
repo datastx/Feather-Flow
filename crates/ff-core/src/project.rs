@@ -39,7 +39,16 @@ impl Project {
 
         let config = Config::load_from_dir(&root)?;
         let models = Self::discover_models(&root, &config)?;
-        let tests = Self::discover_tests(&root, &config)?;
+
+        // Collect tests from both:
+        // 1. Legacy schema.yml files (backward compatibility)
+        // 2. 1:1 schema files (.yml files matching model names)
+        let mut tests = Self::discover_tests(&root, &config)?;
+
+        // Also collect tests from 1:1 schema files loaded with each model
+        for model in models.values() {
+            tests.extend(model.get_schema_tests());
+        }
 
         Ok(Self {
             root,
@@ -231,5 +240,46 @@ models:
         assert_eq!(project.tests.len(), 1);
         assert_eq!(project.tests[0].model, "stg_orders");
         assert_eq!(project.tests[0].column, "order_id");
+    }
+
+    #[test]
+    fn test_duplicate_model_detection() {
+        let dir = TempDir::new().unwrap();
+
+        // Create featherflow.yml
+        std::fs::write(
+            dir.path().join("featherflow.yml"),
+            r#"
+name: test_project
+model_paths: ["models"]
+"#,
+        )
+        .unwrap();
+
+        // Create models directory with subdirectories
+        std::fs::create_dir_all(dir.path().join("models/staging")).unwrap();
+        std::fs::create_dir_all(dir.path().join("models/marts")).unwrap();
+
+        // Create two model files with the same name in different directories
+        std::fs::write(
+            dir.path().join("models/staging/orders.sql"),
+            "SELECT * FROM raw_orders",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("models/marts/orders.sql"),
+            "SELECT * FROM staging_orders",
+        )
+        .unwrap();
+
+        // Should fail with DuplicateModel error
+        let result = Project::load(dir.path());
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, CoreError::DuplicateModel { ref name } if name == "orders"),
+            "Expected DuplicateModel error for 'orders', got: {:?}",
+            err
+        );
     }
 }

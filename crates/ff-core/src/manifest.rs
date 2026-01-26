@@ -200,6 +200,7 @@ mod tests {
             config: Default::default(),
             depends_on: HashSet::from_iter(vec!["other_model".to_string()]),
             external_deps: HashSet::new(),
+            schema: None,
         };
 
         manifest.add_model(

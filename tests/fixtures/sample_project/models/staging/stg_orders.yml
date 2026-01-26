@@ -1,0 +1,24 @@
+version: 1
+
+description: "Staged orders from raw source, filtered by start_date"
+owner: data-team
+tags:
+  - staging
+  - orders
+
+columns:
+  - name: order_id
+    description: "Unique identifier for the order"
+    tests:
+      - unique
+      - not_null
+  - name: customer_id
+    description: "Reference to the customer"
+    tests:
+      - not_null
+  - name: order_date
+    description: "Date the order was placed"
+  - name: amount
+    description: "Order amount in dollars"
+  - name: status
+    description: "Order status"

@@ -1,0 +1,21 @@
+version: 1
+
+description: "Fact table for orders with customer details"
+owner: analytics-team
+tags:
+  - marts
+  - facts
+  - orders
+
+columns:
+  - name: order_id
+    description: "Unique identifier for the order"
+    tests:
+      - unique
+      - not_null
+  - name: customer_name
+    description: "Customer full name"
+  - name: order_date
+    description: "Date the order was placed"
+  - name: amount
+    description: "Order amount in dollars"

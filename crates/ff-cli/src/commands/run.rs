@@ -20,11 +20,13 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     let project_path = Path::new(&global.project_dir);
     let project = Project::load(project_path).context("Failed to load project")?;
 
-    // Create database connection
-    let db: Arc<dyn Database> = Arc::new(
-        DuckDbBackend::new(&project.config.database.path)
-            .context("Failed to connect to database")?,
-    );
+    // Create database connection (use --target override if provided)
+    let db_path = global
+        .target
+        .as_ref()
+        .unwrap_or(&project.config.database.path);
+    let db: Arc<dyn Database> =
+        Arc::new(DuckDbBackend::new(db_path).context("Failed to connect to database")?);
 
     // Create SQL parser and Jinja environment
     let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
@@ -124,6 +126,19 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     }
 
     println!("Running {} models...\n", execution_order.len());
+
+    // Collect unique schemas that need to be created
+    let schemas_to_create: HashSet<String> = schemas.values().filter_map(|s| s.clone()).collect();
+
+    // Create all schemas before running models
+    for schema in &schemas_to_create {
+        if global.verbose {
+            eprintln!("[verbose] Creating schema if not exists: {}", schema);
+        }
+        db.create_schema_if_not_exists(schema)
+            .await
+            .context(format!("Failed to create schema: {}", schema))?;
+    }
 
     let mut success_count = 0;
     let mut failure_count = 0;

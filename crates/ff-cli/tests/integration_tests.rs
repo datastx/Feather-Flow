@@ -288,3 +288,42 @@ fn test_manifest_serialization() {
 
     assert_eq!(loaded.project_name, "test_project");
 }
+
+/// Test seed file loading (all three seed files)
+#[tokio::test]
+async fn test_seed_loading() {
+    let db = DuckDbBackend::in_memory().unwrap();
+
+    // Load seeds from the testdata/seeds directory
+    let seeds_path = Path::new("testdata/seeds");
+    if !seeds_path.exists() {
+        // Skip test if seeds directory doesn't exist
+        return;
+    }
+
+    for entry in std::fs::read_dir(seeds_path).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.extension().is_some_and(|e| e == "csv") {
+            let table_name = path.file_stem().unwrap().to_str().unwrap();
+            db.load_csv(table_name, path.to_str().unwrap())
+                .await
+                .unwrap();
+        }
+    }
+
+    // Verify seeds loaded
+    assert!(db.relation_exists("raw_orders").await.unwrap());
+    assert!(db.relation_exists("raw_customers").await.unwrap());
+    assert!(db.relation_exists("raw_products").await.unwrap());
+
+    // Verify row counts
+    let order_count = db.query_count("SELECT * FROM raw_orders").await.unwrap();
+    assert_eq!(order_count, 10);
+
+    let customer_count = db.query_count("SELECT * FROM raw_customers").await.unwrap();
+    assert_eq!(customer_count, 5);
+
+    let product_count = db.query_count("SELECT * FROM raw_products").await.unwrap();
+    assert_eq!(product_count, 5);
+}

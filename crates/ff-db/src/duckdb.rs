@@ -145,6 +145,12 @@ impl Database for DuckDbBackend {
         let _ = self.execute_sync(&format!("DROP TABLE IF EXISTS {}", name));
         Ok(())
     }
+
+    async fn create_schema_if_not_exists(&self, schema: &str) -> DbResult<()> {
+        let sql = format!("CREATE SCHEMA IF NOT EXISTS {}", schema);
+        self.execute_sync(&sql)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -219,5 +225,24 @@ mod tests {
         db.drop_if_exists("to_drop").await.unwrap();
 
         assert!(!db.relation_exists("to_drop").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_create_schema_if_not_exists() {
+        let db = DuckDbBackend::in_memory().unwrap();
+
+        // Create a schema
+        db.create_schema_if_not_exists("staging").await.unwrap();
+
+        // Create a table in the schema
+        db.create_table_as("staging.test_table", "SELECT 1 AS id", false)
+            .await
+            .unwrap();
+
+        // Verify the table exists in the schema
+        assert!(db.relation_exists("staging.test_table").await.unwrap());
+
+        // Creating the same schema again should not fail (IF NOT EXISTS)
+        db.create_schema_if_not_exists("staging").await.unwrap();
     }
 }

@@ -62,3 +62,7 @@ ci-quick: check fmt-check clippy
 # Release
 install:
 	cargo install --path crates/ff-cli
+
+
+claude-auto-run:
+	claude --dangerously-skip-permissions

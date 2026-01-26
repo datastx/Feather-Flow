@@ -34,4 +34,7 @@ pub trait Database: Send + Sync {
 
     /// Drop a table or view if it exists
     async fn drop_if_exists(&self, name: &str) -> DbResult<()>;
+
+    /// Create a schema if it does not exist
+    async fn create_schema_if_not_exists(&self, schema: &str) -> DbResult<()>;
 }
