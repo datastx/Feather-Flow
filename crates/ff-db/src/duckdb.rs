@@ -151,6 +151,51 @@ impl Database for DuckDbBackend {
         self.execute_sync(&sql)?;
         Ok(())
     }
+
+    async fn query_sample_rows(&self, sql: &str, limit: usize) -> DbResult<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let limited_sql = format!("SELECT * FROM ({}) AS subq LIMIT {}", sql, limit);
+
+        let mut stmt = conn
+            .prepare(&limited_sql)
+            .map_err(|e| DbError::ExecutionError(e.to_string()))?;
+
+        let mut rows: Vec<String> = Vec::new();
+
+        let query_result = stmt.query([]);
+        match query_result {
+            Ok(mut result_rows) => {
+                // Get column count from first row
+                let column_count = result_rows.as_ref().map_or(0, |r| r.column_count());
+
+                while let Some(row) = result_rows
+                    .next()
+                    .map_err(|e| DbError::ExecutionError(e.to_string()))?
+                {
+                    let mut values: Vec<String> = Vec::new();
+                    for i in 0..column_count {
+                        // Try to get value as string representation
+                        let str_val: String = row.get::<_, String>(i).unwrap_or_else(|_| {
+                            // Try as i64
+                            row.get::<_, i64>(i)
+                                .map(|n| n.to_string())
+                                .unwrap_or_else(|_| {
+                                    // Try as f64
+                                    row.get::<_, f64>(i)
+                                        .map(|n| n.to_string())
+                                        .unwrap_or_else(|_| "NULL".to_string())
+                                })
+                        });
+                        values.push(str_val);
+                    }
+                    rows.push(values.join(", "));
+                }
+            }
+            Err(e) => return Err(DbError::ExecutionError(e.to_string())),
+        }
+
+        Ok(rows)
+    }
 }
 
 #[cfg(test)]

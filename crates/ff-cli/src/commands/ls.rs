@@ -57,14 +57,38 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
             })
             .unwrap_or(project.config.materialization);
 
+        // Get schema
+        let schema = config_values
+            .get("schema")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .or_else(|| project.config.schema.clone());
+
         dependencies.insert(name.to_string(), model_deps.clone());
 
         model_info.push(ModelInfo {
             name: name.to_string(),
-            materialized: mat,
+            resource_type: "model".to_string(),
+            materialized: Some(mat),
+            schema,
             model_deps,
             external_deps: ext_deps,
         });
+    }
+
+    // Add sources to the list
+    for source in &project.sources {
+        for table in &source.tables {
+            let source_name = format!("{}.{}", source.name, table.name);
+            model_info.push(ModelInfo {
+                name: source_name,
+                resource_type: "source".to_string(),
+                materialized: None,
+                schema: Some(source.schema.clone()),
+                model_deps: Vec::new(),
+                external_deps: Vec::new(),
+            });
+        }
     }
 
     // Build DAG for selector support
@@ -100,7 +124,10 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
 #[derive(Debug, serde::Serialize)]
 struct ModelInfo {
     name: String,
-    materialized: Materialization,
+    #[serde(rename = "type")]
+    resource_type: String, // "model" or "source"
+    materialized: Option<Materialization>,
+    schema: Option<String>,
     model_deps: Vec<String>,
     external_deps: Vec<String>,
 }
@@ -114,28 +141,50 @@ fn print_table(models: &[&ModelInfo]) {
         .max()
         .unwrap_or(4)
         .max(4);
+    let type_width = 7;
     let mat_width = 12;
+    let schema_width = models
+        .iter()
+        .map(|m| m.schema.as_ref().map(|s| s.len()).unwrap_or(1))
+        .max()
+        .unwrap_or(6)
+        .max(6);
 
     // Print header
     println!(
-        "{:<name_width$}  {:<mat_width$}  DEPENDS_ON",
+        "{:<name_width$}  {:<type_width$}  {:<mat_width$}  {:<schema_width$}  DEPENDS_ON",
         "NAME",
+        "TYPE",
         "MATERIALIZED",
+        "SCHEMA",
         name_width = name_width,
-        mat_width = mat_width
+        type_width = type_width,
+        mat_width = mat_width,
+        schema_width = schema_width
     );
 
     // Print separator
     println!(
-        "{:-<name_width$}  {:-<mat_width$}  {}",
+        "{:-<name_width$}  {:-<type_width$}  {:-<mat_width$}  {:-<schema_width$}  {}",
+        "",
+        "",
         "",
         "",
         "-".repeat(40),
         name_width = name_width,
-        mat_width = mat_width
+        type_width = type_width,
+        mat_width = mat_width,
+        schema_width = schema_width
     );
 
-    // Print each model
+    // Count models and sources
+    let model_count = models.iter().filter(|m| m.resource_type == "model").count();
+    let source_count = models
+        .iter()
+        .filter(|m| m.resource_type == "source")
+        .count();
+
+    // Print each model/source
     for model in models {
         let mut deps: Vec<String> = model.model_deps.clone();
         deps.extend(
@@ -146,23 +195,38 @@ fn print_table(models: &[&ModelInfo]) {
         );
 
         let deps_str = if deps.is_empty() {
-            "(none)".to_string()
+            "-".to_string()
         } else {
             deps.join(", ")
         };
 
+        let mat_str = model
+            .materialized
+            .map(|m| m.to_string())
+            .unwrap_or_else(|| "-".to_string());
+
+        let schema_str = model.schema.as_deref().unwrap_or("-");
+
         println!(
-            "{:<name_width$}  {:<mat_width$}  {}",
+            "{:<name_width$}  {:<type_width$}  {:<mat_width$}  {:<schema_width$}  {}",
             model.name,
-            model.materialized.to_string(),
+            model.resource_type,
+            mat_str,
+            schema_str,
             deps_str,
             name_width = name_width,
-            mat_width = mat_width
+            type_width = type_width,
+            mat_width = mat_width,
+            schema_width = schema_width
         );
     }
 
     println!();
-    println!("{} models found", models.len());
+    if source_count > 0 {
+        println!("{} models, {} sources", model_count, source_count);
+    } else {
+        println!("{} models found", model_count);
+    }
 }
 
 /// Print models in JSON format

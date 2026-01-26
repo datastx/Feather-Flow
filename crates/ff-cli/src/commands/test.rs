@@ -1,7 +1,8 @@
 //! Test command implementation
 
 use anyhow::{Context, Result};
-use ff_core::model::SchemaTest;
+use ff_core::model::{parse_test_definition, SchemaTest};
+use ff_core::source::SourceFile;
 use ff_core::Project;
 use ff_db::{Database, DuckDbBackend};
 use ff_jinja::JinjaEnvironment;
@@ -9,13 +10,35 @@ use ff_test::{generator::GeneratedTest, TestRunner};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
 
 use crate::cli::{GlobalArgs, TestArgs};
 
+/// Generate tests from source files
+fn generate_source_tests(sources: &[SourceFile]) -> Vec<SchemaTest> {
+    let mut tests = Vec::new();
+
+    for source in sources {
+        for table in &source.tables {
+            for column in &table.columns {
+                for test_def in &column.tests {
+                    // Use the same parsing logic as model tests
+                    if let Some(test_type) = parse_test_definition(test_def) {
+                        tests.push(SchemaTest {
+                            model: format!("{}.{}", source.schema, table.name),
+                            column: column.name.clone(),
+                            test_type,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    tests
+}
+
 /// Execute the test command
 pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
-    let start_time = Instant::now();
     let project_path = Path::new(&global.project_dir);
     let project = Project::load(project_path).context("Failed to load project")?;
 
@@ -58,9 +81,23 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
             .collect()
     });
 
-    // Get tests to run
-    let tests_to_run: Vec<&SchemaTest> = project
+    // Generate tests from source files
+    let source_tests = generate_source_tests(&project.sources);
+
+    // Combine model tests and source tests
+    let all_tests: Vec<SchemaTest> = project
         .tests
+        .iter()
+        .cloned()
+        .chain(source_tests.into_iter())
+        .collect();
+
+    // Get set of models that have tests defined
+    let models_with_tests: std::collections::HashSet<_> =
+        all_tests.iter().map(|t| t.model.as_str()).collect();
+
+    // Get tests to run
+    let tests_to_run: Vec<&SchemaTest> = all_tests
         .iter()
         .filter(|t| {
             model_filter
@@ -69,6 +106,23 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
                 .unwrap_or(true)
         })
         .collect();
+
+    // Report models without tests when filtering by model
+    if let Some(filter) = &model_filter {
+        let models_without_tests: Vec<&str> = filter
+            .iter()
+            .filter(|m| !models_with_tests.contains(m.as_str()))
+            .map(|s| s.as_str())
+            .collect();
+
+        if !models_without_tests.is_empty() {
+            println!(
+                "Skipping {} model(s) without tests: {}\n",
+                models_without_tests.len(),
+                models_without_tests.join(", ")
+            );
+        }
+    }
 
     if tests_to_run.is_empty() {
         println!("No tests to run.");
@@ -84,6 +138,7 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
 
     for schema_test in tests_to_run {
         // Get the qualified name for this model
+        // For source tests, the model field already contains schema.table
         let qualified_name = model_qualified_names
             .get(&schema_test.model)
             .map(|s| s.as_str())
@@ -93,31 +148,36 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
 
         if result.passed {
             passed += 1;
-            println!(
-                "  PASS {} [{:.2}s]",
-                result.name,
-                result.duration.as_secs_f64()
-            );
+            println!("  ✓ {} [{}ms]", result.name, result.duration.as_millis());
         } else if let Some(error) = &result.error {
             errors += 1;
             println!(
-                "  ERROR {} - {} [{:.2}s]",
+                "  ✗ {} - {} [{}ms]",
                 result.name,
                 error,
-                result.duration.as_secs_f64()
+                result.duration.as_millis()
             );
         } else {
             failed += 1;
             println!(
-                "  FAIL {} ({} failures) [{:.2}s]",
+                "  ✗ {} ({} failures) [{}ms]",
                 result.name,
                 result.failure_count,
-                result.duration.as_secs_f64()
+                result.duration.as_millis()
             );
 
-            // Show sample failing rows
-            if global.verbose && result.failure_count > 0 {
-                eprintln!("    Failing rows: {} found", result.failure_count);
+            // Show sample failing rows (always show up to 5)
+            if !result.sample_failures.is_empty() {
+                println!("    Sample failing rows:");
+                for (i, row) in result.sample_failures.iter().enumerate() {
+                    println!("      {}. {}", i + 1, row);
+                }
+                if result.failure_count > result.sample_failures.len() {
+                    println!(
+                        "      ... and {} more",
+                        result.failure_count - result.sample_failures.len()
+                    );
+                }
             }
         }
 
@@ -127,19 +187,12 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
-    let total_duration = start_time.elapsed();
-
     println!();
-    println!(
-        "Test Results: {} passed, {} failed, {} errors in {:.2}s",
-        passed,
-        failed,
-        errors,
-        total_duration.as_secs_f64()
-    );
+    println!("Passed: {}, Failed: {}", passed, failed + errors);
 
     if failed > 0 || errors > 0 {
-        std::process::exit(1);
+        // Exit code 2 = Test failures (per spec)
+        std::process::exit(2);
     }
 
     Ok(())

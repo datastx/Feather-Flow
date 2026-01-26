@@ -5,7 +5,6 @@ use ff_core::Project;
 use ff_db::{Database, DuckDbBackend};
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
 
 use crate::cli::{GlobalArgs, SeedArgs};
 
@@ -59,7 +58,6 @@ fn discover_seeds_recursive(dir: &Path, seeds: &mut Vec<SeedFile>) {
 
 /// Execute the seed command
 pub async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
-    let start_time = Instant::now();
     let project_path = Path::new(&global.project_dir);
     let project = Project::load(project_path).context("Failed to load project")?;
 
@@ -108,10 +106,9 @@ pub async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
 
     let mut success_count = 0;
     let mut failure_count = 0;
+    let mut total_rows: usize = 0;
 
     for seed in &seeds_to_load {
-        let seed_start = Instant::now();
-
         // Drop existing table if full_refresh
         if args.full_refresh {
             if global.verbose {
@@ -126,8 +123,6 @@ pub async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
         let path_str = seed.path.display().to_string();
         let result = db.load_csv(&seed.name, &path_str).await;
 
-        let duration = seed_start.elapsed();
-
         match result {
             Ok(_) => {
                 // Get row count
@@ -137,37 +132,22 @@ pub async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
                     .unwrap_or(0);
 
                 success_count += 1;
-                println!(
-                    "  OK {} ({} rows) [{:.2}s]",
-                    seed.name,
-                    row_count,
-                    duration.as_secs_f64()
-                );
+                total_rows += row_count;
+                println!("  ✓ {} ({} rows)", seed.name, row_count);
             }
             Err(e) => {
                 failure_count += 1;
-                println!(
-                    "  FAIL {} - {} [{:.2}s]",
-                    seed.name,
-                    e,
-                    duration.as_secs_f64()
-                );
+                println!("  ✗ {} - {}", seed.name, e);
             }
         }
     }
 
-    let total_duration = start_time.elapsed();
-
     println!();
-    println!(
-        "Completed: {} succeeded, {} failed in {:.2}s",
-        success_count,
-        failure_count,
-        total_duration.as_secs_f64()
-    );
+    println!("Loaded {} seeds ({} total rows)", success_count, total_rows);
 
     if failure_count > 0 {
-        std::process::exit(1);
+        // Exit code 4 = Database error (per spec - seed loading failures)
+        std::process::exit(4);
     }
 
     Ok(())

@@ -37,4 +37,8 @@ pub trait Database: Send + Sync {
 
     /// Create a schema if it does not exist
     async fn create_schema_if_not_exists(&self, schema: &str) -> DbResult<()>;
+
+    /// Query and return sample rows as formatted strings
+    /// Returns up to `limit` rows, each as a comma-separated string
+    async fn query_sample_rows(&self, sql: &str, limit: usize) -> DbResult<Vec<String>>;
 }

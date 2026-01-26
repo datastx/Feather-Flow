@@ -5,16 +5,16 @@ use thiserror::Error;
 /// Jinja templating errors
 #[derive(Error, Debug)]
 pub enum JinjaError {
-    /// Template render error
-    #[error("Template render error: {0}")]
+    /// Template render error (J001)
+    #[error("[J001] Jinja render error: {0}")]
     RenderError(String),
 
-    /// Unknown variable
-    #[error("Unknown variable: {name}")]
+    /// Unknown variable (J002)
+    #[error("[J002] Undefined variable '{name}'. Define it in vars: section of featherflow.yml")]
     UnknownVariable { name: String },
 
-    /// Invalid config key
-    #[error("Invalid config key: {key}")]
+    /// Invalid config key (J003)
+    #[error("[J003] Invalid config key '{key}'. Valid keys: materialized, schema, tags")]
     InvalidConfigKey { key: String },
 
     /// Internal error

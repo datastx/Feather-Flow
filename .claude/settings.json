@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "preToolExecution": [
+      {
+        "matcher": "Edit|Create",
+        "command": "cargo fmt --all -- --check 2>/dev/null || true"
+      }
+    ],
+    "postToolExecution": [
+      {
+        "matcher": "Edit.*\\.rs$",
+        "command": "cargo check -p $(dirname $FILE | xargs basename) 2>&1 | head -20"
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "cargo *",
+      "make *",
+      "cat *",
+      "ls *"
+    ]
+  }
+}

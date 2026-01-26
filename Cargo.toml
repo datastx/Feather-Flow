@@ -36,3 +36,4 @@ async-trait = "0.1"
 
 # Utilities
 petgraph = "0.6"
+chrono = { version = "0.4", features = ["serde"] }

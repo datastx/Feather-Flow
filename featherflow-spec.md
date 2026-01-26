@@ -27,36 +27,66 @@ git clone https://github.com/datastx/featherflow.git
 cd featherflow
 
 # Build all crates
-cargo build --workspace
+make build
 
 # Run tests
-cargo test --workspace
+make test
 
-# Run the CLI
-cargo run -p ff-cli -- --help
+# Show available commands
+make help
 ```
 
 ### First Commands
+
+All CLI commands have corresponding make targets for easy execution:
+
 ```bash
 # Parse a sample project
-cargo run -p ff-cli -- --project-dir tests/fixtures/sample_project parse
+make ff-parse
 
 # Compile models
-cargo run -p ff-cli -- --project-dir tests/fixtures/sample_project compile
+make ff-compile
 
 # List models
-cargo run -p ff-cli -- --project-dir tests/fixtures/sample_project ls
+make ff-ls
 
-# Run models (after loading seeds)
-cargo run -p ff-cli -- --project-dir tests/fixtures/sample_project run
+# Load seed data, then run models
+make ff-seed
+make ff-run
+
+# Run schema tests
+make ff-test
+
+# Validate project without execution
+make ff-validate
+
+# Generate documentation
+make ff-docs
+```
+
+To run against a different project:
+```bash
+make ff-run PROJECT_DIR=path/to/your/project
 ```
 
 ### Development Workflow
 1. Make changes to crates in `crates/`
-2. Run `cargo fmt --all` to format code
-3. Run `cargo clippy --workspace` to check for issues
-4. Run `cargo test --workspace` to verify tests pass
+2. Run `make fmt` to format code
+3. Run `make clippy` to check for issues
+4. Run `make test` to verify tests pass
 5. Run `make ci` for full CI check locally
+
+### Common Workflows
+```bash
+# Full development cycle: seed -> run -> test
+make dev-cycle
+
+# Quick validation: compile -> validate
+make dev-validate
+
+# Fresh pipeline with full refresh
+make dev-fresh
+```
 
 ---
 
@@ -138,6 +168,10 @@ featherflow/
 │   │       ├── featherflow.yml
 │   │       ├── schema.yml
 │   │       ├── models/
+│   │       ├── sources/          # Source definitions
+│   │       │   └── raw_ecommerce.yml
+│   │       ├── macros/           # User-defined macros
+│   │       │   └── utils.sql
 │   │       └── seeds/            # CSV seed data
 │   └── integration_tests.rs
 ├── testdata/                     # Sample data for integration tests
@@ -252,12 +286,35 @@ A Rust CLI tool for SQL templating and execution, similar to dbt.
 - `crates/ff-test`: Schema test generation (unique, not_null)
 
 ## Key Commands
+
+### Build & Test
 ```bash
 make build          # Build all crates
 make test           # Run all tests
 make lint           # Run clippy + fmt check
 make ci             # Full CI check locally
-cargo run -p ff-cli -- <subcommand>
+```
+
+### CLI Commands (use make targets, not raw cargo)
+```bash
+make ff-parse       # Parse SQL files
+make ff-compile     # Compile Jinja to SQL
+make ff-run         # Execute models
+make ff-ls          # List models
+make ff-test        # Run schema tests
+make ff-seed        # Load seed data
+make ff-docs        # Generate documentation
+make ff-validate    # Validate project
+
+# Override project directory:
+make ff-run PROJECT_DIR=path/to/project
+```
+
+### Common Workflows
+```bash
+make dev-cycle      # seed -> run -> test
+make dev-validate   # compile -> validate
+make help           # Show all available targets
 ```
 
 ## Architecture Notes
@@ -267,8 +324,10 @@ cargo run -p ff-cli -- <subcommand>
 - Error handling: thiserror in libs, anyhow in CLI
 
 ## Testing
-- Unit tests: `cargo test -p <crate>`
-- Integration tests: `cargo test --test integration_tests`
+- All tests: `make test`
+- Unit tests only: `make test-unit`
+- Integration tests: `make test-integration`
+- Verbose output: `make test-verbose`
 - Test fixtures in `tests/fixtures/sample_project/`
 - Seed data in `testdata/seeds/`
 
@@ -450,6 +509,7 @@ version: "1.0.0"
 # Directory paths (relative to project root)
 model_paths: ["models"]
 seed_paths: ["seeds"]
+source_paths: ["sources"]         # Source definitions (kind: sources)
 target_path: "target"
 
 # Default materialization
@@ -468,12 +528,12 @@ database:
   # OR for in-memory:
   # path: ":memory:"
 
+# DEPRECATED: Use source_paths and source files (kind: sources) instead
 # External tables (not managed by featherflow)
-# Used to distinguish model deps from source tables
-external_tables:
-  - raw.orders
-  - raw.customers
-  - raw.products
+# external_tables:
+#   - raw.orders
+#   - raw.customers
+#   - raw.products
 
 # Variables available in Jinja templates
 vars:
@@ -1069,11 +1129,11 @@ fn test_unique_constraint_failure() {
 5. Output AST or dependency graph
 
 **Definition of Done**:
-- [ ] Parses all model files in project
-- [ ] Extracts table dependencies from AST
-- [ ] Categorizes deps as model vs external
-- [ ] Reports parse errors with file path, line, column
-- [ ] Integration test: parse sample project, verify deps
+- [x] Parses all model files in project
+- [x] Extracts table dependencies from AST
+- [x] Categorizes deps as model vs external
+- [x] Reports parse errors with file path, line, column
+- [x] Integration test: parse sample project, verify deps
 
 ---
 
@@ -1103,12 +1163,12 @@ fn test_unique_constraint_failure() {
 6. Write manifest.json
 
 **Definition of Done**:
-- [ ] Compiles Jinja to pure SQL
-- [ ] Extracts dependencies from AST (not Jinja)
-- [ ] `config()` values captured in manifest
-- [ ] Circular dependency detection with clear error
-- [ ] Manifest includes: models, dependencies, materialization
-- [ ] Integration test: compile project, verify manifest
+- [x] Compiles Jinja to pure SQL
+- [x] Extracts dependencies from AST (not Jinja)
+- [x] `config()` values captured in manifest
+- [x] Circular dependency detection with clear error
+- [x] Manifest includes: models, dependencies, materialization
+- [x] Integration test: compile project, verify manifest
 
 ---
 
@@ -1136,12 +1196,12 @@ fn test_unique_constraint_failure() {
 4. Write run results
 
 **Definition of Done**:
-- [ ] Executes models in correct dependency order
-- [ ] `materialized='view'` creates VIEW
-- [ ] `materialized='table'` creates TABLE
-- [ ] Clear error messages on SQL execution failure
-- [ ] `--select +model` runs model and all ancestors
-- [ ] Integration test: run models, verify tables exist
+- [x] Executes models in correct dependency order
+- [x] `materialized='view'` creates VIEW
+- [x] `materialized='table'` creates TABLE
+- [x] Clear error messages on SQL execution failure
+- [x] `--select +model` runs model and all ancestors
+- [x] Integration test: run models, verify tables exist
 
 ---
 
@@ -1159,8 +1219,8 @@ fn test_unique_constraint_failure() {
 - Dependency tree when `--output tree`
 
 **Example Output**:
-```
-$ ff ls
+```bash
+$ make ff-ls
 NAME            MATERIALIZED  DEPENDS_ON
 stg_orders      view          raw.orders (external)
 stg_customers   view          raw.customers (external)
@@ -1170,11 +1230,11 @@ fct_orders      table         stg_orders, stg_customers
 ```
 
 **Definition of Done**:
-- [ ] Lists all models with name, materialization
-- [ ] Shows dependencies (model vs external)
-- [ ] JSON output is valid and complete
-- [ ] Tree output shows hierarchy
-- [ ] Integration test: ls output matches expected
+- [x] Lists all models with name, materialization
+- [x] Shows dependencies (model vs external)
+- [x] JSON output is valid and complete
+- [x] Tree output shows hierarchy
+- [x] Integration test: ls output matches expected
 
 ---
 
@@ -1204,12 +1264,12 @@ HAVING COUNT(*) > 1
 ```
 
 **Definition of Done**:
-- [ ] Generates correct SQL for `not_null` test
-- [ ] Generates correct SQL for `unique` test
-- [ ] Reports pass/fail with timing
-- [ ] Shows sample failing rows (limit 5)
-- [ ] Exit code 1 on any failure
-- [ ] Integration test: pass and fail cases
+- [x] Generates correct SQL for `not_null` test
+- [x] Generates correct SQL for `unique` test
+- [x] Reports pass/fail with timing
+- [x] Shows sample failing rows (limit 5)
+- [x] Exit code 2 on any failure (per spec exit codes)
+- [x] Integration test: pass and fail cases
 
 ---
 
@@ -1267,12 +1327,12 @@ Staged orders from raw source, filtered by start_date
 4. Optionally generate dependency graph
 
 **Definition of Done**:
-- [ ] Generates markdown docs for each model with schema
-- [ ] Index file lists all models with descriptions
-- [ ] Works without database connection
-- [ ] Skips models without schema files (with note in index)
-- [ ] JSON output includes all metadata
-- [ ] Integration test: docs match expected output
+- [x] Generates markdown docs for each model with schema
+- [x] Index file lists all models with descriptions
+- [x] Works without database connection
+- [x] Skips models without schema files (with note in index)
+- [x] JSON output includes all metadata
+- [x] Integration test: docs match expected output
 
 ---
 
@@ -1304,8 +1364,8 @@ Staged orders from raw source, filtered by start_date
 | Type/test compatibility | Info | Test makes sense for declared type |
 
 **Example Output**:
-```
-$ ff validate
+```bash
+$ make ff-validate PROJECT_DIR=path/to/project
 
 Validating project: my_analytics_project
 
@@ -1340,14 +1400,14 @@ Validation complete: 2 errors, 2 warnings, 1 info
 7. Exit with code based on error presence
 
 **Definition of Done**:
-- [ ] Catches SQL syntax errors with file:line:col
-- [ ] Detects circular dependencies
-- [ ] Detects duplicate model names
-- [ ] Warns on undefined Jinja variables
-- [ ] Warns on orphaned schema files
-- [ ] `--strict` mode fails on warnings
-- [ ] No database connection required
-- [ ] Integration test: validate pass and fail cases
+- [x] Catches SQL syntax errors with file:line:col
+- [x] Detects circular dependencies
+- [x] Detects duplicate model names
+- [x] Warns on undefined Jinja variables
+- [x] Warns on orphaned schema files
+- [x] `--strict` mode fails on warnings
+- [x] No database connection required
+- [x] Integration test: validate pass and fail cases
 
 ---
 
@@ -1456,23 +1516,49 @@ jobs:
 
 ## Makefile targets
 
-```makefile
-.PHONY: build build-release test lint fmt check doc clean ci
+**Design Principle**: Every CLI command must have a corresponding make target for consistency and reusability. This enables:
+- Quick testing during development without remembering cargo syntax
+- Consistent project directory defaults for sample project testing
+- Easy CI integration and scripting
+- Discoverable commands via `make help`
 
+### Configuration Variables
+
+```makefile
+# Default project for testing CLI commands
+PROJECT_DIR ?= tests/fixtures/sample_project
+
+# Output format for commands that support it
+OUTPUT_FORMAT ?= table
+```
+
+### Complete Makefile
+
+```makefile
+.PHONY: build build-release test lint fmt check doc clean ci help \
+        ff-parse ff-compile ff-run ff-ls ff-test ff-seed ff-docs ff-validate
+
+# Configuration
+PROJECT_DIR ?= tests/fixtures/sample_project
+OUTPUT_FORMAT ?= table
+
+# =============================================================================
 # Development
+# =============================================================================
+
 build:
 	cargo build --workspace
 
 build-release:
 	cargo build --workspace --release
 
-run:
-	cargo run -p ff-cli --
-
 watch:
 	cargo watch -x 'build --workspace'
 
-# Testing
+# =============================================================================
+# Rust Testing
+# =============================================================================
+
 test:
 	cargo test --workspace --all-features
 
@@ -1482,7 +1568,13 @@ test-verbose:
 test-integration:
 	cargo test --test '*' -- --test-threads=1
 
+test-unit:
+	cargo test --workspace --lib
+
+# =============================================================================
 # Code Quality
+# =============================================================================
+
 lint: fmt-check clippy
 
 fmt:
@@ -1497,30 +1589,187 @@ clippy:
 check:
 	cargo check --workspace --all-targets
 
+# =============================================================================
 # Documentation
+# =============================================================================
+
 doc:
 	cargo doc --workspace --no-deps
 
 doc-open:
 	cargo doc --workspace --no-deps --open
 
+# =============================================================================
+# CLI Commands - Featherflow (ff)
+# Each CLI subcommand has a dedicated make target for easy testing
+# =============================================================================
+
+## ff parse - Parse SQL files and output AST/dependencies
+ff-parse:
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) parse
+
+ff-parse-json:
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) parse --output json
+
+ff-parse-deps:
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) parse --output deps
+
+## ff compile - Render Jinja templates to SQL, extract dependencies
+ff-compile:
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) compile
+
+ff-compile-verbose:
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) compile --verbose
+
+## ff run - Execute compiled SQL against database
+ff-run:
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) run
+
+ff-run-full-refresh:
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) run --full-refresh
+
+ff-run-select:
+	@echo "Usage: make ff-run-select MODELS='+model_name'"
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) run --select $(MODELS)
+
+## ff ls - List models with dependencies and materialization
+ff-ls:
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) ls
+
+ff-ls-json:
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) ls --output json
+
+ff-ls-tree:
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) ls --output tree
+
+## ff test - Run schema tests (unique, not_null, etc.)
+ff-test:
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) test
+
+ff-test-verbose:
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) test --verbose
+
+ff-test-fail-fast:
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) test --fail-fast
+
+## ff seed - Load CSV seed files into database
+ff-seed:
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) seed
+
+ff-seed-full-refresh:
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) seed --full-refresh
+
+## ff docs - Generate documentation from schema files
+ff-docs:
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) docs
+
+ff-docs-json:
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) docs --format json
+
+## ff validate - Validate project without execution
+ff-validate:
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) validate
+
+ff-validate-strict:
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) validate --strict
+
+## ff sources - List sources (future: ff sources command)
+ff-sources:
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) ls --type sources
+
+## ff help - Show CLI help
+ff-help:
+	cargo run -p ff-cli -- --help
+
+# =============================================================================
+# Workflows - Common development workflows
+# =============================================================================
+
+## Full development cycle: seed -> run -> test
+dev-cycle: ff-seed ff-run ff-test
+	@echo "Development cycle complete!"
+
+## Quick validation: compile -> validate
+dev-validate: ff-compile ff-validate
+	@echo "Validation complete!"
+
+## Full pipeline with fresh data
+dev-fresh: ff-seed-full-refresh ff-run-full-refresh ff-test
+	@echo "Fresh pipeline complete!"
+
+# =============================================================================
 # Maintenance
+# =============================================================================
+
 clean:
 	cargo clean
+	rm -rf $(PROJECT_DIR)/target
 
 update:
 	cargo update
 
+# =============================================================================
 # CI (local verification)
+# =============================================================================
+
 ci: fmt-check clippy test doc
 	@echo "CI checks passed!"
 
 ci-quick: check fmt-check clippy
 	@echo "Quick CI checks passed!"
 
+ci-full: ci ff-compile ff-validate
+	@echo "Full CI checks passed!"
+
+# =============================================================================
 # Release
+# =============================================================================
+
 install:
 	cargo install --path crates/ff-cli
+
+# =============================================================================
+# Help
+# =============================================================================
+
+help:
+	@echo "Featherflow Development Makefile"
+	@echo ""
+	@echo "Development:"
+	@echo "  make build              Build all crates"
+	@echo "  make build-release      Build release binaries"
+	@echo "  make watch              Watch and rebuild on changes"
+	@echo ""
+	@echo "Testing:"
+	@echo "  make test               Run all tests"
+	@echo "  make test-verbose       Run tests with output"
+	@echo "  make test-integration   Run integration tests only"
+	@echo "  make test-unit          Run unit tests only"
+	@echo ""
+	@echo "Code Quality:"
+	@echo "  make lint               Run fmt-check and clippy"
+	@echo "  make fmt                Format code"
+	@echo "  make clippy             Run clippy linter"
+	@echo ""
+	@echo "CLI Commands (use PROJECT_DIR=path to override):"
+	@echo "  make ff-parse           Parse SQL files"
+	@echo "  make ff-compile         Compile Jinja to SQL"
+	@echo "  make ff-run             Execute models"
+	@echo "  make ff-ls              List models"
+	@echo "  make ff-test            Run schema tests"
+	@echo "  make ff-seed            Load seed data"
+	@echo "  make ff-docs            Generate documentation"
+	@echo "  make ff-validate        Validate project"
+	@echo ""
+	@echo "Workflows:"
+	@echo "  make dev-cycle          seed -> run -> test"
+	@echo "  make dev-validate       compile -> validate"
+	@echo "  make dev-fresh          Full refresh pipeline"
+	@echo ""
+	@echo "CI:"
+	@echo "  make ci                 Full CI check"
+	@echo "  make ci-quick           Quick CI check"
+	@echo "  make ci-full            CI + compile + validate"
 ```
 
 ---
@@ -1532,194 +1781,207 @@ install:
 #### Task 1.1: Repository scaffolding
 **Scope**: Set up monorepo structure, CI/CD, Makefile, CLAUDE.md
 **Acceptance**:
-- [ ] Workspace compiles with `cargo build`
-- [ ] CI runs on push (fmt, clippy, test)
-- [ ] `make ci` passes locally
-- [ ] CLAUDE.md provides accurate project context
+- [x] Workspace compiles with `cargo build`
+- [x] CI runs on push (fmt, clippy, test)
+- [x] `make ci` passes locally
+- [x] CLAUDE.md provides accurate project context
 
 #### Task 1.2: Configuration loading
 **Scope**: Parse featherflow.yml, implement Config structs
 **Acceptance**:
-- [ ] Loads and validates featherflow.yml
-- [ ] Errors on missing required fields
-- [ ] Supports `external_tables` list
-- [ ] Unit tests for config parsing
+- [x] Loads and validates featherflow.yml
+- [x] Errors on missing required fields
+- [x] Supports `external_tables` list
+- [x] Unit tests for config parsing
 
 #### Task 1.3: Project discovery with 1:1 schema files
 **Scope**: Find model files, discover matching schema files (1:1 naming)
 **Acceptance**:
-- [ ] Discovers all .sql files in model_paths
-- [ ] For each .sql file, looks for matching .yml/.yaml file (same name)
-- [ ] Parses ModelSchema from schema files
-- [ ] Handles missing schema files gracefully (optional)
-- [ ] Warns on orphaned schema files (no matching .sql)
-- [ ] Unit tests for discovery with and without schema files
+- [x] Discovers all .sql files in model_paths
+- [x] For each .sql file, looks for matching .yml/.yaml file (same name)
+- [x] Parses ModelSchema from schema files
+- [x] Handles missing schema files gracefully (optional)
+- [x] Warns on orphaned schema files (no matching .sql)
+- [x] Unit tests for discovery with and without schema files
 
 #### Task 1.4: Schema file structs and parsing
 **Scope**: Implement ModelSchema, ColumnSchema, ColumnTest types
 **Acceptance**:
-- [ ] ModelSchema struct with version, description, owner, tags, config, columns
-- [ ] ColumnSchema struct with name, type, description, primary_key, tests, references
-- [ ] ColumnTest enum handles simple ("unique") and parameterized (accepted_values) tests
-- [ ] Serde deserialization from YAML
-- [ ] Config precedence: SQL config() > schema config > project defaults
-- [ ] Unit tests for various schema file formats
+- [x] ModelSchema struct with version, description, owner, tags, config, columns
+- [x] ColumnSchema struct with name, type, description, primary_key, tests, references
+- [x] ColumnTest enum handles simple ("unique") and parameterized (accepted_values) tests
+- [x] Serde deserialization from YAML
+- [x] Config precedence: SQL config() > schema config > project defaults
+- [x] Unit tests for various schema file formats
 
 ### Phase 2: SQL Parsing & Dependency Extraction (1-2 weeks)
 
 #### Task 2.1: SQL parser wrapper with dialect support
 **Scope**: Wrap sqlparser-rs, implement DuckDbDialect
 **Acceptance**:
-- [ ] Parses SQL with DuckDB dialect
-- [ ] Returns meaningful parse errors
-- [ ] Unit tests for parsing various SQL patterns
+- [x] Parses SQL with DuckDB dialect
+- [x] Returns meaningful parse errors
+- [x] Unit tests for parsing various SQL patterns
 
 #### Task 2.2: AST-based dependency extraction
 **Scope**: Implement `extract_dependencies` using `visit_relations`
 **Acceptance**:
-- [ ] Extracts FROM clause tables
-- [ ] Extracts JOIN tables
-- [ ] Extracts subquery tables
-- [ ] Handles schema-qualified names (schema.table)
-- [ ] **CRITICAL**: Filters out CTE names from dependencies (CTEs defined in WITH clause should not appear as deps)
-- [ ] Filters out self-references (model referencing its own name)
-- [ ] Unit tests for complex queries (CTEs, unions)
-- [ ] Unit test: `WITH orders AS (...) SELECT * FROM orders` should NOT include "orders" as dependency
+- [x] Extracts FROM clause tables
+- [x] Extracts JOIN tables
+- [x] Extracts subquery tables
+- [x] Handles schema-qualified names (schema.table)
+- [x] **CRITICAL**: Filters out CTE names from dependencies (CTEs defined in WITH clause should not appear as deps)
+- [x] Filters out self-references (model referencing its own name)
+- [x] Unit tests for complex queries (CTEs, unions)
+- [x] Unit test: `WITH orders AS (...) SELECT * FROM orders` should NOT include "orders" as dependency
 
 #### Task 2.3: Dependency categorization
 **Scope**: Categorize deps as model vs external
 **Acceptance**:
-- [ ] Uses `external_tables` config to categorize
-- [ ] Unknown tables default to external with warning
-- [ ] Unit tests for categorization
+- [x] Uses `external_tables` config to categorize
+- [x] Unknown tables default to external with warning
+- [x] Unit tests for categorization
 
 ### Phase 3: Jinja & Compile (1 week)
 
 #### Task 3.1: Simplified Jinja environment
 **Scope**: Minijinja setup with config() and var() only
 **Acceptance**:
-- [ ] `config(materialized='table')` captured correctly
-- [ ] `var('name')` substitutes from config
-- [ ] Unknown variables error clearly
-- [ ] Unit tests for template rendering
+- [x] `config(materialized='table')` captured correctly
+- [x] `var('name')` substitutes from config
+- [x] Unknown variables error clearly
+- [x] Unit tests for template rendering
 
-#### Task 3.2: Implement `ff compile`
+#### Task 3.2: Custom macros support
+**Scope**: Load user-defined macros from macro_paths directories
+**Acceptance**:
+- [x] `macro_paths` config field parsed
+- [x] Macro files discovered from directories
+- [x] Minijinja `path_loader` enables imports
+- [x] `{% from "file.sql" import macro %}` works
+- [x] Compiled SQL has expanded macros (no Jinja syntax)
+- [x] Missing macro file errors clearly
+- [x] Unit tests for macro loading and expansion
+
+#### Task 3.3: Implement `ff compile`
 **Scope**: Full compile command
 **Acceptance**:
-- [ ] Renders Jinja to SQL
-- [ ] Parses and extracts dependencies
-- [ ] Builds DAG, detects cycles
-- [ ] Writes manifest.json
-- [ ] Integration test passes
+- [x] Renders Jinja to SQL (including macros)
+- [x] Parses and extracts dependencies
+- [x] Builds DAG, detects cycles
+- [x] Writes manifest.json
+- [x] Integration test passes
 
 ### Phase 4: Database Layer (1-2 weeks)
 
 #### Task 4.1: Database trait and DuckDB implementation
 **Scope**: Define trait, implement for DuckDB
 **Acceptance**:
-- [ ] Opens in-memory and file databases
-- [ ] Implements all trait methods
-- [ ] `load_csv` works with test data
-- [ ] Unit tests with in-memory DuckDB
+- [x] Opens in-memory and file databases
+- [x] Implements all trait methods
+- [x] `load_csv` works with test data
+- [x] Unit tests with in-memory DuckDB
 
 #### Task 4.2: Implement `ff run`
 **Scope**: Full run command
 **Acceptance**:
-- [ ] Executes in topological order
-- [ ] Creates tables/views per config
-- [ ] Reports progress and timing
-- [ ] Integration test: tables exist after run
+- [x] Executes in topological order
+- [x] Creates tables/views per config
+- [x] Reports progress and timing
+- [x] Integration test: tables exist after run
 
 ### Phase 5: Additional Commands (1 week)
 
 #### Task 5.1: Implement `ff parse`
 **Scope**: Parse command with output formats
 **Acceptance**:
-- [ ] JSON AST output works
-- [ ] Deps output shows dependencies
-- [ ] Integration test passes
+- [x] JSON AST output works
+- [x] Deps output shows dependencies
+- [x] Integration test passes
 
 #### Task 5.2: Implement `ff ls`
 **Scope**: List command with formats
 **Acceptance**:
-- [ ] Table format shows all info
-- [ ] JSON output is valid
-- [ ] Integration test passes
+- [x] Table format shows all info
+- [x] JSON output is valid
+- [x] Integration test passes
 
 #### Task 5.3: Implement `ff test` with schema-based test generation
 **Scope**: Generate and execute tests from model schema files (no DB introspection)
 **Acceptance**:
-- [ ] Reads tests from model's .yml schema file (1:1 naming)
-- [ ] Generates correct SQL for built-in tests (unique, not_null, positive, accepted_values)
-- [ ] Handles parameterized tests (accepted_values with values list)
-- [ ] Reports pass/fail with timing
-- [ ] Shows sample failing rows (limit 5)
-- [ ] Skips models without schema files (with info message)
-- [ ] Validates test columns exist in schema before execution
-- [ ] Exit code 1 on any failure
-- [ ] Integration test with pass and fail cases
+- [x] Reads tests from model's .yml schema file (1:1 naming)
+- [x] Generates correct SQL for built-in tests (unique, not_null, positive, accepted_values)
+- [x] Handles parameterized tests (accepted_values with values list)
+- [x] Reports pass/fail with timing
+- [x] Shows sample failing rows (limit 5)
+- [x] Skips models without schema files (with info message)
+- [x] Validates test columns exist in schema before execution
+- [x] Exit code 1 on any failure
+- [x] Integration test with pass and fail cases
 
 #### Task 5.4: Implement `ff docs`
 **Scope**: Generate documentation from schema files without database access
 **Acceptance**:
-- [ ] Generates markdown documentation for each model with schema
-- [ ] Includes description, owner, tags from schema
-- [ ] Includes column table with types, descriptions, tests
-- [ ] Includes dependency information
-- [ ] Generates index file listing all models
-- [ ] JSON output format for programmatic use
-- [ ] Works entirely offline (no DB connection)
-- [ ] Integration test: docs match expected output
+- [x] Generates markdown documentation for each model with schema
+- [x] Includes description, owner, tags from schema
+- [x] Includes column table with types, descriptions, tests
+- [x] Includes dependency information
+- [x] Generates index file listing all models
+- [x] JSON output format for programmatic use
+- [x] Works entirely offline (no DB connection)
+- [x] Integration test: docs match expected output
 
 #### Task 5.5: Implement `ff validate`
 **Scope**: Validate project without execution
 **Acceptance**:
-- [ ] Validates SQL syntax for all models
-- [ ] Validates Jinja variables are defined
-- [ ] Validates schema file YAML syntax
-- [ ] Detects circular dependencies
-- [ ] Detects duplicate model names
-- [ ] Warns on orphaned schema files
-- [ ] Warns on test/column mismatches in schema
-- [ ] `--strict` mode fails on warnings
-- [ ] Reports errors with file:line:col where applicable
-- [ ] No database connection required
-- [ ] Integration test: validate pass and fail cases
+- [x] Validates SQL syntax for all models
+- [x] Validates Jinja variables are defined
+- [x] Validates schema file YAML syntax
+- [x] Detects circular dependencies
+- [x] Detects duplicate model names
+- [x] Warns on orphaned schema files
+- [x] Warns on test/column mismatches in schema
+- [x] Warns on test/type compatibility (e.g., positive on VARCHAR)
+- [x] Warns on unknown reference models in column references
+- [x] `--strict` mode fails on warnings
+- [x] Reports errors with file:line:col where applicable
+- [x] No database connection required
+- [x] Integration test: validate pass and fail cases
 
 #### Task 5.6: Implement `ff seed`
 **Scope**: Load CSV seed files into database
 **Acceptance**:
-- [ ] Discovers all .csv files in seed_paths
-- [ ] Creates tables named after file (without .csv extension)
-- [ ] Uses DuckDB's `read_csv_auto()` for type inference
-- [ ] `--seeds` flag filters which seeds to load
-- [ ] `--full-refresh` drops existing tables first
-- [ ] Reports row count per seed
-- [ ] Handles missing seed directory gracefully
-- [ ] Integration test: seeds load and are queryable
+- [x] Discovers all .csv files in seed_paths
+- [x] Creates tables named after file (without .csv extension)
+- [x] Uses DuckDB's `read_csv_auto()` for type inference
+- [x] `--seeds` flag filters which seeds to load
+- [x] `--full-refresh` drops existing tables first
+- [x] Reports row count per seed
+- [x] Handles missing seed directory gracefully
+- [x] Integration test: seeds load and are queryable
 
 ### Phase 6: Polish (1 week)
 
 #### Task 6.1: Error messages and UX
 **Scope**: Improve error formatting, help text
 **Acceptance**:
-- [ ] All errors include context
-- [ ] Help text is complete
-- [ ] `--verbose` flag works
+- [x] All errors include context
+- [x] Help text is complete
+- [x] `--verbose` flag works
 
 #### Task 6.2: Documentation
 **Scope**: README, rustdoc, examples
 **Acceptance**:
-- [ ] README with quickstart
-- [ ] All public APIs documented
-- [ ] Example project works
+- [x] README with quickstart
+- [x] All public APIs documented
+- [x] Example project works
 
 #### Task 6.3: Release pipeline
 **Scope**: Finalize release workflow
 **Acceptance**:
-- [ ] Tag creates release
-- [ ] Binaries for all targets
-- [ ] SHA256 checksums included
+- [x] Tag creates release
+- [x] Binaries for all targets
+- [x] SHA256 checksums included
 
 ---
 
@@ -1749,7 +2011,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
 
-# Templating
+# Templating (loader feature enables path_loader for macro files)
 minijinja = { version = "2.0", features = ["loader"] }
 
 # SQL parsing
@@ -2042,6 +2304,52 @@ columns:
 
 **Priority**: Medium
 
+### Sources
+
+#### No Freshness Checks (MVP)
+**Issue**: The `freshness` configuration is parsed from source files but not executed. No `ff source freshness` command exists.
+
+**Mitigation**: Document as future feature. Freshness config is stored in manifest for future use.
+
+**Priority**: Low (post-MVP feature)
+
+#### No source() Function
+**Issue**: Unlike dbt, models reference source tables by name (e.g., `raw.orders`) rather than `{{ source('raw', 'orders') }}`.
+
+**Mitigation**: This is by design. AST-based extraction handles dependencies without special Jinja functions.
+
+**Priority**: N/A (design decision)
+
+#### No Database Validation
+**Issue**: Source table definitions are not validated against the actual database. A source table that doesn't exist won't be caught until model execution.
+
+**Mitigation**: Future: add `ff validate --check-sources` flag to verify sources exist in database.
+
+**Priority**: Low
+
+### Custom Macros
+
+#### Single Loader Limitation
+**Issue**: Minijinja's `set_loader` replaces the previous loader. If `macro_paths` contains multiple directories, only the last one will be active.
+
+**Workaround for MVP**: Recommend using a single macro_paths directory. Post-MVP, implement a custom composite loader.
+
+**Priority**: Low (documented limitation)
+
+#### Macro Cannot Import Other Macros
+**Issue**: Due to Minijinja's execution model, macros cannot have `{% from ... import %}` statements inside them. All imports must be at the model level.
+
+**Mitigation**: Document this limitation. Users can define all related macros in the same file if they need to share logic.
+
+**Priority**: Low (documented limitation)
+
+#### Macro Names Not Validated Against SQL Keywords
+**Issue**: A macro named `SELECT` or `FROM` could cause confusing errors when used.
+
+**Mitigation**: Future: add warning for macros named after SQL keywords.
+
+**Priority**: Low
+
 ### Schema Testing
 
 #### Tests Pass on Empty Tables
@@ -2104,10 +2412,10 @@ This section tracks the implementation status of all features. Update checkboxes
 | Workspace structure | ✅ Done | `cargo build --workspace` succeeds |
 | ff-core crate | ✅ Done | All types compile, tests pass |
 | ff-sql crate | ✅ Done | SQL parsing works |
-| ff-jinja crate | ✅ Done | config() and var() work |
+| ff-jinja crate | ✅ Done | config(), var(), and custom macros work |
 | ff-db crate | ⚠️ Partial | DuckDB works, Snowflake stub only |
 | ff-test crate | ✅ Done | unique/not_null tests work |
-| ff-cli crate | ⚠️ Partial | 5/7 commands implemented |
+| ff-cli crate | ✅ Done | All 8 commands implemented |
 
 ### CLI Commands
 
@@ -2115,24 +2423,26 @@ This section tracks the implementation status of all features. Update checkboxes
 |---------|--------|------------------|
 | `ff parse` | ✅ Done | - |
 | `ff compile` | ✅ Done | `--vars` and `--output-dir` ARE implemented |
-| `ff run` | ⚠️ Partial | `run_results.json` not written, no manifest caching |
+| `ff run` | ✅ Done | `run_results.json` ✅, manifest caching ✅, `--no-cache` flag ✅ |
 | `ff ls` | ✅ Done | - |
-| `ff test` | ⚠️ Partial | Only unique/not_null, no sample failing rows |
-| `ff docs` | ❌ Not started | Entirely missing |
-| `ff validate` | ❌ Not started | Entirely missing |
-| `ff seed` | ❌ Not started | Specified in spec, needs implementation |
+| `ff test` | ✅ Done | All 8 test types (unique, not_null, positive, non_negative, accepted_values, min_value, max_value, regex) with sample failing rows |
+| `ff seed` | ✅ Done | Full implementation with `--seeds` and `--full-refresh` |
+| `ff validate` | ✅ Done | SQL syntax, Jinja vars, cycles, duplicates, schema files |
+| `ff docs` | ✅ Done | Markdown, JSON, HTML output + lineage.dot diagram |
 
 ### Critical Bugs/Gaps to Fix
 
 | Bug/Gap | Severity | Status | Notes |
 |---------|----------|--------|-------|
-| CTE names included in dependencies | High | ❌ Not fixed | `visit_relations` includes CTE references |
-| No duplicate model name detection | High | ❌ Not fixed | Silent override, undefined behavior |
-| Schema not auto-created before model | High | ❌ Not fixed | DuckDB errors if schema doesn't exist |
-| 1:1 schema file convention not implemented | High | ❌ Not implemented | Currently uses dbt-style multi-model schema.yml |
-| Case-insensitive model matching | Medium | ❌ Not fixed | DuckDB is case-insensitive but matching isn't |
-| Line/column numbers always 0 in parse errors | Medium | ❌ Not fixed | Hardcoded in error types |
-| ModelSchema struct not implemented | Medium | ❌ Not implemented | Spec defines it but code doesn't have it |
+| CTE names included in dependencies | High | ✅ Fixed | `extractor.rs` filters out CTE names |
+| No duplicate model name detection | High | ✅ Fixed | `discover_models_recursive()` checks for duplicates |
+| Schema not auto-created before model | High | ✅ Fixed | `run.rs` collects unique schemas and creates them before execution |
+| 1:1 schema file convention not implemented | High | ✅ Implemented | `Model::from_file()` loads matching .yml file |
+| Case-insensitive model matching | Medium | ✅ Fixed | `categorize_dependencies()` uses case-insensitive matching |
+| Line/column numbers always 0 in parse errors | Medium | ✅ Fixed | `parse_location_from_error()` extracts line/column from sqlparser errors |
+| ModelSchema struct not implemented | Medium | ✅ Implemented | `model.rs` has ModelSchema struct |
+| Custom macros not implemented | Medium | ✅ Implemented | macro_paths config and path_loader set up |
+| Sources not implemented | Medium | ✅ Implemented | source_paths config and SourceFile/SourceTable structs in ff-core |
 
 ---
 
@@ -2146,36 +2456,38 @@ Items specified but not yet implemented or incomplete.
 |---------|---------------|--------|-----------|
 | `--vars <JSON>` for compile | Section: ff compile inputs | ✅ Implemented | No |
 | `--output-dir <PATH>` for compile | Section: ff compile inputs | ✅ Implemented | No |
-| `target/run_results.json` output | Section: ff run outputs | ❌ Not implemented | No |
-| Manifest caching in run | Section: ff run behavior | ❌ Not implemented | No |
-| `ff seed` command | Section: ff seed | ❌ Not implemented | Yes |
-| `ff docs` command | Section: ff docs | ❌ Not implemented | No |
-| `ff validate` command | Section: ff validate | ❌ Not implemented | Yes |
-| Sample failing rows in test output | Section: ff test outputs | ❌ Partial | No |
+| `target/run_results.json` output | Section: ff run outputs | ✅ Implemented | No |
+| Manifest caching in run | Section: ff run behavior | ✅ Implemented | No |
+| `ff seed` command | Section: ff seed | ✅ Implemented | No |
+| `ff docs` command | Section: ff docs | ✅ Implemented | No |
+| `ff validate` command | Section: ff validate | ✅ Implemented | No |
+| Sample failing rows in test output | Section: ff test outputs | ✅ Implemented | No |
+| Custom macros support | Section: Custom Macros | ✅ Implemented | No |
+| Sources support | Section: Sources | ✅ Implemented | No |
 
 ### Missing Validation
 
 | Validation | Description | Priority | Status |
 |------------|-------------|----------|--------|
-| Pre-run variable check | Validate all vars defined before execution | Medium | ❌ |
-| Schema existence check | Ensure target schemas exist | High | ❌ |
-| Duplicate model name detection | Error on conflicting model names | High | ❌ |
+| Pre-run variable check | Validate all vars defined before execution | Medium | ✅ (via ff validate) |
+| Schema existence check | Ensure target schemas exist | High | ✅ Fixed |
+| Duplicate model name detection | Error on conflicting model names | High | ✅ Fixed |
 | External table verification | Warn if external table doesn't exist in DB | Low | ❌ |
-| CTE filtering | Remove CTE names from dependency list | High | ❌ |
+| CTE filtering | Remove CTE names from dependency list | High | ✅ Fixed |
 
 ### Missing Output Files
 
 | File | Purpose | Status |
 |------|---------|--------|
-| `target/run_results.json` | Execution history, timing, status | Not implemented |
+| `target/run_results.json` | Execution history, timing, status | ✅ Implemented |
 | `target/state.json` | Track file hashes for incrementality | Not implemented |
 
 ### Test Fixture Updates Required
 
 | Fixture | Issue | Required Change |
 |---------|-------|-----------------|
-| tests/fixtures/sample_project/models/schema.yml | Uses dbt-style multi-model format | Split into stg_orders.yml, stg_customers.yml, fct_orders.yml |
-| tests/fixtures/sample_project/seeds/ | Seeds exist but no ff seed command | Add ff seed integration test |
+| tests/fixtures/sample_project/models/schema.yml | Legacy multi-model format kept for backward compat | ✅ 1:1 schema files added alongside |
+| tests/fixtures/sample_project/seeds/ | Seeds exist, ff seed implemented | ✅ Add ff seed integration test |
 
 ### Documentation Alignment Required
 
@@ -2215,19 +2527,21 @@ This section provides a prioritized list of action items to complete the MVP. It
 
 | # | Item | Type | Impact | Effort |
 |---|------|------|--------|--------|
-| 11 | Implement `ff docs` command | Feature | No documentation generation | Medium |
-| 12 | Write `run_results.json` | Feature | No execution history | Low |
-| 13 | Add sample failing rows to test output | Enhancement | Better debugging | Low |
-| 14 | Pre-run variable validation | Enhancement | Fail early on missing vars | Low |
+| 11 | Implement sources | Feature | External table documentation/testing | Medium |
+| 12 | Implement custom macros | Feature | Reusable SQL snippets | Medium |
+| 13 | Implement `ff docs` command | Feature | No documentation generation | Medium |
+| 14 | Write `run_results.json` | Feature | No execution history | Low |
+| 15 | Add sample failing rows to test output | Enhancement | Better debugging | Low |
+| 16 | Pre-run variable validation | Enhancement | Fail early on missing vars | Low |
 
 ### P3 - Low Priority (Post-MVP)
 
 | # | Item | Type | Impact | Effort |
 |---|------|------|--------|--------|
-| 15 | Manifest caching | Enhancement | Performance | Medium |
-| 16 | Incremental runs | Feature | Performance | High |
-| 17 | Parallel execution | Feature | Performance | Medium |
-| 18 | Snowflake backend | Feature | Extended support | High |
+| 17 | Manifest caching | Enhancement | Performance | Medium |
+| 18 | Incremental runs | Feature | Performance | High |
+| 19 | Parallel execution | Feature | Performance | Medium |
+| 20 | Snowflake backend | Feature | Extended support | High |
 
 ---
 
@@ -2255,12 +2569,12 @@ This section provides a prioritized list of action items to complete the MVP. It
 4. Report summary
 
 **Definition of Done**:
-- [ ] Discovers all .csv files in seed_paths
-- [ ] Creates tables named after CSV file (without extension)
-- [ ] Uses DuckDB's `read_csv_auto()` for type inference
-- [ ] `--full-refresh` drops existing tables first
-- [ ] Reports row counts per seed
-- [ ] Integration test: seeds load correctly
+- [x] Discovers all .csv files in seed_paths
+- [x] Creates tables named after CSV file (without extension)
+- [x] Uses DuckDB's `read_csv_auto()` for type inference
+- [x] `--full-refresh` drops existing tables first
+- [x] Reports row counts per seed
+- [x] Integration test: seeds load correctly
 
 ---
 
@@ -2409,6 +2723,884 @@ The `SqlDialect` trait can be extended with methods for dialect-specific SQL gen
 
 ---
 
+## Sources
+
+This section specifies how to define external data sources in Featherflow. Sources represent raw data tables that exist in the database but are not managed by Featherflow (e.g., tables loaded by ETL pipelines, operational databases, or third-party data).
+
+### Design Decisions
+
+**Choice**: Use dedicated source definition files with a required `kind: sources` field to explicitly identify and document external data sources.
+
+**Rationale**:
+- **Explicit identification**: The `kind: sources` field makes files self-documenting and prevents accidental misuse
+- **Replaces external_tables**: Provides richer metadata than a simple list in `featherflow.yml`
+- **Enables testing**: Sources can have column-level tests just like models
+- **Supports freshness** (future): Schema designed to support data freshness monitoring
+- **Documentation**: Source tables appear in generated docs with descriptions
+- **Strict validation**: Required `kind` field catches configuration errors early
+
+### Directory Structure
+
+Sources are defined in YAML files within the `sources/` directory:
+
+```
+project/
+├── sources/                    # Source definitions
+│   ├── raw_ecommerce.yml       # E-commerce raw data sources
+│   ├── raw_crm.yml             # CRM system sources
+│   └── external_apis.yml       # Third-party API data
+├── models/
+├── seeds/
+├── macros/
+└── featherflow.yml
+```
+
+### Configuration
+
+Add `source_paths` to `featherflow.yml`:
+
+```yaml
+# featherflow.yml
+name: my_analytics_project
+version: "1.0.0"
+
+model_paths: ["models"]
+seed_paths: ["seeds"]
+macro_paths: ["macros"]
+source_paths: ["sources"]        # NEW: directories containing source definitions
+target_path: "target"
+
+# DEPRECATED: external_tables list (use source files instead)
+# external_tables:
+#   - raw.orders
+```
+
+**Default**: If `source_paths` is not specified, defaults to `["sources"]` if the directory exists.
+
+**Migration**: The `external_tables` list in `featherflow.yml` is deprecated but still supported for backwards compatibility. When both exist, source files take precedence.
+
+### Source File Format
+
+Source files are YAML files with a **required** `kind: sources` field:
+
+```yaml
+# sources/raw_ecommerce.yml
+kind: sources                    # REQUIRED: Must be "sources"
+version: 1
+
+# Source group metadata
+name: raw_ecommerce
+description: "Raw e-commerce data from the production PostgreSQL database"
+database: raw_db                 # Optional: override default database
+schema: ecommerce                # Required: schema containing the tables
+
+# Optional metadata
+owner: data-engineering
+tags:
+  - raw
+  - production
+  - pii
+
+# Table definitions
+tables:
+  - name: orders
+    identifier: api_orders       # Optional: actual table name if different
+    description: "One record per order, including cancelled and deleted"
+    columns:
+      - name: id
+        type: INTEGER
+        description: "Primary key"
+        tests:
+          - unique
+          - not_null
+      - name: user_id
+        type: INTEGER
+        description: "Foreign key to users table"
+        tests:
+          - not_null
+      - name: status
+        type: VARCHAR
+        description: "Order status: pending, completed, cancelled"
+        tests:
+          - accepted_values:
+              values: [pending, completed, cancelled]
+      - name: amount
+        type: DECIMAL(10,2)
+        description: "Order total in USD"
+      - name: created_at
+        type: TIMESTAMP
+        description: "When the order was placed"
+
+    # Optional: freshness configuration (future implementation)
+    freshness:
+      loaded_at_field: created_at
+      warn_after:
+        count: 12
+        period: hour
+      error_after:
+        count: 24
+        period: hour
+
+  - name: customers
+    description: "Customer master data"
+    columns:
+      - name: id
+        type: INTEGER
+        tests:
+          - unique
+          - not_null
+      - name: email
+        type: VARCHAR
+        description: "Customer email address"
+        tests:
+          - unique
+          - not_null
+      - name: name
+        type: VARCHAR
+      - name: tier
+        type: VARCHAR
+        tests:
+          - accepted_values:
+              values: [bronze, silver, gold, platinum]
+
+  - name: products
+    description: "Product catalog"
+    # Minimal definition - columns optional
+```
+
+### Strict Validation Rules
+
+The `kind: sources` field enables strict validation:
+
+| Rule | Severity | Description |
+|------|----------|-------------|
+| `kind` must equal `"sources"` | Error | Files with wrong/missing `kind` are rejected |
+| `name` is required | Error | Source group must have a name |
+| `schema` is required | Error | Must specify the database schema |
+| `tables` must not be empty | Error | At least one table required |
+| Table `name` is required | Error | Each table must have a name |
+| Valid YAML syntax | Error | File must be valid YAML |
+| Column names unique per table | Warning | Duplicate column names in same table |
+| Unknown fields | Warning | Warn on unrecognized fields (typo detection) |
+
+### Source Structs
+
+```rust
+/// A source definition file (from .yml with kind: sources)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceFile {
+    /// Must be "sources" - enforced during parsing
+    pub kind: SourceKind,
+
+    #[serde(default = "default_version")]
+    pub version: u32,
+
+    /// Logical name for this source group
+    pub name: String,
+
+    #[serde(default)]
+    pub description: Option<String>,
+
+    /// Database name (optional, uses default if not specified)
+    #[serde(default)]
+    pub database: Option<String>,
+
+    /// Schema name (required)
+    pub schema: String,
+
+    #[serde(default)]
+    pub owner: Option<String>,
+
+    #[serde(default)]
+    pub tags: Vec<String>,
+
+    /// Tables in this source
+    pub tables: Vec<SourceTable>,
+}
+
+/// Enforces kind: sources
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum SourceKind {
+    Sources,
+}
+
+impl SourceKind {
+    pub fn validate(&self) -> Result<(), SourceError> {
+        match self {
+            SourceKind::Sources => Ok(()),
+        }
+    }
+}
+
+/// A single table within a source
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceTable {
+    /// Logical name used in models
+    pub name: String,
+
+    /// Actual table name in database (if different from name)
+    #[serde(default)]
+    pub identifier: Option<String>,
+
+    #[serde(default)]
+    pub description: Option<String>,
+
+    #[serde(default)]
+    pub columns: Vec<SourceColumn>,
+
+    /// Freshness configuration (future)
+    #[serde(default)]
+    pub freshness: Option<FreshnessConfig>,
+}
+
+/// Column definition within a source table
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceColumn {
+    pub name: String,
+
+    #[serde(rename = "type")]
+    pub data_type: Option<String>,
+
+    #[serde(default)]
+    pub description: Option<String>,
+
+    #[serde(default)]
+    pub tests: Vec<ColumnTest>,
+}
+
+/// Freshness monitoring configuration (future implementation)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FreshnessConfig {
+    /// Column containing the loaded_at timestamp
+    pub loaded_at_field: String,
+
+    #[serde(default)]
+    pub warn_after: Option<FreshnessPeriod>,
+
+    #[serde(default)]
+    pub error_after: Option<FreshnessPeriod>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FreshnessPeriod {
+    pub count: u32,
+    pub period: FreshnessPeriodUnit,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FreshnessPeriodUnit {
+    Minute,
+    Hour,
+    Day,
+}
+```
+
+### Source Discovery and Loading
+
+```rust
+/// Discover and load all source files
+pub fn discover_sources(
+    project_root: &Path,
+    source_paths: &[PathBuf],
+) -> Result<Vec<SourceFile>, SourceError> {
+    let mut sources = Vec::new();
+
+    for source_path in source_paths {
+        let full_path = project_root.join(source_path);
+        if !full_path.exists() {
+            continue;
+        }
+
+        for entry in walkdir::WalkDir::new(&full_path)
+            .max_depth(2)  // Allow one level of subdirectories
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            if path.extension().map_or(false, |e| e == "yml" || e == "yaml") {
+                let source_file = load_source_file(path)?;
+                sources.push(source_file);
+            }
+        }
+    }
+
+    Ok(sources)
+}
+
+/// Load and validate a single source file
+pub fn load_source_file(path: &Path) -> Result<SourceFile, SourceError> {
+    let content = fs::read_to_string(path)
+        .map_err(|e| SourceError::IoError { path: path.to_path_buf(), source: e })?;
+
+    let source: SourceFile = serde_yaml::from_str(&content)
+        .map_err(|e| SourceError::ParseError {
+            path: path.to_path_buf(),
+            details: e.to_string(),
+        })?;
+
+    // Validate kind field
+    if source.kind != SourceKind::Sources {
+        return Err(SourceError::InvalidKind {
+            path: path.to_path_buf(),
+            expected: "sources".to_string(),
+            found: format!("{:?}", source.kind),
+        });
+    }
+
+    // Validate required fields
+    if source.tables.is_empty() {
+        return Err(SourceError::EmptyTables {
+            path: path.to_path_buf(),
+        });
+    }
+
+    Ok(source)
+}
+```
+
+### Integration with Dependency Extraction
+
+Sources replace the `external_tables` list for dependency categorization:
+
+```rust
+/// Build lookup of known source tables
+pub fn build_source_lookup(sources: &[SourceFile]) -> HashSet<String> {
+    let mut lookup = HashSet::new();
+
+    for source in sources {
+        for table in &source.tables {
+            // Build fully qualified name: schema.table
+            let fqn = format!("{}.{}", source.schema, table.name);
+            lookup.insert(fqn);
+
+            // Also add just the table name for unqualified references
+            lookup.insert(table.name.clone());
+
+            // If identifier differs, add that too
+            if let Some(ref ident) = table.identifier {
+                let fqn_ident = format!("{}.{}", source.schema, ident);
+                lookup.insert(fqn_ident);
+                lookup.insert(ident.clone());
+            }
+        }
+    }
+
+    lookup
+}
+
+/// Categorize dependencies using source definitions
+pub fn categorize_dependencies_with_sources(
+    deps: HashSet<String>,
+    known_models: &HashSet<String>,
+    known_sources: &HashSet<String>,
+) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let mut model_deps = Vec::new();
+    let mut source_deps = Vec::new();
+    let mut unknown_deps = Vec::new();
+
+    for dep in deps {
+        if known_models.contains(&dep) {
+            model_deps.push(dep);
+        } else if known_sources.contains(&dep) {
+            source_deps.push(dep);
+        } else {
+            unknown_deps.push(dep);
+        }
+    }
+
+    (model_deps, source_deps, unknown_deps)
+}
+```
+
+### Source Tests
+
+Sources can have column-level tests, executed via `ff test`:
+
+```rust
+/// Generate tests for source tables
+pub fn generate_source_tests(sources: &[SourceFile]) -> Vec<GeneratedTest> {
+    let mut tests = Vec::new();
+
+    for source in sources {
+        for table in &source.tables {
+            let table_ref = format!("{}.{}", source.schema, table.name);
+
+            for column in &table.columns {
+                for test in &column.tests {
+                    tests.push(GeneratedTest {
+                        name: format!("source_{}_{}_{}",
+                            source.name, table.name, test.name()),
+                        test_type: TestType::Source,
+                        table: table_ref.clone(),
+                        column: column.name.clone(),
+                        test_config: test.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    tests
+}
+```
+
+### CLI Integration
+
+#### ff ls
+
+Show sources alongside models:
+
+```bash
+$ make ff-ls
+NAME                TYPE      MATERIALIZED  DEPENDS_ON
+raw_ecommerce.orders   source    -             -
+raw_ecommerce.customers source   -             -
+stg_orders          model     view          raw_ecommerce.orders
+stg_customers       model     view          raw_ecommerce.customers
+fct_orders          model     table         stg_orders, stg_customers
+
+3 models, 2 sources
+```
+
+#### ff test
+
+Test sources alongside models:
+
+```bash
+$ make ff-test
+Running 8 tests...
+  ✓ source_raw_ecommerce_orders_id_unique [15ms]
+  ✓ source_raw_ecommerce_orders_id_not_null [12ms]
+  ✓ unique_stg_orders_order_id [12ms]
+  ...
+
+Passed: 8, Failed: 0
+```
+
+#### ff docs
+
+Include sources in documentation:
+
+```bash
+$ make ff-docs
+Generating documentation...
+  ✓ sources/raw_ecommerce.md
+  ✓ models/stg_orders.md
+  ...
+```
+
+#### ff validate
+
+Validate source files:
+
+```bash
+$ make ff-validate
+Validating project: sample_project
+
+Checking source files...
+  ✓ sources/raw_ecommerce.yml (kind: sources, 3 tables)
+  ✓ sources/raw_crm.yml (kind: sources, 2 tables)
+
+[WARNING] Unknown dependency 'legacy_table' in model stg_legacy
+  Not defined as a model or source. Add to sources/ or verify table exists.
+
+Validation passed: 0 errors, 1 warning
+```
+
+### Error Messages
+
+| Error | Code | Message Template |
+|-------|------|------------------|
+| MissingKind | SRC001 | Source file missing required 'kind' field: {path}. Add `kind: sources` |
+| InvalidKind | SRC002 | Invalid 'kind' in {path}: expected 'sources', found '{found}' |
+| MissingSchema | SRC003 | Source '{name}' missing required 'schema' field in {path} |
+| EmptyTables | SRC004 | Source '{name}' has no tables defined in {path} |
+| ParseError | SRC005 | Failed to parse source file {path}: {details} |
+| DuplicateSource | SRC006 | Duplicate source name '{name}' in {path1} and {path2} |
+| DuplicateTable | SRC007 | Duplicate table '{table}' in source '{source}' |
+
+### Manifest Integration
+
+Sources appear in `target/manifest.json`:
+
+```json
+{
+  "sources": {
+    "raw_ecommerce.orders": {
+      "name": "orders",
+      "source_name": "raw_ecommerce",
+      "schema": "ecommerce",
+      "database": "raw_db",
+      "identifier": "api_orders",
+      "description": "One record per order...",
+      "columns": [...],
+      "freshness": {...}
+    }
+  },
+  "models": {...}
+}
+```
+
+### Limitations (MVP)
+
+1. **No freshness checks**: `freshness` config is parsed but not executed (future feature)
+2. **No source() function**: Models reference sources by table name, not `{{ source() }}`
+3. **No database verification**: Sources are not validated against the actual database
+4. **Single schema per file**: Each source file defines tables in one schema
+
+### Definition of Done
+
+- [x] `source_paths` config field parsed from featherflow.yml
+- [x] Source files discovered from configured directories
+- [x] `kind: sources` validation enforced (error if missing or wrong)
+- [x] SourceFile, SourceTable, SourceColumn structs implemented
+- [x] Source tables included in dependency categorization
+- [x] `ff ls` shows sources alongside models
+- [x] `ff test` runs tests defined on source columns
+- [x] `ff docs` generates documentation for sources
+- [x] `ff validate` validates source file syntax and kind
+- [x] Unknown dependencies warned if not in models or sources
+- [x] Deprecation warning for `external_tables` in featherflow.yml
+- [x] Integration test: model depending on source compiles correctly
+- [x] Integration test: source with tests passes ff test
+- [x] Integration test: missing kind field errors clearly
+- [x] Unit tests for source parsing and validation
+
+### Task Breakdown
+
+#### Task: Implement Sources (MVP)
+
+**Phase 1: Config & Structs**
+- [x] Add `source_paths` to `ProjectConfig` struct
+- [x] Implement `SourceKind` enum with validation
+- [x] Implement `SourceFile`, `SourceTable`, `SourceColumn` structs
+- [x] Implement `FreshnessConfig` struct (parsed but not used)
+- [x] Unit tests for serde deserialization
+
+**Phase 2: Discovery & Validation**
+- [x] Implement `discover_sources()` function
+- [x] Implement `load_source_file()` with kind validation
+- [x] Add source error types (SRC001-SRC007)
+- [x] Integration with project loading
+- [x] Unit tests for discovery and validation
+
+**Phase 3: Dependency Integration**
+- [x] Implement `build_source_lookup()`
+- [x] Update `categorize_dependencies()` to use sources
+- [x] Deprecation warning for `external_tables`
+- [x] Integration tests for dependency categorization
+
+**Phase 4: CLI Integration**
+- [x] Update `ff ls` to show sources
+- [x] Update `ff test` to run source tests
+- [x] Update `ff docs` to document sources
+- [x] Update `ff validate` to validate sources
+- [x] Add make targets for source-related operations
+
+**Estimated effort**: Medium (2-3 days)
+
+---
+
+## Custom Macros
+
+This section specifies user-defined macros for Featherflow, enabling reusable SQL/Jinja snippets across models.
+
+### Design Decisions
+
+**Choice**: Use Minijinja's native macro system with explicit imports, loading macros from a `macros/` directory.
+
+**Rationale**:
+- Leverages Minijinja's built-in `{% macro %}` and `{% from ... import %}` syntax
+- Explicit imports make dependencies clear and avoid namespace pollution
+- File-based organization aligns with model organization patterns
+- Uses Minijinja's `path_loader` feature for filesystem loading
+- Minimal implementation effort for MVP
+
+### Directory Structure
+
+```
+project/
+├── macros/                     # User-defined macros
+│   ├── utils.sql               # General utility macros
+│   ├── dates.sql               # Date-related macros
+│   └── testing.sql             # Test helper macros
+├── models/
+│   └── ...
+└── featherflow.yml
+```
+
+### Configuration
+
+Add `macro_paths` to `featherflow.yml`:
+
+```yaml
+# featherflow.yml
+name: my_analytics_project
+version: "1.0.0"
+
+model_paths: ["models"]
+seed_paths: ["seeds"]
+macro_paths: ["macros"]          # NEW: directories containing macro files
+target_path: "target"
+
+# ... rest of config
+```
+
+**Default**: If `macro_paths` is not specified, defaults to `["macros"]` if the directory exists, otherwise empty.
+
+### Macro File Format
+
+Macro files are `.sql` files containing one or more macro definitions using Jinja syntax:
+
+```sql
+-- macros/utils.sql
+
+{% macro cents_to_dollars(column_name) %}
+({{ column_name }} / 100.0)
+{% endmacro %}
+
+{% macro safe_divide(numerator, denominator, default=0) %}
+CASE
+  WHEN {{ denominator }} = 0 THEN {{ default }}
+  ELSE {{ numerator }} / {{ denominator }}
+END
+{% endmacro %}
+
+{% macro generate_surrogate_key(field_list) %}
+MD5(CONCAT_WS('|', {% for field in field_list %}{{ field }}{% if not loop.last %}, {% endif %}{% endfor %}))
+{% endmacro %}
+```
+
+```sql
+-- macros/dates.sql
+
+{% macro date_trunc_to_week(date_column) %}
+DATE_TRUNC('week', {{ date_column }})
+{% endmacro %}
+
+{% macro fiscal_quarter(date_column) %}
+CASE
+  WHEN MONTH({{ date_column }}) IN (1, 2, 3) THEN 'Q4'
+  WHEN MONTH({{ date_column }}) IN (4, 5, 6) THEN 'Q1'
+  WHEN MONTH({{ date_column }}) IN (7, 8, 9) THEN 'Q2'
+  ELSE 'Q3'
+END
+{% endmacro %}
+```
+
+### Using Macros in Models
+
+Models import macros explicitly using Jinja's `{% from ... import %}` syntax:
+
+```sql
+-- models/staging/stg_orders.sql
+{% from "utils.sql" import cents_to_dollars, safe_divide %}
+{% from "dates.sql" import date_trunc_to_week %}
+
+{{ config(materialized='view') }}
+
+SELECT
+  order_id,
+  {{ cents_to_dollars("amount_cents") }} AS amount_dollars,
+  {{ safe_divide("revenue", "order_count") }} AS avg_revenue,
+  {{ date_trunc_to_week("created_at") }} AS order_week
+FROM raw_orders
+WHERE created_at >= '{{ var("start_date") }}'
+```
+
+Alternative import syntax (import entire module):
+
+```sql
+{% import "utils.sql" as utils %}
+
+SELECT
+  {{ utils.cents_to_dollars("amount") }} AS amount_dollars
+FROM orders
+```
+
+### Implementation
+
+#### Config Struct Update
+
+```rust
+/// Project configuration from featherflow.yml
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProjectConfig {
+    pub name: String,
+    pub version: String,
+
+    #[serde(default = "default_model_paths")]
+    pub model_paths: Vec<PathBuf>,
+
+    #[serde(default = "default_seed_paths")]
+    pub seed_paths: Vec<PathBuf>,
+
+    #[serde(default = "default_macro_paths")]
+    pub macro_paths: Vec<PathBuf>,  // NEW
+
+    #[serde(default = "default_target_path")]
+    pub target_path: PathBuf,
+
+    // ... other fields
+}
+
+fn default_macro_paths() -> Vec<PathBuf> {
+    vec![PathBuf::from("macros")]
+}
+```
+
+#### Jinja Environment Setup
+
+Update `ff-jinja` to load macros using Minijinja's `path_loader`:
+
+```rust
+use minijinja::{Environment, path_loader};
+use std::path::Path;
+
+/// Create Jinja environment with macros loaded
+pub fn create_environment(
+    project_root: &Path,
+    macro_paths: &[PathBuf],
+    vars: &HashMap<String, Value>,
+) -> Result<Environment<'static>, JinjaError> {
+    let mut env = Environment::new();
+
+    // Add built-in functions
+    env.add_function("config", config_function);
+    env.add_function("var", make_var_function(vars.clone()));
+
+    // Load macros from each macro path
+    for macro_path in macro_paths {
+        let full_path = project_root.join(macro_path);
+        if full_path.exists() && full_path.is_dir() {
+            // Use path_loader to enable {% from "file.sql" import macro %}
+            env.set_loader(path_loader(full_path));
+        }
+    }
+
+    Ok(env)
+}
+```
+
+#### Macro Discovery
+
+```rust
+/// Discover macro files in configured directories
+pub fn discover_macros(
+    project_root: &Path,
+    macro_paths: &[PathBuf],
+) -> Vec<PathBuf> {
+    let mut macros = Vec::new();
+
+    for macro_path in macro_paths {
+        let full_path = project_root.join(macro_path);
+        if full_path.exists() && full_path.is_dir() {
+            for entry in walkdir::WalkDir::new(&full_path)
+                .max_depth(1)  // Flat structure for MVP
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
+                let path = entry.path();
+                if path.extension().map_or(false, |e| e == "sql") {
+                    macros.push(path.to_path_buf());
+                }
+            }
+        }
+    }
+
+    macros
+}
+```
+
+### Error Handling
+
+| Error | Code | Message Template |
+|-------|------|------------------|
+| MacroNotFound | M001 | Macro file not found: '{file}'. Check macro_paths in featherflow.yml |
+| MacroParseError | M002 | Failed to parse macro file '{file}': {details} |
+| MacroImportError | M003 | Cannot import '{macro}' from '{file}': macro not defined |
+| CircularMacroImport | M004 | Circular macro import detected: {path} |
+
+### Validation
+
+The `ff validate` command should check macros:
+
+1. **Macro file syntax**: All `.sql` files in macro_paths parse as valid Jinja
+2. **Macro naming**: No duplicate macro names across files (warn, not error)
+3. **Import resolution**: All `{% from ... import %}` statements resolve
+4. **Unused macros**: Warn about macros never imported (optional, low priority)
+
+### Compile Output
+
+Macros are inlined during compilation. The compiled SQL contains no macro references:
+
+```sql
+-- target/compiled/my_project/models/staging/stg_orders.sql
+-- No {% from %} or {{ macro() }} - all expanded
+
+SELECT
+  order_id,
+  (amount_cents / 100.0) AS amount_dollars,
+  CASE WHEN order_count = 0 THEN 0 ELSE revenue / order_count END AS avg_revenue,
+  DATE_TRUNC('week', created_at) AS order_week
+FROM raw_orders
+WHERE created_at >= '2024-01-01'
+```
+
+### Limitations (MVP)
+
+1. **Flat directory structure**: Macros must be in the root of macro_paths directories (no subdirectories)
+2. **No macro chaining**: Macros cannot import other macros (Minijinja limitation)
+3. **No runtime macro generation**: Macros are static, defined in files
+4. **Single loader**: Only the last macro_path is active if multiple are specified (Minijinja limitation - can be worked around post-MVP)
+
+### Definition of Done
+
+- [x] `macro_paths` config field parsed from featherflow.yml
+- [x] Macro files discovered from configured directories
+- [x] Minijinja environment loads macros via path_loader
+- [x] `{% from "file.sql" import macro %}` works in models
+- [x] `{% import "file.sql" as alias %}` works in models
+- [x] Compiled SQL contains expanded macro output (no macro syntax)
+- [x] Parse errors in macro files report file:line:column
+- [x] `ff validate` checks macro file syntax
+- [x] Integration test: model using macros compiles correctly
+- [x] Integration test: undefined macro import errors clearly
+- [x] Documentation in README for macro usage
+
+### Task Breakdown
+
+#### Task: Implement Custom Macros (MVP)
+
+**Phase 1: Config & Discovery**
+- [x] Add `macro_paths` to `ProjectConfig` struct
+- [x] Add `default_macro_paths()` function
+- [x] Update config parsing tests
+- [x] Implement `discover_macros()` function
+- [x] Unit tests for macro discovery
+
+**Phase 2: Jinja Integration**
+- [x] Enable `loader` feature in minijinja Cargo.toml
+- [x] Update `create_environment()` to use `path_loader`
+- [x] Test macro imports work in isolation
+- [x] Handle missing macro file errors
+
+**Phase 3: Compile Integration**
+- [x] Update `ff compile` to load macros
+- [x] Verify compiled output has no macro syntax
+- [x] Add compile integration test with macros
+
+**Phase 4: Validation**
+- [x] Add macro validation to `ff validate`
+- [x] Check macro file syntax
+- [x] Check import resolution
+
+**Estimated effort**: Medium (1-2 days)
+
+---
+
 ## Future Improvements (Backlog)
 
 Enhancements beyond the MVP specification, prioritized by impact.
@@ -2514,8 +3706,10 @@ Complete the `SnowflakeBackend` implementation (currently stub).
 |-----------|------------|
 | `extractor.rs` | CTEs not treated as deps, LATERAL joins, UNION, nested subqueries |
 | `dag.rs` | Complex cycles, self-loops, diamond dependencies |
-| `config.rs` | Invalid YAML, missing required fields, type coercion |
+| `config.rs` | Invalid YAML, missing required fields, type coercion, macro_paths |
 | `functions.rs` | var() with/without default, config() type handling |
+| `environment.rs` | Macro loading, macro import resolution, macro expansion |
+| `source.rs` | Source file parsing, kind validation, source lookup building |
 
 ### Integration Tests Required
 
@@ -2528,6 +3722,12 @@ Complete the `SnowflakeBackend` implementation (currently stub).
 | Invalid SQL in model | Parse error with file:line:col |
 | Undefined variable | Clear error before execution starts |
 | Full refresh with views | Views recreated correctly |
+| Model with macro imports | Compiles with expanded macros |
+| Missing macro file import | Clear error with file name |
+| Undefined macro import | Clear error with macro name |
+| Model depends on source | Dependency categorized as source |
+| Source missing kind field | Clear error about required kind |
+| Source with column tests | Tests execute on source table |
 
 ### Edge Case Tests
 
@@ -2557,25 +3757,86 @@ fn test_schema_creation_before_model() {
     assert!(result.is_ok());
     assert!(db.schema_exists("staging"));
 }
+
+#[test]
+fn test_macro_expansion_in_compiled_sql() {
+    // Macros should be expanded, not present in compiled output
+    let project = Project::load("fixtures/macro_project").unwrap();
+    let compiled = compile_model(&project, "model_with_macro").unwrap();
+
+    // Should NOT contain macro import syntax
+    assert!(!compiled.contains("{% from"));
+    assert!(!compiled.contains("{% import"));
+
+    // Should contain expanded macro content
+    assert!(compiled.contains("/ 100.0"));  // cents_to_dollars expansion
+}
+
+#[test]
+fn test_undefined_macro_import_errors() {
+    let project = Project::load("fixtures/bad_macro_import").unwrap();
+    let result = compile_model(&project, "model_with_bad_import");
+
+    assert!(matches!(result, Err(JinjaError::MacroImportError { .. })));
+}
+
+#[test]
+fn test_source_kind_required() {
+    // Source file without kind: sources should error
+    let content = r#"
+        name: raw_data
+        schema: raw
+        tables:
+          - name: orders
+    "#;
+    let result = parse_source_file(content);
+    assert!(matches!(result, Err(SourceError::MissingKind { .. })));
+}
+
+#[test]
+fn test_source_kind_must_be_sources() {
+    // Source file with wrong kind should error
+    let content = r#"
+        kind: models
+        name: raw_data
+        schema: raw
+        tables:
+          - name: orders
+    "#;
+    let result = parse_source_file(content);
+    assert!(matches!(result, Err(SourceError::InvalidKind { .. })));
+}
+
+#[test]
+fn test_model_depends_on_source() {
+    let project = Project::load("fixtures/project_with_sources").unwrap();
+    let model = project.get_model("stg_orders").unwrap();
+
+    // raw.orders should be categorized as a source, not unknown
+    assert!(model.source_deps.contains(&"raw.orders".to_string()));
+    assert!(model.unknown_deps.is_empty());
+}
 ```
 
 ---
 
 ## Expected CLI Output Examples
 
-These examples document the expected behavior of each command for verification.
+These examples document the expected behavior of each command for verification. Use the make targets for consistent execution.
 
 ### ff parse
 
 ```bash
-$ ff parse --project-dir tests/fixtures/sample_project --output deps
+$ make ff-parse-deps
+# Equivalent: ff parse --project-dir tests/fixtures/sample_project --output deps
 stg_orders: raw_orders (external)
 stg_customers: raw_customers (external)
 fct_orders: stg_customers, stg_orders
 ```
 
 ```bash
-$ ff parse --project-dir tests/fixtures/sample_project --output json --models stg_orders
+$ make ff-parse-json
+# Equivalent: ff parse --project-dir tests/fixtures/sample_project --output json
 {
   "models": [
     {
@@ -2593,7 +3854,8 @@ $ ff parse --project-dir tests/fixtures/sample_project --output json --models st
 ### ff compile
 
 ```bash
-$ ff compile --project-dir tests/fixtures/sample_project
+$ make ff-compile
+# Equivalent: ff compile --project-dir tests/fixtures/sample_project
 Compiling 3 models...
   ✓ stg_orders (view)
   ✓ stg_customers (view)
@@ -2627,7 +3889,8 @@ Expected manifest structure:
 ### ff run
 
 ```bash
-$ ff run --project-dir tests/fixtures/sample_project
+$ make ff-run
+# Equivalent: ff run --project-dir tests/fixtures/sample_project
 Running 3 models...
   ✓ stg_orders (view) [45ms]
   ✓ stg_customers (view) [32ms]
@@ -2639,7 +3902,8 @@ Total time: 205ms
 
 With selector:
 ```bash
-$ ff run --project-dir tests/fixtures/sample_project --select +fct_orders
+$ make ff-run-select MODELS="+fct_orders"
+# Equivalent: ff run --select +fct_orders
 Running 3 models (selected with ancestors)...
   ✓ stg_orders (view) [45ms]
   ✓ stg_customers (view) [32ms]
@@ -2649,7 +3913,8 @@ Running 3 models (selected with ancestors)...
 ### ff ls
 
 ```bash
-$ ff ls --project-dir tests/fixtures/sample_project
+$ make ff-ls
+# Equivalent: ff ls --project-dir tests/fixtures/sample_project
 NAME            MATERIALIZED  SCHEMA    DEPENDS_ON
 stg_orders      view          staging   raw_orders (external)
 stg_customers   view          staging   raw_customers (external)
@@ -2660,7 +3925,8 @@ fct_orders      table         -         stg_orders, stg_customers
 
 Tree output:
 ```bash
-$ ff ls --project-dir tests/fixtures/sample_project --output tree
+$ make ff-ls-tree
+# Equivalent: ff ls --output tree
 fct_orders (table)
 ├── stg_orders (view)
 │   └── raw_orders (external)
@@ -2671,7 +3937,8 @@ fct_orders (table)
 ### ff test
 
 ```bash
-$ ff test --project-dir tests/fixtures/sample_project
+$ make ff-test
+# Equivalent: ff test --project-dir tests/fixtures/sample_project
 Running 4 tests...
   ✓ unique_stg_orders_order_id [12ms]
   ✓ not_null_stg_orders_order_id [8ms]
@@ -2683,7 +3950,7 @@ Passed: 4, Failed: 0
 
 With failure:
 ```bash
-$ ff test --project-dir tests/fixtures/sample_project
+$ make ff-test
 Running 4 tests...
   ✓ unique_stg_orders_order_id [12ms]
   ✗ not_null_stg_orders_customer_id [8ms]
@@ -2696,7 +3963,8 @@ Exit code: 1
 ### ff seed (to be implemented)
 
 ```bash
-$ ff seed --project-dir tests/fixtures/sample_project
+$ make ff-seed
+# Equivalent: ff seed --project-dir tests/fixtures/sample_project
 Loading 3 seeds...
   ✓ raw_orders (10 rows)
   ✓ raw_customers (5 rows)
@@ -2708,7 +3976,8 @@ Loaded 3 seeds (19 total rows)
 ### ff validate (to be implemented)
 
 ```bash
-$ ff validate --project-dir tests/fixtures/sample_project
+$ make ff-validate
+# Equivalent: ff validate --project-dir tests/fixtures/sample_project
 Validating project: sample_project
 
 Checking SQL syntax... ✓
@@ -2722,7 +3991,7 @@ Validation passed: 0 errors, 0 warnings
 
 With errors:
 ```bash
-$ ff validate --project-dir tests/fixtures/broken_project
+$ make ff-validate PROJECT_DIR=tests/fixtures/broken_project
 Validating project: broken_project
 
 [ERROR] E006: SQL parse error in models/bad_model.sql:5:1
@@ -2741,7 +4010,8 @@ Exit code: 1
 ### ff docs (to be implemented)
 
 ```bash
-$ ff docs --project-dir tests/fixtures/sample_project
+$ make ff-docs
+# Equivalent: ff docs --project-dir tests/fixtures/sample_project
 Generating documentation...
   ✓ stg_orders.md
   ✓ stg_customers.md
@@ -2875,127 +4145,127 @@ This checklist defines when the MVP is complete and ready for release.
 ### Core Functionality (All Required)
 
 **Project Loading**
-- [ ] `featherflow.yml` parses correctly
-- [ ] Model discovery finds all .sql files recursively
-- [ ] Schema files (1:1 naming) are discovered and parsed
-- [ ] External tables are recognized from config
-- [ ] Variables are loaded and accessible
+- [x] `featherflow.yml` parses correctly
+- [x] Model discovery finds all .sql files recursively
+- [x] Schema files (1:1 naming) are discovered and parsed
+- [x] External tables are recognized from config
+- [x] Variables are loaded and accessible
 
 **SQL Parsing**
-- [ ] DuckDB dialect parses all standard SQL
-- [ ] Dependencies extracted via AST (not regex)
-- [ ] CTE names are NOT included in dependencies
-- [ ] Self-references filtered out
-- [ ] Parse errors include file:line:column
+- [x] DuckDB dialect parses all standard SQL
+- [x] Dependencies extracted via AST (not regex)
+- [x] CTE names are NOT included in dependencies
+- [x] Self-references filtered out
+- [x] Parse errors include file:line:column
 
 **Jinja Templating**
-- [ ] `config()` function captures materialization, schema, tags
-- [ ] `var()` function substitutes variables with optional defaults
-- [ ] Undefined variables produce clear error messages
-- [ ] Rendered SQL is syntactically valid
+- [x] `config()` function captures materialization, schema, tags
+- [x] `var()` function substitutes variables with optional defaults
+- [x] Undefined variables produce clear error messages
+- [x] Rendered SQL is syntactically valid
 
 **DAG Building**
-- [ ] Circular dependencies detected with clear error message showing cycle path
-- [ ] Topological sort produces correct execution order
-- [ ] `+model` selector includes ancestors
-- [ ] `model+` selector includes descendants
-- [ ] Duplicate model names produce error (not silent override)
+- [x] Circular dependencies detected with clear error message showing cycle path
+- [x] Topological sort produces correct execution order
+- [x] `+model` selector includes ancestors
+- [x] `model+` selector includes descendants
+- [x] Duplicate model names produce error (not silent override)
 
 **Database Operations (DuckDB)**
-- [ ] In-memory databases work
-- [ ] File-based databases work
-- [ ] `CREATE TABLE AS` works
-- [ ] `CREATE VIEW AS` works
-- [ ] `CREATE OR REPLACE` works
-- [ ] CSV loading works via `read_csv_auto()`
-- [ ] Schema creation (if model specifies schema)
+- [x] In-memory databases work
+- [x] File-based databases work
+- [x] `CREATE TABLE AS` works
+- [x] `CREATE VIEW AS` works
+- [x] `CREATE OR REPLACE` works
+- [x] CSV loading works via `read_csv_auto()`
+- [x] Schema creation (if model specifies schema)
 
 **Schema Testing**
-- [ ] `unique` test generates correct SQL
-- [ ] `not_null` test generates correct SQL
-- [ ] Tests read from 1:1 schema files
-- [ ] Test results include pass/fail and timing
-- [ ] Failed tests show failure count
+- [x] `unique` test generates correct SQL
+- [x] `not_null` test generates correct SQL
+- [x] Tests read from 1:1 schema files
+- [x] Test results include pass/fail and timing
+- [x] Failed tests show failure count
 
 ### CLI Commands (All Required)
 
 **ff parse**
-- [ ] Parses all models in project
-- [ ] `--output json` produces valid JSON AST
-- [ ] `--output deps` shows dependency list
-- [ ] `--models` filter works
-- [ ] Parse errors clearly reported
+- [x] Parses all models in project
+- [x] `--output json` produces valid JSON AST
+- [x] `--output deps` shows dependency list
+- [x] `--models` filter works
+- [x] Parse errors clearly reported
 
 **ff compile**
-- [ ] Renders Jinja templates
-- [ ] Writes compiled SQL to target/compiled/
-- [ ] Generates manifest.json with model metadata
-- [ ] Detects and reports circular dependencies
+- [x] Renders Jinja templates
+- [x] Writes compiled SQL to target/compiled/
+- [x] Generates manifest.json with model metadata
+- [x] Detects and reports circular dependencies
 
 **ff run**
-- [ ] Compiles before running
-- [ ] Executes models in dependency order
-- [ ] Creates views for `materialized='view'`
-- [ ] Creates tables for `materialized='table'`
-- [ ] `--select` filters models
-- [ ] `--full-refresh` drops before recreating
-- [ ] Reports timing per model
+- [x] Compiles before running
+- [x] Executes models in dependency order
+- [x] Creates views for `materialized='view'`
+- [x] Creates tables for `materialized='table'`
+- [x] `--select` filters models
+- [x] `--full-refresh` drops before recreating
+- [x] Reports timing per model
 
 **ff ls**
-- [ ] Lists all models
-- [ ] Shows materialization type
-- [ ] Shows dependencies
-- [ ] `--output json` produces valid JSON
-- [ ] `--output tree` shows dependency tree
+- [x] Lists all models
+- [x] Shows materialization type
+- [x] Shows dependencies
+- [x] `--output json` produces valid JSON
+- [x] `--output tree` shows dependency tree
 
 **ff test**
-- [ ] Runs tests defined in schema files
-- [ ] Reports pass/fail per test
-- [ ] `--fail-fast` stops on first failure
-- [ ] Exit code 1 on any failure
+- [x] Runs tests defined in schema files
+- [x] Reports pass/fail per test
+- [x] `--fail-fast` stops on first failure
+- [x] Exit code 1 on any failure
 
-**ff seed** (NEW)
-- [ ] Loads CSV files from seed_paths
-- [ ] Creates tables with inferred types
-- [ ] `--full-refresh` recreates tables
+**ff seed**
+- [x] Loads CSV files from seed_paths
+- [x] Creates tables with inferred types
+- [x] `--full-refresh` recreates tables
 
-**ff validate** (NEW)
-- [ ] Validates SQL syntax
-- [ ] Validates Jinja variables defined
-- [ ] Detects circular dependencies
-- [ ] Detects duplicate model names
-- [ ] Reports all issues with severity levels
+**ff validate**
+- [x] Validates SQL syntax
+- [x] Validates Jinja variables defined
+- [x] Detects circular dependencies
+- [x] Detects duplicate model names
+- [x] Reports all issues with severity levels
 
-**ff docs** (NEW)
-- [ ] Generates markdown per model with schema
-- [ ] Includes column definitions and tests
-- [ ] Generates index file
-- [ ] Works without database connection
+**ff docs**
+- [x] Generates markdown per model with schema
+- [x] Includes column definitions and tests
+- [x] Generates index file
+- [x] Works without database connection
 
 ### Integration Tests (All Required)
 
-- [ ] Full pipeline: seed → compile → run → test
-- [ ] Circular dependency detection
-- [ ] Model with dependencies executes after deps
-- [ ] Schema tests pass with valid data
-- [ ] Schema tests fail with invalid data
-- [ ] Parse errors reported correctly
-- [ ] Missing variable errors reported
+- [x] Full pipeline: seed → compile → run → test
+- [x] Circular dependency detection
+- [x] Model with dependencies executes after deps
+- [x] Schema tests pass with valid data
+- [x] Schema tests fail with invalid data
+- [x] Parse errors reported correctly
+- [x] Missing variable errors reported
 
 ### Documentation (All Required)
 
-- [ ] README with installation and quickstart
-- [ ] All CLI commands documented with examples
-- [ ] CLAUDE.md accurate for AI assistance
-- [ ] Example project in examples/quickstart/
+- [x] README with installation and quickstart
+- [x] All CLI commands documented with examples
+- [x] CLAUDE.md accurate for AI assistance
+- [x] Example project in examples/quickstart/
 
 ### CI/CD (All Required)
 
-- [ ] `cargo build` succeeds
-- [ ] `cargo test` all pass
-- [ ] `cargo clippy` no warnings
-- [ ] `cargo fmt --check` passes
-- [ ] GitHub Actions CI configured
+- [x] `cargo build` succeeds
+- [x] `cargo test` all pass
+- [x] `cargo clippy` no warnings
+- [x] `cargo fmt --check` passes
+- [x] GitHub Actions CI configured
 
 ---
 
@@ -3040,28 +4310,30 @@ The first release requires these features to be complete and tested:
 - [x] `ff run` - Execute models in dependency order
 - [x] `ff ls` - List models with dependencies
 - [x] `ff test` - Run unique/not_null tests
-- [ ] `ff seed` - Load CSV seed files
-- [ ] `ff validate` - Validate without execution
+- [x] `ff seed` - Load CSV seed files
+- [x] `ff validate` - Validate without execution
 - [x] DuckDB backend fully functional
 - [x] DAG building with cycle detection
 - [x] Selector syntax (+model, model+)
 - [x] config() and var() Jinja functions
-- [ ] CTE names filtered from dependencies (BUG FIX)
-- [ ] Duplicate model name detection (BUG FIX)
+- [x] CTE names filtered from dependencies (BUG FIX)
+- [x] Duplicate model name detection (BUG FIX)
 
 **Nice to Have (Not Blocking)**
-- [ ] `ff docs` - Generate documentation
-- [ ] `run_results.json` output
-- [ ] Manifest caching
-- [ ] Sample failing rows in test output
-- [ ] Schema auto-creation
+- [x] `ff docs` - Generate documentation
+- [x] `run_results.json` output
+- [x] Manifest caching (with `--no-cache` flag)
+- [x] Sample failing rows in test output
+- [x] Schema auto-creation
+- [x] Lineage diagram generation (lineage.dot)
 
 **Deferred to v0.2.0**
 - Snowflake backend
 - Parallel execution
 - Incremental runs
-- Custom tests (accepted_values, etc.)
 - Pre/post hooks
+
+**Note**: Custom tests (accepted_values, positive, non_negative, min_value, max_value, regex) were originally deferred but are now fully implemented in v0.1.0.
 
 ### Release Verification Script
 
@@ -3639,7 +4911,7 @@ Expected:
 
 #### ff ls
 ```bash
-$ ff ls --project-dir tests/fixtures/sample_project --output json
+$ make ff-ls-json
 ```
 Expected:
 - Exit code: 0
@@ -3649,7 +4921,7 @@ Expected:
 
 #### ff validate
 ```bash
-$ ff validate --project-dir tests/fixtures/sample_project
+$ make ff-validate
 ```
 Expected:
 - Exit code: 0

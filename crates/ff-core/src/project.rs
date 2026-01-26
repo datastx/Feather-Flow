@@ -3,6 +3,7 @@
 use crate::config::Config;
 use crate::error::{CoreError, CoreResult};
 use crate::model::{Model, SchemaTest, SchemaYml};
+use crate::source::{discover_sources, SourceFile};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -20,6 +21,9 @@ pub struct Project {
 
     /// Schema tests from schema.yml files
     pub tests: Vec<SchemaTest>,
+
+    /// Source definitions
+    pub sources: Vec<SourceFile>,
 }
 
 impl Project {
@@ -38,7 +42,19 @@ impl Project {
         }
 
         let config = Config::load_from_dir(&root)?;
+
+        // Emit deprecation warning if external_tables is used
+        if !config.external_tables.is_empty() {
+            eprintln!(
+                "Warning: 'external_tables' is deprecated. Use source_paths and source files (kind: sources) instead."
+            );
+        }
+
         let models = Self::discover_models(&root, &config)?;
+
+        // Discover source definitions
+        let source_paths = config.source_paths_absolute(&root);
+        let sources = discover_sources(&root, &source_paths).unwrap_or_default();
 
         // Collect tests from both:
         // 1. Legacy schema.yml files (backward compatibility)
@@ -55,6 +71,7 @@ impl Project {
             config,
             models,
             tests,
+            sources,
         })
     }
 
@@ -172,6 +189,16 @@ impl Project {
     pub fn manifest_path(&self) -> PathBuf {
         self.target_dir().join("manifest.json")
     }
+
+    /// Get source table names for dependency categorization
+    pub fn source_table_names(&self) -> std::collections::HashSet<String> {
+        crate::source::build_source_lookup(&self.sources)
+    }
+
+    /// Get all source names
+    pub fn source_names(&self) -> Vec<&str> {
+        self.sources.iter().map(|s| s.name.as_str()).collect()
+    }
 }
 
 #[cfg(test)]
@@ -230,6 +257,7 @@ models:
         assert_eq!(project.config.name, "test_project");
         assert_eq!(project.models.len(), 1);
         assert!(project.models.contains_key("stg_orders"));
+        assert!(project.sources.is_empty()); // No sources in this test
     }
 
     #[test]

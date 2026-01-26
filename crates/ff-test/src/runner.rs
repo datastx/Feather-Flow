@@ -26,6 +26,9 @@ pub struct TestResult {
     /// Number of failing rows (0 if passed)
     pub failure_count: usize,
 
+    /// Sample failing rows (up to 5 rows as formatted strings)
+    pub sample_failures: Vec<String>,
+
     /// Execution time
     pub duration: Duration,
 
@@ -40,23 +43,30 @@ impl TestResult {
             name: test.name.clone(),
             model: test.model.clone(),
             column: test.column.clone(),
-            test_type: test.test_type,
+            test_type: test.test_type.clone(),
             passed: true,
             failure_count: 0,
+            sample_failures: Vec::new(),
             duration,
             error: None,
         }
     }
 
     /// Create a failed test result
-    pub fn fail(test: &GeneratedTest, failure_count: usize, duration: Duration) -> Self {
+    pub fn fail(
+        test: &GeneratedTest,
+        failure_count: usize,
+        sample_failures: Vec<String>,
+        duration: Duration,
+    ) -> Self {
         Self {
             name: test.name.clone(),
             model: test.model.clone(),
             column: test.column.clone(),
-            test_type: test.test_type,
+            test_type: test.test_type.clone(),
             passed: false,
             failure_count,
+            sample_failures,
             duration,
             error: None,
         }
@@ -68,9 +78,10 @@ impl TestResult {
             name: test.name.clone(),
             model: test.model.clone(),
             column: test.column.clone(),
-            test_type: test.test_type,
+            test_type: test.test_type.clone(),
             passed: false,
             failure_count: 0,
+            sample_failures: Vec::new(),
             duration,
             error: Some(error),
         }
@@ -140,7 +151,13 @@ impl<'a> TestRunner<'a> {
                 if count == 0 {
                     TestResult::pass(test, duration)
                 } else {
-                    TestResult::fail(test, count, duration)
+                    // Fetch sample failing rows (up to 5)
+                    let sample_failures = self
+                        .db
+                        .query_sample_rows(&test.sql, 5)
+                        .await
+                        .unwrap_or_default();
+                    TestResult::fail(test, count, sample_failures, duration)
                 }
             }
             Err(e) => {
@@ -228,6 +245,7 @@ mod tests {
 
         assert!(!result.passed);
         assert_eq!(result.failure_count, 1); // One duplicate value (1)
+        assert!(!result.sample_failures.is_empty()); // Should have sample failures
     }
 
     #[tokio::test]
@@ -271,6 +289,7 @@ mod tests {
 
         assert!(!result.passed);
         assert_eq!(result.failure_count, 1);
+        assert!(!result.sample_failures.is_empty()); // Should have sample failures
     }
 
     #[tokio::test]

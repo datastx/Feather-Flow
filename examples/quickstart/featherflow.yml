@@ -5,6 +5,7 @@ version: "1.0.0"
 # Directory paths
 model_paths: ["models"]
 seed_paths: ["seeds"]
+macro_paths: ["macros"]
 target_path: "target"
 
 # Default materialization

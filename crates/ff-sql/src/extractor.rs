@@ -81,8 +81,23 @@ pub fn categorize_dependencies(
     known_models: &HashSet<String>,
     external_tables: &HashSet<String>,
 ) -> (Vec<String>, Vec<String>) {
+    let (model_deps, external_deps, _unknown) =
+        categorize_dependencies_with_unknown(deps, known_models, external_tables);
+    (model_deps, external_deps)
+}
+
+/// Categorize dependencies into models, external tables, and unknown
+///
+/// Returns (model_deps, external_deps, unknown_deps)
+/// Note: Model matching is case-insensitive (DuckDB is case-insensitive by default)
+pub fn categorize_dependencies_with_unknown(
+    deps: HashSet<String>,
+    known_models: &HashSet<String>,
+    external_tables: &HashSet<String>,
+) -> (Vec<String>, Vec<String>, Vec<String>) {
     let mut model_deps = Vec::new();
     let mut external_deps = Vec::new();
+    let mut unknown_deps = Vec::new();
 
     // Build lowercase set of known models for case-insensitive matching
     let known_models_lower: HashSet<String> =
@@ -105,15 +120,18 @@ pub fn categorize_dependencies(
         } else if external_tables.contains(&dep) || external_tables.contains(&dep_normalized) {
             external_deps.push(dep);
         } else {
-            // Unknown tables default to external
+            // Unknown tables - not in models or external_tables
+            unknown_deps.push(dep.clone());
+            // Still add to external_deps for backward compatibility
             external_deps.push(dep);
         }
     }
 
     model_deps.sort();
     external_deps.sort();
+    unknown_deps.sort();
 
-    (model_deps, external_deps)
+    (model_deps, external_deps, unknown_deps)
 }
 
 /// Normalize a table name by taking only the last component

@@ -5,25 +5,25 @@ use thiserror::Error;
 /// Database operation errors
 #[derive(Error, Debug)]
 pub enum DbError {
-    /// Connection error
-    #[error("Database connection error: {0}")]
+    /// Connection error (D001)
+    #[error("[D001] Database connection failed: {0}")]
     ConnectionError(String),
 
-    /// Query execution error
-    #[error("Query execution error: {0}")]
+    /// Query execution error (D002)
+    #[error("[D002] SQL execution failed: {0}")]
     ExecutionError(String),
 
-    /// Table not found
-    #[error("Table not found: {0}")]
+    /// Table not found (D003)
+    #[error("[D003] Table or view not found: {0}")]
     TableNotFound(String),
 
-    /// CSV loading error
-    #[error("CSV loading error: {0}")]
+    /// CSV loading error (D004)
+    #[error("[D004] CSV load failed: {0}")]
     CsvError(String),
 
-    /// Not implemented
-    #[error("Not implemented: {0}")]
-    NotImplemented(String),
+    /// Not implemented (D005)
+    #[error("[D005] Feature not implemented for {backend}: {feature}")]
+    NotImplemented { backend: String, feature: String },
 
     /// Internal error
     #[error("Internal database error: {0}")]

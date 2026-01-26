@@ -9,9 +9,11 @@ pub mod error;
 pub mod manifest;
 pub mod model;
 pub mod project;
+pub mod source;
 
 pub use config::Config;
 pub use error::CoreError;
 pub use manifest::Manifest;
 pub use model::Model;
 pub use project::Project;
+pub use source::{SourceFile, SourceTable};
