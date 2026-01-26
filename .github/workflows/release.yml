@@ -38,7 +38,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }} -p ff-cli
+        run: make build-target TARGET=${{ matrix.target }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -60,15 +60,7 @@ jobs:
           path: artifacts
 
       - name: Create checksums
-        run: |
-          cd artifacts
-          for dir in */; do
-            cd "$dir"
-            for file in *; do
-              sha256sum "$file" > "${file}.sha256"
-            done
-            cd ..
-          done
+        run: make checksums ARTIFACTS_DIR=artifacts
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
