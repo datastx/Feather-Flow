@@ -216,6 +216,7 @@ mod tests {
             test_type: TestType::Unique,
             column: "id".to_string(),
             model: "test_table".to_string(),
+            config: Default::default(),
         });
 
         let runner = TestRunner::new(&db);
@@ -238,6 +239,7 @@ mod tests {
             test_type: TestType::Unique,
             column: "id".to_string(),
             model: "test_table".to_string(),
+            config: Default::default(),
         });
 
         let runner = TestRunner::new(&db);
@@ -261,6 +263,7 @@ mod tests {
             test_type: TestType::NotNull,
             column: "name".to_string(),
             model: "test_table".to_string(),
+            config: Default::default(),
         });
 
         let runner = TestRunner::new(&db);
@@ -282,6 +285,7 @@ mod tests {
             test_type: TestType::NotNull,
             column: "name".to_string(),
             model: "test_table".to_string(),
+            config: Default::default(),
         });
 
         let runner = TestRunner::new(&db);
@@ -306,11 +310,13 @@ mod tests {
                 test_type: TestType::Unique,
                 column: "id".to_string(),
                 model: "t".to_string(),
+                config: Default::default(),
             },
             SchemaTest {
                 test_type: TestType::NotNull,
                 column: "name".to_string(),
                 model: "t".to_string(),
+                config: Default::default(),
             },
         ];
 

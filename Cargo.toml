@@ -31,7 +31,7 @@ sqlparser = { version = "0.52", features = ["visitor"] }
 duckdb = { version = "1.1", features = ["bundled"] }
 
 # Async
-tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "sync"] }
 async-trait = "0.1"
 
 # Utilities

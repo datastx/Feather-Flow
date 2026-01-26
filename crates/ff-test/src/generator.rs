@@ -111,6 +111,32 @@ pub fn generate_regex_test(table: &str, column: &str, pattern: &str) -> String {
     )
 }
 
+/// Generate SQL for a relationship test (foreign key validation)
+///
+/// Returns rows where the column value does not exist in the referenced table.
+/// This validates referential integrity - every value in `table.column` must
+/// exist in `ref_table.ref_column`.
+pub fn generate_relationship_test(
+    table: &str,
+    column: &str,
+    ref_table: &str,
+    ref_column: &str,
+) -> String {
+    format!(
+        r#"SELECT src.{column}
+FROM {table} AS src
+WHERE src.{column} IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM {ref_table} AS ref
+    WHERE ref.{ref_column} = src.{column}
+  )"#,
+        table = table,
+        column = column,
+        ref_table = ref_table,
+        ref_column = ref_column
+    )
+}
+
 /// Generate SQL for a schema test
 pub fn generate_test_sql(test: &SchemaTest) -> String {
     match &test.test_type {
@@ -124,6 +150,10 @@ pub fn generate_test_sql(test: &SchemaTest) -> String {
         TestType::MinValue { value } => generate_min_value_test(&test.model, &test.column, *value),
         TestType::MaxValue { value } => generate_max_value_test(&test.model, &test.column, *value),
         TestType::Regex { pattern } => generate_regex_test(&test.model, &test.column, pattern),
+        TestType::Relationship { to, field } => {
+            let ref_column = field.as_deref().unwrap_or(&test.column);
+            generate_relationship_test(&test.model, &test.column, to, ref_column)
+        }
     }
 }
 
@@ -179,6 +209,53 @@ impl GeneratedTest {
             }
             TestType::Regex { pattern } => {
                 generate_regex_test(qualified_name, &test.column, pattern)
+            }
+            TestType::Relationship { to, field } => {
+                let ref_column = field.as_deref().unwrap_or(&test.column);
+                generate_relationship_test(qualified_name, &test.column, to, ref_column)
+            }
+        };
+        let name = format!("{}_{}__{}", test.test_type, test.model, test.column);
+
+        Self {
+            model: test.model.clone(),
+            column: test.column.clone(),
+            test_type: test.test_type.clone(),
+            sql,
+            name,
+        }
+    }
+
+    /// Create a generated test with qualified names for both source and referenced tables
+    ///
+    /// This is used for relationship tests where both the source table and the
+    /// referenced table need to be qualified with their schemas.
+    pub fn from_schema_test_qualified_with_refs(
+        test: &SchemaTest,
+        qualified_name: &str,
+        ref_table_resolver: impl Fn(&str) -> String,
+    ) -> Self {
+        let sql = match &test.test_type {
+            TestType::Unique => generate_unique_test(qualified_name, &test.column),
+            TestType::NotNull => generate_not_null_test(qualified_name, &test.column),
+            TestType::Positive => generate_positive_test(qualified_name, &test.column),
+            TestType::NonNegative => generate_non_negative_test(qualified_name, &test.column),
+            TestType::AcceptedValues { values, quote } => {
+                generate_accepted_values_test(qualified_name, &test.column, values, *quote)
+            }
+            TestType::MinValue { value } => {
+                generate_min_value_test(qualified_name, &test.column, *value)
+            }
+            TestType::MaxValue { value } => {
+                generate_max_value_test(qualified_name, &test.column, *value)
+            }
+            TestType::Regex { pattern } => {
+                generate_regex_test(qualified_name, &test.column, pattern)
+            }
+            TestType::Relationship { to, field } => {
+                let ref_column = field.as_deref().unwrap_or(&test.column);
+                let qualified_ref = ref_table_resolver(to);
+                generate_relationship_test(qualified_name, &test.column, &qualified_ref, ref_column)
             }
         };
         let name = format!("{}_{}__{}", test.test_type, test.model, test.column);
@@ -282,6 +359,7 @@ mod tests {
             test_type: TestType::Unique,
             column: "order_id".to_string(),
             model: "stg_orders".to_string(),
+            config: Default::default(),
         };
 
         let generated = GeneratedTest::from_schema_test(&schema_test);
@@ -297,10 +375,108 @@ mod tests {
             },
             column: "status".to_string(),
             model: "orders".to_string(),
+            config: Default::default(),
         };
 
         let generated = GeneratedTest::from_schema_test(&schema_test);
         assert_eq!(generated.name, "accepted_values_orders__status");
         assert!(generated.sql.contains("NOT IN ('a', 'b')"));
+    }
+
+    #[test]
+    fn test_generate_relationship_test() {
+        let sql = generate_relationship_test("orders", "customer_id", "customers", "id");
+        assert!(sql.contains("FROM orders AS src"));
+        assert!(sql.contains("FROM customers AS ref"));
+        assert!(sql.contains("ref.id = src.customer_id"));
+        assert!(sql.contains("src.customer_id IS NOT NULL"));
+        assert!(sql.contains("NOT EXISTS"));
+    }
+
+    #[test]
+    fn test_generate_relationship_test_same_column() {
+        let sql = generate_relationship_test("orders", "customer_id", "customers", "customer_id");
+        assert!(sql.contains("ref.customer_id = src.customer_id"));
+    }
+
+    #[test]
+    fn test_generated_test_relationship() {
+        let schema_test = SchemaTest {
+            test_type: TestType::Relationship {
+                to: "customers".to_string(),
+                field: Some("id".to_string()),
+            },
+            column: "customer_id".to_string(),
+            model: "orders".to_string(),
+            config: Default::default(),
+        };
+
+        let generated = GeneratedTest::from_schema_test(&schema_test);
+        assert_eq!(generated.name, "relationship_orders__customer_id");
+        assert!(generated.sql.contains("FROM orders AS src"));
+        assert!(generated.sql.contains("FROM customers AS ref"));
+        assert!(generated.sql.contains("ref.id = src.customer_id"));
+    }
+
+    #[test]
+    fn test_generated_test_relationship_default_field() {
+        // When field is not specified, it should default to the same column name
+        let schema_test = SchemaTest {
+            test_type: TestType::Relationship {
+                to: "users".to_string(),
+                field: None,
+            },
+            column: "user_id".to_string(),
+            model: "posts".to_string(),
+            config: Default::default(),
+        };
+
+        let generated = GeneratedTest::from_schema_test(&schema_test);
+        assert!(generated.sql.contains("ref.user_id = src.user_id"));
+    }
+
+    #[test]
+    fn test_generated_test_relationship_qualified() {
+        let schema_test = SchemaTest {
+            test_type: TestType::Relationship {
+                to: "dim_customers".to_string(),
+                field: Some("customer_id".to_string()),
+            },
+            column: "customer_id".to_string(),
+            model: "fct_orders".to_string(),
+            config: Default::default(),
+        };
+
+        let generated =
+            GeneratedTest::from_schema_test_qualified(&schema_test, "analytics.fct_orders");
+        assert!(generated.sql.contains("FROM analytics.fct_orders AS src"));
+        // Referenced table uses unqualified name by default
+        assert!(generated.sql.contains("FROM dim_customers AS ref"));
+    }
+
+    #[test]
+    fn test_generated_test_relationship_qualified_with_refs() {
+        let schema_test = SchemaTest {
+            test_type: TestType::Relationship {
+                to: "dim_customers".to_string(),
+                field: Some("customer_id".to_string()),
+            },
+            column: "customer_id".to_string(),
+            model: "fct_orders".to_string(),
+            config: Default::default(),
+        };
+
+        // Resolver that qualifies referenced tables
+        let resolver = |name: &str| format!("analytics.{}", name);
+
+        let generated = GeneratedTest::from_schema_test_qualified_with_refs(
+            &schema_test,
+            "analytics.fct_orders",
+            resolver,
+        );
+        assert!(generated.sql.contains("FROM analytics.fct_orders AS src"));
+        assert!(generated
+            .sql
+            .contains("FROM analytics.dim_customers AS ref"));
     }
 }

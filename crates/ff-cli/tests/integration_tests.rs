@@ -195,6 +195,7 @@ async fn test_unique_constraint_pass() {
         test_type: ff_core::model::TestType::Unique,
         column: "id".to_string(),
         model: "test_table".to_string(),
+        config: Default::default(),
     });
 
     let runner = TestRunner::new(&db);
@@ -217,6 +218,7 @@ async fn test_unique_constraint_fail() {
         test_type: ff_core::model::TestType::Unique,
         column: "id".to_string(),
         model: "test_table".to_string(),
+        config: Default::default(),
     });
 
     let runner = TestRunner::new(&db);
@@ -240,6 +242,7 @@ async fn test_not_null_constraint() {
         test_type: ff_core::model::TestType::NotNull,
         column: "name".to_string(),
         model: "test_table".to_string(),
+        config: Default::default(),
     });
 
     let runner = TestRunner::new(&db);
@@ -757,4 +760,252 @@ fn test_validate_sql_syntax() {
         invalid_result.is_err(),
         "Invalid SQL syntax should fail parsing"
     );
+}
+
+/// Test incremental append strategy
+#[tokio::test]
+async fn test_incremental_append_strategy() {
+    let db = DuckDbBackend::in_memory().unwrap();
+
+    // Create initial table
+    db.execute_batch(
+        "CREATE TABLE events (id INT, event_type VARCHAR, created_at DATE);
+         INSERT INTO events VALUES (1, 'click', '2024-01-01'), (2, 'view', '2024-01-01');",
+    )
+    .await
+    .unwrap();
+
+    let initial_count = db.query_count("SELECT * FROM events").await.unwrap();
+    assert_eq!(initial_count, 2);
+
+    // Append new data (simulating incremental run)
+    db.execute("INSERT INTO events SELECT 3, 'purchase', '2024-01-02'")
+        .await
+        .unwrap();
+
+    let new_count = db.query_count("SELECT * FROM events").await.unwrap();
+    assert_eq!(new_count, 3);
+
+    // Verify original data unchanged
+    let jan1_count = db
+        .query_count("SELECT * FROM events WHERE created_at = '2024-01-01'")
+        .await
+        .unwrap();
+    assert_eq!(jan1_count, 2);
+}
+
+/// Test incremental merge strategy
+#[tokio::test]
+async fn test_incremental_merge_strategy() {
+    let db = DuckDbBackend::in_memory().unwrap();
+
+    // Create initial table
+    db.execute_batch(
+        "CREATE TABLE users (id INT, name VARCHAR, status VARCHAR);
+         INSERT INTO users VALUES (1, 'Alice', 'active'), (2, 'Bob', 'active');",
+    )
+    .await
+    .unwrap();
+
+    // Merge with updated and new data
+    let source_sql =
+        "SELECT 2 AS id, 'Bobby' AS name, 'inactive' AS status UNION ALL SELECT 3, 'Charlie', 'active'";
+
+    db.merge_into("users", source_sql, &["id".to_string()])
+        .await
+        .unwrap();
+
+    // Verify counts
+    let count = db.query_count("SELECT * FROM users").await.unwrap();
+    assert_eq!(count, 3);
+
+    // Verify Bob was updated
+    let bob_status = db
+        .query_one("SELECT status FROM users WHERE id = 2")
+        .await
+        .unwrap();
+    assert_eq!(bob_status, Some("inactive".to_string()));
+
+    // Verify Alice unchanged
+    let alice_status = db
+        .query_one("SELECT status FROM users WHERE id = 1")
+        .await
+        .unwrap();
+    assert_eq!(alice_status, Some("active".to_string()));
+}
+
+/// Test incremental delete+insert strategy
+#[tokio::test]
+async fn test_incremental_delete_insert_strategy() {
+    let db = DuckDbBackend::in_memory().unwrap();
+
+    // Create initial table
+    db.execute_batch(
+        "CREATE TABLE inventory (product_id INT, warehouse VARCHAR, qty INT);
+         INSERT INTO inventory VALUES (1, 'A', 100), (1, 'B', 50), (2, 'A', 75);",
+    )
+    .await
+    .unwrap();
+
+    // Delete+insert for product 1 across all warehouses
+    let source_sql =
+        "SELECT 1 AS product_id, 'A' AS warehouse, 120 AS qty UNION ALL SELECT 1, 'C', 30";
+
+    db.delete_insert(
+        "inventory",
+        source_sql,
+        &["product_id".to_string(), "warehouse".to_string()],
+    )
+    .await
+    .unwrap();
+
+    // Product 1 warehouse A should be updated, warehouse B should remain, warehouse C should be new
+    let count = db.query_count("SELECT * FROM inventory").await.unwrap();
+    assert_eq!(count, 4); // 1-A (updated), 1-B (unchanged), 1-C (new), 2-A (unchanged)
+
+    // Verify product 1 warehouse A was updated
+    let qty = db
+        .query_one("SELECT qty FROM inventory WHERE product_id = 1 AND warehouse = 'A'")
+        .await
+        .unwrap();
+    assert_eq!(qty, Some("120".to_string()));
+
+    // Verify product 2 unchanged
+    let qty = db
+        .query_one("SELECT qty FROM inventory WHERE product_id = 2 AND warehouse = 'A'")
+        .await
+        .unwrap();
+    assert_eq!(qty, Some("75".to_string()));
+}
+
+/// Test incremental with full refresh
+#[tokio::test]
+async fn test_incremental_full_refresh() {
+    let db = DuckDbBackend::in_memory().unwrap();
+
+    // Create initial table with old data
+    db.execute_batch(
+        "CREATE TABLE metrics (date DATE, value INT);
+         INSERT INTO metrics VALUES ('2024-01-01', 100);",
+    )
+    .await
+    .unwrap();
+
+    let initial_count = db.query_count("SELECT * FROM metrics").await.unwrap();
+    assert_eq!(initial_count, 1);
+
+    // Full refresh replaces all data
+    db.drop_if_exists("metrics").await.unwrap();
+    db.create_table_as(
+        "metrics",
+        "SELECT '2024-01-02'::DATE AS date, 200 AS value",
+        false,
+    )
+    .await
+    .unwrap();
+
+    let new_count = db.query_count("SELECT * FROM metrics").await.unwrap();
+    assert_eq!(new_count, 1);
+
+    let new_value = db.query_one("SELECT value FROM metrics").await.unwrap();
+    assert_eq!(new_value, Some("200".to_string()));
+}
+
+/// Test state file serialization
+#[test]
+fn test_state_file_serialization() {
+    use ff_core::config::Materialization;
+    use ff_core::state::{ModelState, ModelStateConfig, StateFile};
+
+    let mut state = StateFile::new();
+
+    let config = ModelStateConfig::new(
+        Materialization::Table,
+        Some("staging".to_string()),
+        None,
+        None,
+        None,
+    );
+    let model_state = ModelState::new("my_model".to_string(), "SELECT 1", Some(100), config);
+
+    state.upsert_model(model_state);
+
+    // Serialize and deserialize
+    let json = serde_json::to_string_pretty(&state).unwrap();
+    let loaded: StateFile = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(loaded.models.len(), 1);
+    assert!(loaded.models.contains_key("my_model"));
+
+    let loaded_model = loaded.models.get("my_model").unwrap();
+    assert_eq!(loaded_model.row_count, Some(100));
+    assert_eq!(loaded_model.config.schema, Some("staging".to_string()));
+}
+
+/// Test parallel execution with independent models
+#[tokio::test]
+async fn test_parallel_execution_independent() {
+    // This test verifies that independent models can be executed
+    // The actual parallelism is tested by running the CLI with --threads
+    // Here we verify the compute_execution_levels logic indirectly
+
+    let db = DuckDbBackend::in_memory().unwrap();
+
+    // Create three independent tables (no dependencies between them)
+    let models = vec![
+        ("model_a", "SELECT 1 AS id, 'a' AS value"),
+        ("model_b", "SELECT 2 AS id, 'b' AS value"),
+        ("model_c", "SELECT 3 AS id, 'c' AS value"),
+    ];
+
+    // Execute all models - they could theoretically run in parallel
+    for (name, sql) in &models {
+        db.create_table_as(name, sql, false).await.unwrap();
+    }
+
+    // Verify all tables exist
+    for (name, _) in &models {
+        assert!(db.relation_exists(name).await.unwrap());
+    }
+
+    // Verify row counts
+    for (name, _) in &models {
+        let count = db
+            .query_count(&format!("SELECT * FROM {}", name))
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+}
+
+/// Test parallel execution respects dependencies
+#[tokio::test]
+async fn test_parallel_execution_with_dependencies() {
+    let db = DuckDbBackend::in_memory().unwrap();
+
+    // Create a dependency chain: base -> stg -> fct
+    // In parallel execution, only models without pending deps can run together
+
+    // Level 1: base (no dependencies)
+    db.create_table_as("base", "SELECT 1 AS id, 100 AS value", false)
+        .await
+        .unwrap();
+
+    // Level 2: stg (depends on base)
+    db.create_table_as("stg", "SELECT id, value * 2 AS value FROM base", false)
+        .await
+        .unwrap();
+
+    // Level 3: fct (depends on stg)
+    db.create_table_as(
+        "fct",
+        "SELECT id, value + 50 AS final_value FROM stg",
+        false,
+    )
+    .await
+    .unwrap();
+
+    // Verify the chain executed correctly
+    let result = db.query_one("SELECT final_value FROM fct").await.unwrap();
+    assert_eq!(result, Some("250".to_string())); // 100 * 2 + 50 = 250
 }

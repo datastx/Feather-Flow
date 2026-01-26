@@ -588,6 +588,8 @@ mod tests {
                 quote: false,
                 value: None,
                 pattern: Some(".*".to_string()),
+                to: None,
+                field: None,
             },
         );
         let test = TestDefinition::Parameterized(params);
@@ -606,6 +608,8 @@ mod tests {
                 quote: false,
                 value: None,
                 pattern: Some(".*".to_string()),
+                to: None,
+                field: None,
             },
         );
         let test = TestDefinition::Parameterized(params);
@@ -623,6 +627,8 @@ mod tests {
                 quote: false,
                 value: Some(0.0),
                 pattern: None,
+                to: None,
+                field: None,
             },
         );
         let test = TestDefinition::Parameterized(params);

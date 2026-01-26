@@ -2,7 +2,7 @@
 
 use crate::config::Config;
 use crate::error::{CoreError, CoreResult};
-use crate::model::{Model, SchemaTest, SchemaYml};
+use crate::model::{Model, SchemaTest, SchemaYml, SingularTest};
 use crate::source::{discover_sources, SourceFile};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -21,6 +21,9 @@ pub struct Project {
 
     /// Schema tests from schema.yml files
     pub tests: Vec<SchemaTest>,
+
+    /// Singular tests (standalone SQL test files)
+    pub singular_tests: Vec<SingularTest>,
 
     /// Source definitions
     pub sources: Vec<SourceFile>,
@@ -66,11 +69,15 @@ impl Project {
             tests.extend(model.get_schema_tests());
         }
 
+        // Discover singular tests from test_paths
+        let singular_tests = Self::discover_singular_tests(&root, &config)?;
+
         Ok(Self {
             root,
             config,
             models,
             tests,
+            singular_tests,
             sources,
         })
     }
@@ -146,6 +153,46 @@ impl Project {
             {
                 let schema = SchemaYml::load(&path)?;
                 tests.extend(schema.extract_tests());
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Discover singular tests from test_paths
+    fn discover_singular_tests(root: &Path, config: &Config) -> CoreResult<Vec<SingularTest>> {
+        let mut tests = Vec::new();
+
+        for test_path in config.test_paths_absolute(root) {
+            if !test_path.exists() {
+                continue;
+            }
+
+            Self::discover_singular_tests_recursive(&test_path, &mut tests)?;
+        }
+
+        Ok(tests)
+    }
+
+    /// Recursively discover singular test SQL files
+    fn discover_singular_tests_recursive(
+        dir: &Path,
+        tests: &mut Vec<SingularTest>,
+    ) -> CoreResult<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            if path.is_dir() {
+                Self::discover_singular_tests_recursive(&path, tests)?;
+            } else if path.extension().is_some_and(|e| e == "sql") {
+                match SingularTest::from_file(path) {
+                    Ok(test) => tests.push(test),
+                    Err(e) => {
+                        // Log warning but continue - don't fail on a single bad test file
+                        eprintln!("Warning: Failed to load test file: {}", e);
+                    }
+                }
             }
         }
 

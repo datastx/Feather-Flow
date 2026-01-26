@@ -10,4 +10,4 @@ pub mod traits;
 
 pub use duckdb::DuckDbBackend;
 pub use error::DbError;
-pub use traits::Database;
+pub use traits::{CsvLoadOptions, Database, SnapshotResult};

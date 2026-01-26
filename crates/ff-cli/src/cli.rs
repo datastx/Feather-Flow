@@ -62,6 +62,18 @@ pub enum Commands {
 
     /// Generate documentation from schema files
     Docs(DocsArgs),
+
+    /// Remove generated artifacts
+    Clean(CleanArgs),
+
+    /// Source-related operations
+    Source(SourceArgs),
+
+    /// Execute snapshots (SCD Type 2)
+    Snapshot(SnapshotArgs),
+
+    /// Execute a standalone operation (macro that returns SQL)
+    RunOperation(RunOperationArgs),
 }
 
 /// Arguments for the parse command
@@ -105,6 +117,10 @@ pub struct CompileArgs {
     /// Override/add variables as JSON
     #[arg(long)]
     pub vars: Option<String>,
+
+    /// Parse and validate only, don't write output files
+    #[arg(long)]
+    pub parse_only: bool,
 }
 
 /// Arguments for the run command
@@ -118,13 +134,33 @@ pub struct RunArgs {
     #[arg(short, long)]
     pub select: Option<String>,
 
+    /// Exclude models matching this pattern
+    #[arg(short, long)]
+    pub exclude: Option<String>,
+
     /// Drop and recreate all models
     #[arg(long)]
     pub full_refresh: bool,
 
+    /// Stop on first model failure
+    #[arg(long)]
+    pub fail_fast: bool,
+
     /// Skip manifest cache and force recompilation
     #[arg(long)]
     pub no_cache: bool,
+
+    /// Defer to another manifest for unselected models
+    #[arg(long)]
+    pub defer: Option<String>,
+
+    /// Path to manifest for state comparison (enables state:modified selector)
+    #[arg(long)]
+    pub state: Option<String>,
+
+    /// Number of threads for parallel execution (default: 1)
+    #[arg(short = 't', long, default_value = "1")]
+    pub threads: usize,
 }
 
 /// Arguments for the ls command
@@ -137,6 +173,27 @@ pub struct LsArgs {
     /// dbt-style selector to filter models
     #[arg(short, long)]
     pub select: Option<String>,
+
+    /// Exclude models matching this pattern
+    #[arg(short, long)]
+    pub exclude: Option<String>,
+
+    /// Filter by resource type
+    #[arg(long, value_enum)]
+    pub resource_type: Option<ResourceType>,
+}
+
+/// Resource types for filtering
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceType {
+    /// Models only
+    Model,
+    /// Sources only
+    Source,
+    /// Seeds only
+    Seed,
+    /// Tests only
+    Test,
 }
 
 /// List output formats
@@ -148,6 +205,8 @@ pub enum LsOutput {
     Json,
     /// Dependency tree
     Tree,
+    /// File paths only (one per line)
+    Path,
 }
 
 /// Arguments for the test command
@@ -160,6 +219,18 @@ pub struct TestArgs {
     /// Stop on first failure
     #[arg(long)]
     pub fail_fast: bool,
+
+    /// Store failing rows to target/test_failures/
+    #[arg(long)]
+    pub store_failures: bool,
+
+    /// Treat test failures as warnings (exit 0)
+    #[arg(long)]
+    pub warn_only: bool,
+
+    /// Number of threads for parallel test execution (default: 1)
+    #[arg(short = 't', long, default_value = "1")]
+    pub threads: usize,
 }
 
 /// Arguments for the seed command
@@ -172,6 +243,10 @@ pub struct SeedArgs {
     /// Drop and recreate all seed tables
     #[arg(long)]
     pub full_refresh: bool,
+
+    /// Display inferred schema without loading
+    #[arg(long)]
+    pub show_columns: bool,
 }
 
 /// Arguments for the validate command
@@ -211,4 +286,71 @@ pub enum DocsFormat {
     Json,
     /// HTML format
     Html,
+}
+
+/// Arguments for the clean command
+#[derive(Args, Debug)]
+pub struct CleanArgs {
+    /// Show what would be deleted without actually deleting
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+/// Arguments for the source command
+#[derive(Args, Debug)]
+pub struct SourceArgs {
+    /// Source subcommand
+    #[command(subcommand)]
+    pub command: SourceCommands,
+}
+
+/// Source subcommands
+#[derive(Subcommand, Debug)]
+pub enum SourceCommands {
+    /// Check freshness of source data
+    Freshness(FreshnessArgs),
+}
+
+/// Arguments for the freshness subcommand
+#[derive(Args, Debug)]
+pub struct FreshnessArgs {
+    /// Source names to check (comma-separated, default: all with freshness config)
+    #[arg(short, long)]
+    pub sources: Option<String>,
+
+    /// Output format
+    #[arg(short, long, value_enum, default_value = "table")]
+    pub output: FreshnessOutput,
+}
+
+/// Freshness output formats
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FreshnessOutput {
+    /// Table format
+    Table,
+    /// JSON output
+    Json,
+}
+
+/// Arguments for the snapshot command
+#[derive(Args, Debug)]
+pub struct SnapshotArgs {
+    /// Snapshot names to run (comma-separated, default: all)
+    #[arg(short, long)]
+    pub snapshots: Option<String>,
+
+    /// dbt-style selector (+snapshot, snapshot+)
+    #[arg(short, long)]
+    pub select: Option<String>,
+}
+
+/// Arguments for the run-operation command
+#[derive(Args, Debug)]
+pub struct RunOperationArgs {
+    /// Name of the macro to execute
+    pub macro_name: String,
+
+    /// Arguments to pass to the macro as JSON
+    #[arg(long)]
+    pub args: Option<String>,
 }
