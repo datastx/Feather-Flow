@@ -1,4 +1,4 @@
-.PHONY: build build-release test lint fmt check doc clean ci
+.PHONY: build build-release test lint fmt check doc clean ci build-target checksums
 
 # Development
 build:
@@ -62,6 +62,23 @@ ci-quick: check fmt-check clippy
 # Release
 install:
 	cargo install --path crates/ff-cli
+
+# Build release binary for a specific target (used in CI)
+# Usage: make build-target TARGET=x86_64-unknown-linux-gnu
+build-target:
+	cargo build --release --target $(TARGET) -p ff-cli
+
+# Create checksums for release artifacts (used in CI)
+# Usage: make checksums ARTIFACTS_DIR=artifacts
+checksums:
+	cd $(ARTIFACTS_DIR) && \
+	for dir in */; do \
+		cd "$$dir" && \
+		for file in *; do \
+			sha256sum "$$file" > "$${file}.sha256"; \
+		done && \
+		cd ..; \
+	done
 
 
 claude-auto-run:
