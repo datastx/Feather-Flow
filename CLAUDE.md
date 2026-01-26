@@ -34,8 +34,10 @@ cargo run -p ff-cli -- <subcommand>
 - Error handling: thiserror in libs, anyhow in CLI
 
 ## Testing
-- Unit tests: `cargo test -p <crate>`
-- Integration tests: `cargo test --test integration_tests`
+- All tests: `make test`
+- Unit tests only: `make test-unit`
+- Integration tests: `make test-integration`
+- Verbose output: `make test-verbose`
 - Test fixtures in `tests/fixtures/sample_project/`
 - Seed data in `testdata/seeds/`
 

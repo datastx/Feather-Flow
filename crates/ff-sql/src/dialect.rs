@@ -157,15 +157,34 @@ mod tests {
     #[test]
     fn test_parse_error_location() {
         let dialect = DuckDbDialect::new();
+        // Error is on line 2 (the FROM keyword with no columns)
         let result = dialect.parse("SELECT\nFROM users");
         assert!(result.is_err());
-        if let Err(crate::error::SqlError::ParseError { line, column, .. }) = result {
-            // The error should have a non-zero line number
+        if let Err(crate::error::SqlError::ParseError {
+            line,
+            column,
+            message,
+        }) = result
+        {
+            // The error should have line 2 (FROM is on line 2)
+            assert_eq!(
+                line, 2,
+                "Expected line 2, got line {} (message: {})",
+                line, message
+            );
+            // Column points to where the error is detected (depends on parser implementation)
+            // Just verify it's non-zero
             assert!(
-                line > 0 || column > 0,
-                "Expected non-zero location, got line: {}, column: {}",
-                line,
-                column
+                column > 0,
+                "Expected non-zero column, got {} (message: {})",
+                column,
+                message
+            );
+            // Verify the error message contains location info
+            assert!(
+                message.contains("Line: 2"),
+                "Expected 'Line: 2' in message: {}",
+                message
             );
         }
     }

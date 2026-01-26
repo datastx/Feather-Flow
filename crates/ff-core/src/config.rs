@@ -23,6 +23,14 @@ pub struct Config {
     #[serde(default = "default_seed_paths")]
     pub seed_paths: Vec<String>,
 
+    /// Directories containing macro files
+    #[serde(default = "default_macro_paths")]
+    pub macro_paths: Vec<String>,
+
+    /// Directories containing source definitions
+    #[serde(default = "default_source_paths")]
+    pub source_paths: Vec<String>,
+
     /// Output directory for compiled SQL and manifest
     #[serde(default = "default_target_path")]
     pub target_path: String,
@@ -97,6 +105,14 @@ fn default_model_paths() -> Vec<String> {
 
 fn default_seed_paths() -> Vec<String> {
     vec!["seeds".to_string()]
+}
+
+fn default_macro_paths() -> Vec<String> {
+    vec!["macros".to_string()]
+}
+
+fn default_source_paths() -> Vec<String> {
+    vec!["sources".to_string()]
 }
 
 fn default_target_path() -> String {
@@ -188,6 +204,16 @@ impl Config {
         self.seed_paths.iter().map(|p| root.join(p)).collect()
     }
 
+    /// Get absolute macro paths relative to a project root
+    pub fn macro_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
+        self.macro_paths.iter().map(|p| root.join(p)).collect()
+    }
+
+    /// Get absolute source paths relative to a project root
+    pub fn source_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
+        self.source_paths.iter().map(|p| root.join(p)).collect()
+    }
+
     /// Get absolute target path relative to a project root
     pub fn target_path_absolute(&self, root: &Path) -> PathBuf {
         root.join(&self.target_path)
@@ -224,6 +250,9 @@ name: test_project
         let config: Config = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.name, "test_project");
         assert_eq!(config.model_paths, vec!["models"]);
+        assert_eq!(config.seed_paths, vec!["seeds"]);
+        assert_eq!(config.macro_paths, vec!["macros"]);
+        assert_eq!(config.source_paths, vec!["sources"]);
         assert_eq!(config.target_path, "target");
     }
 
@@ -234,6 +263,8 @@ name: my_analytics_project
 version: "1.0.0"
 model_paths: ["models"]
 seed_paths: ["seeds"]
+macro_paths: ["macros", "shared_macros"]
+source_paths: ["sources"]
 target_path: "target"
 materialization: view
 schema: analytics
@@ -250,6 +281,8 @@ vars:
 "#;
         let config: Config = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.name, "my_analytics_project");
+        assert_eq!(config.macro_paths, vec!["macros", "shared_macros"]);
+        assert_eq!(config.source_paths, vec!["sources"]);
         assert_eq!(config.external_tables.len(), 2);
         assert!(config.is_external_table("raw.orders"));
         assert!(!config.is_external_table("stg_orders"));

@@ -1,18 +1,81 @@
 //! Run command implementation
 
 use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use ff_core::config::Materialization;
 use ff_core::dag::ModelDag;
+use ff_core::manifest::Manifest;
 use ff_core::Project;
 use ff_db::{Database, DuckDbBackend};
 use ff_jinja::JinjaEnvironment;
 use ff_sql::{extract_dependencies, SqlParser};
+use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
 use crate::cli::{GlobalArgs, RunArgs};
+
+/// Run result for a single model
+#[derive(Debug, Serialize)]
+struct ModelRunResult {
+    model: String,
+    status: String,
+    materialization: String,
+    duration_secs: f64,
+    error: Option<String>,
+}
+
+/// Run results output file format
+#[derive(Debug, Serialize)]
+struct RunResults {
+    timestamp: DateTime<Utc>,
+    elapsed_secs: f64,
+    success_count: usize,
+    failure_count: usize,
+    results: Vec<ModelRunResult>,
+}
+
+/// Check if manifest cache is valid (newer than all source files)
+fn is_cache_valid(project: &Project) -> bool {
+    let manifest_path = project.manifest_path();
+    if !manifest_path.exists() {
+        return false;
+    }
+
+    // Get manifest modification time
+    let manifest_mtime = match std::fs::metadata(&manifest_path) {
+        Ok(meta) => match meta.modified() {
+            Ok(time) => time,
+            Err(_) => return false,
+        },
+        Err(_) => return false,
+    };
+
+    // Check all model files are older than manifest
+    for model in project.models.values() {
+        if let Ok(meta) = std::fs::metadata(&model.path) {
+            if let Ok(mtime) = meta.modified() {
+                if mtime > manifest_mtime {
+                    return false;
+                }
+            }
+        }
+    }
+
+    // Check config file
+    let config_path = project.root.join("featherflow.yml");
+    if let Ok(meta) = std::fs::metadata(config_path) {
+        if let Ok(mtime) = meta.modified() {
+            if mtime > manifest_mtime {
+                return false;
+            }
+        }
+    }
+
+    true
+}
 
 /// Execute the run command
 pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
@@ -28,14 +91,13 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     let db: Arc<dyn Database> =
         Arc::new(DuckDbBackend::new(db_path).context("Failed to connect to database")?);
 
-    // Create SQL parser and Jinja environment
-    let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
-        .context("Invalid SQL dialect")?;
-    let jinja = JinjaEnvironment::new(&project.config.vars);
-
-    // Collect known models and external tables
-    let external_tables: HashSet<String> = project.config.external_tables.iter().cloned().collect();
-    let known_models: HashSet<String> = project.models.keys().cloned().collect();
+    // Check for cached manifest (unless --no-cache is specified)
+    let use_cache = !args.no_cache && is_cache_valid(&project);
+    let cached_manifest = if use_cache {
+        Manifest::load(&project.manifest_path()).ok()
+    } else {
+        None
+    };
 
     // Get all model names first
     let all_model_names: Vec<String> = project
@@ -44,53 +106,96 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         .map(String::from)
         .collect();
 
-    // Compile all models first to get dependencies
+    // Compile all models or use cached data
     let mut dependencies: HashMap<String, Vec<String>> = HashMap::new();
     let mut compiled_sql: HashMap<String, String> = HashMap::new();
     let mut materializations: HashMap<String, Materialization> = HashMap::new();
     let mut schemas: HashMap<String, Option<String>> = HashMap::new();
 
-    for name in &all_model_names {
-        let model = project
-            .get_model(name)
-            .context(format!("Model not found: {}", name))?;
+    if let Some(ref manifest) = cached_manifest {
+        // Use cached manifest data
+        if global.verbose {
+            eprintln!("[verbose] Using cached manifest");
+        }
 
-        // Render Jinja template
-        let (rendered, config_values) = jinja
-            .render_with_config(&model.raw_sql)
-            .context(format!("Failed to render template for model: {}", name))?;
+        for name in &all_model_names {
+            if let Some(manifest_model) = manifest.get_model(name) {
+                dependencies.insert(name.clone(), manifest_model.depends_on.clone());
+                materializations.insert(name.clone(), manifest_model.materialized);
+                schemas.insert(name.clone(), manifest_model.schema.clone());
 
-        // Parse SQL to extract dependencies
-        let statements = parser
-            .parse(&rendered)
-            .context(format!("Failed to parse SQL for model: {}", name))?;
+                // Read compiled SQL from file
+                let compiled_path = project.root.join(&manifest_model.compiled_path);
+                if let Ok(sql) = std::fs::read_to_string(&compiled_path) {
+                    compiled_sql.insert(name.clone(), sql);
+                } else {
+                    // Fall back to recompiling this model
+                    let model = project.get_model(name).unwrap();
+                    let macro_paths = project.config.macro_paths_absolute(&project.root);
+                    let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
+                    if let Ok((rendered, _)) = jinja.render_with_config(&model.raw_sql) {
+                        compiled_sql.insert(name.clone(), rendered);
+                    }
+                }
+            }
+        }
+    } else {
+        // Compile all models (no cache or cache invalid)
+        if global.verbose && !args.no_cache {
+            eprintln!("[verbose] Cache invalid or missing, recompiling");
+        }
 
-        // Extract and categorize dependencies
-        let deps = extract_dependencies(&statements);
-        let (model_deps, _) =
-            ff_sql::extractor::categorize_dependencies(deps, &known_models, &external_tables);
+        let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
+            .context("Invalid SQL dialect")?;
+        let macro_paths = project.config.macro_paths_absolute(&project.root);
+        let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
 
-        // Get materialization
-        let mat = config_values
-            .get("materialized")
-            .and_then(|v| v.as_str())
-            .map(|s| match s {
-                "table" => Materialization::Table,
-                _ => Materialization::View,
-            })
-            .unwrap_or(project.config.materialization);
+        let external_tables: HashSet<String> =
+            project.config.external_tables.iter().cloned().collect();
+        let known_models: HashSet<String> = project.models.keys().cloned().collect();
 
-        // Get schema
-        let schema = config_values
-            .get("schema")
-            .and_then(|v| v.as_str())
-            .map(String::from)
-            .or_else(|| project.config.schema.clone());
+        for name in &all_model_names {
+            let model = project
+                .get_model(name)
+                .context(format!("Model not found: {}", name))?;
 
-        dependencies.insert(name.to_string(), model_deps);
-        compiled_sql.insert(name.to_string(), rendered);
-        materializations.insert(name.to_string(), mat);
-        schemas.insert(name.to_string(), schema);
+            // Render Jinja template
+            let (rendered, config_values) = jinja
+                .render_with_config(&model.raw_sql)
+                .context(format!("Failed to render template for model: {}", name))?;
+
+            // Parse SQL to extract dependencies
+            let statements = parser
+                .parse(&rendered)
+                .context(format!("Failed to parse SQL for model: {}", name))?;
+
+            // Extract and categorize dependencies
+            let deps = extract_dependencies(&statements);
+            let (model_deps, _) =
+                ff_sql::extractor::categorize_dependencies(deps, &known_models, &external_tables);
+
+            // Get materialization
+            let mat = config_values
+                .get("materialized")
+                .and_then(|v| v.as_str())
+                .map(|s| match s {
+                    "table" => Materialization::Table,
+                    _ => Materialization::View,
+                })
+                .unwrap_or(project.config.materialization);
+
+            // Get schema
+            let schema = config_values
+                .get("schema")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .or_else(|| project.config.schema.clone());
+
+            dependencies.insert(name.to_string(), model_deps);
+            compiled_sql.insert(name.to_string(), rendered);
+            materializations.insert(name.to_string(), mat);
+            schemas.insert(name.to_string(), schema);
+        }
     }
 
     // Build DAG
@@ -142,6 +247,7 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
 
     let mut success_count = 0;
     let mut failure_count = 0;
+    let mut run_results: Vec<ModelRunResult> = Vec::new();
 
     for name in &execution_order {
         let model_start = Instant::now();
@@ -174,27 +280,61 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         match result {
             Ok(_) => {
                 success_count += 1;
-                println!("  OK {} ({}) [{:.2}s]", name, mat, duration.as_secs_f64());
+                println!("  ✓ {} ({}) [{}ms]", name, mat, duration.as_millis());
+                run_results.push(ModelRunResult {
+                    model: name.clone(),
+                    status: "success".to_string(),
+                    materialization: mat.to_string(),
+                    duration_secs: duration.as_secs_f64(),
+                    error: None,
+                });
             }
             Err(e) => {
                 failure_count += 1;
-                println!("  FAIL {} - {} [{:.2}s]", name, e, duration.as_secs_f64());
+                println!("  ✗ {} - {} [{}ms]", name, e, duration.as_millis());
+                run_results.push(ModelRunResult {
+                    model: name.clone(),
+                    status: "failure".to_string(),
+                    materialization: mat.to_string(),
+                    duration_secs: duration.as_secs_f64(),
+                    error: Some(e.to_string()),
+                });
             }
         }
     }
 
     let total_duration = start_time.elapsed();
 
-    println!();
-    println!(
-        "Completed: {} succeeded, {} failed in {:.2}s",
+    // Write run_results.json
+    let results = RunResults {
+        timestamp: Utc::now(),
+        elapsed_secs: total_duration.as_secs_f64(),
         success_count,
         failure_count,
-        total_duration.as_secs_f64()
+        results: run_results,
+    };
+
+    let target_dir = project.target_dir();
+    std::fs::create_dir_all(&target_dir).context("Failed to create target directory")?;
+    let results_path = target_dir.join("run_results.json");
+    let results_json =
+        serde_json::to_string_pretty(&results).context("Failed to serialize run results")?;
+    std::fs::write(&results_path, results_json).context("Failed to write run_results.json")?;
+
+    if global.verbose {
+        eprintln!("[verbose] Wrote run results to {:?}", results_path);
+    }
+
+    println!();
+    println!(
+        "Completed: {} succeeded, {} failed",
+        success_count, failure_count
     );
+    println!("Total time: {}ms", total_duration.as_millis());
 
     if failure_count > 0 {
-        std::process::exit(1);
+        // Exit code 4 = Database error (per spec - model execution failures)
+        std::process::exit(4);
     }
 
     Ok(())

@@ -1,0 +1,38 @@
+kind: sources
+version: 1
+
+name: raw_ecommerce
+description: "Raw e-commerce data from CSV seed files"
+schema: main
+
+tables:
+  - name: raw_orders
+    description: "Raw order data loaded from CSV"
+    columns:
+      - name: order_id
+        type: INTEGER
+        description: "Unique order identifier"
+        tests:
+          - unique
+          - not_null
+      - name: customer_id
+        type: INTEGER
+        tests:
+          - not_null
+      - name: order_date
+        type: DATE
+      - name: amount
+        type: DECIMAL(10,2)
+
+  - name: raw_customers
+    description: "Raw customer data loaded from CSV"
+    columns:
+      - name: customer_id
+        type: INTEGER
+        tests:
+          - unique
+          - not_null
+      - name: customer_name
+        type: VARCHAR
+      - name: email
+        type: VARCHAR

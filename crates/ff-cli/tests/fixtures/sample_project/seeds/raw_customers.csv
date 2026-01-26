@@ -1,0 +1,4 @@
+id,name,email,tier
+101,Alice Smith,alice@example.com,gold
+102,Bob Jones,bob@example.com,silver
+103,Carol White,carol@example.com,bronze

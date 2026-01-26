@@ -59,6 +59,9 @@ pub enum Commands {
 
     /// Validate project without running
     Validate(ValidateArgs),
+
+    /// Generate documentation from schema files
+    Docs(DocsArgs),
 }
 
 /// Arguments for the parse command
@@ -69,7 +72,7 @@ pub struct ParseArgs {
     pub models: Option<String>,
 
     /// Output format
-    #[arg(short, long, value_enum, default_value = "deps")]
+    #[arg(short, long, value_enum, default_value = "pretty")]
     pub output: ParseOutput,
 
     /// Override SQL dialect
@@ -118,6 +121,10 @@ pub struct RunArgs {
     /// Drop and recreate all models
     #[arg(long)]
     pub full_refresh: bool,
+
+    /// Skip manifest cache and force recompilation
+    #[arg(long)]
+    pub no_cache: bool,
 }
 
 /// Arguments for the ls command
@@ -177,4 +184,31 @@ pub struct ValidateArgs {
     /// Enable strict mode (warnings become errors)
     #[arg(long)]
     pub strict: bool,
+}
+
+/// Arguments for the docs command
+#[derive(Args, Debug)]
+pub struct DocsArgs {
+    /// Model names to generate docs for (comma-separated, default: all with schemas)
+    #[arg(short, long)]
+    pub models: Option<String>,
+
+    /// Output directory for documentation (default: target/docs)
+    #[arg(short, long)]
+    pub output: Option<String>,
+
+    /// Output format
+    #[arg(short, long, value_enum, default_value = "markdown")]
+    pub format: DocsFormat,
+}
+
+/// Documentation output formats
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocsFormat {
+    /// Markdown format
+    Markdown,
+    /// JSON format
+    Json,
+    /// HTML format
+    Html,
 }

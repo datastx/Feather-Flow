@@ -1,0 +1,50 @@
+version: 1
+
+description: "Staged orders from raw source"
+owner: data-team
+tags:
+  - staging
+  - orders
+
+config:
+  materialized: view
+  schema: staging
+
+columns:
+  - name: order_id
+    type: INTEGER
+    description: "Unique identifier for the order"
+    primary_key: true
+    tests:
+      - unique
+      - not_null
+
+  - name: customer_id
+    type: INTEGER
+    description: "Foreign key to stg_customers"
+    tests:
+      - not_null
+    references:
+      model: stg_customers
+      column: customer_id
+
+  - name: order_date
+    type: DATE
+    description: "Date the order was placed"
+    tests:
+      - not_null
+
+  - name: amount
+    type: DECIMAL(10,2)
+    description: "Order total in USD"
+    tests:
+      - not_null
+      - positive
+
+  - name: status
+    type: VARCHAR
+    description: "Order status"
+    tests:
+      - not_null
+      - accepted_values:
+          values: [pending, completed, cancelled]

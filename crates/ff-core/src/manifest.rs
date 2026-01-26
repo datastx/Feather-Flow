@@ -2,6 +2,7 @@
 
 use crate::config::Materialization;
 use crate::model::Model;
+use crate::source::SourceFile;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -17,6 +18,10 @@ pub struct Manifest {
 
     /// All models in the project
     pub models: HashMap<String, ManifestModel>,
+
+    /// All sources in the project
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub sources: HashMap<String, ManifestSource>,
 
     /// Total number of models
     pub model_count: usize,
@@ -41,6 +46,10 @@ pub struct ManifestModel {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
 
+    /// Model tags
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+
     /// Dependencies on other models
     pub depends_on: Vec<String>,
 
@@ -51,6 +60,54 @@ pub struct ManifestModel {
     pub referenced_tables: Vec<String>,
 }
 
+/// A source entry in the manifest
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManifestSource {
+    /// Table name
+    pub name: String,
+
+    /// Source group name
+    pub source_name: String,
+
+    /// Database schema
+    pub schema: String,
+
+    /// Database name (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database: Option<String>,
+
+    /// Actual table name if different from name
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identifier: Option<String>,
+
+    /// Table description
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
+    /// Column definitions
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<ManifestSourceColumn>,
+}
+
+/// A column in a manifest source
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManifestSourceColumn {
+    /// Column name
+    pub name: String,
+
+    /// Column data type
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_type: Option<String>,
+
+    /// Column description
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
+    /// Tests defined for this column
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tests: Vec<String>,
+}
+
 impl Manifest {
     /// Create a new manifest
     pub fn new(project_name: &str) -> Self {
@@ -58,7 +115,50 @@ impl Manifest {
             project_name: project_name.to_string(),
             compiled_at: chrono_lite_now(),
             models: HashMap::new(),
+            sources: HashMap::new(),
             model_count: 0,
+        }
+    }
+
+    /// Add a source to the manifest
+    pub fn add_source(&mut self, source: &SourceFile) {
+        for table in &source.tables {
+            let key = format!("{}.{}", source.name, table.name);
+
+            let columns: Vec<ManifestSourceColumn> = table
+                .columns
+                .iter()
+                .map(|col| {
+                    let tests: Vec<String> = col
+                        .tests
+                        .iter()
+                        .map(|t| match t {
+                            crate::model::TestDefinition::Simple(name) => name.clone(),
+                            crate::model::TestDefinition::Parameterized(map) => {
+                                map.keys().next().cloned().unwrap_or_default()
+                            }
+                        })
+                        .collect();
+                    ManifestSourceColumn {
+                        name: col.name.clone(),
+                        data_type: col.data_type.clone(),
+                        description: col.description.clone(),
+                        tests,
+                    }
+                })
+                .collect();
+
+            let manifest_source = ManifestSource {
+                name: table.name.clone(),
+                source_name: source.name.clone(),
+                schema: source.schema.clone(),
+                database: source.database.clone(),
+                identifier: table.identifier.clone(),
+                description: table.description.clone(),
+                columns,
+            };
+
+            self.sources.insert(key, manifest_source);
         }
     }
 
@@ -70,12 +170,65 @@ impl Manifest {
         default_materialization: Materialization,
         default_schema: Option<&str>,
     ) {
+        // Get tags from schema file if available
+        let tags = model
+            .schema
+            .as_ref()
+            .map(|s| s.tags.clone())
+            .unwrap_or_default();
+
+        // Use paths as-is (caller should provide relative paths)
         let manifest_model = ManifestModel {
             name: model.name.clone(),
             source_path: model.path.display().to_string(),
             compiled_path: compiled_path.display().to_string(),
             materialized: model.materialization(default_materialization),
-            schema: model.schema(default_schema),
+            schema: model.target_schema(default_schema),
+            tags,
+            depends_on: model.depends_on.iter().cloned().collect(),
+            external_deps: model.external_deps.iter().cloned().collect(),
+            referenced_tables: model.all_dependencies().into_iter().collect(),
+        };
+
+        self.models.insert(model.name.clone(), manifest_model);
+        self.model_count = self.models.len();
+    }
+
+    /// Add a model to the manifest with paths relative to project root
+    pub fn add_model_relative(
+        &mut self,
+        model: &Model,
+        compiled_path: &Path,
+        project_root: &Path,
+        default_materialization: Materialization,
+        default_schema: Option<&str>,
+    ) {
+        // Get tags from schema file if available
+        let tags = model
+            .schema
+            .as_ref()
+            .map(|s| s.tags.clone())
+            .unwrap_or_default();
+
+        // Compute relative paths from project root
+        let source_path = model
+            .path
+            .strip_prefix(project_root)
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| model.path.display().to_string());
+
+        let compiled_path_rel = compiled_path
+            .strip_prefix(project_root)
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| compiled_path.display().to_string());
+
+        let manifest_model = ManifestModel {
+            name: model.name.clone(),
+            source_path,
+            compiled_path: compiled_path_rel,
+            materialized: model.materialization(default_materialization),
+            schema: model.target_schema(default_schema),
+            tags,
             depends_on: model.depends_on.iter().cloned().collect(),
             external_deps: model.external_deps.iter().cloned().collect(),
             referenced_tables: model.all_dependencies().into_iter().collect(),

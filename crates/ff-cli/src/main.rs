@@ -8,7 +8,7 @@ mod commands;
 mod context;
 
 use cli::Cli;
-use commands::{compile, ls, parse, run, seed, test, validate};
+use commands::{compile, docs, ls, parse, run, seed, test, validate};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -22,5 +22,6 @@ async fn main() -> Result<()> {
         cli::Commands::Test(args) => test::execute(args, &cli.global).await,
         cli::Commands::Seed(args) => seed::execute(args, &cli.global).await,
         cli::Commands::Validate(args) => validate::execute(args, &cli.global).await,
+        cli::Commands::Docs(args) => docs::execute(args, &cli.global).await,
     }
 }
