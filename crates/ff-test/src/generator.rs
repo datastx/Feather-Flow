@@ -101,11 +101,13 @@ pub fn generate_max_value_test(table: &str, column: &str, max: f64) -> String {
 ///
 /// Returns rows where the column value does not match the pattern.
 pub fn generate_regex_test(table: &str, column: &str, pattern: &str) -> String {
+    // Escape single quotes to prevent SQL injection
+    let escaped_pattern = pattern.replace('\'', "''");
     format!(
-        "SELECT * FROM {table} WHERE NOT regexp_matches({column}, '{pattern}')",
+        "SELECT * FROM {table} WHERE NOT regexp_matches({column}, '{escaped_pattern}')",
         table = table,
         column = column,
-        pattern = pattern
+        escaped_pattern = escaped_pattern
     )
 }
 
@@ -261,6 +263,14 @@ mod tests {
         );
         assert!(sql.contains("regexp_matches(email,"));
         assert!(sql.contains("NOT"));
+    }
+
+    #[test]
+    fn test_generate_regex_test_escapes_quotes() {
+        // Verify that single quotes in patterns are escaped to prevent SQL injection
+        let sql = generate_regex_test("users", "name", "O'Brien");
+        assert!(sql.contains("O''Brien"), "Single quotes should be escaped");
+        assert!(!sql.contains("O'Brien' OR"), "SQL injection should be prevented");
     }
 
     #[test]
