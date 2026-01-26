@@ -1,0 +1,18 @@
+version: 1
+
+description: "Staged customers from raw source"
+owner: data-team
+tags:
+  - staging
+  - customers
+
+columns:
+  - name: customer_id
+    description: "Unique identifier for the customer"
+    tests:
+      - unique
+      - not_null
+  - name: customer_name
+    description: "Full name of the customer"
+  - name: email
+    description: "Customer email address"

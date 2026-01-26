@@ -1,4 +1,4 @@
-{{ config(materialized='table') }}
+{{ config(materialized='table', schema='analytics') }}
 
 SELECT
     o.order_id,
@@ -8,6 +8,6 @@ SELECT
     o.order_date,
     o.amount,
     o.status
-FROM stg_orders o
-LEFT JOIN stg_customers c
+FROM staging.stg_orders o
+LEFT JOIN staging.stg_customers c
     ON o.customer_id = c.customer_id

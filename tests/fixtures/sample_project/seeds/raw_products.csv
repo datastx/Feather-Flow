@@ -1,0 +1,6 @@
+id,name,category,price,active
+1,Widget Pro,electronics,99.99,true
+2,Gadget Plus,electronics,149.50,true
+3,Basic Tool,tools,25.00,true
+4,Premium Kit,tools,200.00,true
+5,Starter Pack,accessories,50.00,false

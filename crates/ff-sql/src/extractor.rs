@@ -1,15 +1,49 @@
 //! Table dependency extraction from SQL AST
 
-use sqlparser::ast::{visit_relations, Statement};
+use sqlparser::ast::{visit_relations, Query, Statement, With};
 use std::collections::HashSet;
+
+/// Extract CTE names from a WITH clause
+fn extract_cte_names(with: &With) -> HashSet<String> {
+    with.cte_tables
+        .iter()
+        .map(|cte| cte.alias.name.value.clone())
+        .collect()
+}
+
+/// Extract CTE names from a statement
+fn get_cte_names(stmt: &Statement) -> HashSet<String> {
+    match stmt {
+        Statement::Query(query) => get_cte_names_from_query(query),
+        _ => HashSet::new(),
+    }
+}
+
+/// Extract CTE names from a query (including nested queries)
+fn get_cte_names_from_query(query: &Query) -> HashSet<String> {
+    let mut cte_names = HashSet::new();
+    if let Some(with) = &query.with {
+        cte_names.extend(extract_cte_names(with));
+    }
+    cte_names
+}
 
 /// Extract all table references from SQL statements
 ///
 /// Uses `visit_relations` to walk the AST and collect all `ObjectName` references
 /// from FROM clauses, JOINs, and subqueries.
+///
+/// CTE names defined in WITH clauses are automatically filtered out.
 pub fn extract_dependencies(statements: &[Statement]) -> HashSet<String> {
     let mut deps = HashSet::new();
+    let mut all_cte_names = HashSet::new();
 
+    // First, collect all CTE names
+    for stmt in statements {
+        all_cte_names.extend(get_cte_names(stmt));
+    }
+
+    // Then extract all table references
     for stmt in statements {
         let _ = visit_relations(stmt, |relation| {
             let table_name = relation
@@ -23,6 +57,13 @@ pub fn extract_dependencies(statements: &[Statement]) -> HashSet<String> {
         });
     }
 
+    // Filter out CTE names from dependencies
+    deps.retain(|dep| {
+        // Normalize the name for comparison (take last component)
+        let normalized = dep.split('.').next_back().unwrap_or(dep);
+        !all_cte_names.contains(normalized)
+    });
+
     deps
 }
 
@@ -34,6 +75,7 @@ pub fn extract_dependencies_single(statement: &Statement) -> HashSet<String> {
 /// Categorize dependencies into models vs external tables
 ///
 /// Returns (model_deps, external_deps)
+/// Note: Model matching is case-insensitive (DuckDB is case-insensitive by default)
 pub fn categorize_dependencies(
     deps: HashSet<String>,
     known_models: &HashSet<String>,
@@ -42,12 +84,24 @@ pub fn categorize_dependencies(
     let mut model_deps = Vec::new();
     let mut external_deps = Vec::new();
 
+    // Build lowercase set of known models for case-insensitive matching
+    let known_models_lower: HashSet<String> =
+        known_models.iter().map(|s| s.to_lowercase()).collect();
+
     for dep in deps {
         // Normalize the dependency name for comparison
         let dep_normalized = normalize_table_name(&dep);
+        let dep_lower = dep_normalized.to_lowercase();
 
-        if known_models.contains(&dep_normalized) {
-            model_deps.push(dep_normalized);
+        // Check for case-insensitive model match
+        if known_models_lower.contains(&dep_lower) {
+            // Find the original model name (with original case) to preserve it
+            let model_name = known_models
+                .iter()
+                .find(|m| m.to_lowercase() == dep_lower)
+                .cloned()
+                .unwrap_or(dep_normalized);
+            model_deps.push(model_name);
         } else if external_tables.contains(&dep) || external_tables.contains(&dep_normalized) {
             external_deps.push(dep);
         } else {
@@ -123,8 +177,61 @@ mod tests {
         );
         assert!(deps.contains("raw_orders"));
         assert!(deps.contains("customers"));
-        // CTEs themselves are not external dependencies
-        // Note: visit_relations may include the CTE name depending on implementation
+        // CTEs should NOT appear in dependencies
+        assert!(
+            !deps.contains("staged"),
+            "CTE 'staged' should not be in dependencies"
+        );
+        assert_eq!(deps.len(), 2);
+    }
+
+    #[test]
+    fn test_extract_from_multiple_ctes() {
+        let deps = parse_and_extract(
+            r#"
+            WITH
+                orders_cte AS (SELECT * FROM raw_orders),
+                customers_cte AS (SELECT * FROM raw_customers)
+            SELECT * FROM orders_cte
+            JOIN customers_cte ON orders_cte.customer_id = customers_cte.id
+            JOIN products ON orders_cte.product_id = products.id
+            "#,
+        );
+        assert!(deps.contains("raw_orders"));
+        assert!(deps.contains("raw_customers"));
+        assert!(deps.contains("products"));
+        // CTEs should NOT appear in dependencies
+        assert!(
+            !deps.contains("orders_cte"),
+            "CTE 'orders_cte' should not be in dependencies"
+        );
+        assert!(
+            !deps.contains("customers_cte"),
+            "CTE 'customers_cte' should not be in dependencies"
+        );
+        assert_eq!(deps.len(), 3);
+    }
+
+    #[test]
+    fn test_recursive_cte_not_in_deps() {
+        let deps = parse_and_extract(
+            r#"
+            WITH RECURSIVE emp_tree AS (
+                SELECT * FROM employees WHERE manager_id IS NULL
+                UNION ALL
+                SELECT e.* FROM employees e
+                JOIN emp_tree t ON e.manager_id = t.id
+            )
+            SELECT * FROM emp_tree
+            "#,
+        );
+        assert!(deps.contains("employees"));
+        // Recursive CTE should NOT appear in dependencies
+        assert!(
+            !deps.contains("emp_tree"),
+            "Recursive CTE 'emp_tree' should not be in dependencies"
+        );
+        assert_eq!(deps.len(), 1);
     }
 
     #[test]
@@ -158,6 +265,22 @@ mod tests {
         assert_eq!(normalize_table_name("users"), "users");
         assert_eq!(normalize_table_name("schema.users"), "users");
         assert_eq!(normalize_table_name("db.schema.users"), "users");
+    }
+
+    #[test]
+    fn test_case_insensitive_model_matching() {
+        // SQL references "STG_ORDERS" but model is "stg_orders"
+        let deps = HashSet::from(["STG_ORDERS".to_string(), "RAW_DATA".to_string()]);
+        let known_models = HashSet::from(["stg_orders".to_string()]);
+        let external_tables = HashSet::from(["raw_data".to_string()]);
+
+        let (model_deps, external_deps) =
+            categorize_dependencies(deps, &known_models, &external_tables);
+
+        // Should match case-insensitively and preserve original model name
+        assert_eq!(model_deps, vec!["stg_orders"]);
+        // External tables should also match the reference (uppercase in this case)
+        assert!(external_deps.contains(&"RAW_DATA".to_string()));
     }
 
     #[test]

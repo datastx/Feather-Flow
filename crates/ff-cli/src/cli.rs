@@ -53,6 +53,12 @@ pub enum Commands {
 
     /// Run schema tests
     Test(TestArgs),
+
+    /// Load CSV seed files into the database
+    Seed(SeedArgs),
+
+    /// Validate project without running
+    Validate(ValidateArgs),
 }
 
 /// Arguments for the parse command
@@ -147,4 +153,28 @@ pub struct TestArgs {
     /// Stop on first failure
     #[arg(long)]
     pub fail_fast: bool,
+}
+
+/// Arguments for the seed command
+#[derive(Args, Debug)]
+pub struct SeedArgs {
+    /// Seed names to load (comma-separated, default: all)
+    #[arg(short, long)]
+    pub seeds: Option<String>,
+
+    /// Drop and recreate all seed tables
+    #[arg(long)]
+    pub full_refresh: bool,
+}
+
+/// Arguments for the validate command
+#[derive(Args, Debug)]
+pub struct ValidateArgs {
+    /// Model names to validate (comma-separated, default: all)
+    #[arg(short, long)]
+    pub models: Option<String>,
+
+    /// Enable strict mode (warnings become errors)
+    #[arg(long)]
+    pub strict: bool,
 }

@@ -1,6 +1,7 @@
 //! Model representation
 
 use crate::config::Materialization;
+use crate::error::CoreError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -32,6 +33,68 @@ pub struct Model {
     /// Dependencies on external tables
     #[serde(default)]
     pub external_deps: HashSet<String>,
+
+    /// Schema metadata from 1:1 .yml file (optional)
+    #[serde(default)]
+    pub schema: Option<ModelSchema>,
+}
+
+/// Schema metadata for a single model (from 1:1 .yml file)
+///
+/// This follows the 1:1 naming convention where each model's schema file
+/// has the same name as its SQL file (e.g., stg_orders.sql + stg_orders.yml)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelSchema {
+    /// Schema format version
+    pub version: u32,
+
+    /// Model description
+    #[serde(default)]
+    pub description: Option<String>,
+
+    /// Model owner (team or person)
+    #[serde(default)]
+    pub owner: Option<String>,
+
+    /// Tags for categorization
+    #[serde(default)]
+    pub tags: Vec<String>,
+
+    /// Column definitions
+    #[serde(default)]
+    pub columns: Vec<SchemaColumnDef>,
+}
+
+impl ModelSchema {
+    /// Load schema from a file path
+    pub fn load(path: &std::path::Path) -> Result<Self, CoreError> {
+        let content = std::fs::read_to_string(path)?;
+        let schema: ModelSchema = serde_yaml::from_str(&content)?;
+        Ok(schema)
+    }
+
+    /// Extract tests from this schema
+    pub fn extract_tests(&self, model_name: &str) -> Vec<SchemaTest> {
+        let mut tests = Vec::new();
+
+        for column in &self.columns {
+            for test_name in &column.tests {
+                let test_type = match test_name.as_str() {
+                    "unique" => TestType::Unique,
+                    "not_null" => TestType::NotNull,
+                    _ => continue, // Skip unknown test types
+                };
+
+                tests.push(SchemaTest {
+                    test_type,
+                    column: column.name.clone(),
+                    model: model_name.to_string(),
+                });
+            }
+        }
+
+        tests
+    }
 }
 
 /// Configuration for a model extracted from config() function
@@ -108,6 +171,8 @@ pub struct SchemaColumnDef {
 
 impl Model {
     /// Create a new model from a file path
+    ///
+    /// This also looks for a matching 1:1 schema file (same name with .yml or .yaml extension)
     pub fn from_file(path: PathBuf) -> Result<Self, std::io::Error> {
         let name = path
             .file_stem()
@@ -117,6 +182,18 @@ impl Model {
 
         let raw_sql = std::fs::read_to_string(&path)?;
 
+        // Look for matching 1:1 schema file
+        let yml_path = path.with_extension("yml");
+        let yaml_path = path.with_extension("yaml");
+
+        let schema = if yml_path.exists() {
+            ModelSchema::load(&yml_path).ok()
+        } else if yaml_path.exists() {
+            ModelSchema::load(&yaml_path).ok()
+        } else {
+            None
+        };
+
         Ok(Self {
             name,
             path,
@@ -125,6 +202,7 @@ impl Model {
             config: ModelConfig::default(),
             depends_on: HashSet::new(),
             external_deps: HashSet::new(),
+            schema,
         })
     }
 
@@ -147,6 +225,14 @@ impl Model {
             .union(&self.external_deps)
             .cloned()
             .collect()
+    }
+
+    /// Get tests from the model's 1:1 schema file
+    pub fn get_schema_tests(&self) -> Vec<SchemaTest> {
+        match &self.schema {
+            Some(schema) => schema.extract_tests(&self.name),
+            None => Vec::new(),
+        }
     }
 }
 
@@ -242,5 +328,63 @@ models:
         assert_eq!(tests[0].model, "stg_orders");
         assert_eq!(tests[0].column, "order_id");
         assert_eq!(tests[0].test_type, TestType::Unique);
+    }
+
+    #[test]
+    fn test_parse_model_schema_1to1() {
+        let yaml = r#"
+version: 1
+description: "Staged orders from raw source"
+owner: data-team
+tags:
+  - staging
+  - orders
+columns:
+  - name: order_id
+    description: "Unique identifier for the order"
+    tests:
+      - unique
+      - not_null
+  - name: customer_id
+    tests:
+      - not_null
+"#;
+        let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(schema.version, 1);
+        assert_eq!(
+            schema.description,
+            Some("Staged orders from raw source".to_string())
+        );
+        assert_eq!(schema.owner, Some("data-team".to_string()));
+        assert_eq!(schema.tags, vec!["staging", "orders"]);
+        assert_eq!(schema.columns.len(), 2);
+    }
+
+    #[test]
+    fn test_model_schema_extract_tests() {
+        let yaml = r#"
+version: 1
+columns:
+  - name: order_id
+    tests:
+      - unique
+      - not_null
+  - name: customer_id
+    tests:
+      - not_null
+"#;
+        let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
+        let tests = schema.extract_tests("stg_orders");
+
+        assert_eq!(tests.len(), 3);
+        assert!(tests
+            .iter()
+            .any(|t| t.column == "order_id" && t.test_type == TestType::Unique));
+        assert!(tests
+            .iter()
+            .any(|t| t.column == "order_id" && t.test_type == TestType::NotNull));
+        assert!(tests
+            .iter()
+            .any(|t| t.column == "customer_id" && t.test_type == TestType::NotNull));
     }
 }

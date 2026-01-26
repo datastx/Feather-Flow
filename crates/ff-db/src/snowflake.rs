@@ -67,4 +67,10 @@ impl Database for SnowflakeBackend {
             "Snowflake drop_if_exists".to_string(),
         ))
     }
+
+    async fn create_schema_if_not_exists(&self, _schema: &str) -> DbResult<()> {
+        Err(DbError::NotImplemented(
+            "Snowflake create_schema_if_not_exists".to_string(),
+        ))
+    }
 }

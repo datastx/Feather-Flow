@@ -68,6 +68,23 @@ impl GeneratedTest {
             name,
         }
     }
+
+    /// Create a generated test with a qualified model name (schema.model)
+    pub fn from_schema_test_qualified(test: &SchemaTest, qualified_name: &str) -> Self {
+        let sql = match test.test_type {
+            TestType::Unique => generate_unique_test(qualified_name, &test.column),
+            TestType::NotNull => generate_not_null_test(qualified_name, &test.column),
+        };
+        let name = format!("{}_{}__{}", test.test_type, test.model, test.column);
+
+        Self {
+            model: test.model.clone(),
+            column: test.column.clone(),
+            test_type: test.test_type,
+            sql,
+            name,
+        }
+    }
 }
 
 #[cfg(test)]

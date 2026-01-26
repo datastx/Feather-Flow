@@ -4,7 +4,9 @@ use anyhow::{Context, Result};
 use ff_core::model::SchemaTest;
 use ff_core::Project;
 use ff_db::{Database, DuckDbBackend};
+use ff_jinja::JinjaEnvironment;
 use ff_test::{generator::GeneratedTest, TestRunner};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -17,11 +19,36 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
     let project_path = Path::new(&global.project_dir);
     let project = Project::load(project_path).context("Failed to load project")?;
 
-    // Create database connection
-    let db: Arc<dyn Database> = Arc::new(
-        DuckDbBackend::new(&project.config.database.path)
-            .context("Failed to connect to database")?,
-    );
+    // Create database connection (use --target override if provided)
+    let db_path = global
+        .target
+        .as_ref()
+        .unwrap_or(&project.config.database.path);
+    let db: Arc<dyn Database> =
+        Arc::new(DuckDbBackend::new(db_path).context("Failed to connect to database")?);
+
+    // Build a map of model name -> qualified name (with schema if specified)
+    let jinja = JinjaEnvironment::new(&project.config.vars);
+    let mut model_qualified_names: HashMap<String, String> = HashMap::new();
+
+    for (name, model) in &project.models {
+        // Get schema from rendered config
+        let schema = if let Ok((_, config_values)) = jinja.render_with_config(&model.raw_sql) {
+            config_values
+                .get("schema")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .or_else(|| project.config.schema.clone())
+        } else {
+            project.config.schema.clone()
+        };
+
+        let qualified_name = match schema {
+            Some(s) => format!("{}.{}", s, name),
+            None => name.clone(),
+        };
+        model_qualified_names.insert(name.clone(), qualified_name);
+    }
 
     // Filter tests based on --models argument
     let model_filter: Option<Vec<String>> = args.models.as_ref().map(|m| {
@@ -56,7 +83,12 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
     let mut errors = 0;
 
     for schema_test in tests_to_run {
-        let generated = GeneratedTest::from_schema_test(schema_test);
+        // Get the qualified name for this model
+        let qualified_name = model_qualified_names
+            .get(&schema_test.model)
+            .map(|s| s.as_str())
+            .unwrap_or(&schema_test.model);
+        let generated = GeneratedTest::from_schema_test_qualified(schema_test, qualified_name);
         let result = runner.run_test(&generated).await;
 
         if result.passed {
