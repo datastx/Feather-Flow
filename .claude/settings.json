@@ -1,15 +1,25 @@
 {
   "hooks": {
-    "PreToolExecution": [
+    "PreToolUse": [
       {
         "matcher": "Edit|Write",
-        "command": "cargo fmt --all -- --check 2>/dev/null || true"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cargo fmt --all -- --check 2>/dev/null || true"
+          }
+        ]
       }
     ],
-    "PostToolExecution": [
+    "PostToolUse": [
       {
         "matcher": "Edit.*\\.rs$",
-        "command": "cargo check -p $(dirname $FILE | xargs basename) 2>&1 | head -20"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cargo check -p $(dirname $FILE | xargs basename) 2>&1 | head -20"
+          }
+        ]
       }
     ]
   },
