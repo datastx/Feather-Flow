@@ -106,7 +106,13 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     let (run_results, success_count, failure_count) =
         execute_models(&db, &compiled_models, &execution_order, args).await;
 
-    write_run_results(&project, &run_results, start_time, success_count, failure_count)?;
+    write_run_results(
+        &project,
+        &run_results,
+        start_time,
+        success_count,
+        failure_count,
+    )?;
 
     println!();
     println!(
@@ -345,9 +351,13 @@ async fn execute_models(
         }
 
         let result = match compiled.materialization {
-            Materialization::View => db.create_view_as(&qualified_name, &compiled.sql, true).await,
+            Materialization::View => {
+                db.create_view_as(&qualified_name, &compiled.sql, true)
+                    .await
+            }
             Materialization::Table => {
-                db.create_table_as(&qualified_name, &compiled.sql, true).await
+                db.create_table_as(&qualified_name, &compiled.sql, true)
+                    .await
             }
         };
 

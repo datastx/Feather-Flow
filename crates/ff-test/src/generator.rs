@@ -270,7 +270,10 @@ mod tests {
         // Verify that single quotes in patterns are escaped to prevent SQL injection
         let sql = generate_regex_test("users", "name", "O'Brien");
         assert!(sql.contains("O''Brien"), "Single quotes should be escaped");
-        assert!(!sql.contains("O'Brien' OR"), "SQL injection should be prevented");
+        assert!(
+            !sql.contains("O'Brien' OR"),
+            "SQL injection should be prevented"
+        );
     }
 
     #[test]

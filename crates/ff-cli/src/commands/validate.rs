@@ -115,8 +115,15 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
     let external_tables = build_external_tables_lookup(&project);
     let known_models: HashSet<String> = project.models.keys().cloned().collect();
 
-    let dependencies =
-        validate_sql_syntax(&project, &models_to_validate, &parser, &jinja, &external_tables, &known_models, &mut ctx);
+    let dependencies = validate_sql_syntax(
+        &project,
+        &models_to_validate,
+        &parser,
+        &jinja,
+        &external_tables,
+        &known_models,
+        &mut ctx,
+    );
     validate_jinja_variables(&project, &models_to_validate, &jinja, &mut ctx);
     validate_dag(&dependencies, &mut ctx);
     validate_duplicates(&project, &mut ctx);
@@ -519,9 +526,22 @@ fn check_test_type_compatibility(
 
     if test_name == "regex" && !is_string_type {
         let numeric_types = [
-            "INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "FLOAT", "DOUBLE",
-            "DECIMAL", "NUMERIC", "REAL", "BOOLEAN", "BOOL", "DATE", "TIME",
-            "TIMESTAMP", "DATETIME",
+            "INT",
+            "INTEGER",
+            "BIGINT",
+            "SMALLINT",
+            "TINYINT",
+            "FLOAT",
+            "DOUBLE",
+            "DECIMAL",
+            "NUMERIC",
+            "REAL",
+            "BOOLEAN",
+            "BOOL",
+            "DATE",
+            "TIME",
+            "TIMESTAMP",
+            "DATETIME",
         ];
         let is_non_string_type = numeric_types
             .iter()
