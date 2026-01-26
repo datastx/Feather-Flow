@@ -18,7 +18,7 @@ use std::time::Instant;
 use crate::cli::{GlobalArgs, RunArgs};
 
 /// Run result for a single model
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct ModelRunResult {
     model: String,
     status: String,
@@ -37,20 +37,22 @@ struct RunResults {
     results: Vec<ModelRunResult>,
 }
 
+/// Compiled model data needed for execution
+struct CompiledModel {
+    sql: String,
+    materialization: Materialization,
+    schema: Option<String>,
+    dependencies: Vec<String>,
+}
+
 /// Check if manifest cache is valid (newer than all source files)
 fn is_cache_valid(project: &Project) -> bool {
     let manifest_path = project.manifest_path();
-    if !manifest_path.exists() {
+    let Ok(manifest_meta) = std::fs::metadata(&manifest_path) else {
         return false;
-    }
-
-    // Get manifest modification time
-    let manifest_mtime = match std::fs::metadata(&manifest_path) {
-        Ok(meta) => match meta.modified() {
-            Ok(time) => time,
-            Err(_) => return false,
-        },
-        Err(_) => return false,
+    };
+    let Ok(manifest_mtime) = manifest_meta.modified() else {
+        return false;
     };
 
     // Check all model files are older than manifest
@@ -83,125 +85,202 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     let project_path = Path::new(&global.project_dir);
     let project = Project::load(project_path).context("Failed to load project")?;
 
-    // Create database connection (use --target override if provided)
+    let db = create_database_connection(&project, global)?;
+
+    let compiled_models = load_or_compile_models(&project, args, global)?;
+
+    let execution_order = determine_execution_order(&compiled_models, args)?;
+
+    if global.verbose {
+        eprintln!(
+            "[verbose] Running {} models in order: {:?}",
+            execution_order.len(),
+            execution_order
+        );
+    }
+
+    println!("Running {} models...\n", execution_order.len());
+
+    create_schemas(&db, &compiled_models, global).await?;
+
+    let (run_results, success_count, failure_count) =
+        execute_models(&db, &compiled_models, &execution_order, args).await;
+
+    write_run_results(
+        &project,
+        &run_results,
+        start_time,
+        success_count,
+        failure_count,
+    )?;
+
+    println!();
+    println!(
+        "Completed: {} succeeded, {} failed",
+        success_count, failure_count
+    );
+    println!("Total time: {}ms", start_time.elapsed().as_millis());
+
+    if failure_count > 0 {
+        std::process::exit(4);
+    }
+
+    Ok(())
+}
+
+/// Create database connection from project config or CLI override
+fn create_database_connection(project: &Project, global: &GlobalArgs) -> Result<Arc<dyn Database>> {
     let db_path = global
         .target
         .as_ref()
         .unwrap_or(&project.config.database.path);
     let db: Arc<dyn Database> =
         Arc::new(DuckDbBackend::new(db_path).context("Failed to connect to database")?);
+    Ok(db)
+}
 
-    // Check for cached manifest (unless --no-cache is specified)
-    let use_cache = !args.no_cache && is_cache_valid(&project);
-    let cached_manifest = if use_cache {
-        Manifest::load(&project.manifest_path()).ok()
-    } else {
-        None
-    };
-
-    // Get all model names first
+/// Load models from cache or compile them fresh
+fn load_or_compile_models(
+    project: &Project,
+    args: &RunArgs,
+    global: &GlobalArgs,
+) -> Result<HashMap<String, CompiledModel>> {
     let all_model_names: Vec<String> = project
         .model_names()
         .into_iter()
         .map(String::from)
         .collect();
 
-    // Compile all models or use cached data
-    let mut dependencies: HashMap<String, Vec<String>> = HashMap::new();
-    let mut compiled_sql: HashMap<String, String> = HashMap::new();
-    let mut materializations: HashMap<String, Materialization> = HashMap::new();
-    let mut schemas: HashMap<String, Option<String>> = HashMap::new();
+    let use_cache = !args.no_cache && is_cache_valid(project);
+    let cached_manifest = if use_cache {
+        Manifest::load(&project.manifest_path()).ok()
+    } else {
+        None
+    };
 
     if let Some(ref manifest) = cached_manifest {
-        // Use cached manifest data
         if global.verbose {
             eprintln!("[verbose] Using cached manifest");
         }
-
-        for name in &all_model_names {
-            if let Some(manifest_model) = manifest.get_model(name) {
-                dependencies.insert(name.clone(), manifest_model.depends_on.clone());
-                materializations.insert(name.clone(), manifest_model.materialized);
-                schemas.insert(name.clone(), manifest_model.schema.clone());
-
-                // Read compiled SQL from file
-                let compiled_path = project.root.join(&manifest_model.compiled_path);
-                if let Ok(sql) = std::fs::read_to_string(&compiled_path) {
-                    compiled_sql.insert(name.clone(), sql);
-                } else {
-                    // Fall back to recompiling this model
-                    let model = project.get_model(name).unwrap();
-                    let macro_paths = project.config.macro_paths_absolute(&project.root);
-                    let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
-                    if let Ok((rendered, _)) = jinja.render_with_config(&model.raw_sql) {
-                        compiled_sql.insert(name.clone(), rendered);
-                    }
-                }
-            }
-        }
+        load_from_manifest(project, manifest, &all_model_names)
     } else {
-        // Compile all models (no cache or cache invalid)
         if global.verbose && !args.no_cache {
             eprintln!("[verbose] Cache invalid or missing, recompiling");
         }
+        compile_all_models(project, &all_model_names)
+    }
+}
 
-        let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
-            .context("Invalid SQL dialect")?;
-        let macro_paths = project.config.macro_paths_absolute(&project.root);
-        let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
+/// Load compiled models from cached manifest
+fn load_from_manifest(
+    project: &Project,
+    manifest: &Manifest,
+    model_names: &[String],
+) -> Result<HashMap<String, CompiledModel>> {
+    let mut compiled_models = HashMap::new();
+    let macro_paths = project.config.macro_paths_absolute(&project.root);
+    let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
 
-        let external_tables: HashSet<String> =
-            project.config.external_tables.iter().cloned().collect();
-        let known_models: HashSet<String> = project.models.keys().cloned().collect();
+    for name in model_names {
+        if let Some(manifest_model) = manifest.get_model(name) {
+            let compiled_path = project.root.join(&manifest_model.compiled_path);
+            let sql = std::fs::read_to_string(&compiled_path).unwrap_or_else(|_| {
+                // Fall back to recompiling this model
+                let model = project.get_model(name).unwrap();
+                jinja
+                    .render_with_config(&model.raw_sql)
+                    .map(|(rendered, _)| rendered)
+                    .unwrap_or_default()
+            });
 
-        for name in &all_model_names {
-            let model = project
-                .get_model(name)
-                .context(format!("Model not found: {}", name))?;
-
-            // Render Jinja template
-            let (rendered, config_values) = jinja
-                .render_with_config(&model.raw_sql)
-                .context(format!("Failed to render template for model: {}", name))?;
-
-            // Parse SQL to extract dependencies
-            let statements = parser
-                .parse(&rendered)
-                .context(format!("Failed to parse SQL for model: {}", name))?;
-
-            // Extract and categorize dependencies
-            let deps = extract_dependencies(&statements);
-            let (model_deps, _) =
-                ff_sql::extractor::categorize_dependencies(deps, &known_models, &external_tables);
-
-            // Get materialization
-            let mat = config_values
-                .get("materialized")
-                .and_then(|v| v.as_str())
-                .map(|s| match s {
-                    "table" => Materialization::Table,
-                    _ => Materialization::View,
-                })
-                .unwrap_or(project.config.materialization);
-
-            // Get schema
-            let schema = config_values
-                .get("schema")
-                .and_then(|v| v.as_str())
-                .map(String::from)
-                .or_else(|| project.config.schema.clone());
-
-            dependencies.insert(name.to_string(), model_deps);
-            compiled_sql.insert(name.to_string(), rendered);
-            materializations.insert(name.to_string(), mat);
-            schemas.insert(name.to_string(), schema);
+            compiled_models.insert(
+                name.clone(),
+                CompiledModel {
+                    sql,
+                    materialization: manifest_model.materialized,
+                    schema: manifest_model.schema.clone(),
+                    dependencies: manifest_model.depends_on.clone(),
+                },
+            );
         }
     }
 
-    // Build DAG
+    Ok(compiled_models)
+}
+
+/// Compile all models fresh
+fn compile_all_models(
+    project: &Project,
+    model_names: &[String],
+) -> Result<HashMap<String, CompiledModel>> {
+    let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
+        .context("Invalid SQL dialect")?;
+    let macro_paths = project.config.macro_paths_absolute(&project.root);
+    let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
+
+    let external_tables: HashSet<String> = project.config.external_tables.iter().cloned().collect();
+    let known_models: HashSet<String> = project.models.keys().cloned().collect();
+
+    let mut compiled_models = HashMap::new();
+
+    for name in model_names {
+        let model = project
+            .get_model(name)
+            .context(format!("Model not found: {}", name))?;
+
+        let (rendered, config_values) = jinja
+            .render_with_config(&model.raw_sql)
+            .context(format!("Failed to render template for model: {}", name))?;
+
+        let statements = parser
+            .parse(&rendered)
+            .context(format!("Failed to parse SQL for model: {}", name))?;
+
+        let deps = extract_dependencies(&statements);
+        let (model_deps, _) =
+            ff_sql::extractor::categorize_dependencies(deps, &known_models, &external_tables);
+
+        let mat = config_values
+            .get("materialized")
+            .and_then(|v| v.as_str())
+            .map(|s| match s {
+                "table" => Materialization::Table,
+                _ => Materialization::View,
+            })
+            .unwrap_or(project.config.materialization);
+
+        let schema = config_values
+            .get("schema")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .or_else(|| project.config.schema.clone());
+
+        compiled_models.insert(
+            name.to_string(),
+            CompiledModel {
+                sql: rendered,
+                materialization: mat,
+                schema,
+                dependencies: model_deps,
+            },
+        );
+    }
+
+    Ok(compiled_models)
+}
+
+/// Determine execution order based on DAG and CLI arguments
+fn determine_execution_order(
+    compiled_models: &HashMap<String, CompiledModel>,
+    args: &RunArgs,
+) -> Result<Vec<String>> {
+    let dependencies: HashMap<String, Vec<String>> = compiled_models
+        .iter()
+        .map(|(name, model)| (name.clone(), model.dependencies.clone()))
+        .collect();
+
     let dag = ModelDag::build(&dependencies).context("Failed to build dependency graph")?;
 
-    // Get models to run based on args
     let models_to_run: Vec<String> = if let Some(select) = &args.select {
         dag.select(select).context("Invalid selector")?
     } else if let Some(models) = &args.models {
@@ -215,27 +294,26 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
             .context("Failed to get execution order")?
     };
 
-    // Filter to only models in the execution list and get topological order
     let execution_order: Vec<String> = dag
         .topological_order()?
         .into_iter()
         .filter(|m| models_to_run.contains(m))
         .collect();
 
-    if global.verbose {
-        eprintln!(
-            "[verbose] Running {} models in order: {:?}",
-            execution_order.len(),
-            execution_order
-        );
-    }
+    Ok(execution_order)
+}
 
-    println!("Running {} models...\n", execution_order.len());
+/// Create all required schemas before running models
+async fn create_schemas(
+    db: &Arc<dyn Database>,
+    compiled_models: &HashMap<String, CompiledModel>,
+    global: &GlobalArgs,
+) -> Result<()> {
+    let schemas_to_create: HashSet<String> = compiled_models
+        .values()
+        .filter_map(|m| m.schema.clone())
+        .collect();
 
-    // Collect unique schemas that need to be created
-    let schemas_to_create: HashSet<String> = schemas.values().filter_map(|s| s.clone()).collect();
-
-    // Create all schemas before running models
     for schema in &schemas_to_create {
         if global.verbose {
             eprintln!("[verbose] Creating schema if not exists: {}", schema);
@@ -245,34 +323,42 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
             .context(format!("Failed to create schema: {}", schema))?;
     }
 
+    Ok(())
+}
+
+/// Execute all models in order
+async fn execute_models(
+    db: &Arc<dyn Database>,
+    compiled_models: &HashMap<String, CompiledModel>,
+    execution_order: &[String],
+    args: &RunArgs,
+) -> (Vec<ModelRunResult>, usize, usize) {
     let mut success_count = 0;
     let mut failure_count = 0;
     let mut run_results: Vec<ModelRunResult> = Vec::new();
 
-    for name in &execution_order {
-        let model_start = Instant::now();
-
-        // Get the qualified name (with schema if specified)
-        let schema = schemas.get(name).and_then(|s| s.as_ref());
-        let qualified_name = match schema {
+    for name in execution_order {
+        let compiled = compiled_models.get(name).unwrap();
+        let qualified_name = match &compiled.schema {
             Some(s) => format!("{}.{}", s, name),
             None => name.clone(),
         };
 
-        let sql = compiled_sql.get(name).unwrap();
-        let mat = materializations.get(name).unwrap();
+        let model_start = Instant::now();
 
-        // Full refresh: drop existing
         if args.full_refresh {
-            db.drop_if_exists(&qualified_name)
-                .await
-                .context(format!("Failed to drop {}", qualified_name))?;
+            let _ = db.drop_if_exists(&qualified_name).await;
         }
 
-        // Execute based on materialization
-        let result = match mat {
-            Materialization::View => db.create_view_as(&qualified_name, sql, true).await,
-            Materialization::Table => db.create_table_as(&qualified_name, sql, true).await,
+        let result = match compiled.materialization {
+            Materialization::View => {
+                db.create_view_as(&qualified_name, &compiled.sql, true)
+                    .await
+            }
+            Materialization::Table => {
+                db.create_table_as(&qualified_name, &compiled.sql, true)
+                    .await
+            }
         };
 
         let duration = model_start.elapsed();
@@ -280,11 +366,16 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         match result {
             Ok(_) => {
                 success_count += 1;
-                println!("  ✓ {} ({}) [{}ms]", name, mat, duration.as_millis());
+                println!(
+                    "  ✓ {} ({}) [{}ms]",
+                    name,
+                    compiled.materialization,
+                    duration.as_millis()
+                );
                 run_results.push(ModelRunResult {
                     model: name.clone(),
                     status: "success".to_string(),
-                    materialization: mat.to_string(),
+                    materialization: compiled.materialization.to_string(),
                     duration_secs: duration.as_secs_f64(),
                     error: None,
                 });
@@ -295,7 +386,7 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
                 run_results.push(ModelRunResult {
                     model: name.clone(),
                     status: "failure".to_string(),
-                    materialization: mat.to_string(),
+                    materialization: compiled.materialization.to_string(),
                     duration_secs: duration.as_secs_f64(),
                     error: Some(e.to_string()),
                 });
@@ -303,15 +394,23 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
-    let total_duration = start_time.elapsed();
+    (run_results, success_count, failure_count)
+}
 
-    // Write run_results.json
+/// Write run results to JSON file
+fn write_run_results(
+    project: &Project,
+    run_results: &[ModelRunResult],
+    start_time: Instant,
+    success_count: usize,
+    failure_count: usize,
+) -> Result<()> {
     let results = RunResults {
         timestamp: Utc::now(),
-        elapsed_secs: total_duration.as_secs_f64(),
+        elapsed_secs: start_time.elapsed().as_secs_f64(),
         success_count,
         failure_count,
-        results: run_results,
+        results: run_results.to_vec(),
     };
 
     let target_dir = project.target_dir();
@@ -320,22 +419,6 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     let results_json =
         serde_json::to_string_pretty(&results).context("Failed to serialize run results")?;
     std::fs::write(&results_path, results_json).context("Failed to write run_results.json")?;
-
-    if global.verbose {
-        eprintln!("[verbose] Wrote run results to {:?}", results_path);
-    }
-
-    println!();
-    println!(
-        "Completed: {} succeeded, {} failed",
-        success_count, failure_count
-    );
-    println!("Total time: {}ms", total_duration.as_millis());
-
-    if failure_count > 0 {
-        // Exit code 4 = Database error (per spec - model execution failures)
-        std::process::exit(4);
-    }
 
     Ok(())
 }

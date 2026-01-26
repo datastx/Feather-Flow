@@ -3,7 +3,8 @@
         ff-run ff-run-full-refresh ff-run-select ff-ls ff-ls-json ff-ls-tree \
         ff-test ff-test-verbose ff-test-fail-fast ff-seed ff-seed-full-refresh \
         ff-docs ff-docs-json ff-validate ff-validate-strict ff-sources ff-help \
-        dev-cycle dev-validate dev-fresh help
+        dev-cycle dev-validate dev-fresh help run watch test-verbose test-integration \
+        test-unit fmt-check clippy doc-open update ci-quick ci-full install claude-auto-run
 
 # =============================================================================
 # Configuration
@@ -16,199 +17,188 @@ PROJECT_DIR ?= tests/fixtures/sample_project
 # Development
 # =============================================================================
 
-build:
+build: ## Build all crates
 	cargo build --workspace
 
-build-release:
+build-release: ## Build release binaries
 	cargo build --workspace --release
 
-run:
+run: ## Run CLI with no arguments
 	cargo run -p ff-cli --
 
-watch:
+watch: ## Watch and rebuild on changes
 	cargo watch -x 'build --workspace'
 
 # =============================================================================
 # Rust Testing
 # =============================================================================
 
-test:
+test: ## Run all tests
 	cargo test --workspace --all-features
 
-test-verbose:
+test-verbose: ## Run tests with output
 	cargo test --workspace -- --nocapture
 
-test-integration:
+test-integration: ## Run integration tests only
 	cargo test --test '*' -- --test-threads=1
 
-test-unit:
+test-unit: ## Run unit tests only
 	cargo test --workspace --lib
 
 # =============================================================================
 # Code Quality
 # =============================================================================
 
-lint: fmt-check clippy
+lint: fmt-check clippy ## Run fmt-check and clippy
 
-fmt:
+fmt: ## Format code
 	cargo fmt --all
 
-fmt-check:
+fmt-check: ## Check code formatting
 	cargo fmt --all -- --check
 
-clippy:
+clippy: ## Run clippy linter
 	cargo clippy --workspace --all-targets -- -D warnings
 
-check:
+check: ## Run cargo check
 	cargo check --workspace --all-targets
 
 # =============================================================================
 # Documentation
 # =============================================================================
 
-doc:
+doc: ## Generate documentation
 	cargo doc --workspace --no-deps
 
-doc-open:
+doc-open: ## Generate and open documentation
 	cargo doc --workspace --no-deps --open
 
 # =============================================================================
 # CLI Commands - Featherflow (ff)
-# Each CLI subcommand has a dedicated make target for easy testing
 # =============================================================================
 
-## ff parse - Parse SQL files and output AST/dependencies
-ff-parse:
+ff-parse: ## Parse SQL files
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) parse
 
-ff-parse-json:
+ff-parse-json: ## Parse with JSON output
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) parse --output json
 
-ff-parse-deps:
+ff-parse-deps: ## Parse with deps output
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) parse --output deps
 
-## ff compile - Render Jinja templates to SQL, extract dependencies
-ff-compile:
+ff-compile: ## Compile Jinja to SQL
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) compile
 
-ff-compile-verbose:
+ff-compile-verbose: ## Compile with verbose output
 	cargo run -p ff-cli -- --verbose --project-dir $(PROJECT_DIR) compile
 
-## ff run - Execute compiled SQL against database
-ff-run:
+ff-run: ## Execute models
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) run
 
-ff-run-full-refresh:
+ff-run-full-refresh: ## Execute with full refresh
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) run --full-refresh
 
-ff-run-select:
-	@echo "Usage: make ff-run-select MODELS='+model_name'"
+ff-run-select: ## Run specific models (set MODELS='+model_name')
+	@if [ -z "$(MODELS)" ]; then \
+		echo "Error: MODELS not set. Usage: make ff-run-select MODELS='+model_name'"; \
+		exit 1; \
+	fi
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) run --select $(MODELS)
 
-## ff ls - List models with dependencies and materialization
-ff-ls:
+ff-ls: ## List models
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) ls
 
-ff-ls-json:
+ff-ls-json: ## List models as JSON
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) ls --output json
 
-ff-ls-tree:
+ff-ls-tree: ## List models as tree
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) ls --output tree
 
-## ff test - Run schema tests (unique, not_null, etc.)
-ff-test:
+ff-test: ## Run schema tests
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) test
 
-ff-test-verbose:
+ff-test-verbose: ## Run tests with verbose output
 	cargo run -p ff-cli -- --verbose --project-dir $(PROJECT_DIR) test
 
-ff-test-fail-fast:
+ff-test-fail-fast: ## Run tests, stop on first failure
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) test --fail-fast
 
-## ff seed - Load CSV seed files into database
-ff-seed:
+ff-seed: ## Load seed data
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) seed
 
-ff-seed-full-refresh:
+ff-seed-full-refresh: ## Load seeds with full refresh
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) seed --full-refresh
 
-## ff docs - Generate documentation from schema files
-ff-docs:
+ff-docs: ## Generate documentation
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) docs
 
-ff-docs-json:
+ff-docs-json: ## Generate documentation as JSON
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) docs --format json
 
-## ff validate - Validate project without execution
-ff-validate:
+ff-validate: ## Validate project
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) validate
 
-ff-validate-strict:
+ff-validate-strict: ## Validate with strict mode
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) validate --strict
 
-## ff sources - List sources (future: ff sources command)
-ff-sources:
+ff-sources: ## List sources (JSON filtered)
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) ls --output json | jq '.[] | select(.type == "source")'
 
-## ff help - Show CLI help
-ff-help:
+ff-help: ## Show CLI help
 	cargo run -p ff-cli -- --help
 
 # =============================================================================
-# Workflows - Common development workflows
+# Workflows
 # =============================================================================
 
-## Full development cycle: seed -> run -> test
-dev-cycle: ff-seed ff-run ff-test
+dev-cycle: ff-seed ff-run ff-test ## Full cycle: seed -> run -> test
 	@echo "Development cycle complete!"
 
-## Quick validation: compile -> validate
-dev-validate: ff-compile ff-validate
+dev-validate: ff-compile ff-validate ## Quick validation: compile -> validate
 	@echo "Validation complete!"
 
-## Full pipeline with fresh data
-dev-fresh: ff-seed-full-refresh ff-run-full-refresh ff-test
+dev-fresh: ff-seed-full-refresh ff-run-full-refresh ff-test ## Full refresh pipeline
 	@echo "Fresh pipeline complete!"
 
 # =============================================================================
 # Maintenance
 # =============================================================================
 
-clean:
+clean: ## Remove build artifacts
 	cargo clean
 	rm -rf $(PROJECT_DIR)/target
 
-update:
+update: ## Update dependencies
 	cargo update
 
 # =============================================================================
-# CI (local verification)
+# CI
 # =============================================================================
 
-ci: fmt-check clippy test doc
+ci: fmt-check clippy test doc ## Full CI check
 	@echo "CI checks passed!"
 
-ci-quick: check fmt-check clippy
+ci-quick: check fmt-check clippy ## Quick CI check (no tests)
 	@echo "Quick CI checks passed!"
 
-ci-full: ci ff-compile ff-validate
+ci-full: ci ff-compile ff-validate ## CI + compile + validate
 	@echo "Full CI checks passed!"
 
 # =============================================================================
 # Release
 # =============================================================================
 
-install:
+install: ## Install CLI binary
 	cargo install --path crates/ff-cli
 
-# Build release binary for a specific target (used in CI)
-# Usage: make build-target TARGET=x86_64-unknown-linux-gnu
-build-target:
+build-target: ## Build for target (set TARGET=x86_64-unknown-linux-gnu)
+	@if [ -z "$(TARGET)" ]; then \
+		echo "Error: TARGET not set. Usage: make build-target TARGET=x86_64-unknown-linux-gnu"; \
+		exit 1; \
+	fi
 	cargo build --release --target $(TARGET) -p ff-cli
 
-# Create checksums for release artifacts (used in CI)
-# Usage: make checksums ARTIFACTS_DIR=artifacts
-checksums:
+checksums: ## Create checksums (set ARTIFACTS_DIR=artifacts)
 	cd $(ARTIFACTS_DIR) && \
 	for dir in */; do \
 		cd "$$dir" && \
@@ -222,56 +212,20 @@ checksums:
 # Claude Code
 # =============================================================================
 
-claude-auto-run:
+claude-auto-run: ## Run Claude with auto-permissions
 	claude --dangerously-skip-permissions
 
 # =============================================================================
 # Help
 # =============================================================================
 
-help:
+help: ## Show this help message
 	@echo "Featherflow Development Makefile"
 	@echo ""
-	@echo "Development:"
-	@echo "  make build              Build all crates"
-	@echo "  make build-release      Build release binaries"
-	@echo "  make watch              Watch and rebuild on changes"
+	@echo "Usage: make [target]"
 	@echo ""
-	@echo "Testing:"
-	@echo "  make test               Run all tests"
-	@echo "  make test-verbose       Run tests with output"
-	@echo "  make test-integration   Run integration tests only"
-	@echo "  make test-unit          Run unit tests only"
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-24s\033[0m %s\n", $$1, $$2}'
 	@echo ""
-	@echo "Code Quality:"
-	@echo "  make lint               Run fmt-check and clippy"
-	@echo "  make fmt                Format code"
-	@echo "  make clippy             Run clippy linter"
-	@echo ""
-	@echo "CLI Commands (use PROJECT_DIR=path to override):"
-	@echo "  make ff-parse           Parse SQL files"
-	@echo "  make ff-parse-json      Parse with JSON output"
-	@echo "  make ff-parse-deps      Parse with deps output"
-	@echo "  make ff-compile         Compile Jinja to SQL"
-	@echo "  make ff-run             Execute models"
-	@echo "  make ff-run-full-refresh  Execute with full refresh"
-	@echo "  make ff-ls              List models"
-	@echo "  make ff-ls-json         List models as JSON"
-	@echo "  make ff-ls-tree         List models as tree"
-	@echo "  make ff-test            Run schema tests"
-	@echo "  make ff-seed            Load seed data"
-	@echo "  make ff-seed-full-refresh  Load seeds with full refresh"
-	@echo "  make ff-docs            Generate documentation"
-	@echo "  make ff-validate        Validate project"
-	@echo "  make ff-validate-strict Validate with strict mode"
-	@echo "  make ff-sources         List sources (JSON filtered)"
-	@echo ""
-	@echo "Workflows:"
-	@echo "  make dev-cycle          seed -> run -> test"
-	@echo "  make dev-validate       compile -> validate"
-	@echo "  make dev-fresh          Full refresh pipeline"
-	@echo ""
-	@echo "CI:"
-	@echo "  make ci                 Full CI check"
-	@echo "  make ci-quick           Quick CI check"
-	@echo "  make ci-full            CI + compile + validate"
+	@echo "Environment Variables:"
+	@echo "  PROJECT_DIR    Test project path (default: tests/fixtures/sample_project)"

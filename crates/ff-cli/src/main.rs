@@ -5,7 +5,6 @@ use clap::Parser;
 
 mod cli;
 mod commands;
-mod context;
 
 use cli::Cli;
 use commands::{compile, docs, ls, parse, run, seed, test, validate};

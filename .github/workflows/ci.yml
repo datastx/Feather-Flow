@@ -5,53 +5,81 @@ on:
     branches: [main, develop]
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
 
 jobs:
   check:
+    name: Cargo check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: make check
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+      - name: Run cargo check
+        run: make check
 
   fmt:
+    name: Check formatting
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - run: make fmt-check
+      - name: Check code formatting
+        run: make fmt-check
 
   clippy:
+    name: Clippy lints
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: make clippy
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+      - name: Run clippy
+        run: make clippy
 
   test:
+    name: Test on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: make test
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+      - name: Run tests
+        run: make test
 
   docs:
+    name: Build documentation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: make doc
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+      - name: Build documentation
+        run: make doc

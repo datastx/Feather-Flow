@@ -4,8 +4,13 @@ on:
   push:
     tags: ['v*.*.*']
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
+    name: Build ${{ matrix.asset_name }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -27,9 +32,11 @@ jobs:
             artifact_name: ff
             asset_name: ff-aarch64-apple-darwin
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
@@ -37,7 +44,7 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-musl'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
-      - name: Build
+      - name: Build release binary
         run: make build-target TARGET=${{ matrix.target }}
 
       - name: Upload artifact
@@ -47,12 +54,14 @@ jobs:
           path: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
 
   release:
+    name: Create GitHub release
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -62,7 +71,7 @@ jobs:
       - name: Create checksums
         run: make checksums ARTIFACTS_DIR=artifacts
 
-      - name: Create Release
+      - name: Create GitHub release
         uses: softprops/action-gh-release@v1
         with:
           files: artifacts/**/*

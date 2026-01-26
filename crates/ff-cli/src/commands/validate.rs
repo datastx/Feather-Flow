@@ -8,15 +8,13 @@ use ff_core::Project;
 use ff_jinja::JinjaEnvironment;
 use ff_sql::SqlParser;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::cli::{GlobalArgs, ValidateArgs};
 
 /// Validation result severity
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[allow(dead_code)]
 enum Severity {
-    Info,
     Warning,
     Error,
 }
@@ -24,7 +22,6 @@ enum Severity {
 impl std::fmt::Display for Severity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Severity::Info => write!(f, "INFO"),
             Severity::Warning => write!(f, "WARNING"),
             Severity::Error => write!(f, "ERROR"),
         }
@@ -110,79 +107,101 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
 
     let mut ctx = ValidationContext::new();
 
-    // Get models to validate
-    let models_to_validate: Vec<String> = if let Some(filter) = &args.models {
-        filter.split(',').map(|s| s.trim().to_string()).collect()
+    let models_to_validate = get_models_to_validate(&project, &args.models);
+    let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
+        .context("Invalid SQL dialect")?;
+    let macro_paths = project.config.macro_paths_absolute(&project.root);
+    let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
+    let external_tables = build_external_tables_lookup(&project);
+    let known_models: HashSet<String> = project.models.keys().cloned().collect();
+
+    let dependencies = validate_sql_syntax(
+        &project,
+        &models_to_validate,
+        &parser,
+        &jinja,
+        &external_tables,
+        &known_models,
+        &mut ctx,
+    );
+    validate_jinja_variables(&project, &models_to_validate, &jinja, &mut ctx);
+    validate_dag(&dependencies, &mut ctx);
+    validate_duplicates(&project, &mut ctx);
+    validate_schemas(&project, &models_to_validate, &known_models, &mut ctx);
+    validate_sources(&project);
+    validate_macros(&project.config.vars, &macro_paths, &mut ctx);
+
+    print_issues_and_summary(&ctx, args.strict)
+}
+
+/// Get list of models to validate based on CLI filter
+fn get_models_to_validate(project: &Project, filter: &Option<String>) -> Vec<String> {
+    if let Some(f) = filter {
+        f.split(',').map(|s| s.trim().to_string()).collect()
     } else {
         project
             .model_names()
             .into_iter()
             .map(String::from)
             .collect()
-    };
+    }
+}
 
-    // Create SQL parser and Jinja environment with macro support
-    let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
-        .context("Invalid SQL dialect")?;
-    let macro_paths = project.config.macro_paths_absolute(&project.root);
-    let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
-
-    // Collect known models and external tables (including sources)
+/// Build external tables lookup including sources
+fn build_external_tables_lookup(project: &Project) -> HashSet<String> {
     let mut external_tables: HashSet<String> =
         project.config.external_tables.iter().cloned().collect();
-    // Add source tables to external tables lookup
     let source_tables = build_source_lookup(&project.sources);
     external_tables.extend(source_tables);
-    let known_models: HashSet<String> = project.models.keys().cloned().collect();
+    external_tables
+}
 
-    // Track dependencies for cycle detection
-    let mut dependencies: HashMap<String, Vec<String>> = HashMap::new();
-
-    // Validate SQL syntax
+/// Validate SQL syntax and extract dependencies
+fn validate_sql_syntax(
+    project: &Project,
+    models: &[String],
+    parser: &SqlParser,
+    jinja: &JinjaEnvironment,
+    external_tables: &HashSet<String>,
+    known_models: &HashSet<String>,
+    ctx: &mut ValidationContext,
+) -> HashMap<String, Vec<String>> {
     print!("Checking SQL syntax... ");
     let mut sql_errors = 0;
-    for name in &models_to_validate {
+    let mut dependencies: HashMap<String, Vec<String>> = HashMap::new();
+
+    for name in models {
         if let Some(model) = project.get_model(name) {
-            // First render Jinja template
             let rendered = match jinja.render(&model.raw_sql) {
                 Ok(sql) => sql,
                 Err(e) => {
                     let err_str = e.to_string();
-                    // Check for macro import errors (M003)
-                    if err_str.contains("unable to load template")
-                        || err_str.contains("template not found")
-                        || (err_str.contains("import") && err_str.contains("not found"))
-                    {
-                        ctx.error(
-                            "M003",
-                            format!("Macro import error: {}", e),
-                            Some(model.path.display().to_string()),
-                        );
+                    let code = if is_macro_import_error(&err_str) {
+                        "M003"
                     } else {
-                        ctx.error(
-                            "E001",
-                            format!("Jinja render error: {}", e),
-                            Some(model.path.display().to_string()),
-                        );
-                    }
+                        "E001"
+                    };
+                    let msg = if code == "M003" {
+                        format!("Macro import error: {}", e)
+                    } else {
+                        format!("Jinja render error: {}", e)
+                    };
+                    ctx.error(code, msg, Some(model.path.display().to_string()));
                     sql_errors += 1;
                     continue;
                 }
             };
 
-            // Then parse SQL
             match parser.parse(&rendered) {
                 Ok(stmts) => {
-                    // Extract dependencies for later cycle detection
                     let deps = ff_sql::extract_dependencies(&stmts);
                     let (model_deps, _, unknown_deps) =
                         ff_sql::extractor::categorize_dependencies_with_unknown(
                             deps,
-                            &known_models,
-                            &external_tables,
+                            known_models,
+                            external_tables,
                         );
 
-                    // Warn about unknown dependencies
                     for unknown in &unknown_deps {
                         ctx.warning(
                             "W003",
@@ -207,18 +226,35 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
             }
         }
     }
+
     if sql_errors == 0 {
         println!("✓");
     } else {
         println!("✗ ({} errors)", sql_errors);
     }
 
-    // Check for undefined Jinja variables
+    dependencies
+}
+
+/// Check if error message indicates a macro import failure
+fn is_macro_import_error(err_str: &str) -> bool {
+    err_str.contains("unable to load template")
+        || err_str.contains("template not found")
+        || (err_str.contains("import") && err_str.contains("not found"))
+}
+
+/// Validate Jinja variables are defined
+fn validate_jinja_variables(
+    project: &Project,
+    models: &[String],
+    jinja: &JinjaEnvironment,
+    ctx: &mut ValidationContext,
+) {
     print!("Checking Jinja variables... ");
     let mut var_warnings = 0;
-    for name in &models_to_validate {
+
+    for name in models {
         if let Some(model) = project.get_model(name) {
-            // Check for var() calls without defaults
             if let Err(e) = jinja.render(&model.raw_sql) {
                 let err_str = e.to_string();
                 if err_str.contains("undefined variable") {
@@ -232,23 +268,28 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
             }
         }
     }
+
     if var_warnings == 0 {
         println!("✓");
     } else {
         println!("{} warnings", var_warnings);
     }
+}
 
-    // Check for circular dependencies
+/// Validate DAG for circular dependencies
+fn validate_dag(dependencies: &HashMap<String, Vec<String>>, ctx: &mut ValidationContext) {
     print!("Checking for cycles... ");
-    match ModelDag::build(&dependencies) {
+    match ModelDag::build(dependencies) {
         Ok(_) => println!("✓"),
         Err(e) => {
             ctx.error("E003", format!("Circular dependency: {}", e), None);
             println!("✗");
         }
     }
+}
 
-    // Check for duplicate model names (already handled by Project::load, but verify)
+/// Validate no duplicate model names
+fn validate_duplicates(project: &Project, ctx: &mut ValidationContext) {
     print!("Checking for duplicates... ");
     let model_names: Vec<&String> = project.models.keys().collect();
     let unique_count = model_names.iter().collect::<HashSet<_>>().len();
@@ -258,12 +299,19 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
         ctx.error("E004", "Duplicate model names detected", None);
         println!("✗");
     }
+}
 
-    // Check schema files
+/// Validate schema files and test definitions
+fn validate_schemas(
+    project: &Project,
+    models: &[String],
+    known_models: &HashSet<String>,
+    ctx: &mut ValidationContext,
+) {
     print!("Checking schema files... ");
     let mut schema_warnings = 0;
 
-    // Find orphaned schema files (schema without matching model)
+    // Check orphaned schema references
     let models_with_tests: HashSet<&str> = project.tests.iter().map(|t| t.model.as_str()).collect();
     for model_ref in &models_with_tests {
         if !known_models.contains(*model_ref) {
@@ -276,7 +324,7 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
-    // Validate that test columns exist in the schema definition
+    // Validate test columns exist in schema
     for test in &project.tests {
         if let Some(model) = project.get_model(&test.model) {
             if let Some(schema) = &model.schema {
@@ -297,12 +345,11 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
-    // Check reference integrity and type compatibility
-    for name in &models_to_validate {
+    // Check references and type compatibility
+    for name in models {
         if let Some(model) = project.get_model(name) {
             if let Some(schema) = &model.schema {
                 for column in &schema.columns {
-                    // Check if referenced model exists
                     if let Some(refs) = &column.references {
                         if !known_models.contains(&refs.model) {
                             ctx.warning(
@@ -317,13 +364,11 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
                         }
                     }
 
-                    // Check test/type compatibility
                     if let Some(data_type) = &column.data_type {
-                        let data_type_upper = data_type.to_uppercase();
                         for test in &column.tests {
                             if let Some(warning) = check_test_type_compatibility(
                                 test,
-                                &data_type_upper,
+                                &data_type.to_uppercase(),
                                 &column.name,
                                 name,
                             ) {
@@ -346,8 +391,10 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
     } else {
         println!("{} warnings", schema_warnings);
     }
+}
 
-    // Check source files
+/// Validate source files
+fn validate_sources(project: &Project) {
     print!("Checking source files... ");
     let source_count = project.sources.len();
     let source_table_count: usize = project.sources.iter().map(|s| s.tables.len()).sum();
@@ -359,25 +406,29 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
             source_count, source_table_count
         );
     }
+}
 
-    // Check macro files
+/// Validate macro files
+fn validate_macros(
+    vars: &HashMap<String, serde_yaml::Value>,
+    macro_paths: &[PathBuf],
+    ctx: &mut ValidationContext,
+) {
     print!("Checking macro files... ");
     let mut macro_errors = 0;
     let mut macro_count = 0;
-    for macro_dir in &macro_paths {
+
+    for macro_dir in macro_paths {
         if macro_dir.exists() && macro_dir.is_dir() {
             if let Ok(entries) = std::fs::read_dir(macro_dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if path.extension().is_some_and(|e| e == "sql") {
                         macro_count += 1;
-                        // Try to read and parse the macro file
                         if let Ok(content) = std::fs::read_to_string(&path) {
-                            // Use a simple Jinja env to test syntax
-                            let test_env = JinjaEnvironment::new(&project.config.vars);
+                            let test_env = JinjaEnvironment::new(vars);
                             if let Err(e) = test_env.render(&content) {
                                 let err_str = e.to_string();
-                                // Only report if it's a real syntax error, not undefined variable
                                 if !err_str.contains("undefined") {
                                     ctx.error(
                                         "M002",
@@ -400,6 +451,7 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
             }
         }
     }
+
     if macro_count == 0 {
         println!("(none found)");
     } else if macro_errors == 0 {
@@ -407,25 +459,26 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
     } else {
         println!("✗ ({} errors in {} macros)", macro_errors, macro_count);
     }
+}
 
-    // Print all issues
+/// Print all issues and final summary
+fn print_issues_and_summary(ctx: &ValidationContext, strict: bool) -> Result<()> {
     println!();
     for issue in &ctx.issues {
         println!("{}", issue);
     }
 
-    // Summary
     let error_count = ctx.error_count();
     let warning_count = ctx.warning_count();
 
     println!();
-    if error_count == 0 && (warning_count == 0 || !args.strict) {
+    if error_count == 0 && (warning_count == 0 || !strict) {
         println!(
             "Validation passed: {} errors, {} warnings",
             error_count, warning_count
         );
         Ok(())
-    } else if args.strict && warning_count > 0 {
+    } else if strict && warning_count > 0 {
         println!(
             "Validation failed (strict mode): {} errors, {} warnings",
             error_count, warning_count
@@ -436,7 +489,6 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
             "Validation failed: {} errors, {} warnings",
             error_count, warning_count
         );
-        // Exit code 3 = Circular dependency (per spec)
         if ctx.has_circular_dependency() {
             std::process::exit(3);
         }
@@ -445,22 +497,17 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
 }
 
 /// Check if a test makes sense for the given data type
-/// Returns Some(warning_message) if there's a type incompatibility
 fn check_test_type_compatibility(
     test: &TestDefinition,
     data_type: &str,
     column_name: &str,
     model_name: &str,
 ) -> Option<String> {
-    // Tests that require numeric types
     let numeric_tests = ["positive", "non_negative", "min_value", "max_value"];
-
-    // String/text types
     let string_types = [
         "VARCHAR", "CHAR", "TEXT", "STRING", "NVARCHAR", "NCHAR", "CLOB",
     ];
 
-    // Check if type is a string type
     let is_string_type = string_types
         .iter()
         .any(|t| data_type.starts_with(t) || data_type.contains(t));
@@ -470,7 +517,6 @@ fn check_test_type_compatibility(
         TestDefinition::Parameterized(map) => map.keys().next().map(|s| s.as_str()).unwrap_or(""),
     };
 
-    // Numeric tests on string types
     if numeric_tests.contains(&test_name) && is_string_type {
         return Some(format!(
             "Test '{}' on column '{}' (type {}) in model '{}' - numeric test on string type",
@@ -478,9 +524,7 @@ fn check_test_type_compatibility(
         ));
     }
 
-    // Regex test on non-string types
     if test_name == "regex" && !is_string_type {
-        // Only warn if it's clearly a non-string type
         let numeric_types = [
             "INT",
             "INTEGER",
@@ -589,7 +633,6 @@ mod tests {
     #[test]
     fn test_not_null_on_any_type() {
         let test = TestDefinition::Simple("not_null".to_string());
-        // not_null should work on any type
         let result1 = check_test_type_compatibility(&test, "VARCHAR", "name", "test_model");
         let result2 = check_test_type_compatibility(&test, "INTEGER", "id", "test_model");
         assert!(result1.is_none());
@@ -599,7 +642,6 @@ mod tests {
     #[test]
     fn test_unique_on_any_type() {
         let test = TestDefinition::Simple("unique".to_string());
-        // unique should work on any type
         let result1 = check_test_type_compatibility(&test, "VARCHAR", "name", "test_model");
         let result2 = check_test_type_compatibility(&test, "INTEGER", "id", "test_model");
         assert!(result1.is_none());
