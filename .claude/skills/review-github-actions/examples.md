@@ -53,16 +53,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
-      
+
       - uses: dtolnay/rust-toolchain@stable
-      
+
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.os }}
-      
+
       - name: Check compilation
         run: make check
 
@@ -74,7 +74,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       
@@ -209,17 +209,11 @@ jobs:
             target: x86_64-apple-darwin
             artifact_name: ff
             asset_name: ff-x86_64-apple-darwin
-          
+
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact_name: ff
             asset_name: ff-aarch64-apple-darwin
-          
-          # Windows targets
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact_name: ff.exe
-            asset_name: ff-x86_64-windows-msvc.exe
     
     steps:
       - uses: actions/checkout@v4

@@ -14,6 +14,12 @@ allowed-tools:
 
 This skill enforces clean GitHub Actions patterns with emphasis on delegating execution to Makefile commands rather than inline scripts.
 
+## Project-Specific Rules
+
+### No Windows CI
+
+**CRITICAL**: Never use `windows-latest` in any GitHub Actions workflow for this project. Windows is not a target platform, and Windows CI is slow and expensive. Only use `ubuntu-latest` and `macos-latest` in matrix strategies.
+
 ## Core Principles
 
 ### 1. Makefile Delegation (DRY Principle)
@@ -69,21 +75,30 @@ steps:
 
 ### 3. Matrix Builds for Cross-Platform
 
-**Standard**: Use matrix strategy for testing across multiple environments.
+**Standard**: Use matrix strategy for testing across multiple environments. **Never include `windows-latest`** - Windows CI is slow, expensive, and not a target platform for this project.
 
-**GOOD** - Matrix for multi-platform:
+**GOOD** - Matrix for multi-platform (no Windows):
 ```yaml
 jobs:
   test:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: make test
+```
+
+**BAD** - Includes Windows:
+```yaml
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]  # NO! Remove windows-latest
 ```
 
 **BAD** - Separate jobs per platform:
@@ -100,7 +115,7 @@ jobs:
     steps: [...]
 ```
 
-**Why**: Matrix reduces duplication, easier to maintain, clearer structure.
+**Why**: Matrix reduces duplication, easier to maintain, clearer structure. Windows is excluded due to slow builds and not being a target platform.
 
 ### 4. Fail-Fast Strategy
 
@@ -111,7 +126,7 @@ jobs:
 strategy:
   fail-fast: true
   matrix:
-    os: [ubuntu-latest, macos-latest, windows-latest]
+    os: [ubuntu-latest, macos-latest]
 ```
 
 **GOOD** - Continue for comprehensive testing:
@@ -119,7 +134,7 @@ strategy:
 strategy:
   fail-fast: false  # Complete all matrix runs
   matrix:
-    os: [ubuntu-latest, macos-latest, windows-latest]
+    os: [ubuntu-latest, macos-latest]
 ```
 
 **Why**: Fail-fast saves time in development; continuing shows full test results.
@@ -283,30 +298,34 @@ jobs:
 
 When reviewing workflow files, check:
 
-1. **Makefile Delegation**
+1. **Project Rules**
+   - [ ] **No `windows-latest`** - Only use `ubuntu-latest` and `macos-latest`
+   - [ ] No Windows targets in release builds
+
+2. **Makefile Delegation**
    - [ ] All `run:` steps use Makefile targets
    - [ ] No inline shell scripts duplicating Makefile logic
    - [ ] Complex commands are in Makefile, not YAML
 
-2. **Efficiency**
+3. **Efficiency**
    - [ ] Appropriate caching strategy implemented
-   - [ ] Matrix builds for multi-platform testing
+   - [ ] Matrix builds for multi-platform testing (Linux + macOS only)
    - [ ] Concurrency control to cancel stale runs
    - [ ] Artifacts used for build output sharing
 
-3. **Security**
+4. **Security**
    - [ ] Minimal permissions granted
    - [ ] Secrets properly used via `${{ secrets.NAME }}`
    - [ ] No hardcoded credentials or tokens
    - [ ] Actions pinned to specific versions/SHAs
 
-4. **Maintainability**
+5. **Maintainability**
    - [ ] Self-documenting job and step names
    - [ ] Environment variables centralized
    - [ ] DRY principle followed (no duplication)
    - [ ] Clear workflow structure
 
-5. **Quality**
+6. **Quality**
    - [ ] Fail-fast strategy considered for context
    - [ ] Branch/path filters appropriate
    - [ ] Timeout values set for long-running jobs

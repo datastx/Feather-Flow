@@ -1413,6 +1413,8 @@ Validation complete: 2 errors, 2 warnings, 1 info
 
 ## CI/CD pipeline stages
 
+**Important**: Never use `windows-latest` in GitHub Actions workflows. Windows CI is slow, expensive, and not a target platform for Featherflow. Only use `ubuntu-latest` and `macos-latest`.
+
 ### ci.yml
 
 ```yaml
@@ -1459,7 +1461,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -1498,8 +1500,6 @@ jobs:
             target: x86_64-apple-darwin
           - os: macos-latest
             target: aarch64-apple-darwin
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
