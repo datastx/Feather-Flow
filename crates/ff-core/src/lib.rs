@@ -6,11 +6,15 @@
 
 pub mod breaking_changes;
 pub mod config;
+pub mod contract;
 pub mod dag;
 pub mod error;
+pub mod exposure;
 pub mod manifest;
+pub mod metric;
 pub mod model;
 pub mod project;
+pub mod run_state;
 pub mod seed;
 pub mod selector;
 pub mod snapshot;
@@ -22,10 +26,17 @@ pub use breaking_changes::{
     BreakingChangeType,
 };
 pub use config::Config;
+pub use contract::{validate_contract, ContractValidationResult, ContractViolation, ViolationType};
 pub use error::CoreError;
+pub use exposure::{discover_exposures, Exposure, ExposureMaturity, ExposureOwner, ExposureType};
 pub use manifest::Manifest;
-pub use model::Model;
+pub use metric::{discover_metrics, Metric, MetricCalculation};
+pub use model::{
+    ColumnConstraint, FreshnessConfig, FreshnessPeriod, FreshnessThreshold, Model, ModelSchema,
+    SchemaContract,
+};
 pub use project::Project;
+pub use run_state::{CompletedModel, FailedModel, RunState, RunStateSummary, RunStatus};
 pub use seed::{Seed, SeedConfig};
 pub use selector::Selector;
 pub use snapshot::{discover_snapshots, Snapshot, SnapshotConfig, SnapshotStrategy};

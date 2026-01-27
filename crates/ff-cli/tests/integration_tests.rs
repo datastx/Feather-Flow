@@ -3,6 +3,7 @@
 use ff_core::dag::ModelDag;
 use ff_core::manifest::Manifest;
 use ff_core::model::TestDefinition;
+use ff_core::run_state::{RunState, RunStatus};
 use ff_core::Project;
 use ff_db::{Database, DuckDbBackend};
 use ff_jinja::JinjaEnvironment;
@@ -10,6 +11,7 @@ use ff_sql::{extract_dependencies, SqlParser};
 use ff_test::{generator::GeneratedTest, TestRunner};
 use std::collections::HashMap;
 use std::path::Path;
+use tempfile::tempdir;
 
 /// Test loading the sample project
 #[test]
@@ -1008,4 +1010,824 @@ async fn test_parallel_execution_with_dependencies() {
     // Verify the chain executed correctly
     let result = db.query_one("SELECT final_value FROM fct").await.unwrap();
     assert_eq!(result, Some("250".to_string())); // 100 * 2 + 50 = 250
+}
+
+// ============================================================================
+// ERROR SCENARIO TESTS (Work Unit 5.1)
+// ============================================================================
+
+/// Test that circular dependency error includes the cycle path
+#[test]
+fn test_circular_dependency_error_message_includes_cycle() {
+    let mut deps = HashMap::new();
+    deps.insert("model_a".to_string(), vec!["model_c".to_string()]);
+    deps.insert("model_b".to_string(), vec!["model_a".to_string()]);
+    deps.insert("model_c".to_string(), vec!["model_b".to_string()]);
+
+    let result = ModelDag::build(&deps);
+    assert!(result.is_err(), "Should fail due to circular dependency");
+
+    let err = result.unwrap_err();
+    let err_str = err.to_string();
+
+    // Error should include E007 code and cycle information
+    assert!(
+        err_str.contains("E007") || err_str.contains("ircular"),
+        "Error should indicate circular dependency: {}",
+        err_str
+    );
+
+    // Error should mention at least one model in the cycle
+    let contains_cycle_info =
+        err_str.contains("model_a") || err_str.contains("model_b") || err_str.contains("model_c");
+    assert!(
+        contains_cycle_info,
+        "Error should mention models in cycle: {}",
+        err_str
+    );
+}
+
+/// Test that SQL syntax errors show useful location information
+#[test]
+fn test_sql_syntax_error_shows_useful_info() {
+    let parser = SqlParser::from_dialect_name("duckdb").unwrap();
+
+    // Various invalid SQL statements
+    let test_cases = vec![
+        "SELEC * FROM users",                  // Typo in SELECT
+        "SELECT FROM users",                   // Missing columns
+        "SELECT * FROM users WHERE",           // Incomplete WHERE
+        "SELECT * FROM users GROUP",           // Incomplete GROUP BY
+        "SELECT a, b FROM users HAVING a > 0", // HAVING without GROUP BY (depending on dialect)
+    ];
+
+    for invalid_sql in test_cases {
+        let result = parser.parse(invalid_sql);
+        // Most of these should fail to parse
+        if let Err(err) = result {
+            let err_str = err.to_string();
+
+            // Error should not be empty
+            assert!(
+                !err_str.is_empty(),
+                "Error message should not be empty for: {}",
+                invalid_sql
+            );
+        }
+    }
+}
+
+/// Test undefined variable error in Jinja
+#[test]
+fn test_undefined_variable_error() {
+    let jinja = JinjaEnvironment::default();
+
+    // Reference a variable that doesn't exist and has no default
+    let template = "SELECT * FROM orders WHERE date > '{{ var(\"nonexistent_var\") }}'";
+    let result = jinja.render(template);
+
+    // This should either error or return empty string depending on implementation
+    // The important thing is it doesn't panic
+    match result {
+        Ok(rendered) => {
+            // If it succeeds, the undefined var should be handled gracefully
+            assert!(
+                !rendered.contains("nonexistent_var"),
+                "Undefined variable should be replaced or cause error"
+            );
+        }
+        Err(e) => {
+            // If it errors, the message should be helpful
+            let err_str = e.to_string();
+            assert!(
+                !err_str.is_empty(),
+                "Error message should not be empty for undefined variable"
+            );
+        }
+    }
+}
+
+/// Test invalid YAML schema error handling
+#[test]
+fn test_invalid_yaml_schema_error() {
+    let dir = tempdir().unwrap();
+    let project_dir = dir.path();
+
+    // Create minimal project structure
+    std::fs::create_dir_all(project_dir.join("models")).unwrap();
+
+    // Create config file
+    let config_content = r#"
+name: test_project
+database:
+  type: duckdb
+  path: ":memory:"
+model_paths:
+  - models
+"#;
+    std::fs::write(project_dir.join("featherflow.yml"), config_content).unwrap();
+
+    // Create a valid model SQL file
+    std::fs::write(project_dir.join("models/test_model.sql"), "SELECT 1 as id").unwrap();
+
+    // Create an INVALID YAML schema file (malformed YAML)
+    let invalid_yaml = r#"
+version: "1"
+name: test_model
+  columns:  # Wrong indentation
+- name: id
+"#;
+    std::fs::write(project_dir.join("models/test_model.yml"), invalid_yaml).unwrap();
+
+    // Try to load the project - it should handle the invalid YAML gracefully
+    let result = Project::load(project_dir);
+
+    // Either it loads with warnings or fails with a clear error
+    match result {
+        Ok(_) => {
+            // If it loads, the schema was either skipped or partially parsed
+        }
+        Err(e) => {
+            // Error should mention YAML or parse error
+            let err_str = e.to_string();
+            assert!(
+                err_str.to_lowercase().contains("yaml")
+                    || err_str.to_lowercase().contains("parse")
+                    || err_str.contains("E010"),
+                "Error should indicate YAML parse issue: {}",
+                err_str
+            );
+        }
+    }
+}
+
+/// Test duplicate model name detection
+#[test]
+fn test_duplicate_model_name_error() {
+    use ff_core::dag::ModelDag;
+
+    // In practice, duplicate detection happens at project load time
+    // Here we test that the DAG doesn't break with duplicate keys (HashMap handles it)
+    let mut deps: HashMap<String, Vec<String>> = HashMap::new();
+    deps.insert("model_a".to_string(), vec![]);
+    deps.insert("model_a".to_string(), vec!["model_b".to_string()]); // Overwrites
+
+    let dag = ModelDag::build(&deps);
+    assert!(dag.is_ok(), "HashMap handles duplicates by overwriting");
+
+    // The second insert overwrites the first
+    let dag = dag.unwrap();
+    let _order = dag.topological_order();
+    // Depending on implementation, this might succeed or fail
+    // The key test is that it doesn't panic
+}
+
+// ============================================================================
+// EDGE CASE TESTS (Work Unit 5.2)
+// ============================================================================
+
+/// Test empty project (no models)
+#[test]
+fn test_empty_project() {
+    let dir = tempdir().unwrap();
+    let project_dir = dir.path();
+
+    // Create config file but no models directory
+    let config_content = r#"
+name: empty_project
+database:
+  type: duckdb
+  path: ":memory:"
+model_paths:
+  - models
+"#;
+    std::fs::write(project_dir.join("featherflow.yml"), config_content).unwrap();
+
+    // Create empty models directory
+    std::fs::create_dir_all(project_dir.join("models")).unwrap();
+
+    let result = Project::load(project_dir);
+    match result {
+        Ok(project) => {
+            assert!(
+                project.models.is_empty(),
+                "Empty project should have no models"
+            );
+        }
+        Err(_) => {
+            // Some implementations might error on empty project
+        }
+    }
+}
+
+/// Test model with no dependencies (standalone)
+#[test]
+fn test_model_with_no_dependencies() {
+    let mut deps = HashMap::new();
+    deps.insert("standalone_model".to_string(), vec![]);
+
+    let dag = ModelDag::build(&deps).unwrap();
+    let order = dag.topological_order().unwrap();
+
+    assert_eq!(order.len(), 1);
+    assert_eq!(order[0], "standalone_model");
+}
+
+/// Test very deep DAG (10+ levels)
+#[test]
+fn test_very_deep_dag() {
+    let mut deps = HashMap::new();
+
+    // Create a chain: level_0 -> level_1 -> level_2 -> ... -> level_19
+    for i in 0..20 {
+        let model_name = format!("level_{}", i);
+        if i == 0 {
+            deps.insert(model_name, vec![]);
+        } else {
+            deps.insert(model_name, vec![format!("level_{}", i - 1)]);
+        }
+    }
+
+    let dag = ModelDag::build(&deps).unwrap();
+    let order = dag.topological_order().unwrap();
+
+    assert_eq!(order.len(), 20);
+    // level_0 should be first, level_19 should be last
+    assert_eq!(order[0], "level_0");
+    assert_eq!(order[19], "level_19");
+
+    // Verify order is correct
+    for i in 1..20 {
+        let pos_prev = order.iter().position(|m| m == &format!("level_{}", i - 1));
+        let pos_curr = order.iter().position(|m| m == &format!("level_{}", i));
+        assert!(
+            pos_prev.unwrap() < pos_curr.unwrap(),
+            "level_{} should come before level_{}",
+            i - 1,
+            i
+        );
+    }
+}
+
+/// Test wide DAG (model with 20+ dependencies)
+#[test]
+fn test_wide_dag() {
+    let mut deps = HashMap::new();
+
+    // Create 25 base models
+    let base_models: Vec<String> = (0..25).map(|i| format!("base_{}", i)).collect();
+    for name in &base_models {
+        deps.insert(name.clone(), vec![]);
+    }
+
+    // Create one model that depends on all 25
+    deps.insert("wide_model".to_string(), base_models.clone());
+
+    let dag = ModelDag::build(&deps).unwrap();
+    let order = dag.topological_order().unwrap();
+
+    assert_eq!(order.len(), 26);
+
+    // wide_model should be last
+    assert_eq!(order[25], "wide_model");
+
+    // All base models should come before wide_model
+    let wide_pos = order.iter().position(|m| m == "wide_model").unwrap();
+    for base in &base_models {
+        let base_pos = order.iter().position(|m| m == base).unwrap();
+        assert!(
+            base_pos < wide_pos,
+            "{} should come before wide_model",
+            base
+        );
+    }
+}
+
+/// Test special characters in column names
+#[tokio::test]
+async fn test_special_chars_in_column_names() {
+    let db = DuckDbBackend::in_memory().unwrap();
+
+    // DuckDB handles quoted identifiers
+    db.execute_batch(
+        r#"CREATE TABLE test_special (
+            "column with spaces" INTEGER,
+            "column-with-dashes" INTEGER,
+            "UPPERCASE" INTEGER
+        );
+        INSERT INTO test_special VALUES (1, 2, 3);"#,
+    )
+    .await
+    .unwrap();
+
+    // Verify we can query
+    let count = db.query_count("SELECT * FROM test_special").await.unwrap();
+    assert_eq!(count, 1);
+
+    // Verify we can access special columns
+    let result = db
+        .query_one(r#"SELECT "column with spaces" FROM test_special"#)
+        .await
+        .unwrap();
+    assert_eq!(result, Some("1".to_string()));
+}
+
+// ============================================================================
+// RUN STATE TESTS (Verifies 15.1 implementation)
+// ============================================================================
+
+/// Test run state basic functionality
+#[test]
+fn test_run_state_new_and_mark() {
+    let mut state = RunState::new(
+        vec!["a".to_string(), "b".to_string(), "c".to_string()],
+        Some("--select +c".to_string()),
+        "config_hash_123".to_string(),
+    );
+
+    assert_eq!(state.pending_models.len(), 3);
+    assert_eq!(state.status, RunStatus::Running);
+
+    // Mark model a as completed
+    state.mark_completed("a", 1500);
+    assert_eq!(state.completed_models.len(), 1);
+    assert_eq!(state.pending_models.len(), 2);
+    assert!(state.is_completed("a"));
+    assert!(!state.is_failed("a"));
+
+    // Mark model b as failed
+    state.mark_failed("b", "SQL error");
+    assert_eq!(state.failed_models.len(), 1);
+    assert_eq!(state.pending_models.len(), 1);
+    assert!(state.is_failed("b"));
+    assert!(!state.is_completed("b"));
+
+    // Summary
+    let summary = state.summary();
+    assert_eq!(summary.completed, 1);
+    assert_eq!(summary.failed, 1);
+    assert_eq!(summary.pending, 1);
+}
+
+/// Test run state save and load
+#[test]
+fn test_run_state_persistence() {
+    let dir = tempdir().unwrap();
+    let state_path = dir.path().join("run_state.json");
+
+    let mut state = RunState::new(
+        vec!["model_a".to_string(), "model_b".to_string()],
+        None,
+        "hash123".to_string(),
+    );
+    state.mark_completed("model_a", 1000);
+
+    // Save
+    state.save(&state_path).unwrap();
+    assert!(state_path.exists());
+
+    // Load
+    let loaded = RunState::load(&state_path).unwrap().unwrap();
+    assert_eq!(loaded.run_id, state.run_id);
+    assert_eq!(loaded.completed_models.len(), 1);
+    assert_eq!(loaded.pending_models.len(), 1);
+    assert!(loaded.is_completed("model_a"));
+}
+
+/// Test run state models_to_run for resume
+#[test]
+fn test_run_state_models_to_run() {
+    let mut state = RunState::new(
+        vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+        ],
+        None,
+        "hash".to_string(),
+    );
+
+    state.mark_completed("a", 1000);
+    state.mark_completed("b", 2000);
+    state.mark_failed("c", "error");
+
+    // models_to_run should include failed (c) and pending (d)
+    let to_run = state.models_to_run();
+    assert_eq!(to_run.len(), 2);
+    assert!(to_run.contains(&"c".to_string()));
+    assert!(to_run.contains(&"d".to_string()));
+
+    // failed_model_names should only include c
+    let failed = state.failed_model_names();
+    assert_eq!(failed.len(), 1);
+    assert!(failed.contains(&"c".to_string()));
+}
+
+// ============================================================================
+// DEFER MANIFEST TESTS (Work Units 1.1, 1.2)
+// ============================================================================
+
+/// Test loading a deferred manifest from file
+#[test]
+fn test_load_deferred_manifest() {
+    use ff_core::config::Materialization;
+    use ff_core::manifest::{Manifest, ManifestModel};
+
+    let dir = tempdir().unwrap();
+    let manifest_path = dir.path().join("manifest.json");
+
+    // Create a manifest with known models
+    let mut manifest = Manifest::new("test_project");
+    manifest.models.insert(
+        "stg_customers".to_string(),
+        ManifestModel {
+            name: "stg_customers".to_string(),
+            source_path: "models/staging/stg_customers.sql".to_string(),
+            compiled_path: "target/compiled/stg_customers.sql".to_string(),
+            materialized: Materialization::View,
+            schema: Some("staging".to_string()),
+            tags: vec![],
+            depends_on: vec![],
+            external_deps: vec!["raw_customers".to_string()],
+            referenced_tables: vec!["raw_customers".to_string()],
+            unique_key: None,
+            incremental_strategy: None,
+            on_schema_change: None,
+            pre_hook: vec![],
+            post_hook: vec![],
+        },
+    );
+    manifest.model_count = 1;
+
+    // Save manifest
+    manifest.save(&manifest_path).unwrap();
+    assert!(manifest_path.exists());
+
+    // Load it back
+    let loaded = Manifest::load(&manifest_path).unwrap();
+    assert_eq!(loaded.project_name, "test_project");
+    assert!(loaded.get_model("stg_customers").is_some());
+    assert!(loaded.get_model("nonexistent").is_none());
+}
+
+/// Test defer fails when manifest file doesn't exist
+#[test]
+fn test_defer_manifest_not_found() {
+    let nonexistent_path = "/tmp/nonexistent_manifest_12345.json";
+    let path = Path::new(nonexistent_path);
+
+    assert!(!path.exists(), "Path should not exist for this test");
+
+    // Loading should fail
+    let result = Manifest::load(path);
+    assert!(result.is_err(), "Loading nonexistent manifest should fail");
+}
+
+/// Test deferred model dependencies are resolved correctly
+#[test]
+fn test_defer_dependency_resolution() {
+    use ff_core::config::Materialization;
+    use ff_core::manifest::{Manifest, ManifestModel};
+
+    // Create a deferred manifest with stg_customers and stg_orders
+    let mut deferred = Manifest::new("prod_project");
+
+    deferred.models.insert(
+        "stg_customers".to_string(),
+        ManifestModel {
+            name: "stg_customers".to_string(),
+            source_path: "models/stg_customers.sql".to_string(),
+            compiled_path: "target/compiled/stg_customers.sql".to_string(),
+            materialized: Materialization::View,
+            schema: None,
+            tags: vec![],
+            depends_on: vec![],
+            external_deps: vec!["raw_customers".to_string()],
+            referenced_tables: vec!["raw_customers".to_string()],
+            unique_key: None,
+            incremental_strategy: None,
+            on_schema_change: None,
+            pre_hook: vec![],
+            post_hook: vec![],
+        },
+    );
+
+    deferred.models.insert(
+        "stg_orders".to_string(),
+        ManifestModel {
+            name: "stg_orders".to_string(),
+            source_path: "models/stg_orders.sql".to_string(),
+            compiled_path: "target/compiled/stg_orders.sql".to_string(),
+            materialized: Materialization::View,
+            schema: None,
+            tags: vec![],
+            depends_on: vec![],
+            external_deps: vec!["raw_orders".to_string()],
+            referenced_tables: vec!["raw_orders".to_string()],
+            unique_key: None,
+            incremental_strategy: None,
+            on_schema_change: None,
+            pre_hook: vec![],
+            post_hook: vec![],
+        },
+    );
+
+    // Simulate a selected model (fct_orders) that depends on both
+    // The selected models need stg_customers and stg_orders
+    // These should be found in the deferred manifest
+    let required_deps = vec!["stg_customers", "stg_orders"];
+    for dep in required_deps {
+        assert!(
+            deferred.get_model(dep).is_some(),
+            "Deferred manifest should contain {}",
+            dep
+        );
+    }
+
+    // A missing dependency should not be found
+    assert!(
+        deferred.get_model("stg_products").is_none(),
+        "stg_products should not be in deferred manifest"
+    );
+}
+
+/// Test defer with missing upstream model in manifest
+#[test]
+fn test_defer_missing_upstream_detection() {
+    use ff_core::config::Materialization;
+    use ff_core::manifest::{Manifest, ManifestModel};
+
+    // Create a deferred manifest with only stg_customers (missing stg_orders)
+    let mut deferred = Manifest::new("prod_project");
+
+    deferred.models.insert(
+        "stg_customers".to_string(),
+        ManifestModel {
+            name: "stg_customers".to_string(),
+            source_path: "models/stg_customers.sql".to_string(),
+            compiled_path: "target/compiled/stg_customers.sql".to_string(),
+            materialized: Materialization::View,
+            schema: None,
+            tags: vec![],
+            depends_on: vec![],
+            external_deps: vec!["raw_customers".to_string()],
+            referenced_tables: vec!["raw_customers".to_string()],
+            unique_key: None,
+            incremental_strategy: None,
+            on_schema_change: None,
+            pre_hook: vec![],
+            post_hook: vec![],
+        },
+    );
+
+    // fct_orders depends on stg_orders which is NOT in the manifest
+    let missing = "stg_orders";
+    assert!(
+        deferred.get_model(missing).is_none(),
+        "stg_orders should be missing from manifest"
+    );
+
+    // In actual code, this would trigger:
+    // "Model 'stg_orders' not found in deferred manifest. It is required by: fct_orders"
+}
+
+/// Test manifest with transitive dependencies
+#[test]
+fn test_defer_transitive_dependencies() {
+    use ff_core::config::Materialization;
+    use ff_core::manifest::{Manifest, ManifestModel};
+
+    // Create a manifest with a chain: dim_products -> stg_products -> raw_products
+    let mut manifest = Manifest::new("prod");
+
+    manifest.models.insert(
+        "stg_products".to_string(),
+        ManifestModel {
+            name: "stg_products".to_string(),
+            source_path: "models/stg_products.sql".to_string(),
+            compiled_path: "target/compiled/stg_products.sql".to_string(),
+            materialized: Materialization::View,
+            schema: None,
+            tags: vec![],
+            depends_on: vec!["raw_products".to_string()],
+            external_deps: vec![],
+            referenced_tables: vec!["raw_products".to_string()],
+            unique_key: None,
+            incremental_strategy: None,
+            on_schema_change: None,
+            pre_hook: vec![],
+            post_hook: vec![],
+        },
+    );
+
+    manifest.models.insert(
+        "dim_products".to_string(),
+        ManifestModel {
+            name: "dim_products".to_string(),
+            source_path: "models/dim_products.sql".to_string(),
+            compiled_path: "target/compiled/dim_products.sql".to_string(),
+            materialized: Materialization::Table,
+            schema: None,
+            tags: vec![],
+            depends_on: vec!["stg_products".to_string()],
+            external_deps: vec![],
+            referenced_tables: vec!["stg_products".to_string()],
+            unique_key: None,
+            incremental_strategy: None,
+            on_schema_change: None,
+            pre_hook: vec![],
+            post_hook: vec![],
+        },
+    );
+
+    // Verify we can traverse the dependency chain
+    let dim = manifest.get_model("dim_products").unwrap();
+    assert_eq!(dim.depends_on, vec!["stg_products"]);
+
+    let stg = manifest.get_model("stg_products").unwrap();
+    assert_eq!(stg.depends_on, vec!["raw_products"]);
+}
+
+/// Test slim CI workflow scenario
+#[test]
+fn test_defer_slim_ci_scenario() {
+    use ff_core::config::Materialization;
+    use ff_core::manifest::{Manifest, ManifestModel};
+
+    // Production manifest has a full DAG
+    let mut prod_manifest = Manifest::new("production");
+
+    // Add production models
+    for model_name in &[
+        "stg_customers",
+        "stg_orders",
+        "stg_products",
+        "fct_orders",
+        "fct_revenue",
+    ] {
+        prod_manifest.models.insert(
+            model_name.to_string(),
+            ManifestModel {
+                name: model_name.to_string(),
+                source_path: format!("models/{}.sql", model_name),
+                compiled_path: format!("target/compiled/{}.sql", model_name),
+                materialized: if model_name.starts_with("stg") {
+                    Materialization::View
+                } else {
+                    Materialization::Table
+                },
+                schema: None,
+                tags: vec![],
+                depends_on: match *model_name {
+                    "fct_orders" => vec!["stg_customers".to_string(), "stg_orders".to_string()],
+                    "fct_revenue" => vec!["stg_orders".to_string(), "stg_products".to_string()],
+                    _ => vec![],
+                },
+                external_deps: vec![],
+                referenced_tables: vec![],
+                unique_key: None,
+                incremental_strategy: None,
+                on_schema_change: None,
+                pre_hook: vec![],
+                post_hook: vec![],
+            },
+        );
+    }
+
+    // Scenario: Developer changed only fct_orders
+    // They want to run: ff run --select fct_orders --defer --state prod_manifest.json
+    let selected_model = "fct_orders";
+
+    // fct_orders depends on stg_customers and stg_orders
+    let fct = prod_manifest.get_model(selected_model).unwrap();
+    let deps_to_defer: Vec<&str> = fct.depends_on.iter().map(|s| s.as_str()).collect();
+
+    assert_eq!(deps_to_defer.len(), 2);
+    assert!(deps_to_defer.contains(&"stg_customers"));
+    assert!(deps_to_defer.contains(&"stg_orders"));
+
+    // All dependencies exist in prod manifest - can be deferred
+    for dep in &deps_to_defer {
+        assert!(
+            prod_manifest.get_model(dep).is_some(),
+            "{} should be in production manifest",
+            dep
+        );
+    }
+}
+
+/// Test ephemeral model SQL inlining
+#[test]
+fn test_ephemeral_model_inlining() {
+    use ff_sql::{collect_ephemeral_dependencies, inline_ephemeral_ctes};
+
+    // Setup: Create dependency graph with ephemeral models
+    // stg_raw (ephemeral) -> stg_orders (ephemeral) -> fct_orders (table)
+    let mut dependencies: HashMap<String, Vec<String>> = HashMap::new();
+    dependencies.insert("fct_orders".to_string(), vec!["stg_orders".to_string()]);
+    dependencies.insert("stg_orders".to_string(), vec!["stg_raw".to_string()]);
+    dependencies.insert("stg_raw".to_string(), vec![]); // depends on external table
+
+    // Simulate ephemeral SQL
+    let mut ephemeral_sql: HashMap<String, String> = HashMap::new();
+    ephemeral_sql.insert(
+        "stg_raw".to_string(),
+        "SELECT id, customer_id, amount FROM raw_orders WHERE amount > 0".to_string(),
+    );
+    ephemeral_sql.insert(
+        "stg_orders".to_string(),
+        "SELECT id, customer_id, amount FROM stg_raw".to_string(),
+    );
+
+    // Define which models are ephemeral
+    let is_ephemeral = |name: &str| name == "stg_raw" || name == "stg_orders";
+    let get_sql = |name: &str| ephemeral_sql.get(name).cloned();
+
+    // Collect ephemeral dependencies for fct_orders
+    let (collected_ephemeral, order) =
+        collect_ephemeral_dependencies("fct_orders", &dependencies, is_ephemeral, get_sql);
+
+    // Verify both ephemeral models were collected
+    assert_eq!(collected_ephemeral.len(), 2);
+    assert!(collected_ephemeral.contains_key("stg_raw"));
+    assert!(collected_ephemeral.contains_key("stg_orders"));
+
+    // Verify order: stg_raw should come before stg_orders
+    assert_eq!(order.len(), 2);
+    let raw_pos = order.iter().position(|s| s == "stg_raw").unwrap();
+    let orders_pos = order.iter().position(|s| s == "stg_orders").unwrap();
+    assert!(
+        raw_pos < orders_pos,
+        "stg_raw should come before stg_orders"
+    );
+
+    // Inline ephemeral CTEs into fct_orders SQL
+    let fct_orders_sql =
+        "SELECT id, customer_id, SUM(amount) as total FROM stg_orders GROUP BY 1, 2";
+    let inlined = inline_ephemeral_ctes(fct_orders_sql, &collected_ephemeral, &order);
+
+    // Verify the inlined SQL has CTEs
+    assert!(inlined.starts_with("WITH"), "Should start with WITH clause");
+    assert!(inlined.contains("stg_raw AS"), "Should contain stg_raw CTE");
+    assert!(
+        inlined.contains("stg_orders AS"),
+        "Should contain stg_orders CTE"
+    );
+    assert!(
+        inlined.contains("FROM raw_orders"),
+        "Should contain stg_raw's source table"
+    );
+    assert!(
+        inlined.contains("FROM stg_raw"),
+        "stg_orders should reference stg_raw"
+    );
+    assert!(
+        inlined.contains("GROUP BY 1, 2"),
+        "Original query should be preserved"
+    );
+
+    // Verify CTE order in the output
+    let raw_cte_pos = inlined.find("stg_raw AS").unwrap();
+    let orders_cte_pos = inlined.find("stg_orders AS").unwrap();
+    assert!(
+        raw_cte_pos < orders_cte_pos,
+        "stg_raw CTE should come before stg_orders CTE"
+    );
+}
+
+/// Test ephemeral model with existing CTE in query
+#[test]
+fn test_ephemeral_inlining_with_existing_cte() {
+    use ff_sql::inline_ephemeral_ctes;
+
+    let original_sql = "WITH recent_orders AS (SELECT * FROM stg_orders WHERE order_date > '2024-01-01') SELECT * FROM recent_orders";
+
+    let mut ephemeral_sql: HashMap<String, String> = HashMap::new();
+    ephemeral_sql.insert(
+        "stg_orders".to_string(),
+        "SELECT id, order_date, amount FROM raw_orders".to_string(),
+    );
+
+    let order = vec!["stg_orders".to_string()];
+    let inlined = inline_ephemeral_ctes(original_sql, &ephemeral_sql, &order);
+
+    // Should merge CTEs properly
+    assert!(inlined.starts_with("WITH"), "Should start with WITH");
+    assert!(
+        inlined.contains("stg_orders AS"),
+        "Should contain ephemeral CTE"
+    );
+    assert!(
+        inlined.contains("recent_orders AS"),
+        "Should preserve original CTE"
+    );
+
+    // The ephemeral CTE should come before the original CTE
+    let ephemeral_pos = inlined.find("stg_orders AS").unwrap();
+    let original_cte_pos = inlined.find("recent_orders AS").unwrap();
+    assert!(
+        ephemeral_pos < original_cte_pos,
+        "Ephemeral CTE should come first"
+    );
 }

@@ -1744,6 +1744,167 @@ Errors include relevant context:
 | Run hooks | Done |
 | Operations | Done (run-operation command) |
 
+### Phase A: Production Readiness (v1.0.0) - COMPLETE
+
+| Feature | Work Units | Status |
+|---------|------------|--------|
+| Full --defer Implementation | 3 | Done |
+| Integration Test Expansion | 2 | Done |
+| Structured JSON Output | 1 | Done |
+| Data Contracts / Schema Enforcement | 3 | Done |
+| Data Freshness SLAs | 3 | Done |
+| Retry and Partial Run Recovery | 2 | Done |
+
+**Key Files**: `run.rs`, `contract.rs`, `freshness.rs`, `run_state.rs`
+
+### Phase B: Developer Experience (v1.1.0) - COMPLETE
+
+| Feature | Work Units | Status |
+|---------|------------|--------|
+| Custom Test Macros | 3 | Done |
+| Environment/Target Management | 3 | Done |
+| Progress Indicators | 1 | Done |
+| Verbose Mode | 1 | Done |
+| Exposure Definitions | 2 | Done |
+| Data Diff / Compare | 2 | Done |
+| Model Ownership and Metadata | 3 | Done |
+
+**Key Files**: `custom_tests.rs`, `config.rs`, `exposure.rs`, `diff.rs`, `model.rs`
+
+### Phase C: Advanced Features (v1.2.0) - COMPLETE
+
+| Feature | Work Units | Status |
+|---------|------------|--------|
+| Ephemeral Materialization | 3 | Done |
+| Macro Documentation | 2 | Done |
+| Model Versioning | 3 | Done |
+| Metric Definitions | 4 | Done |
+| Freshness in Run Results | 1 | Done |
+| Exposure Docs & Impact Analysis | 2 | Done |
+
+**Key Files**: `inline.rs`, `builtins.rs`, `model.rs`, `project.rs`, `metric.rs`
+
+---
+
+## Extended Features Reference
+
+### Data Contracts (Feature 8)
+
+Define enforced schema contracts in model YAML:
+
+```yaml
+version: "1"
+name: fct_orders
+contract:
+  enforced: true
+columns:
+  - name: order_id
+    data_type: INTEGER
+    constraints: [not_null, primary_key]
+  - name: total_amount
+    data_type: DECIMAL(10,2)
+```
+
+Commands:
+- `ff run` validates contracts after model creation
+- `ff validate --contracts --state` checks contracts without running
+
+### Data Freshness SLAs (Feature 10)
+
+Define freshness SLAs in model YAML:
+
+```yaml
+name: fct_orders
+freshness:
+  loaded_at_field: updated_at
+  warn_after:
+    count: 4
+    period: hour
+  error_after:
+    count: 8
+    period: hour
+```
+
+Commands:
+- `ff freshness` - Check model freshness against SLAs
+- Results included in `ff run` output
+
+### Exposure Definitions (Feature 11)
+
+Document downstream consumers in `exposures/` directory:
+
+```yaml
+version: "1"
+kind: exposure
+name: revenue_dashboard
+type: dashboard
+owner:
+  name: Analytics Team
+  email: analytics@company.com
+depends_on:
+  - fct_orders
+  - dim_customers
+url: https://bi.company.com/dashboard/123
+maturity: high
+```
+
+Commands:
+- `ff ls --downstream-exposures` - Show affected exposures
+- Exposures included in documentation output
+
+### Metric Definitions (Feature 12)
+
+Define semantic metrics in `metrics/` directory:
+
+```yaml
+version: "1"
+kind: metric
+name: total_revenue
+label: Total Revenue
+model: fct_orders
+calculation: sum
+expression: order_amount
+timestamp: order_date
+dimensions:
+  - customer_segment
+  - product_category
+filters:
+  - is_valid = true
+```
+
+Commands:
+- `ff metric` - List all metrics
+- Metrics generate SQL for BI tools
+
+### Data Diff (Feature 13)
+
+Compare model output between environments:
+
+```bash
+ff diff fct_orders --compare-to /path/to/prod.duckdb
+ff diff fct_orders --columns order_id,total_amount --compare-to prod.duckdb
+```
+
+### Model Versioning (Feature 9)
+
+Support versioned models with `_v{N}` suffix:
+
+- `fct_orders_v1.sql` and `fct_orders_v2.sql` can coexist
+- Unversioned references resolve to latest version
+- Deprecation warnings via `deprecated: true` in schema
+
+### Retry and Recovery (Feature 15)
+
+Resume failed runs:
+
+```bash
+ff run --resume                    # Continue from failed state
+ff run --resume --retry-failed     # Only retry failed models
+ff run --resume --state-file ./custom/run_state.json
+```
+
+State tracked in `target/run_state.json`.
+
 ---
 
 ## Dialect Extensibility

@@ -2,6 +2,8 @@
 
 use crate::config::Config;
 use crate::error::{CoreError, CoreResult};
+use crate::exposure::{discover_exposures, Exposure};
+use crate::metric::{discover_metrics, Metric};
 use crate::model::{Model, SchemaTest, SchemaYml, SingularTest};
 use crate::source::{discover_sources, SourceFile};
 use std::collections::HashMap;
@@ -27,6 +29,12 @@ pub struct Project {
 
     /// Source definitions
     pub sources: Vec<SourceFile>,
+
+    /// Exposure definitions
+    pub exposures: Vec<Exposure>,
+
+    /// Metric definitions
+    pub metrics: Vec<Metric>,
 }
 
 impl Project {
@@ -72,6 +80,14 @@ impl Project {
         // Discover singular tests from test_paths
         let singular_tests = Self::discover_singular_tests(&root, &config)?;
 
+        // Discover exposure definitions
+        let exposure_paths = config.exposure_paths_absolute(&root);
+        let exposures = discover_exposures(&exposure_paths);
+
+        // Discover metric definitions
+        let metric_paths = config.metric_paths_absolute(&root);
+        let metrics = discover_metrics(&metric_paths);
+
         Ok(Self {
             root,
             config,
@@ -79,6 +95,8 @@ impl Project {
             tests,
             singular_tests,
             sources,
+            exposures,
+            metrics,
         })
     }
 
@@ -214,6 +232,117 @@ impl Project {
         self.models.keys().map(|s| s.as_str()).collect()
     }
 
+    /// Resolve a model reference, handling version resolution
+    ///
+    /// If the reference is unversioned (e.g., "fct_orders"), resolves to the latest version.
+    /// If the reference is versioned (e.g., "fct_orders_v1"), resolves to that specific version.
+    ///
+    /// Returns (resolved_name, warnings) where warnings contains any deprecation warnings.
+    pub fn resolve_model_reference(&self, reference: &str) -> (Option<&Model>, Vec<String>) {
+        let mut warnings = Vec::new();
+
+        // First try exact match
+        if let Some(model) = self.models.get(reference) {
+            // Check for deprecation
+            if model.is_deprecated() {
+                let msg = model
+                    .get_deprecation_message()
+                    .unwrap_or("This model is deprecated");
+                warnings.push(format!(
+                    "Warning: Model '{}' is deprecated. {}",
+                    reference, msg
+                ));
+            }
+            return (Some(model), warnings);
+        }
+
+        // If no exact match and reference doesn't look versioned, try to find latest version
+        let (parsed_base, _) = Model::parse_version(reference);
+        if parsed_base.is_none() {
+            // Unversioned reference - find all versions and return latest
+            if let Some((name, model)) = self.get_latest_version(reference) {
+                if model.is_versioned() {
+                    // Resolved to a versioned model - this is normal, no warning needed
+                }
+                // Check for deprecation on resolved model
+                if model.is_deprecated() {
+                    let msg = model
+                        .get_deprecation_message()
+                        .unwrap_or("This model is deprecated");
+                    warnings.push(format!("Warning: Model '{}' is deprecated. {}", name, msg));
+                }
+                return (Some(model), warnings);
+            }
+        }
+
+        (None, warnings)
+    }
+
+    /// Get the latest version of a model by base name
+    ///
+    /// Returns the model with the highest version number, or the unversioned model if no versions exist.
+    pub fn get_latest_version(&self, base_name: &str) -> Option<(&str, &Model)> {
+        let mut candidates: Vec<(&str, &Model, Option<u32>)> = Vec::new();
+
+        for (name, model) in &self.models {
+            // Check if this model matches the base name
+            let model_base = model.get_base_name();
+            if model_base == base_name || name == base_name {
+                candidates.push((name.as_str(), model, model.version));
+            }
+        }
+
+        if candidates.is_empty() {
+            return None;
+        }
+
+        // Sort by version (None treated as 0, so unversioned comes before v1)
+        candidates.sort_by(|a, b| {
+            let va = a.2.unwrap_or(0);
+            let vb = b.2.unwrap_or(0);
+            vb.cmp(&va) // Descending order, highest version first
+        });
+
+        candidates.first().map(|(name, model, _)| (*name, *model))
+    }
+
+    /// Get all versions of a model by base name
+    pub fn get_all_versions(&self, base_name: &str) -> Vec<(&str, &Model)> {
+        let mut versions: Vec<(&str, &Model)> = self
+            .models
+            .iter()
+            .filter(|(_, model)| model.get_base_name() == base_name)
+            .map(|(name, model)| (name.as_str(), model))
+            .collect();
+
+        // Sort by version ascending
+        versions.sort_by(|a, b| {
+            let va = a.1.version.unwrap_or(0);
+            let vb = b.1.version.unwrap_or(0);
+            va.cmp(&vb)
+        });
+
+        versions
+    }
+
+    /// Check if a model reference is to a non-latest version and return a warning if so
+    pub fn check_version_warning(&self, reference: &str) -> Option<String> {
+        if let Some(model) = self.models.get(reference) {
+            if model.is_versioned() {
+                let base_name = model.get_base_name();
+                if let Some((latest_name, _)) = self.get_latest_version(base_name) {
+                    if latest_name != reference {
+                        return Some(format!(
+                            "Warning: Model '{}' depends on '{}' which is not the latest version. Latest is '{}'.",
+                            reference, reference, latest_name
+                        ));
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Get tests for a specific model
     pub fn tests_for_model(&self, model: &str) -> Vec<&SchemaTest> {
         self.tests.iter().filter(|t| t.model == model).collect()
@@ -245,6 +374,42 @@ impl Project {
     /// Get all source names
     pub fn source_names(&self) -> Vec<&str> {
         self.sources.iter().map(|s| s.name.as_str()).collect()
+    }
+
+    /// Get all exposure names
+    pub fn exposure_names(&self) -> Vec<&str> {
+        self.exposures.iter().map(|e| e.name.as_str()).collect()
+    }
+
+    /// Get an exposure by name
+    pub fn get_exposure(&self, name: &str) -> Option<&Exposure> {
+        self.exposures.iter().find(|e| e.name == name)
+    }
+
+    /// Get exposures that depend on a specific model
+    pub fn exposures_for_model(&self, model_name: &str) -> Vec<&Exposure> {
+        self.exposures
+            .iter()
+            .filter(|e| e.depends_on_model(model_name))
+            .collect()
+    }
+
+    /// Get all metric names
+    pub fn metric_names(&self) -> Vec<&str> {
+        self.metrics.iter().map(|m| m.name.as_str()).collect()
+    }
+
+    /// Get a metric by name
+    pub fn get_metric(&self, name: &str) -> Option<&Metric> {
+        self.metrics.iter().find(|m| m.name == name)
+    }
+
+    /// Get metrics that are based on a specific model
+    pub fn metrics_for_model(&self, model_name: &str) -> Vec<&Metric> {
+        self.metrics
+            .iter()
+            .filter(|m| m.model == model_name)
+            .collect()
     }
 }
 
@@ -356,5 +521,261 @@ model_paths: ["models"]
             "Expected DuplicateModel error for 'orders', got: {:?}",
             err
         );
+    }
+
+    #[test]
+    fn test_exposure_discovery() {
+        let dir = TempDir::new().unwrap();
+
+        // Create minimal featherflow.yml
+        std::fs::write(
+            dir.path().join("featherflow.yml"),
+            r#"
+name: test_project
+model_paths: ["models"]
+exposure_paths: ["exposures"]
+"#,
+        )
+        .unwrap();
+
+        // Create models directory with a model
+        std::fs::create_dir_all(dir.path().join("models")).unwrap();
+        std::fs::write(dir.path().join("models/orders.sql"), "SELECT 1 AS id").unwrap();
+
+        // Create exposures directory
+        std::fs::create_dir_all(dir.path().join("exposures")).unwrap();
+
+        // Create exposure files
+        std::fs::write(
+            dir.path().join("exposures/revenue_dashboard.yml"),
+            r#"
+version: "1"
+kind: exposure
+name: revenue_dashboard
+type: dashboard
+owner:
+  name: Analytics Team
+depends_on:
+  - orders
+"#,
+        )
+        .unwrap();
+
+        std::fs::write(
+            dir.path().join("exposures/ml_model.yml"),
+            r#"
+version: "1"
+kind: exposure
+name: churn_predictor
+type: ml_model
+owner:
+  name: Data Science Team
+  email: ds@example.com
+depends_on:
+  - orders
+"#,
+        )
+        .unwrap();
+
+        // Load the project
+        let project = Project::load(dir.path()).unwrap();
+
+        // Verify exposures were discovered
+        assert_eq!(project.exposures.len(), 2);
+
+        // Verify exposure names
+        let names: Vec<&str> = project.exposure_names();
+        assert!(names.contains(&"revenue_dashboard"));
+        assert!(names.contains(&"churn_predictor"));
+
+        // Test get_exposure
+        let dashboard = project.get_exposure("revenue_dashboard").unwrap();
+        assert_eq!(dashboard.owner.name, "Analytics Team");
+
+        // Test exposures_for_model
+        let exposures = project.exposures_for_model("orders");
+        assert_eq!(exposures.len(), 2);
+    }
+
+    #[test]
+    fn test_exposure_discovery_empty_dir() {
+        let dir = TempDir::new().unwrap();
+
+        // Create minimal featherflow.yml
+        std::fs::write(
+            dir.path().join("featherflow.yml"),
+            r#"
+name: test_project
+model_paths: ["models"]
+"#,
+        )
+        .unwrap();
+
+        // Create models directory
+        std::fs::create_dir_all(dir.path().join("models")).unwrap();
+        std::fs::write(dir.path().join("models/orders.sql"), "SELECT 1 AS id").unwrap();
+
+        // Note: not creating exposures directory
+
+        // Load the project - should succeed with empty exposures
+        let project = Project::load(dir.path()).unwrap();
+        assert!(project.exposures.is_empty());
+    }
+
+    #[test]
+    fn test_versioned_model_discovery() {
+        let dir = TempDir::new().unwrap();
+
+        // Create minimal featherflow.yml
+        std::fs::write(
+            dir.path().join("featherflow.yml"),
+            r#"
+name: test_project
+model_paths: ["models"]
+"#,
+        )
+        .unwrap();
+
+        // Create models directory with versioned models
+        std::fs::create_dir_all(dir.path().join("models")).unwrap();
+        std::fs::write(dir.path().join("models/fct_orders.sql"), "SELECT 1 AS id").unwrap();
+        std::fs::write(
+            dir.path().join("models/fct_orders_v2.sql"),
+            "SELECT 2 AS id",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("models/fct_orders_v3.sql"),
+            "SELECT 3 AS id",
+        )
+        .unwrap();
+
+        let project = Project::load(dir.path()).unwrap();
+
+        // All models should be discovered
+        assert_eq!(project.models.len(), 3);
+
+        // Check version parsing
+        let v2 = project.get_model("fct_orders_v2").unwrap();
+        assert!(v2.is_versioned());
+        assert_eq!(v2.get_version(), Some(2));
+        assert_eq!(v2.get_base_name(), "fct_orders");
+
+        let v3 = project.get_model("fct_orders_v3").unwrap();
+        assert_eq!(v3.get_version(), Some(3));
+
+        // Original model should not be versioned
+        let original = project.get_model("fct_orders").unwrap();
+        assert!(!original.is_versioned());
+        assert_eq!(original.get_base_name(), "fct_orders");
+    }
+
+    #[test]
+    fn test_resolve_latest_version() {
+        let dir = TempDir::new().unwrap();
+
+        std::fs::write(
+            dir.path().join("featherflow.yml"),
+            r#"
+name: test_project
+model_paths: ["models"]
+"#,
+        )
+        .unwrap();
+
+        std::fs::create_dir_all(dir.path().join("models")).unwrap();
+        std::fs::write(dir.path().join("models/fct_orders_v1.sql"), "SELECT 1").unwrap();
+        std::fs::write(dir.path().join("models/fct_orders_v2.sql"), "SELECT 2").unwrap();
+
+        let project = Project::load(dir.path()).unwrap();
+
+        // get_latest_version should return v2
+        let (name, model) = project.get_latest_version("fct_orders").unwrap();
+        assert_eq!(name, "fct_orders_v2");
+        assert_eq!(model.get_version(), Some(2));
+
+        // get_all_versions should return both in order
+        let versions = project.get_all_versions("fct_orders");
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions[0].0, "fct_orders_v1");
+        assert_eq!(versions[1].0, "fct_orders_v2");
+    }
+
+    #[test]
+    fn test_resolve_model_reference() {
+        let dir = TempDir::new().unwrap();
+
+        std::fs::write(
+            dir.path().join("featherflow.yml"),
+            r#"
+name: test_project
+model_paths: ["models"]
+"#,
+        )
+        .unwrap();
+
+        std::fs::create_dir_all(dir.path().join("models")).unwrap();
+        std::fs::write(dir.path().join("models/fct_orders_v1.sql"), "SELECT 1").unwrap();
+        std::fs::write(dir.path().join("models/fct_orders_v2.sql"), "SELECT 2").unwrap();
+        std::fs::write(dir.path().join("models/dim_products.sql"), "SELECT 1").unwrap();
+
+        let project = Project::load(dir.path()).unwrap();
+
+        // Exact match for versioned model
+        let (model, warnings) = project.resolve_model_reference("fct_orders_v1");
+        assert!(model.is_some());
+        assert_eq!(model.unwrap().name, "fct_orders_v1");
+        assert!(warnings.is_empty());
+
+        // Unversioned reference resolves to latest
+        let (model, warnings) = project.resolve_model_reference("fct_orders");
+        assert!(model.is_some());
+        assert_eq!(model.unwrap().name, "fct_orders_v2");
+        assert!(warnings.is_empty());
+
+        // Exact match for unversioned model
+        let (model, warnings) = project.resolve_model_reference("dim_products");
+        assert!(model.is_some());
+        assert_eq!(model.unwrap().name, "dim_products");
+        assert!(warnings.is_empty());
+
+        // Non-existent model
+        let (model, _) = project.resolve_model_reference("non_existent");
+        assert!(model.is_none());
+    }
+
+    #[test]
+    fn test_deprecation_warning_in_resolution() {
+        let dir = TempDir::new().unwrap();
+
+        std::fs::write(
+            dir.path().join("featherflow.yml"),
+            r#"
+name: test_project
+model_paths: ["models"]
+"#,
+        )
+        .unwrap();
+
+        std::fs::create_dir_all(dir.path().join("models")).unwrap();
+        std::fs::write(dir.path().join("models/fct_orders_v1.sql"), "SELECT 1").unwrap();
+        std::fs::write(
+            dir.path().join("models/fct_orders_v1.yml"),
+            r#"
+version: 1
+deprecated: true
+deprecation_message: "Use fct_orders_v2 instead"
+"#,
+        )
+        .unwrap();
+
+        let project = Project::load(dir.path()).unwrap();
+
+        // Reference to deprecated model should generate warning
+        let (model, warnings) = project.resolve_model_reference("fct_orders_v1");
+        assert!(model.is_some());
+        assert!(!warnings.is_empty());
+        assert!(warnings[0].contains("deprecated"));
+        assert!(warnings[0].contains("Use fct_orders_v2 instead"));
     }
 }

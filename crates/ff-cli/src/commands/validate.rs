@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use ff_core::dag::ModelDag;
+use ff_core::manifest::Manifest;
 use ff_core::model::TestDefinition;
 use ff_core::source::build_source_lookup;
 use ff_core::Project;
@@ -130,6 +131,11 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
     validate_schemas(&project, &models_to_validate, &known_models, &mut ctx);
     validate_sources(&project);
     validate_macros(&project.config.vars, &macro_paths, &mut ctx);
+
+    // Validate contracts if --contracts flag is set
+    if args.contracts {
+        validate_contracts(&project, &models_to_validate, &args.state, &mut ctx)?;
+    }
 
     print_issues_and_summary(&ctx, args.strict)
 }
@@ -459,6 +465,123 @@ fn validate_macros(
     } else {
         println!("✗ ({} errors in {} macros)", macro_errors, macro_count);
     }
+}
+
+/// Validate schema contracts
+///
+/// Without --state: Reports models with contracts defined and validates structure
+/// With --state: Reports models with contracts and checks against manifest
+///
+/// Note: Full contract validation (column types) happens at runtime during `ff run`
+/// because we need to query the actual database schema.
+fn validate_contracts(
+    project: &Project,
+    models: &[String],
+    state_path: &Option<String>,
+    ctx: &mut ValidationContext,
+) -> Result<()> {
+    print!("Checking schema contracts... ");
+
+    // Load reference manifest if provided
+    let reference_manifest = if let Some(path) = state_path {
+        let manifest_path = Path::new(path);
+        if !manifest_path.exists() {
+            ctx.error(
+                "C001",
+                format!("Reference manifest not found: {}", path),
+                None,
+            );
+            println!("✗");
+            return Ok(());
+        }
+        Some(Manifest::load(manifest_path).context("Failed to load reference manifest")?)
+    } else {
+        None
+    };
+
+    let mut contract_warnings = 0;
+    let mut models_with_contracts = 0;
+    let mut enforced_count = 0;
+
+    for name in models {
+        if let Some(model) = project.get_model(name) {
+            // Check if model has a schema with contract
+            if let Some(schema) = &model.schema {
+                if let Some(contract) = &schema.contract {
+                    models_with_contracts += 1;
+                    if contract.enforced {
+                        enforced_count += 1;
+                    }
+
+                    let file_path = model.path.with_extension("yml").display().to_string();
+
+                    // Validate contract structure
+                    if schema.columns.is_empty() {
+                        ctx.warning(
+                            "C006",
+                            format!(
+                                "Model '{}' has contract defined but no columns specified",
+                                name
+                            ),
+                            Some(file_path.clone()),
+                        );
+                        contract_warnings += 1;
+                    }
+
+                    // Check that columns have types defined (recommended for contracts)
+                    for column in &schema.columns {
+                        if column.data_type.is_none() {
+                            ctx.warning(
+                                "C007",
+                                format!(
+                                    "Column '{}' in model '{}' has no type defined in contract",
+                                    column.name, name
+                                ),
+                                Some(file_path.clone()),
+                            );
+                            contract_warnings += 1;
+                        }
+                    }
+
+                    // If we have a reference manifest, verify model exists
+                    if let Some(ref manifest) = reference_manifest {
+                        if manifest.get_model(name).is_none() {
+                            ctx.warning(
+                                "C005",
+                                format!(
+                                    "Model '{}' has contract but not found in reference manifest (new model?)",
+                                    name
+                                ),
+                                Some(model.path.display().to_string()),
+                            );
+                            contract_warnings += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if models_with_contracts == 0 {
+        println!("(no contracts defined)");
+    } else if contract_warnings == 0 {
+        println!(
+            "✓ ({} contracts, {} enforced)",
+            models_with_contracts, enforced_count
+        );
+    } else {
+        println!(
+            "{} warnings ({} contracts, {} enforced)",
+            contract_warnings, models_with_contracts, enforced_count
+        );
+    }
+
+    // Add note about runtime validation
+    if models_with_contracts > 0 && contract_warnings == 0 {
+        // Informational: contracts are fully validated at runtime
+    }
+
+    Ok(())
 }
 
 /// Print all issues and final summary

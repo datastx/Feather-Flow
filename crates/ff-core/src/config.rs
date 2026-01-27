@@ -39,6 +39,14 @@ pub struct Config {
     #[serde(default = "default_snapshot_paths")]
     pub snapshot_paths: Vec<String>,
 
+    /// Directories containing exposure YAML files
+    #[serde(default = "default_exposure_paths")]
+    pub exposure_paths: Vec<String>,
+
+    /// Directories containing metric YAML files
+    #[serde(default = "default_metric_paths")]
+    pub metric_paths: Vec<String>,
+
     /// Output directory for compiled SQL and manifest
     #[serde(default = "default_target_path")]
     pub target_path: String,
@@ -78,6 +86,27 @@ pub struct Config {
     /// SQL statements to execute after all models complete
     #[serde(default)]
     pub on_run_end: Vec<String>,
+
+    /// Named target configurations (e.g., dev, staging, prod)
+    /// Each target can override database settings and variables
+    #[serde(default)]
+    pub targets: HashMap<String, TargetConfig>,
+}
+
+/// Target-specific configuration overrides
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TargetConfig {
+    /// Database configuration override
+    #[serde(default)]
+    pub database: Option<DatabaseConfig>,
+
+    /// Schema override
+    #[serde(default)]
+    pub schema: Option<String>,
+
+    /// Variable overrides (merged with base vars)
+    #[serde(default)]
+    pub vars: HashMap<String, serde_yaml::Value>,
 }
 
 /// Database connection configuration
@@ -103,6 +132,8 @@ pub enum Materialization {
     Table,
     /// Incremental table (only process new/changed data)
     Incremental,
+    /// Ephemeral model (inlined as CTE, no database object created)
+    Ephemeral,
 }
 
 /// Incremental strategy for incremental models
@@ -171,6 +202,14 @@ fn default_snapshot_paths() -> Vec<String> {
     vec!["snapshots".to_string()]
 }
 
+fn default_exposure_paths() -> Vec<String> {
+    vec!["exposures".to_string()]
+}
+
+fn default_metric_paths() -> Vec<String> {
+    vec!["metrics".to_string()]
+}
+
 fn default_target_path() -> String {
     "target".to_string()
 }
@@ -183,16 +222,25 @@ fn default_dialect() -> Dialect {
     Dialect::DuckDb
 }
 
+/// Default database type
+pub const DEFAULT_DB_TYPE: &str = "duckdb";
+
+/// Default database path (in-memory)
+pub const DEFAULT_DB_PATH: &str = ":memory:";
+
+/// Default target/output directory name
+pub const DEFAULT_TARGET_DIR: &str = "target";
+
 fn default_db_type() -> String {
-    "duckdb".to_string()
+    DEFAULT_DB_TYPE.to_string()
 }
 
 fn default_db_path() -> String {
-    ":memory:".to_string()
+    DEFAULT_DB_PATH.to_string()
 }
 
 fn default_clean_targets() -> Vec<String> {
-    vec!["target".to_string()]
+    vec![DEFAULT_TARGET_DIR.to_string()]
 }
 
 impl Config {
@@ -284,9 +332,96 @@ impl Config {
         self.snapshot_paths.iter().map(|p| root.join(p)).collect()
     }
 
+    /// Get absolute exposure paths relative to a project root
+    pub fn exposure_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
+        self.exposure_paths.iter().map(|p| root.join(p)).collect()
+    }
+
+    /// Get absolute metric paths relative to a project root
+    pub fn metric_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
+        self.metric_paths.iter().map(|p| root.join(p)).collect()
+    }
+
     /// Get absolute target path relative to a project root
     pub fn target_path_absolute(&self, root: &Path) -> PathBuf {
         root.join(&self.target_path)
+    }
+
+    /// Get the list of available target names
+    pub fn available_targets(&self) -> Vec<&str> {
+        self.targets.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Get target configuration by name
+    pub fn get_target(&self, name: &str) -> Option<&TargetConfig> {
+        self.targets.get(name)
+    }
+
+    /// Get database configuration, optionally applying target overrides
+    ///
+    /// If target is specified and exists, uses target's database config.
+    /// Otherwise, uses the base database config.
+    pub fn get_database_config(&self, target: Option<&str>) -> CoreResult<DatabaseConfig> {
+        match target {
+            Some(name) => {
+                let target_config =
+                    self.targets
+                        .get(name)
+                        .ok_or_else(|| CoreError::ConfigInvalid {
+                            message: format!(
+                                "Target '{}' not found. Available targets: {}",
+                                name,
+                                self.targets.keys().cloned().collect::<Vec<_>>().join(", ")
+                            ),
+                        })?;
+
+                // Use target's database config if specified, otherwise fall back to base
+                Ok(target_config
+                    .database
+                    .clone()
+                    .unwrap_or_else(|| self.database.clone()))
+            }
+            None => Ok(self.database.clone()),
+        }
+    }
+
+    /// Get schema, optionally applying target overrides
+    pub fn get_schema(&self, target: Option<&str>) -> Option<String> {
+        if let Some(name) = target {
+            if let Some(target_config) = self.targets.get(name) {
+                if target_config.schema.is_some() {
+                    return target_config.schema.clone();
+                }
+            }
+        }
+        self.schema.clone()
+    }
+
+    /// Get merged variables, with target overrides taking precedence
+    pub fn get_merged_vars(&self, target: Option<&str>) -> HashMap<String, serde_yaml::Value> {
+        let mut vars = self.vars.clone();
+
+        if let Some(name) = target {
+            if let Some(target_config) = self.targets.get(name) {
+                // Target vars override base vars
+                for (key, value) in &target_config.vars {
+                    vars.insert(key.clone(), value.clone());
+                }
+            }
+        }
+
+        vars
+    }
+
+    /// Resolve target from CLI flag or FF_TARGET environment variable
+    ///
+    /// Priority: CLI flag > FF_TARGET env var > None
+    pub fn resolve_target(cli_target: Option<&str>) -> Option<String> {
+        if let Some(target) = cli_target {
+            return Some(target.to_string());
+        }
+
+        std::env::var("FF_TARGET").ok()
     }
 }
 
@@ -296,7 +431,15 @@ impl std::fmt::Display for Materialization {
             Materialization::View => write!(f, "view"),
             Materialization::Table => write!(f, "table"),
             Materialization::Incremental => write!(f, "incremental"),
+            Materialization::Ephemeral => write!(f, "ephemeral"),
         }
+    }
+}
+
+impl Materialization {
+    /// Returns true if this is an ephemeral materialization
+    pub fn is_ephemeral(&self) -> bool {
+        matches!(self, Materialization::Ephemeral)
     }
 }
 
@@ -376,6 +519,14 @@ vars:
     }
 
     #[test]
+    fn test_materialization_ephemeral() {
+        let config: Config =
+            serde_yaml::from_str("name: test\nmaterialization: ephemeral").unwrap();
+        assert_eq!(config.materialization, Materialization::Ephemeral);
+        assert!(config.materialization.is_ephemeral());
+    }
+
+    #[test]
     fn test_dialect_default() {
         let config: Config = serde_yaml::from_str("name: test").unwrap();
         assert_eq!(config.dialect, Dialect::DuckDb);
@@ -407,5 +558,221 @@ on_run_end:
         assert_eq!(config.on_run_start[1], "SET timezone = 'UTC'");
         assert_eq!(config.on_run_end.len(), 1);
         assert_eq!(config.on_run_end[0], "ANALYZE staging.final_table");
+    }
+
+    #[test]
+    fn test_targets_parsing() {
+        let yaml = r#"
+name: test_project
+database:
+  type: duckdb
+  path: ./dev.duckdb
+schema: dev_schema
+vars:
+  environment: dev
+targets:
+  prod:
+    database:
+      type: duckdb
+      path: ./prod.duckdb
+    schema: prod_schema
+    vars:
+      environment: prod
+      debug_mode: false
+  staging:
+    database:
+      type: duckdb
+      path: ./staging.duckdb
+    schema: staging_schema
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.targets.len(), 2);
+        assert!(config.targets.contains_key("prod"));
+        assert!(config.targets.contains_key("staging"));
+
+        let prod = config.targets.get("prod").unwrap();
+        assert_eq!(prod.database.as_ref().unwrap().path, "./prod.duckdb");
+        assert_eq!(prod.schema.as_ref().unwrap(), "prod_schema");
+        assert!(prod.vars.contains_key("environment"));
+    }
+
+    #[test]
+    fn test_get_database_config_base() {
+        let yaml = r#"
+name: test_project
+database:
+  type: duckdb
+  path: ./base.duckdb
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let db = config.get_database_config(None).unwrap();
+        assert_eq!(db.path, "./base.duckdb");
+    }
+
+    #[test]
+    fn test_get_database_config_with_target() {
+        let yaml = r#"
+name: test_project
+database:
+  type: duckdb
+  path: ./base.duckdb
+targets:
+  prod:
+    database:
+      type: duckdb
+      path: ./prod.duckdb
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let db = config.get_database_config(Some("prod")).unwrap();
+        assert_eq!(db.path, "./prod.duckdb");
+    }
+
+    #[test]
+    fn test_get_database_config_target_without_db_override() {
+        let yaml = r#"
+name: test_project
+database:
+  type: duckdb
+  path: ./base.duckdb
+targets:
+  prod:
+    schema: prod_schema
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        // Target exists but has no database override, should use base
+        let db = config.get_database_config(Some("prod")).unwrap();
+        assert_eq!(db.path, "./base.duckdb");
+    }
+
+    #[test]
+    fn test_get_database_config_invalid_target() {
+        let yaml = r#"
+name: test_project
+database:
+  type: duckdb
+  path: ./base.duckdb
+targets:
+  prod:
+    database:
+      path: ./prod.duckdb
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let result = config.get_database_config(Some("nonexistent"));
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Target 'nonexistent' not found"));
+        assert!(err.contains("prod"));
+    }
+
+    #[test]
+    fn test_get_schema_with_target_override() {
+        let yaml = r#"
+name: test_project
+schema: base_schema
+targets:
+  prod:
+    schema: prod_schema
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.get_schema(None), Some("base_schema".to_string()));
+        assert_eq!(
+            config.get_schema(Some("prod")),
+            Some("prod_schema".to_string())
+        );
+    }
+
+    #[test]
+    fn test_get_merged_vars() {
+        let yaml = r#"
+name: test_project
+vars:
+  environment: dev
+  debug: true
+  common_key: base_value
+targets:
+  prod:
+    vars:
+      environment: prod
+      debug: false
+      extra_key: prod_only
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+
+        // Base vars
+        let base_vars = config.get_merged_vars(None);
+        assert_eq!(base_vars.get("environment").unwrap().as_str(), Some("dev"));
+        assert_eq!(base_vars.get("debug").unwrap().as_bool(), Some(true));
+
+        // Merged vars with target
+        let merged = config.get_merged_vars(Some("prod"));
+        assert_eq!(merged.get("environment").unwrap().as_str(), Some("prod"));
+        assert_eq!(merged.get("debug").unwrap().as_bool(), Some(false));
+        assert_eq!(
+            merged.get("common_key").unwrap().as_str(),
+            Some("base_value")
+        );
+        assert_eq!(merged.get("extra_key").unwrap().as_str(), Some("prod_only"));
+    }
+
+    #[test]
+    fn test_available_targets() {
+        let yaml = r#"
+name: test_project
+targets:
+  dev: {}
+  staging: {}
+  prod: {}
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let targets = config.available_targets();
+        assert_eq!(targets.len(), 3);
+        assert!(targets.contains(&"dev"));
+        assert!(targets.contains(&"staging"));
+        assert!(targets.contains(&"prod"));
+    }
+
+    // These tests modify environment variables and must run serially
+    use serial_test::serial;
+
+    #[test]
+    #[serial]
+    fn test_resolve_target_cli_takes_precedence() {
+        // CLI flag should take precedence over env var
+        let original = std::env::var("FF_TARGET").ok();
+        std::env::set_var("FF_TARGET", "staging");
+        let result = Config::resolve_target(Some("prod"));
+        assert_eq!(result, Some("prod".to_string()));
+        // Restore original state
+        match original {
+            Some(v) => std::env::set_var("FF_TARGET", v),
+            None => std::env::remove_var("FF_TARGET"),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_resolve_target_uses_env_var() {
+        let original = std::env::var("FF_TARGET").ok();
+        std::env::set_var("FF_TARGET", "staging");
+        let result = Config::resolve_target(None);
+        assert_eq!(result, Some("staging".to_string()));
+        // Restore original state
+        match original {
+            Some(v) => std::env::set_var("FF_TARGET", v),
+            None => std::env::remove_var("FF_TARGET"),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_resolve_target_none_when_not_set() {
+        let original = std::env::var("FF_TARGET").ok();
+        std::env::remove_var("FF_TARGET");
+        let result = Config::resolve_target(None);
+        assert_eq!(result, None);
+        // Restore original state
+        if let Some(v) = original {
+            std::env::set_var("FF_TARGET", v);
+        }
     }
 }

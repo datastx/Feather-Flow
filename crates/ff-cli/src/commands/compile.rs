@@ -1,18 +1,46 @@
 //! Compile command implementation
 
 use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use ff_core::config::Materialization;
 use ff_core::dag::ModelDag;
 use ff_core::manifest::Manifest;
 use ff_core::model::ModelConfig;
 use ff_core::Project;
 use ff_jinja::JinjaEnvironment;
-use ff_sql::{extract_dependencies, SqlParser};
+use ff_sql::{
+    collect_ephemeral_dependencies, extract_dependencies, inline_ephemeral_ctes, SqlParser,
+};
+use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::time::Instant;
 
-use crate::cli::{CompileArgs, GlobalArgs};
+use crate::cli::{CompileArgs, GlobalArgs, OutputFormat};
 use ff_core::source::build_source_lookup;
+
+/// Compile result for a single model
+#[derive(Debug, Clone, Serialize)]
+struct ModelCompileResult {
+    model: String,
+    status: String,
+    materialization: String,
+    output_path: Option<String>,
+    dependencies: Vec<String>,
+    error: Option<String>,
+}
+
+/// Compile results summary for JSON output
+#[derive(Debug, Serialize)]
+struct CompileResults {
+    timestamp: DateTime<Utc>,
+    elapsed_secs: f64,
+    total_models: usize,
+    success_count: usize,
+    failure_count: usize,
+    manifest_path: Option<String>,
+    results: Vec<ModelCompileResult>,
+}
 
 /// Parse hooks from config() values (minijinja::Value)
 /// Hooks can be specified as a single string or an array of strings
@@ -41,12 +69,37 @@ fn parse_hooks_from_config(
         .unwrap_or_default()
 }
 
+/// Intermediate compilation result before ephemeral inlining
+struct CompiledModel {
+    name: String,
+    sql: String,
+    materialization: Materialization,
+    dependencies: Vec<String>,
+    output_path: std::path::PathBuf,
+}
+
 /// Execute the compile command
 pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
+    use ff_core::config::Config;
+
+    let start_time = Instant::now();
     let project_path = Path::new(&global.project_dir);
     let mut project = Project::load(project_path).context("Failed to load project")?;
+    let json_mode = args.output == OutputFormat::Json;
 
-    let vars = merge_vars(&project.config.vars, &args.vars)?;
+    // Resolve target from CLI flag or FF_TARGET env var
+    let target = Config::resolve_target(global.target.as_deref());
+
+    // Get vars merged with target overrides, then merge with CLI --vars
+    let base_vars = project.config.get_merged_vars(target.as_deref());
+    let vars = merge_vars(&base_vars, &args.vars)?;
+
+    if global.verbose {
+        if let Some(ref target_name) = target {
+            eprintln!("[verbose] Using target '{}' for compilation", target_name);
+        }
+    }
+
     let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
         .context("Invalid SQL dialect")?;
     let macro_paths = project.config.macro_paths_absolute(&project.root);
@@ -56,10 +109,12 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
     let external_tables = build_external_tables_lookup(&project);
     let known_models: HashSet<String> = project.models.keys().cloned().collect();
 
-    if args.parse_only {
-        println!("Validating {} models (parse-only)...\n", model_names.len());
-    } else {
-        println!("Compiling {} models...\n", model_names.len());
+    if !json_mode {
+        if args.parse_only {
+            println!("Validating {} models (parse-only)...\n", model_names.len());
+        } else {
+            println!("Compiling {} models...\n", model_names.len());
+        }
     }
 
     if global.verbose {
@@ -78,11 +133,18 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
 
     let project_root = project.root.clone();
     let mut dependencies: HashMap<String, Vec<String>> = HashMap::new();
+    let mut compile_results: Vec<ModelCompileResult> = Vec::new();
+    let mut success_count = 0;
+    let mut failure_count = 0;
 
     let default_materialization = project.config.materialization;
 
+    // Phase 1: Compile all models (render Jinja, parse SQL, extract dependencies)
+    let mut compiled_models: Vec<CompiledModel> = Vec::new();
+    let mut materializations: HashMap<String, Materialization> = HashMap::new();
+
     for name in &model_names {
-        let model_deps = compile_model(
+        match compile_model_phase1(
             &mut project,
             name,
             &jinja,
@@ -91,11 +153,28 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
             &external_tables,
             &project_root,
             &output_dir,
-            global.verbose,
-            args.parse_only,
             default_materialization,
-        )?;
-        dependencies.insert(name.clone(), model_deps);
+        ) {
+            Ok(compiled) => {
+                dependencies.insert(name.clone(), compiled.dependencies.clone());
+                materializations.insert(name.clone(), compiled.materialization);
+                compiled_models.push(compiled);
+            }
+            Err(e) => {
+                failure_count += 1;
+                compile_results.push(ModelCompileResult {
+                    model: name.clone(),
+                    status: "failure".to_string(),
+                    materialization: "unknown".to_string(),
+                    output_path: None,
+                    dependencies: vec![],
+                    error: Some(e.to_string()),
+                });
+                if !json_mode {
+                    println!("  ✗ {} - {}", name, e);
+                }
+            }
+        }
     }
 
     // Validate DAG (always done even in parse-only mode)
@@ -104,21 +183,179 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
         .topological_order()
         .context("Circular dependency detected")?;
 
-    if args.parse_only {
+    // Phase 2: Inline ephemeral dependencies and write files
+    // Build a map of ephemeral model SQL for inlining
+    let ephemeral_sql: HashMap<String, String> = compiled_models
+        .iter()
+        .filter(|m| m.materialization == Materialization::Ephemeral)
+        .map(|m| (m.name.clone(), m.sql.clone()))
+        .collect();
+
+    let ephemeral_count = ephemeral_sql.len();
+    if global.verbose && ephemeral_count > 0 {
+        eprintln!(
+            "[verbose] Found {} ephemeral model(s) to inline",
+            ephemeral_count
+        );
+    }
+
+    for compiled in compiled_models {
+        // Skip ephemeral models - they don't get written as files
+        if compiled.materialization == Materialization::Ephemeral {
+            if !json_mode {
+                println!("  ✓ {} (ephemeral) [inlined]", compiled.name);
+            }
+            success_count += 1;
+            compile_results.push(ModelCompileResult {
+                model: compiled.name,
+                status: "success".to_string(),
+                materialization: "ephemeral".to_string(),
+                output_path: None, // Ephemeral models don't have output files
+                dependencies: compiled.dependencies,
+                error: None,
+            });
+            continue;
+        }
+
+        // Inline ephemeral dependencies into this model's SQL
+        let final_sql = if !ephemeral_sql.is_empty() {
+            // Collect ephemeral dependencies for this model
+            let is_ephemeral =
+                |name: &str| materializations.get(name) == Some(&Materialization::Ephemeral);
+            let get_sql = |name: &str| ephemeral_sql.get(name).cloned();
+
+            let (ephemeral_deps, order) = collect_ephemeral_dependencies(
+                &compiled.name,
+                &dependencies,
+                is_ephemeral,
+                get_sql,
+            );
+
+            if !ephemeral_deps.is_empty() {
+                if global.verbose {
+                    eprintln!(
+                        "[verbose] Inlining {} ephemeral model(s) into {}",
+                        ephemeral_deps.len(),
+                        compiled.name
+                    );
+                }
+                inline_ephemeral_ctes(&compiled.sql, &ephemeral_deps, &order)
+            } else {
+                compiled.sql.clone()
+            }
+        } else {
+            compiled.sql.clone()
+        };
+
+        // Write the compiled SQL (with inlined ephemerals)
+        if args.parse_only {
+            if !json_mode {
+                println!(
+                    "  ✓ {} ({}) [validated]",
+                    compiled.name, compiled.materialization
+                );
+            }
+            if global.verbose {
+                eprintln!("[verbose] Validated {} (parse-only mode)", compiled.name);
+            }
+            success_count += 1;
+            compile_results.push(ModelCompileResult {
+                model: compiled.name,
+                status: "success".to_string(),
+                materialization: compiled.materialization.to_string(),
+                output_path: None,
+                dependencies: compiled.dependencies,
+                error: None,
+            });
+        } else {
+            if let Some(parent) = compiled.output_path.parent() {
+                std::fs::create_dir_all(parent).context(format!(
+                    "Failed to create directory for model: {}",
+                    compiled.name
+                ))?;
+            }
+
+            std::fs::write(&compiled.output_path, &final_sql).context(format!(
+                "Failed to write compiled SQL for model: {}",
+                compiled.name
+            ))?;
+
+            // Also update the model's compiled_sql with the inlined version
+            if let Some(model) = project.get_model_mut(&compiled.name) {
+                model.compiled_sql = Some(final_sql);
+            }
+
+            if !json_mode {
+                println!("  ✓ {} ({})", compiled.name, compiled.materialization);
+            }
+
+            if global.verbose {
+                eprintln!(
+                    "[verbose] Compiled {} -> {}",
+                    compiled.name,
+                    compiled.output_path.display()
+                );
+            }
+
+            success_count += 1;
+            compile_results.push(ModelCompileResult {
+                model: compiled.name,
+                status: "success".to_string(),
+                materialization: compiled.materialization.to_string(),
+                output_path: Some(compiled.output_path.display().to_string()),
+                dependencies: compiled.dependencies,
+                error: None,
+            });
+        }
+    }
+
+    let manifest_path = if !args.parse_only && failure_count == 0 {
+        // Write manifest only if not in parse-only mode and no failures
+        write_manifest(&project, &model_names, &output_dir, global.verbose)?;
+        Some(project.manifest_path().display().to_string())
+    } else {
+        None
+    };
+
+    if json_mode {
+        let results = CompileResults {
+            timestamp: Utc::now(),
+            elapsed_secs: start_time.elapsed().as_secs_f64(),
+            total_models: model_names.len(),
+            success_count,
+            failure_count,
+            manifest_path,
+            results: compile_results,
+        };
+        println!("{}", serde_json::to_string_pretty(&results)?);
+    } else if args.parse_only {
         println!(
             "\nValidated {} models successfully (no files written)",
             model_names.len()
         );
     } else {
-        // Write manifest only if not in parse-only mode
-        write_manifest(&project, &model_names, &output_dir, global.verbose)?;
+        let non_ephemeral_count = model_names.len() - ephemeral_count;
+        if ephemeral_count > 0 {
+            println!(
+                "\nCompiled {} models ({} ephemeral inlined) to {}",
+                non_ephemeral_count,
+                ephemeral_count,
+                output_dir.display()
+            );
+        } else {
+            println!(
+                "\nCompiled {} models to {}",
+                model_names.len(),
+                output_dir.display()
+            );
+        }
+        if let Some(path) = manifest_path {
+            println!("Manifest written to {}", path);
+        }
+    }
 
-        println!(
-            "\nCompiled {} models to {}",
-            model_names.len(),
-            output_dir.display()
-        );
-        println!("Manifest written to {}", project.manifest_path().display());
+    if failure_count > 0 {
+        std::process::exit(1);
     }
 
     Ok(())
@@ -147,9 +384,10 @@ fn build_external_tables_lookup(project: &Project) -> HashSet<String> {
     external_tables
 }
 
-/// Compile a single model: render template, parse SQL, extract dependencies
+/// Compile a single model (phase 1): render template, parse SQL, extract dependencies
+/// Does not write files - returns compiled model info for phase 2
 #[allow(clippy::too_many_arguments)]
-fn compile_model(
+fn compile_model_phase1(
     project: &mut Project,
     name: &str,
     jinja: &JinjaEnvironment,
@@ -158,10 +396,8 @@ fn compile_model(
     external_tables: &HashSet<String>,
     project_root: &Path,
     output_dir: &Path,
-    verbose: bool,
-    parse_only: bool,
     default_materialization: Materialization,
-) -> Result<Vec<String>> {
+) -> Result<CompiledModel> {
     let model = project
         .get_model_mut(name)
         .context(format!("Model not found: {}", name))?;
@@ -199,6 +435,7 @@ fn compile_model(
             .map(|s| match s {
                 "table" => Materialization::Table,
                 "incremental" => Materialization::Incremental,
+                "ephemeral" => Materialization::Ephemeral,
                 _ => Materialization::View,
             }),
         schema: config_values
@@ -241,31 +478,15 @@ fn compile_model(
     };
 
     let mat = model.config.materialized.unwrap_or(default_materialization);
+    let output_path = compute_compiled_path(&model.path, project_root, output_dir);
 
-    if parse_only {
-        println!("  ✓ {} ({}) [validated]", name, mat);
-        if verbose {
-            eprintln!("[verbose] Validated {} (parse-only mode)", name);
-        }
-    } else {
-        let output_path = compute_compiled_path(&model.path, project_root, output_dir);
-
-        if let Some(parent) = output_path.parent() {
-            std::fs::create_dir_all(parent)
-                .context(format!("Failed to create directory for model: {}", name))?;
-        }
-
-        std::fs::write(&output_path, &rendered)
-            .context(format!("Failed to write compiled SQL for model: {}", name))?;
-
-        println!("  ✓ {} ({})", name, mat);
-
-        if verbose {
-            eprintln!("[verbose] Compiled {} -> {}", name, output_path.display());
-        }
-    }
-
-    Ok(model_deps)
+    Ok(CompiledModel {
+        name: name.to_string(),
+        sql: rendered,
+        materialization: mat,
+        dependencies: model_deps,
+        output_path,
+    })
 }
 
 /// Write manifest file

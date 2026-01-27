@@ -11,15 +11,31 @@ use crate::cli::{GlobalArgs, SeedArgs};
 
 /// Execute the seed command
 pub async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
+    use ff_core::config::Config;
+
     let project_path = Path::new(&global.project_dir);
     let project = Project::load(project_path).context("Failed to load project")?;
 
-    let db_path = global
-        .target
-        .as_ref()
-        .unwrap_or(&project.config.database.path);
+    // Resolve target from CLI flag or FF_TARGET env var
+    let target = Config::resolve_target(global.target.as_deref());
+
+    // Get database config, applying target overrides if specified
+    let db_config = project
+        .config
+        .get_database_config(target.as_deref())
+        .context("Failed to get database configuration")?;
+
+    if global.verbose {
+        if let Some(ref target_name) = target {
+            eprintln!(
+                "[verbose] Using target '{}' with database: {}",
+                target_name, db_config.path
+            );
+        }
+    }
+
     let db: Arc<dyn Database> =
-        Arc::new(DuckDbBackend::new(db_path).context("Failed to connect to database")?);
+        Arc::new(DuckDbBackend::new(&db_config.path).context("Failed to connect to database")?);
 
     let seed_paths = project.config.seed_paths_absolute(&project.root);
     let all_seeds = discover_seeds(&project.root, &seed_paths);

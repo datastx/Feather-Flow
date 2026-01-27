@@ -9,6 +9,7 @@ description = "Test generation for Featherflow - schema test SQL generation and 
 thiserror.workspace = true
 ff-core = { path = "../ff-core" }
 ff-db = { path = "../ff-db" }
+ff-jinja = { path = "../ff-jinja" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

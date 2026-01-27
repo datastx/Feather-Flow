@@ -1,6 +1,7 @@
 //! Test SQL generation
 
 use ff_core::model::{SchemaTest, TestType};
+use ff_jinja::CustomTestRegistry;
 
 /// Generate SQL for a unique test
 ///
@@ -139,6 +140,14 @@ WHERE src.{column} IS NOT NULL
 
 /// Generate SQL for a schema test
 pub fn generate_test_sql(test: &SchemaTest) -> String {
+    generate_test_sql_with_registry(test, None)
+}
+
+/// Generate SQL for a schema test, optionally using custom test registry
+pub fn generate_test_sql_with_registry(
+    test: &SchemaTest,
+    _registry: Option<&CustomTestRegistry>,
+) -> String {
     match &test.test_type {
         TestType::Unique => generate_unique_test(&test.model, &test.column),
         TestType::NotNull => generate_not_null_test(&test.model, &test.column),
@@ -153,6 +162,15 @@ pub fn generate_test_sql(test: &SchemaTest) -> String {
         TestType::Relationship { to, field } => {
             let ref_column = field.as_deref().unwrap_or(&test.column);
             generate_relationship_test(&test.model, &test.column, to, ref_column)
+        }
+        TestType::Custom { name, kwargs: _ } => {
+            // Custom tests require the Jinja environment to render
+            // For now, return a placeholder that can be replaced by actual SQL
+            // when the test command is executed with full context
+            format!(
+                "-- Custom test '{}' for {}.{} requires Jinja environment",
+                name, test.model, test.column
+            )
         }
     }
 }
@@ -191,6 +209,19 @@ impl GeneratedTest {
         }
     }
 
+    /// Create a generated test with custom SQL (for custom test macros)
+    pub fn with_custom_sql(test: &SchemaTest, sql: String) -> Self {
+        let name = format!("{}_{}__{}", test.test_type, test.model, test.column);
+
+        Self {
+            model: test.model.clone(),
+            column: test.column.clone(),
+            test_type: test.test_type.clone(),
+            sql,
+            name,
+        }
+    }
+
     /// Create a generated test with a qualified model name (schema.model)
     pub fn from_schema_test_qualified(test: &SchemaTest, qualified_name: &str) -> Self {
         let sql = match &test.test_type {
@@ -213,6 +244,13 @@ impl GeneratedTest {
             TestType::Relationship { to, field } => {
                 let ref_column = field.as_deref().unwrap_or(&test.column);
                 generate_relationship_test(qualified_name, &test.column, to, ref_column)
+            }
+            TestType::Custom { name, kwargs: _ } => {
+                // Custom tests require Jinja environment - return placeholder
+                format!(
+                    "-- Custom test '{}' for {}.{} requires Jinja environment",
+                    name, qualified_name, test.column
+                )
             }
         };
         let name = format!("{}_{}__{}", test.test_type, test.model, test.column);
@@ -256,6 +294,13 @@ impl GeneratedTest {
                 let ref_column = field.as_deref().unwrap_or(&test.column);
                 let qualified_ref = ref_table_resolver(to);
                 generate_relationship_test(qualified_name, &test.column, &qualified_ref, ref_column)
+            }
+            TestType::Custom { name, kwargs: _ } => {
+                // Custom tests require Jinja environment - return placeholder
+                format!(
+                    "-- Custom test '{}' for {}.{} requires Jinja environment",
+                    name, qualified_name, test.column
+                )
             }
         };
         let name = format!("{}_{}__{}", test.test_type, test.model, test.column);

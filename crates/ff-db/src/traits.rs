@@ -77,7 +77,19 @@ impl CsvLoadOptions {
 
 /// Database abstraction trait for Featherflow
 ///
-/// Implementations must be Send + Sync for async operation.
+/// This trait provides the core database operations needed for model execution,
+/// including SQL execution, table/view creation, CSV loading, and snapshot operations.
+///
+/// # Thread Safety
+///
+/// Implementations must be `Send + Sync` to support:
+/// - Concurrent model execution with `--threads` flag
+/// - Async operations across multiple tokio tasks
+/// - Shared access via `Arc<dyn Database>`
+///
+/// # Implementors
+///
+/// - [`DuckDbBackend`](crate::DuckDbBackend) - Primary implementation using DuckDB
 #[async_trait]
 pub trait Database: Send + Sync {
     /// Execute SQL that modifies data, returns affected rows

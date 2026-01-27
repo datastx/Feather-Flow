@@ -8,7 +8,8 @@ mod commands;
 
 use cli::Cli;
 use commands::{
-    clean, compile, docs, ls, parse, run, run_operation, seed, snapshot, source, test, validate,
+    clean, compile, diff, docs, freshness, ls, metric, parse, run, run_operation, seed, snapshot,
+    source, test, validate,
 };
 
 #[tokio::main]
@@ -28,5 +29,8 @@ async fn main() -> Result<()> {
         cli::Commands::Source(args) => source::execute(args, &cli.global).await,
         cli::Commands::Snapshot(args) => snapshot::execute(args, &cli.global).await,
         cli::Commands::RunOperation(args) => run_operation::execute(args, &cli.global).await,
+        cli::Commands::Freshness(args) => freshness::execute(args, &cli.global).await,
+        cli::Commands::Metric(args) => metric::execute(args, &cli.global).await,
+        cli::Commands::Diff(args) => diff::execute(args, &cli.global).await,
     }
 }

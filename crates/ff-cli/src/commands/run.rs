@@ -3,14 +3,18 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use ff_core::config::{IncrementalStrategy, Materialization, OnSchemaChange};
+use ff_core::contract::{validate_contract, ContractValidationResult, ViolationType};
 use ff_core::dag::ModelDag;
 use ff_core::manifest::Manifest;
+use ff_core::model::ModelSchema;
+use ff_core::run_state::RunState;
 use ff_core::selector::Selector;
-use ff_core::state::{ModelState, ModelStateConfig, StateFile};
+use ff_core::state::{compute_checksum, ModelState, ModelStateConfig, StateFile};
 use ff_core::Project;
 use ff_db::{Database, DuckDbBackend};
 use ff_jinja::JinjaEnvironment;
 use ff_sql::{extract_dependencies, SqlParser};
+use indicatif::{ProgressBar, ProgressStyle};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -18,7 +22,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::Semaphore;
 
-use crate::cli::{GlobalArgs, RunArgs};
+use crate::cli::{GlobalArgs, OutputFormat, RunArgs};
 
 /// Parse hooks from config() values (minijinja::Value)
 /// Hooks can be specified as a single string or an array of strings
@@ -83,6 +87,8 @@ struct CompiledModel {
     pre_hook: Vec<String>,
     /// SQL statements to execute after the model runs
     post_hook: Vec<String>,
+    /// Model schema for contract validation (from .yml file)
+    model_schema: Option<ModelSchema>,
 }
 
 /// Check if manifest cache is valid (newer than all source files)
@@ -125,11 +131,52 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     let project_path = Path::new(&global.project_dir);
     let project = Project::load(project_path).context("Failed to load project")?;
 
+    let json_mode = args.output == OutputFormat::Json;
+
     let db = create_database_connection(&project, global)?;
 
     let compiled_models = load_or_compile_models(&project, args, global)?;
 
-    let execution_order = determine_execution_order(&compiled_models, &project, args, global)?;
+    // Compute config hash for run state validation
+    let config_hash = compute_config_hash(&project);
+
+    // Determine run state path
+    let run_state_path = args
+        .state_file
+        .as_ref()
+        .map(|s| Path::new(s).to_path_buf())
+        .unwrap_or_else(|| project.target_dir().join("run_state.json"));
+
+    // Handle resume mode
+    let (execution_order, previous_run_state) = if args.resume {
+        handle_resume_mode(
+            &run_state_path,
+            &compiled_models,
+            &project,
+            args,
+            global,
+            &config_hash,
+        )?
+    } else {
+        let order = determine_execution_order(&compiled_models, &project, args, global)?;
+        (order, None)
+    };
+
+    if execution_order.is_empty() {
+        if json_mode {
+            let empty_result = RunResults {
+                timestamp: Utc::now(),
+                elapsed_secs: 0.0,
+                success_count: 0,
+                failure_count: 0,
+                results: vec![],
+            };
+            println!("{}", serde_json::to_string_pretty(&empty_result)?);
+        } else {
+            println!("No models to run.");
+        }
+        return Ok(());
+    }
 
     if global.verbose {
         eprintln!(
@@ -139,12 +186,63 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         );
     }
 
-    println!("Running {} models...\n", execution_order.len());
+    // Count non-ephemeral models (ephemeral models are inlined, not executed)
+    let ephemeral_count = execution_order
+        .iter()
+        .filter(|name| {
+            compiled_models
+                .get(*name)
+                .map(|m| m.materialization == Materialization::Ephemeral)
+                .unwrap_or(false)
+        })
+        .count();
+    let executable_count = execution_order.len() - ephemeral_count;
+
+    // Show resume summary if applicable (text mode only)
+    if !json_mode {
+        if let Some(ref prev_state) = previous_run_state {
+            let summary = prev_state.summary();
+            println!(
+                "Resuming: {} skipped, {} to retry, {} pending\n",
+                summary.completed, summary.failed, summary.pending
+            );
+        } else if ephemeral_count > 0 {
+            println!(
+                "Running {} models ({} ephemeral inlined)...\n",
+                executable_count, ephemeral_count
+            );
+        } else {
+            println!("Running {} models...\n", execution_order.len());
+        }
+
+        // Show affected exposures
+        let affected_exposures = find_affected_exposures(&project, &execution_order);
+        if !affected_exposures.is_empty() {
+            println!(
+                "  {} downstream exposure(s) may be affected:",
+                affected_exposures.len()
+            );
+            for (exposure_name, exposure_type, depends_on) in &affected_exposures {
+                let models_affected: Vec<&str> = depends_on
+                    .iter()
+                    .filter(|d| execution_order.contains(&d.to_string()))
+                    .map(|s| s.as_str())
+                    .collect();
+                println!(
+                    "    - {} ({}) via {}",
+                    exposure_name,
+                    exposure_type,
+                    models_affected.join(", ")
+                );
+            }
+            println!();
+        }
+    }
 
     create_schemas(&db, &compiled_models, global).await?;
 
-    // Execute on-run-start hooks
-    if !project.config.on_run_start.is_empty() {
+    // Execute on-run-start hooks (skip if resuming)
+    if previous_run_state.is_none() && !project.config.on_run_start.is_empty() {
         if global.verbose {
             eprintln!(
                 "[verbose] Executing {} on-run-start hooks",
@@ -163,16 +261,33 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     let state_path = project.target_dir().join("state.json");
     let mut state_file = StateFile::load(&state_path).unwrap_or_default();
 
-    let (run_results, success_count, failure_count, stopped_early) = execute_models(
+    // Create run state for tracking this execution
+    let selection_str = args.select.clone().or(args.models.clone());
+    let mut run_state = RunState::new(execution_order.clone(), selection_str, config_hash);
+
+    // Save initial run state
+    if let Err(e) = run_state.save(&run_state_path) {
+        eprintln!("Warning: Failed to save initial run state: {}", e);
+    }
+
+    let (run_results, success_count, failure_count, stopped_early) = execute_models_with_state(
         &db,
         &compiled_models,
         &execution_order,
         args,
         &mut state_file,
+        &mut run_state,
+        &run_state_path,
     )
     .await;
 
-    // Save updated state
+    // Mark run as completed
+    run_state.mark_run_completed();
+    if let Err(e) = run_state.save(&run_state_path) {
+        eprintln!("Warning: Failed to save final run state: {}", e);
+    }
+
+    // Save updated incremental state
     if let Err(e) = state_file.save(&state_path) {
         eprintln!("Warning: Failed to save state file: {}", e);
     }
@@ -202,19 +317,31 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         failure_count,
     )?;
 
-    if stopped_early {
-        let remaining = execution_order.len() - run_results.len();
-        if remaining > 0 {
-            println!("  {} model(s) skipped due to early termination", remaining);
+    // Output results based on format
+    if json_mode {
+        let results = RunResults {
+            timestamp: Utc::now(),
+            elapsed_secs: start_time.elapsed().as_secs_f64(),
+            success_count,
+            failure_count,
+            results: run_results,
+        };
+        println!("{}", serde_json::to_string_pretty(&results)?);
+    } else {
+        if stopped_early {
+            let remaining = execution_order.len() - run_results.len();
+            if remaining > 0 {
+                println!("  {} model(s) skipped due to early termination", remaining);
+            }
         }
-    }
 
-    println!();
-    println!(
-        "Completed: {} succeeded, {} failed",
-        success_count, failure_count
-    );
-    println!("Total time: {}ms", start_time.elapsed().as_millis());
+        println!();
+        println!(
+            "Completed: {} succeeded, {} failed",
+            success_count, failure_count
+        );
+        println!("Total time: {}ms", start_time.elapsed().as_millis());
+    }
 
     if failure_count > 0 {
         std::process::exit(4);
@@ -223,14 +350,92 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     Ok(())
 }
 
-/// Create database connection from project config or CLI override
+/// Compute a hash of the project configuration for resume validation
+fn compute_config_hash(project: &Project) -> String {
+    let config_str = format!(
+        "{}:{}:{}",
+        project.config.name,
+        project.config.database.path,
+        project.config.schema.as_deref().unwrap_or("default")
+    );
+    compute_checksum(&config_str)
+}
+
+/// Handle resume mode - load previous state and determine what to run
+fn handle_resume_mode(
+    run_state_path: &Path,
+    compiled_models: &HashMap<String, CompiledModel>,
+    _project: &Project,
+    args: &RunArgs,
+    global: &GlobalArgs,
+    config_hash: &str,
+) -> Result<(Vec<String>, Option<RunState>)> {
+    let previous_state = RunState::load(run_state_path)
+        .context("Failed to load run state")?
+        .ok_or_else(|| anyhow::anyhow!("No run state found. Run 'ff run' first."))?;
+
+    // Warn if config has changed
+    if previous_state.config_hash != config_hash {
+        eprintln!("Warning: Project configuration has changed since last run");
+    }
+
+    // Determine which models to run
+    let models_to_run = if args.retry_failed {
+        // Only retry failed models
+        previous_state.failed_model_names()
+    } else {
+        // Retry failed + run pending
+        previous_state.models_to_run()
+    };
+
+    // Filter to only models that exist in compiled_models
+    let execution_order: Vec<String> = models_to_run
+        .into_iter()
+        .filter(|m| compiled_models.contains_key(m))
+        .collect();
+
+    // Log what we're skipping
+    for completed in &previous_state.completed_models {
+        if global.verbose {
+            eprintln!(
+                "[verbose] Skipping {} (completed in previous run)",
+                completed.name
+            );
+        }
+    }
+
+    Ok((execution_order, Some(previous_state)))
+}
+
+/// Create database connection from project config, optionally using target override
+///
+/// If --target is specified (or FF_TARGET env var is set), uses the database config
+/// from that target. Otherwise, uses the base database config.
 fn create_database_connection(project: &Project, global: &GlobalArgs) -> Result<Arc<dyn Database>> {
-    let db_path = global
-        .target
-        .as_ref()
-        .unwrap_or(&project.config.database.path);
+    use ff_core::config::Config;
+
+    // Resolve target from CLI flag or FF_TARGET env var
+    let target = Config::resolve_target(global.target.as_deref());
+
+    // Get database config, applying target overrides if specified
+    let db_config = project
+        .config
+        .get_database_config(target.as_deref())
+        .context("Failed to get database configuration")?;
+
+    if global.verbose {
+        if let Some(ref target_name) = target {
+            eprintln!(
+                "[verbose] Using target '{}' with database: {}",
+                target_name, db_config.path
+            );
+        } else {
+            eprintln!("[verbose] Using default database: {}", db_config.path);
+        }
+    }
+
     let db: Arc<dyn Database> =
-        Arc::new(DuckDbBackend::new(db_path).context("Failed to connect to database")?);
+        Arc::new(DuckDbBackend::new(&db_config.path).context("Failed to connect to database")?);
     Ok(db)
 }
 
@@ -281,12 +486,19 @@ fn load_from_manifest(
             let compiled_path = project.root.join(&manifest_model.compiled_path);
             let sql = std::fs::read_to_string(&compiled_path).unwrap_or_else(|_| {
                 // Fall back to recompiling this model
-                let model = project.get_model(name).unwrap();
-                jinja
-                    .render_with_config(&model.raw_sql)
-                    .map(|(rendered, _)| rendered)
+                project
+                    .get_model(name)
+                    .and_then(|model| {
+                        jinja
+                            .render_with_config(&model.raw_sql)
+                            .map(|(rendered, _)| rendered)
+                            .ok()
+                    })
                     .unwrap_or_default()
             });
+
+            // Get model schema from project if available
+            let model_schema = project.get_model(name).and_then(|m| m.schema.clone());
 
             compiled_models.insert(
                 name.clone(),
@@ -300,6 +512,7 @@ fn load_from_manifest(
                     on_schema_change: manifest_model.on_schema_change,
                     pre_hook: manifest_model.pre_hook.clone(),
                     post_hook: manifest_model.post_hook.clone(),
+                    model_schema,
                 },
             );
         }
@@ -346,6 +559,7 @@ fn compile_all_models(
             .map(|s| match s {
                 "table" => Materialization::Table,
                 "incremental" => Materialization::Incremental,
+                "ephemeral" => Materialization::Ephemeral,
                 _ => Materialization::View,
             })
             .unwrap_or(project.config.materialization);
@@ -396,6 +610,9 @@ fn compile_all_models(
         let pre_hook = parse_hooks_from_config(&config_values, "pre_hook");
         let post_hook = parse_hooks_from_config(&config_values, "post_hook");
 
+        // Get model schema for contract validation
+        let model_schema = model.schema.clone();
+
         compiled_models.insert(
             name.to_string(),
             CompiledModel {
@@ -408,11 +625,95 @@ fn compile_all_models(
                 on_schema_change,
                 pre_hook,
                 post_hook,
+                model_schema,
             },
         );
     }
 
     Ok(compiled_models)
+}
+
+/// Load the deferred manifest from --defer path
+/// Returns error if manifest doesn't exist or can't be parsed
+fn load_deferred_manifest(defer_path: &str, global: &GlobalArgs) -> Result<Manifest> {
+    let path = Path::new(defer_path);
+
+    if !path.exists() {
+        anyhow::bail!("Deferred manifest not found at: {}", defer_path);
+    }
+
+    if global.verbose {
+        eprintln!("[verbose] Loading deferred manifest from: {}", defer_path);
+    }
+
+    Manifest::load(path).context(format!(
+        "Failed to parse deferred manifest at: {}",
+        defer_path
+    ))
+}
+
+/// Resolve unselected upstream dependencies from deferred manifest
+/// Returns the list of models that should be deferred (not executed)
+fn resolve_deferred_dependencies(
+    selected_models: &[String],
+    compiled_models: &HashMap<String, CompiledModel>,
+    deferred_manifest: &Manifest,
+    global: &GlobalArgs,
+) -> Result<HashSet<String>> {
+    let selected_set: HashSet<String> = selected_models.iter().cloned().collect();
+    let mut deferred_models: HashSet<String> = HashSet::new();
+
+    // Find all upstream dependencies that are not in the selected set
+    for model_name in selected_models {
+        if let Some(compiled) = compiled_models.get(model_name) {
+            for dep in &compiled.dependencies {
+                if !selected_set.contains(dep) {
+                    // This dependency is not selected - need to defer it
+                    // Check if it exists in the deferred manifest
+                    if deferred_manifest.get_model(dep).is_some() {
+                        if !deferred_models.contains(dep) {
+                            deferred_models.insert(dep.clone());
+                            if global.verbose {
+                                eprintln!("[verbose] Deferring {} to production manifest", dep);
+                            }
+                        }
+                    } else {
+                        anyhow::bail!(
+                            "Model '{}' not found in deferred manifest. It is required by: {}",
+                            dep,
+                            model_name
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // Also check for transitive dependencies of deferred models
+    let mut to_check: Vec<String> = deferred_models.iter().cloned().collect();
+    while let Some(model_name) = to_check.pop() {
+        if let Some(manifest_model) = deferred_manifest.get_model(&model_name) {
+            for dep in &manifest_model.depends_on {
+                if !selected_set.contains(dep)
+                    && !deferred_models.contains(dep)
+                    && deferred_manifest.get_model(dep).is_some()
+                {
+                    deferred_models.insert(dep.clone());
+                    to_check.push(dep.clone());
+                    if global.verbose {
+                        eprintln!(
+                            "[verbose] Deferring {} to production manifest (transitive)",
+                            dep
+                        );
+                    }
+                }
+                // Note: Don't fail on transitive deps missing from manifest
+                // They might be external tables or already executed
+            }
+        }
+    }
+
+    Ok(deferred_models)
 }
 
 /// Determine execution order based on DAG and CLI arguments
@@ -442,6 +743,17 @@ fn determine_execution_order(
     } else {
         None
     };
+
+    // Validate --defer usage
+    if args.defer.is_some()
+        && args.state.is_none()
+        && args.select.is_none()
+        && args.models.is_none()
+    {
+        anyhow::bail!(
+            "The --defer flag requires either --state, --select, or --models to specify which models to run"
+        );
+    }
 
     let models_to_run: Vec<String> = if let Some(select) = &args.select {
         // Parse the selector to check if it's a state selector
@@ -480,24 +792,37 @@ fn determine_execution_order(
         models_to_run
     };
 
+    // Handle --defer: load deferred manifest and validate dependencies
+    if let Some(defer_path) = &args.defer {
+        let deferred_manifest = load_deferred_manifest(defer_path, global)?;
+
+        // Resolve which models can be deferred
+        let deferred_models = resolve_deferred_dependencies(
+            &models_after_exclusion,
+            compiled_models,
+            &deferred_manifest,
+            global,
+        )?;
+
+        // Log deferred models summary
+        if !deferred_models.is_empty() {
+            println!(
+                "Deferring {} model(s) to manifest at: {}",
+                deferred_models.len(),
+                defer_path
+            );
+            for model in &deferred_models {
+                println!("  → {}", model);
+            }
+            println!();
+        }
+    }
+
     let execution_order: Vec<String> = dag
         .topological_order()?
         .into_iter()
         .filter(|m| models_after_exclusion.contains(m))
         .collect();
-
-    // Log if using --defer
-    if let Some(defer_path) = &args.defer {
-        if global.verbose {
-            eprintln!(
-                "[verbose] Deferring to manifest at: {} for unselected models",
-                defer_path
-            );
-        }
-        // Note: --defer functionality would be used during execution
-        // to resolve missing upstream dependencies from the deferred manifest.
-        // For now, we just log the intent.
-    }
 
     Ok(execution_order)
 }
@@ -658,6 +983,92 @@ async fn execute_hooks(
     Ok(())
 }
 
+/// Validate schema contract for a model after execution
+///
+/// Returns Ok(Some(result)) if contract validation was performed,
+/// Ok(None) if no contract was defined,
+/// Err if contract was enforced and violations were found
+async fn validate_model_contract(
+    db: &Arc<dyn Database>,
+    model_name: &str,
+    qualified_name: &str,
+    model_schema: Option<&ModelSchema>,
+    verbose: bool,
+) -> Result<Option<ContractValidationResult>, String> {
+    // Check if model has a schema with contract
+    let schema = match model_schema {
+        Some(s) if s.contract.is_some() => s,
+        _ => return Ok(None), // No contract to validate
+    };
+
+    if verbose {
+        eprintln!("[verbose] Validating contract for model: {}", model_name);
+    }
+
+    // Get actual table schema from database
+    let actual_columns = match db.get_table_schema(qualified_name).await {
+        Ok(cols) => cols,
+        Err(e) => {
+            return Err(format!(
+                "Failed to get schema for contract validation: {}",
+                e
+            ));
+        }
+    };
+
+    // Validate the contract
+    let result = validate_contract(model_name, schema, &actual_columns);
+
+    // Log violations
+    for violation in &result.violations {
+        let severity = if result.enforced { "ERROR" } else { "WARN" };
+        match &violation.violation_type {
+            ViolationType::MissingColumn { column } => {
+                eprintln!(
+                    "    [{}] Contract violation: missing column '{}'",
+                    severity, column
+                );
+            }
+            ViolationType::TypeMismatch {
+                column,
+                expected,
+                actual,
+            } => {
+                eprintln!(
+                    "    [{}] Contract violation: column '{}' type mismatch (expected {}, got {})",
+                    severity, column, expected, actual
+                );
+            }
+            ViolationType::ExtraColumn { column } => {
+                if verbose {
+                    eprintln!("    [INFO] Extra column '{}' not in contract", column);
+                }
+            }
+            ViolationType::ConstraintNotMet { column, constraint } => {
+                eprintln!(
+                    "    [{}] Contract violation: column '{}' constraint {:?} not met",
+                    severity, column, constraint
+                );
+            }
+        }
+    }
+
+    // If contract is enforced and has violations (excluding extra columns), fail
+    if result.enforced && !result.passed {
+        let violation_count = result
+            .violations
+            .iter()
+            .filter(|v| !matches!(v.violation_type, ViolationType::ExtraColumn { .. }))
+            .count();
+        return Err(format!(
+            "Contract enforcement failed: {} violation(s)",
+            violation_count
+        ));
+    }
+
+    Ok(Some(result))
+}
+
 /// Execute all models in order with optional parallelism
 async fn execute_models(
     db: &Arc<dyn Database>,
@@ -689,8 +1100,59 @@ async fn execute_models_sequential(
     let mut run_results: Vec<ModelRunResult> = Vec::new();
     let mut stopped_early = false;
 
-    for name in execution_order {
-        let compiled = compiled_models.get(name).unwrap();
+    // Count non-ephemeral models for progress bar
+    let executable_models: Vec<&String> = execution_order
+        .iter()
+        .filter(|name| {
+            compiled_models
+                .get(*name)
+                .map(|m| m.materialization != Materialization::Ephemeral)
+                .unwrap_or(true)
+        })
+        .collect();
+    let executable_count = executable_models.len();
+
+    // Create progress bar if not in quiet mode
+    let progress = if !args.quiet && args.output == OutputFormat::Text {
+        let pb = ProgressBar::new(executable_count as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}",
+                )
+                .unwrap()
+                .progress_chars("#>-"),
+        );
+        Some(pb)
+    } else {
+        None
+    };
+
+    let mut executable_idx = 0;
+    for name in execution_order.iter() {
+        let compiled = compiled_models.get(name).expect(
+            "model exists in compiled_models - validated during execution order construction",
+        );
+
+        // Skip ephemeral models (they're inlined during compilation)
+        if compiled.materialization == Materialization::Ephemeral {
+            success_count += 1;
+            run_results.push(ModelRunResult {
+                model: name.clone(),
+                status: "success".to_string(),
+                materialization: "ephemeral".to_string(),
+                duration_secs: 0.0,
+                error: None,
+            });
+            continue;
+        }
+
+        // Update progress bar
+        if let Some(ref pb) = progress {
+            pb.set_message(format!("Running: {}", name));
+            pb.set_position(executable_idx as u64);
+        }
+        executable_idx += 1;
         let qualified_name = match &compiled.schema {
             Some(s) => format!("{}.{}", s, name),
             None => name.clone(),
@@ -740,6 +1202,11 @@ async fn execute_models_sequential(
             Materialization::Incremental => {
                 execute_incremental(db, &qualified_name, compiled, args.full_refresh).await
             }
+            Materialization::Ephemeral => {
+                // Ephemeral models don't create database objects
+                // They are inlined as CTEs in downstream models during compilation
+                Ok(())
+            }
         };
 
         let duration = model_start.elapsed();
@@ -774,7 +1241,42 @@ async fn execute_models_sequential(
                     continue;
                 }
 
+                // Validate schema contract if defined
+                let contract_result = validate_model_contract(
+                    db,
+                    name,
+                    &qualified_name,
+                    compiled.model_schema.as_ref(),
+                    false, // verbose flag from args would go here
+                )
+                .await;
+
+                if let Err(contract_error) = contract_result {
+                    failure_count += 1;
+                    let final_duration = model_start.elapsed();
+                    println!(
+                        "  ✗ {} (contract) - {} [{}ms]",
+                        name,
+                        contract_error,
+                        final_duration.as_millis()
+                    );
+                    run_results.push(ModelRunResult {
+                        model: name.clone(),
+                        status: "failure".to_string(),
+                        materialization: compiled.materialization.to_string(),
+                        duration_secs: final_duration.as_secs_f64(),
+                        error: Some(contract_error),
+                    });
+                    if args.fail_fast {
+                        stopped_early = true;
+                        println!("\n  Stopping due to --fail-fast");
+                        break;
+                    }
+                    continue;
+                }
+
                 success_count += 1;
+                let final_duration = model_start.elapsed();
                 println!(
                     "  ✓ {} ({}) [{}ms]",
                     name,
@@ -829,6 +1331,11 @@ async fn execute_models_sequential(
         }
     }
 
+    // Finish progress bar
+    if let Some(pb) = progress {
+        pb.finish_with_message("Complete");
+    }
+
     (run_results, success_count, failure_count, stopped_early)
 }
 
@@ -856,6 +1363,33 @@ async fn execute_models_parallel(
     // Group models by their dependency level
     let levels = compute_execution_levels(execution_order, compiled_models);
 
+    // Count non-ephemeral models for progress bar
+    let executable_count = execution_order
+        .iter()
+        .filter(|name| {
+            compiled_models
+                .get(*name)
+                .map(|m| m.materialization != Materialization::Ephemeral)
+                .unwrap_or(true)
+        })
+        .count();
+
+    // Create progress bar if not in quiet mode
+    let progress = if !args.quiet && args.output == OutputFormat::Text {
+        let pb = ProgressBar::new(executable_count as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({msg})",
+                )
+                .unwrap()
+                .progress_chars("#>-"),
+        );
+        Some(Arc::new(pb))
+    } else {
+        None
+    };
+
     println!(
         "  [parallel mode: {} threads, {} levels]",
         args.threads,
@@ -879,7 +1413,23 @@ async fn execute_models_parallel(
 
             let name = name.clone();
             let db = Arc::clone(db);
-            let compiled = compiled_models.get(&name).unwrap();
+            let compiled = compiled_models.get(&name).expect(
+                "model exists in compiled_models - validated during execution order construction",
+            );
+
+            // Skip ephemeral models (they're inlined during compilation)
+            if compiled.materialization == Materialization::Ephemeral {
+                success_count.fetch_add(1, Ordering::SeqCst);
+                run_results.lock().unwrap().push(ModelRunResult {
+                    model: name.clone(),
+                    status: "success".to_string(),
+                    materialization: "ephemeral".to_string(),
+                    duration_secs: 0.0,
+                    error: None,
+                });
+                completed.lock().unwrap().insert(name);
+                continue;
+            }
             let sql = compiled.sql.clone();
             let materialization = compiled.materialization;
             let schema = compiled.schema.clone();
@@ -888,6 +1438,7 @@ async fn execute_models_parallel(
             let on_schema_change = compiled.on_schema_change;
             let pre_hook = compiled.pre_hook.clone();
             let post_hook = compiled.post_hook.clone();
+            let model_schema = compiled.model_schema.clone();
             let full_refresh = args.full_refresh;
             let fail_fast = args.fail_fast;
 
@@ -897,10 +1448,14 @@ async fn execute_models_parallel(
             let run_results = Arc::clone(&run_results);
             let stopped = Arc::clone(&stopped);
             let completed = Arc::clone(&completed);
+            let progress = progress.clone();
 
             let handle = tokio::spawn(async move {
                 // Acquire semaphore permit
-                let _permit = semaphore.acquire().await.unwrap();
+                let _permit = semaphore
+                    .acquire()
+                    .await
+                    .expect("semaphore closed unexpectedly - this should not happen during normal execution");
 
                 // Check if we should stop
                 if stopped.load(Ordering::SeqCst) && fail_fast {
@@ -955,6 +1510,7 @@ async fn execute_models_parallel(
                     on_schema_change,
                     pre_hook: vec![],  // Already executed
                     post_hook: vec![], // Will execute separately
+                    model_schema: model_schema.clone(),
                 };
 
                 let result = match materialization {
@@ -962,6 +1518,10 @@ async fn execute_models_parallel(
                     Materialization::Table => db.create_table_as(&qualified_name, &sql, true).await,
                     Materialization::Incremental => {
                         execute_incremental(&db, &qualified_name, &compiled, full_refresh).await
+                    }
+                    Materialization::Ephemeral => {
+                        // Ephemeral models don't create database objects
+                        Ok(())
                     }
                 };
 
@@ -989,22 +1549,54 @@ async fn execute_models_parallel(
                                 error: Some(format!("post-hook failed: {}", e)),
                             }
                         } else {
-                            let duration = model_start.elapsed();
-                            success_count.fetch_add(1, Ordering::SeqCst);
-                            println!(
-                                "  ✓ {} ({}) [{}ms]",
-                                name,
-                                materialization,
-                                duration.as_millis()
-                            );
+                            // Validate schema contract if defined
+                            let contract_result = validate_model_contract(
+                                &db,
+                                &name,
+                                &qualified_name,
+                                model_schema.as_ref(),
+                                false, // verbose
+                            )
+                            .await;
 
-                            // Row count retrieved later in state update
-                            ModelRunResult {
-                                model: name.clone(),
-                                status: "success".to_string(),
-                                materialization: materialization.to_string(),
-                                duration_secs: duration.as_secs_f64(),
-                                error: None,
+                            if let Err(contract_error) = contract_result {
+                                let duration = model_start.elapsed();
+                                failure_count.fetch_add(1, Ordering::SeqCst);
+                                println!(
+                                    "  ✗ {} (contract) - {} [{}ms]",
+                                    name,
+                                    contract_error,
+                                    duration.as_millis()
+                                );
+                                if fail_fast {
+                                    stopped.store(true, Ordering::SeqCst);
+                                    println!("\n  Stopping due to --fail-fast");
+                                }
+                                ModelRunResult {
+                                    model: name.clone(),
+                                    status: "failure".to_string(),
+                                    materialization: materialization.to_string(),
+                                    duration_secs: duration.as_secs_f64(),
+                                    error: Some(contract_error),
+                                }
+                            } else {
+                                let duration = model_start.elapsed();
+                                success_count.fetch_add(1, Ordering::SeqCst);
+                                println!(
+                                    "  ✓ {} ({}) [{}ms]",
+                                    name,
+                                    materialization,
+                                    duration.as_millis()
+                                );
+
+                                // Row count retrieved later in state update
+                                ModelRunResult {
+                                    model: name.clone(),
+                                    status: "success".to_string(),
+                                    materialization: materialization.to_string(),
+                                    duration_secs: duration.as_secs_f64(),
+                                    error: None,
+                                }
                             }
                         }
                     }
@@ -1031,6 +1623,11 @@ async fn execute_models_parallel(
                 run_results.lock().unwrap().push(model_result);
                 completed.lock().unwrap().insert(name.clone());
 
+                // Update progress bar
+                if let Some(ref pb) = progress {
+                    pb.inc(1);
+                }
+
                 (name, Some(()))
             });
 
@@ -1041,6 +1638,11 @@ async fn execute_models_parallel(
         for handle in handles {
             let _ = handle.await;
         }
+    }
+
+    // Finish progress bar
+    if let Some(pb) = progress {
+        pb.finish_with_message("Complete");
     }
 
     let final_results = run_results.lock().unwrap().clone();
@@ -1119,6 +1721,41 @@ fn compute_execution_levels(
     levels
 }
 
+/// Execute all models in order with run state tracking for resume capability
+async fn execute_models_with_state(
+    db: &Arc<dyn Database>,
+    compiled_models: &HashMap<String, CompiledModel>,
+    execution_order: &[String],
+    args: &RunArgs,
+    state_file: &mut StateFile,
+    run_state: &mut RunState,
+    run_state_path: &Path,
+) -> (Vec<ModelRunResult>, usize, usize, bool) {
+    // Use the existing execute_models function and update run state after
+    let (run_results, success_count, failure_count, stopped_early) =
+        execute_models(db, compiled_models, execution_order, args, state_file).await;
+
+    // Update run state based on results
+    for result in &run_results {
+        let duration_ms = (result.duration_secs * 1000.0) as u64;
+        if result.status == "success" {
+            run_state.mark_completed(&result.model, duration_ms);
+        } else {
+            run_state.mark_failed(
+                &result.model,
+                result.error.as_deref().unwrap_or("unknown error"),
+            );
+        }
+    }
+
+    // Save run state after execution
+    if let Err(e) = run_state.save(run_state_path) {
+        eprintln!("Warning: Failed to save run state: {}", e);
+    }
+
+    (run_results, success_count, failure_count, stopped_early)
+}
+
 /// Write run results to JSON file
 fn write_run_results(
     project: &Project,
@@ -1143,4 +1780,31 @@ fn write_run_results(
     std::fs::write(&results_path, results_json).context("Failed to write run_results.json")?;
 
     Ok(())
+}
+
+/// Find exposures that depend on any of the models being run
+/// Returns a list of (exposure_name, exposure_type, depends_on models)
+fn find_affected_exposures(
+    project: &Project,
+    models_to_run: &[String],
+) -> Vec<(String, String, Vec<String>)> {
+    let model_set: HashSet<&str> = models_to_run.iter().map(|s| s.as_str()).collect();
+
+    project
+        .exposures
+        .iter()
+        .filter(|exposure| {
+            exposure
+                .depends_on
+                .iter()
+                .any(|dep| model_set.contains(dep.as_str()))
+        })
+        .map(|exposure| {
+            (
+                exposure.name.clone(),
+                format!("{}", exposure.exposure_type),
+                exposure.depends_on.clone(),
+            )
+        })
+        .collect()
 }
