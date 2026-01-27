@@ -159,7 +159,7 @@ pub struct RunArgs {
     pub state: Option<String>,
 
     /// Number of threads for parallel execution (default: 1)
-    #[arg(short = 't', long, default_value = "1")]
+    #[arg(long, default_value = "1")]
     pub threads: usize,
 }
 
@@ -229,7 +229,7 @@ pub struct TestArgs {
     pub warn_only: bool,
 
     /// Number of threads for parallel test execution (default: 1)
-    #[arg(short = 't', long, default_value = "1")]
+    #[arg(long, default_value = "1")]
     pub threads: usize,
 }
 
@@ -336,7 +336,7 @@ pub enum FreshnessOutput {
 #[derive(Args, Debug)]
 pub struct SnapshotArgs {
     /// Snapshot names to run (comma-separated, default: all)
-    #[arg(short, long)]
+    #[arg(long)]
     pub snapshots: Option<String>,
 
     /// dbt-style selector (+snapshot, snapshot+)

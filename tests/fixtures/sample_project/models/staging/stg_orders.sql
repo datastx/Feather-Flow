@@ -6,5 +6,5 @@ SELECT
     created_at AS order_date,
     amount,
     status
-FROM raw_orders
+FROM analytics.raw_orders
 WHERE created_at >= '{{ var("start_date") }}'

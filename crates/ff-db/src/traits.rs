@@ -7,14 +7,72 @@ use std::collections::HashMap;
 /// Options for loading CSV files
 #[derive(Debug, Clone, Default)]
 pub struct CsvLoadOptions {
-    /// CSV delimiter character (default: comma)
-    pub delimiter: Option<char>,
-    /// Override inferred types for specific columns
-    pub column_types: HashMap<String, String>,
-    /// Force column quoting
-    pub quote_columns: bool,
-    /// Target schema for the table
-    pub schema: Option<String>,
+    delimiter: Option<char>,
+    column_types: HashMap<String, String>,
+    quote_columns: bool,
+    schema: Option<String>,
+}
+
+impl CsvLoadOptions {
+    /// Create a new CsvLoadOptions with defaults
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the CSV delimiter character
+    #[must_use]
+    pub fn with_delimiter(mut self, delimiter: char) -> Self {
+        self.delimiter = Some(delimiter);
+        self
+    }
+
+    /// Set column type overrides
+    #[must_use]
+    pub fn with_column_types(mut self, types: HashMap<String, String>) -> Self {
+        self.column_types = types;
+        self
+    }
+
+    /// Add a single column type override
+    #[must_use]
+    pub fn with_column_type(mut self, column: impl Into<String>, dtype: impl Into<String>) -> Self {
+        self.column_types.insert(column.into(), dtype.into());
+        self
+    }
+
+    /// Enable column quoting
+    #[must_use]
+    pub fn with_quote_columns(mut self, quote: bool) -> Self {
+        self.quote_columns = quote;
+        self
+    }
+
+    /// Set target schema for the table
+    #[must_use]
+    pub fn with_schema(mut self, schema: impl Into<String>) -> Self {
+        self.schema = Some(schema.into());
+        self
+    }
+
+    /// Get the delimiter
+    pub fn delimiter(&self) -> Option<char> {
+        self.delimiter
+    }
+
+    /// Get the column types
+    pub fn column_types(&self) -> &HashMap<String, String> {
+        &self.column_types
+    }
+
+    /// Check if column quoting is enabled
+    pub fn quote_columns(&self) -> bool {
+        self.quote_columns
+    }
+
+    /// Get the schema
+    pub fn schema(&self) -> Option<&str> {
+        self.schema.as_deref()
+    }
 }
 
 /// Database abstraction trait for Featherflow
@@ -111,8 +169,6 @@ pub trait Database: Send + Sync {
     ///
     /// Used for on_schema_change: append_new_columns
     async fn add_columns(&self, table: &str, columns: &[(String, String)]) -> DbResult<()>;
-
-    // ===== Snapshot Operations =====
 
     /// Execute a snapshot operation (SCD Type 2)
     ///

@@ -7,6 +7,19 @@ use duckdb::Connection;
 use std::path::Path;
 use std::sync::Mutex;
 
+/// Extension trait for converting `duckdb::Error` into `DbResult`.
+///
+/// Reduces boilerplate when propagating database errors through the crate.
+trait DuckDbResultExt<T> {
+    fn to_db_err(self) -> DbResult<T>;
+}
+
+impl<T> DuckDbResultExt<T> for Result<T, duckdb::Error> {
+    fn to_db_err(self) -> DbResult<T> {
+        self.map_err(|e| DbError::ExecutionError(e.to_string()))
+    }
+}
+
 /// DuckDB database backend
 pub struct DuckDbBackend {
     conn: Mutex<Connection>,
@@ -68,7 +81,6 @@ impl DuckDbBackend {
     fn relation_exists_sync(&self, name: &str) -> DbResult<bool> {
         let conn = self.conn.lock().unwrap();
 
-        // Handle schema-qualified names
         let (schema, table) = if let Some(pos) = name.rfind('.') {
             (&name[..pos], &name[pos + 1..])
         } else {
@@ -141,12 +153,9 @@ impl Database for DuckDbBackend {
         path: &str,
         options: CsvLoadOptions,
     ) -> DbResult<()> {
-        // Build read_csv options
         let mut csv_options = Vec::new();
 
-        // Delimiter option
-        if let Some(delim) = options.delimiter {
-            // Escape single quotes in delimiter
+        if let Some(delim) = options.delimiter() {
             let delim_str = if delim == '\t' {
                 "\\t".to_string()
             } else {
@@ -155,14 +164,12 @@ impl Database for DuckDbBackend {
             csv_options.push(format!("delim = '{}'", delim_str));
         }
 
-        // Quote columns option
-        if options.quote_columns {
+        if options.quote_columns() {
             csv_options.push("quote = '\"'".to_string());
         }
 
-        // Build column types if specified
         let type_casts: Vec<String> = options
-            .column_types
+            .column_types()
             .iter()
             .map(|(col, typ)| format!("CAST({} AS {}) AS {}", col, typ, col))
             .collect();
@@ -173,9 +180,7 @@ impl Database for DuckDbBackend {
             format!(", {}", csv_options.join(", "))
         };
 
-        // Determine target table name (with schema if specified)
-        let target_table = if let Some(ref schema) = options.schema {
-            // Create schema if it doesn't exist
+        let target_table = if let Some(schema) = options.schema() {
             self.create_schema_if_not_exists(schema).await?;
             format!("{}.{}", schema, table)
         } else {
@@ -188,14 +193,12 @@ impl Database for DuckDbBackend {
                 target_table, path, csv_opts_str
             )
         } else {
-            // When we have type casts, we need to select specific columns
-            // First, get all columns and apply casts where specified
             let typed_columns = type_casts.join(", ");
             format!(
                 "CREATE OR REPLACE TABLE {} AS SELECT {}, * EXCLUDE ({}) FROM read_csv_auto('{}'{})",
                 target_table,
                 typed_columns,
-                options.column_types.keys().cloned().collect::<Vec<_>>().join(", "),
+                options.column_types().keys().cloned().collect::<Vec<_>>().join(", "),
                 path,
                 csv_opts_str
             )
@@ -207,34 +210,16 @@ impl Database for DuckDbBackend {
 
     async fn infer_csv_schema(&self, path: &str) -> DbResult<Vec<(String, String)>> {
         let conn = self.conn.lock().unwrap();
-
-        // Use DuckDB's DESCRIBE to get the inferred schema
         let sql = format!("DESCRIBE SELECT * FROM read_csv_auto('{}')", path);
 
-        let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|e| DbError::ExecutionError(e.to_string()))?;
-
+        let mut stmt = conn.prepare(&sql).to_db_err()?;
         let mut schema: Vec<(String, String)> = Vec::new();
+        let mut rows = stmt.query([]).to_db_err()?;
 
-        let query_result = stmt.query([]);
-        match query_result {
-            Ok(mut rows) => {
-                while let Some(row) = rows
-                    .next()
-                    .map_err(|e| DbError::ExecutionError(e.to_string()))?
-                {
-                    // DESCRIBE returns: column_name, column_type, null, key, default, extra
-                    let column_name: String = row
-                        .get(0)
-                        .map_err(|e| DbError::ExecutionError(e.to_string()))?;
-                    let column_type: String = row
-                        .get(1)
-                        .map_err(|e| DbError::ExecutionError(e.to_string()))?;
-                    schema.push((column_name, column_type));
-                }
-            }
-            Err(e) => return Err(DbError::ExecutionError(e.to_string())),
+        while let Some(row) = rows.next().to_db_err()? {
+            let column_name: String = row.get(0).to_db_err()?;
+            let column_type: String = row.get(1).to_db_err()?;
+            schema.push((column_name, column_type));
         }
 
         Ok(schema)
@@ -245,7 +230,6 @@ impl Database for DuckDbBackend {
     }
 
     async fn drop_if_exists(&self, name: &str) -> DbResult<()> {
-        // Try dropping as view first, then as table
         let _ = self.execute_sync(&format!("DROP VIEW IF EXISTS {}", name));
         let _ = self.execute_sync(&format!("DROP TABLE IF EXISTS {}", name));
         Ok(())
@@ -261,42 +245,26 @@ impl Database for DuckDbBackend {
         let conn = self.conn.lock().unwrap();
         let limited_sql = format!("SELECT * FROM ({}) AS subq LIMIT {}", sql, limit);
 
-        let mut stmt = conn
-            .prepare(&limited_sql)
-            .map_err(|e| DbError::ExecutionError(e.to_string()))?;
-
+        let mut stmt = conn.prepare(&limited_sql).to_db_err()?;
         let mut rows: Vec<String> = Vec::new();
+        let mut result_rows = stmt.query([]).to_db_err()?;
+        let column_count = result_rows.as_ref().map_or(0, |r| r.column_count());
 
-        let query_result = stmt.query([]);
-        match query_result {
-            Ok(mut result_rows) => {
-                // Get column count from first row
-                let column_count = result_rows.as_ref().map_or(0, |r| r.column_count());
-
-                while let Some(row) = result_rows
-                    .next()
-                    .map_err(|e| DbError::ExecutionError(e.to_string()))?
-                {
-                    let mut values: Vec<String> = Vec::new();
-                    for i in 0..column_count {
-                        // Try to get value as string representation
-                        let str_val: String = row.get::<_, String>(i).unwrap_or_else(|_| {
-                            // Try as i64
-                            row.get::<_, i64>(i)
+        while let Some(row) = result_rows.next().to_db_err()? {
+            let mut values: Vec<String> = Vec::new();
+            for i in 0..column_count {
+                let str_val: String = row.get::<_, String>(i).unwrap_or_else(|_| {
+                    row.get::<_, i64>(i)
+                        .map(|n| n.to_string())
+                        .unwrap_or_else(|_| {
+                            row.get::<_, f64>(i)
                                 .map(|n| n.to_string())
-                                .unwrap_or_else(|_| {
-                                    // Try as f64
-                                    row.get::<_, f64>(i)
-                                        .map(|n| n.to_string())
-                                        .unwrap_or_else(|_| "NULL".to_string())
-                                })
-                        });
-                        values.push(str_val);
-                    }
-                    rows.push(values.join(", "));
-                }
+                                .unwrap_or_else(|_| "NULL".to_string())
+                        })
+                });
+                values.push(str_val);
             }
-            Err(e) => return Err(DbError::ExecutionError(e.to_string())),
+            rows.push(values.join(", "));
         }
 
         Ok(rows)
@@ -305,40 +273,27 @@ impl Database for DuckDbBackend {
     async fn query_one(&self, sql: &str) -> DbResult<Option<String>> {
         let conn = self.conn.lock().unwrap();
 
-        let mut stmt = conn
-            .prepare(sql)
-            .map_err(|e| DbError::ExecutionError(e.to_string()))?;
+        let mut stmt = conn.prepare(sql).to_db_err()?;
+        let mut result_rows = stmt.query([]).to_db_err()?;
 
-        let query_result = stmt.query([]);
-        match query_result {
-            Ok(mut result_rows) => {
-                if let Some(row) = result_rows
-                    .next()
-                    .map_err(|e| DbError::ExecutionError(e.to_string()))?
-                {
-                    // Try to get first column as string
-                    let value: String = row.get::<_, String>(0).unwrap_or_else(|_| {
-                        // Try as i64
-                        row.get::<_, i64>(0)
-                            .map(|n| n.to_string())
-                            .unwrap_or_else(|_| {
-                                // Try as f64
-                                row.get::<_, f64>(0)
-                                    .map(|n| n.to_string())
-                                    .unwrap_or_else(|_| "".to_string())
-                            })
-                    });
+        let Some(row) = result_rows.next().to_db_err()? else {
+            return Ok(None);
+        };
 
-                    if value.is_empty() {
-                        Ok(None)
-                    } else {
-                        Ok(Some(value))
-                    }
-                } else {
-                    Ok(None)
-                }
-            }
-            Err(e) => Err(DbError::ExecutionError(e.to_string())),
+        let value: String = row.get::<_, String>(0).unwrap_or_else(|_| {
+            row.get::<_, i64>(0)
+                .map(|n| n.to_string())
+                .unwrap_or_else(|_| {
+                    row.get::<_, f64>(0)
+                        .map(|n| n.to_string())
+                        .unwrap_or_else(|_| String::new())
+                })
+        });
+
+        if value.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(value))
         }
     }
 
@@ -348,39 +303,27 @@ impl Database for DuckDbBackend {
         source_sql: &str,
         unique_keys: &[String],
     ) -> DbResult<()> {
-        // DuckDB doesn't have native MERGE, so we implement using DELETE + INSERT
-        // This is a common pattern: delete matching rows, then insert all from source
-        //
-        // 1. Create a temp table from source SQL
-        // 2. Delete matching rows from target based on unique keys
-        // 3. Insert all rows from temp table into target
-        // 4. Drop temp table
+        // DuckDB lacks native MERGE; emulate via DELETE + INSERT through temp table
+        let temp_table = format!("__ff_merge_source_{}", unique_id());
 
-        let temp_table = format!("__ff_merge_source_{}", uuid_v4_simple());
-
-        // Create temp table from source SQL
         let create_temp = format!("CREATE TEMP TABLE {} AS {}", temp_table, source_sql);
         self.execute_sync(&create_temp)?;
 
-        // Build the join condition for unique keys
         let join_conditions: Vec<String> = unique_keys
             .iter()
             .map(|k| format!("{}.{} = {}.{}", target_table, k, temp_table, k))
             .collect();
         let join_clause = join_conditions.join(" AND ");
 
-        // Delete matching rows from target
         let delete_sql = format!(
             "DELETE FROM {} WHERE EXISTS (SELECT 1 FROM {} WHERE {})",
             target_table, temp_table, join_clause
         );
         self.execute_sync(&delete_sql)?;
 
-        // Insert all rows from temp table
         let insert_sql = format!("INSERT INTO {} SELECT * FROM {}", target_table, temp_table);
         self.execute_sync(&insert_sql)?;
 
-        // Drop temp table
         let drop_temp = format!("DROP TABLE {}", temp_table);
         self.execute_sync(&drop_temp)?;
 
@@ -393,40 +336,26 @@ impl Database for DuckDbBackend {
         source_sql: &str,
         unique_keys: &[String],
     ) -> DbResult<()> {
-        // Delete+Insert strategy:
-        // 1. Create temp table from source SQL
-        // 2. Delete ALL rows from target that match ANY row in source on unique keys
-        // 3. Insert all rows from source into target
-        //
-        // This differs from merge in that it's more aggressive - it deletes
-        // all matching rows before inserting, which is useful when you want
-        // to completely replace matching records.
+        let temp_table = format!("__ff_delete_insert_source_{}", unique_id());
 
-        let temp_table = format!("__ff_delete_insert_source_{}", uuid_v4_simple());
-
-        // Create temp table from source SQL
         let create_temp = format!("CREATE TEMP TABLE {} AS {}", temp_table, source_sql);
         self.execute_sync(&create_temp)?;
 
-        // Build the join condition for unique keys
         let join_conditions: Vec<String> = unique_keys
             .iter()
             .map(|k| format!("{}.{} = {}.{}", target_table, k, temp_table, k))
             .collect();
         let join_clause = join_conditions.join(" AND ");
 
-        // Delete matching rows from target
         let delete_sql = format!(
             "DELETE FROM {} WHERE EXISTS (SELECT 1 FROM {} WHERE {})",
             target_table, temp_table, join_clause
         );
         self.execute_sync(&delete_sql)?;
 
-        // Insert all rows from temp table
         let insert_sql = format!("INSERT INTO {} SELECT * FROM {}", target_table, temp_table);
         self.execute_sync(&insert_sql)?;
 
-        // Drop temp table
         let drop_temp = format!("DROP TABLE {}", temp_table);
         self.execute_sync(&drop_temp)?;
 
@@ -436,7 +365,6 @@ impl Database for DuckDbBackend {
     async fn get_table_schema(&self, table: &str) -> DbResult<Vec<(String, String)>> {
         let conn = self.conn.lock().unwrap();
 
-        // Handle schema-qualified names
         let (schema, table_name) = if let Some(pos) = table.rfind('.') {
             (&table[..pos], &table[pos + 1..])
         } else {
@@ -449,29 +377,14 @@ impl Database for DuckDbBackend {
             schema, table_name
         );
 
-        let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|e| DbError::ExecutionError(e.to_string()))?;
-
+        let mut stmt = conn.prepare(&sql).to_db_err()?;
         let mut columns: Vec<(String, String)> = Vec::new();
+        let mut rows = stmt.query([]).to_db_err()?;
 
-        let query_result = stmt.query([]);
-        match query_result {
-            Ok(mut rows) => {
-                while let Some(row) = rows
-                    .next()
-                    .map_err(|e| DbError::ExecutionError(e.to_string()))?
-                {
-                    let column_name: String = row
-                        .get(0)
-                        .map_err(|e| DbError::ExecutionError(e.to_string()))?;
-                    let column_type: String = row
-                        .get(1)
-                        .map_err(|e| DbError::ExecutionError(e.to_string()))?;
-                    columns.push((column_name, column_type));
-                }
-            }
-            Err(e) => return Err(DbError::ExecutionError(e.to_string())),
+        while let Some(row) = rows.next().to_db_err()? {
+            let column_name: String = row.get(0).to_db_err()?;
+            let column_type: String = row.get(1).to_db_err()?;
+            columns.push((column_name, column_type));
         }
 
         Ok(columns)
@@ -479,34 +392,16 @@ impl Database for DuckDbBackend {
 
     async fn describe_query(&self, sql: &str) -> DbResult<Vec<(String, String)>> {
         let conn = self.conn.lock().unwrap();
-
-        // Use DuckDB's DESCRIBE to get the schema of a query
         let describe_sql = format!("DESCRIBE SELECT * FROM ({}) AS subq", sql);
 
-        let mut stmt = conn
-            .prepare(&describe_sql)
-            .map_err(|e| DbError::ExecutionError(e.to_string()))?;
-
+        let mut stmt = conn.prepare(&describe_sql).to_db_err()?;
         let mut columns: Vec<(String, String)> = Vec::new();
+        let mut rows = stmt.query([]).to_db_err()?;
 
-        let query_result = stmt.query([]);
-        match query_result {
-            Ok(mut rows) => {
-                while let Some(row) = rows
-                    .next()
-                    .map_err(|e| DbError::ExecutionError(e.to_string()))?
-                {
-                    // DESCRIBE returns: column_name, column_type, null, key, default, extra
-                    let column_name: String = row
-                        .get(0)
-                        .map_err(|e| DbError::ExecutionError(e.to_string()))?;
-                    let column_type: String = row
-                        .get(1)
-                        .map_err(|e| DbError::ExecutionError(e.to_string()))?;
-                    columns.push((column_name, column_type));
-                }
-            }
-            Err(e) => return Err(DbError::ExecutionError(e.to_string())),
+        while let Some(row) = rows.next().to_db_err()? {
+            let column_name: String = row.get(0).to_db_err()?;
+            let column_type: String = row.get(1).to_db_err()?;
+            columns.push((column_name, column_type));
         }
 
         Ok(columns)
@@ -531,20 +426,16 @@ impl Database for DuckDbBackend {
         check_cols: Option<&[String]>,
         invalidate_hard_deletes: bool,
     ) -> DbResult<SnapshotResult> {
-        // Check if snapshot table exists
         let snapshot_exists = self.relation_exists(snapshot_table).await?;
 
         if !snapshot_exists {
-            // First run: create snapshot table from source with SCD columns
             let source_schema = self.get_table_schema(source_table).await?;
 
-            // Build column definitions
             let mut columns: Vec<String> = source_schema
                 .iter()
                 .map(|(name, dtype)| format!("{} {}", name, dtype))
                 .collect();
 
-            // Add SCD Type 2 tracking columns
             columns.push("dbt_scd_id VARCHAR".to_string());
             columns.push("dbt_updated_at TIMESTAMP".to_string());
             columns.push("dbt_valid_from TIMESTAMP".to_string());
@@ -553,18 +444,14 @@ impl Database for DuckDbBackend {
             let create_sql = format!("CREATE TABLE {} ({})", snapshot_table, columns.join(", "));
             self.execute_sync(&create_sql)?;
 
-            // Insert all records from source as initial snapshot
             let source_cols: Vec<&str> = source_schema.iter().map(|(n, _)| n.as_str()).collect();
 
-            // For dbt_updated_at, use the actual updated_at column value if provided,
-            // otherwise use CURRENT_TIMESTAMP. This is important for change detection.
             let updated_at_expr = if let Some(col) = updated_at_column {
                 format!("CAST({} AS TIMESTAMP)", col)
             } else {
                 "CURRENT_TIMESTAMP".to_string()
             };
 
-            // Generate SCD ID from unique keys
             let key_concat: Vec<String> = unique_keys
                 .iter()
                 .map(|k| format!("COALESCE(CAST({} AS VARCHAR), '')", k))
@@ -598,7 +485,6 @@ impl Database for DuckDbBackend {
             });
         }
 
-        // Subsequent run: handle new, changed, and deleted records
         let new_records = self
             .snapshot_insert_new(snapshot_table, source_table, unique_keys)
             .await?;
@@ -633,17 +519,14 @@ impl Database for DuckDbBackend {
         source_table: &str,
         unique_keys: &[String],
     ) -> DbResult<usize> {
-        // Find records in source that don't exist in snapshot (by unique key, where dbt_valid_to IS NULL)
         let join_conditions: Vec<String> = unique_keys
             .iter()
             .map(|k| format!("s.{} = snap.{}", k, k))
             .collect();
 
-        // Get source columns
         let source_schema = self.get_table_schema(source_table).await?;
         let source_cols: Vec<&str> = source_schema.iter().map(|(n, _)| n.as_str()).collect();
 
-        // Generate SCD ID
         let key_concat: Vec<String> = unique_keys
             .iter()
             .map(|k| format!("COALESCE(CAST(s.{} AS VARCHAR), '')", k))
@@ -654,8 +537,8 @@ impl Database for DuckDbBackend {
         );
 
         let prefixed_cols: Vec<String> = source_cols.iter().map(|c| format!("s.{}", c)).collect();
+        let first_key = unique_keys.first().map(String::as_str).unwrap_or("id");
 
-        // Find new records (not yet in snapshot) - query_count will wrap with COUNT(*)
         let new_records_sql = format!(
             "SELECT s.* FROM {source} s \
              LEFT JOIN (SELECT * FROM {snapshot} WHERE dbt_valid_to IS NULL) snap \
@@ -664,13 +547,12 @@ impl Database for DuckDbBackend {
             source = source_table,
             snapshot = snapshot_table,
             join_conditions = join_conditions.join(" AND "),
-            first_key = unique_keys.first().unwrap_or(&"id".to_string()),
+            first_key = first_key,
         );
 
         let new_count = self.query_count(&new_records_sql).await?;
 
         if new_count > 0 {
-            // Insert new records
             let insert_sql = format!(
                 "INSERT INTO {snapshot} ({cols}, dbt_scd_id, dbt_updated_at, dbt_valid_from, dbt_valid_to) \
                  SELECT {prefixed_cols}, {scd_id}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL \
@@ -684,7 +566,7 @@ impl Database for DuckDbBackend {
                 scd_id = scd_id_expr,
                 source = source_table,
                 join_conditions = join_conditions.join(" AND "),
-                first_key = unique_keys.first().unwrap_or(&"id".to_string()),
+                first_key = first_key,
             );
             self.execute_sync(&insert_sql)?;
         }
@@ -700,29 +582,23 @@ impl Database for DuckDbBackend {
         updated_at_column: Option<&str>,
         check_cols: Option<&[String]>,
     ) -> DbResult<usize> {
-        // Build join condition
         let join_conditions: Vec<String> = unique_keys
             .iter()
             .map(|k| format!("s.{} = snap.{}", k, k))
             .collect();
 
-        // Build change detection condition
         let change_condition = if let Some(updated_at) = updated_at_column {
-            // Timestamp strategy: compare updated_at column against dbt_updated_at
             format!("s.{} > snap.dbt_updated_at", updated_at)
         } else if let Some(cols) = check_cols {
-            // Check strategy: compare specific columns
             let comparisons: Vec<String> = cols
                 .iter()
                 .map(|c| format!("(s.{c} IS DISTINCT FROM snap.{c})", c = c))
                 .collect();
             comparisons.join(" OR ")
         } else {
-            // Default: no changes detected
             return Ok(0);
         };
 
-        // Build query to find changed records (don't include SELECT COUNT(*) - query_count will wrap it)
         let changed_records_sql = format!(
             "SELECT s.* FROM {source} s \
              INNER JOIN (SELECT * FROM {snapshot} WHERE dbt_valid_to IS NULL) snap \
@@ -740,12 +616,10 @@ impl Database for DuckDbBackend {
             return Ok(0);
         }
 
-        // Get source schema for inserting new versions
         let source_schema = self.get_table_schema(source_table).await?;
         let source_cols: Vec<&str> = source_schema.iter().map(|(n, _)| n.as_str()).collect();
         let prefixed_cols: Vec<String> = source_cols.iter().map(|c| format!("s.{}", c)).collect();
 
-        // Generate SCD ID
         let key_concat: Vec<String> = unique_keys
             .iter()
             .map(|k| format!("COALESCE(CAST(s.{} AS VARCHAR), '')", k))
@@ -755,16 +629,13 @@ impl Database for DuckDbBackend {
             key_concat.join(" || '|' || ")
         );
 
-        // For dbt_updated_at, use the source's updated_at if using timestamp strategy,
-        // otherwise use CURRENT_TIMESTAMP
         let updated_at_expr = if let Some(col) = updated_at_column {
             format!("s.{}", col)
         } else {
             "CURRENT_TIMESTAMP".to_string()
         };
 
-        // Step 1: Insert new versions of changed records FIRST (before invalidating old ones)
-        // We need to capture which records are changing before we invalidate them
+        // Insert new versions before invalidating old ones to capture changing records
         let insert_sql = format!(
             "INSERT INTO {snapshot} ({cols}, dbt_scd_id, dbt_updated_at, dbt_valid_from, dbt_valid_to) \
              SELECT {prefixed_cols}, {scd_id}, {updated_at_expr}, CURRENT_TIMESTAMP, NULL \
@@ -783,8 +654,6 @@ impl Database for DuckDbBackend {
         );
         self.execute_sync(&insert_sql)?;
 
-        // Step 2: Invalidate old records (set dbt_valid_to) - mark records that have newer versions
-        // Find records where there's a newer version with the same unique key
         let key_match_for_newer: Vec<String> = unique_keys
             .iter()
             .map(|k| format!("old.{k} = newer.{k}", k = k))
@@ -813,13 +682,13 @@ impl Database for DuckDbBackend {
         source_table: &str,
         unique_keys: &[String],
     ) -> DbResult<usize> {
-        // Find records in snapshot that no longer exist in source
         let join_conditions: Vec<String> = unique_keys
             .iter()
             .map(|k| format!("snap.{} = s.{}", k, k))
             .collect();
 
-        // Find deleted records (in snapshot but not in source) - query_count will wrap with COUNT(*)
+        let first_key = unique_keys.first().map(String::as_str).unwrap_or("id");
+
         let deleted_records_sql = format!(
             "SELECT snap.* FROM {snapshot} snap \
              LEFT JOIN {source} s ON {join_conditions} \
@@ -827,7 +696,7 @@ impl Database for DuckDbBackend {
             snapshot = snapshot_table,
             source = source_table,
             join_conditions = join_conditions.join(" AND "),
-            first_key = unique_keys.first().unwrap_or(&"id".to_string()),
+            first_key = first_key,
         );
 
         let deleted_count = self.query_count(&deleted_records_sql).await?;
@@ -836,7 +705,6 @@ impl Database for DuckDbBackend {
             return Ok(0);
         }
 
-        // Invalidate deleted records
         let update_sql = format!(
             "UPDATE {snapshot} SET dbt_valid_to = CURRENT_TIMESTAMP \
              WHERE dbt_valid_to IS NULL \
@@ -858,13 +726,20 @@ impl Database for DuckDbBackend {
     }
 }
 
-/// Generate a simple UUID-like string for temp table names
-fn uuid_v4_simple() -> String {
+/// Generate a unique identifier for temp table names.
+///
+/// Uses timestamp plus atomic counter to avoid collisions in concurrent operations.
+fn unique_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
-    format!("{}_{}", now.as_secs(), now.subsec_nanos())
+    let count = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{}_{}_{}", now.as_secs(), now.subsec_nanos(), count)
 }
 
 #[cfg(test)]

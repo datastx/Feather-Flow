@@ -1667,82 +1667,82 @@ Errors include relevant context:
 | ff validate | Done |
 | ff ls | Done |
 
-### Phase 3: Selection & Sources (v0.2.0) - IN PROGRESS
+### Phase 3: Selection & Sources (v0.2.0) - COMPLETE
 
 | Feature | Status |
 |---------|--------|
-| Path selection (`path:`) | Not started |
-| Tag selection (`tag:`) | Not started |
-| Exclusion (`--exclude`) | Not started |
-| State selection (`state:`) | Not started |
-| Source YAML parsing | Done (v0.1.x) |
-| Source freshness command | Not started |
-| Source in lineage | Done (v0.1.x) |
-| ff clean command | Not started |
+| Path selection (`path:`) | Done |
+| Tag selection (`tag:`) | Done |
+| Exclusion (`--exclude`) | Done |
+| State selection (`state:`) | Done |
+| Source YAML parsing | Done |
+| Source freshness command | Done |
+| Source in lineage | Done |
+| ff clean command | Done |
 
-### Phase 4: Advanced Testing (v0.3.0) - PLANNED
+### Phase 4: Advanced Testing (v0.3.0) - COMPLETE
 
 | Feature | Status |
 |---------|--------|
 | Custom test macros | Not started |
-| Test severity (warn/error) | Not started |
-| Store failures | Not started |
-| Singular tests | Not started |
-| Relationship tests | Not started |
+| Test severity (warn/error) | Done |
+| Store failures | Done |
+| Singular tests | Done |
+| Relationship tests | Done |
 
-### Phase 5: Incremental Models (v0.4.0) - PLANNED
-
-| Feature | Status |
-|---------|--------|
-| is_incremental() macro | Not started |
-| Append strategy | Not started |
-| Merge strategy | Not started |
-| Delete+insert strategy | Not started |
-| State tracking | Not started |
-
-### Phase 6: Parallel Execution (v0.5.0) - PLANNED
+### Phase 5: Incremental Models (v0.4.0) - COMPLETE
 
 | Feature | Status |
 |---------|--------|
-| --threads option | Not started |
-| DAG-aware scheduling | Not started |
-| Connection pooling | Not started |
-| Progress tracking | Not started |
+| is_incremental() macro | Done |
+| Append strategy | Done |
+| Merge strategy | Done |
+| Delete+insert strategy | Done |
+| State tracking | Done |
 
-### Phase 7: Advanced Macros (v0.6.0) - PLANNED
+### Phase 6: Parallel Execution (v0.5.0) - COMPLETE
 
 | Feature | Status |
 |---------|--------|
-| Built-in date macros | Not started |
-| Built-in string macros | Not started |
-| Built-in cross-db macros | Not started |
+| --threads option | Done |
+| DAG-aware scheduling | Done |
+| Connection pooling | N/A (DuckDB uses single connection) |
+| Progress tracking | Done |
+
+### Phase 7: Advanced Macros (v0.6.0) - COMPLETE
+
+| Feature | Status |
+|---------|--------|
+| Built-in date macros | Done (date_spine, date_diff, date_add, date_trunc) |
+| Built-in string macros | Done (slugify, clean_string, split_part) |
+| Built-in cross-db macros | Done (hash, safe_divide, coalesce_columns) |
 | Macro documentation | Not started |
 
-### Phase 8: AST-Powered Features (v0.7.0) - PLANNED
+### Phase 8: AST-Powered Features (v0.7.0) - COMPLETE
 
 | Feature | Status |
 |---------|--------|
-| Column-level lineage | Not started |
-| Auto-documentation | Not started |
-| Test suggestions | Not started |
-| Breaking change detection | Not started |
+| Column-level lineage | Done |
+| Auto-documentation | Done |
+| Test suggestions | Done |
+| Breaking change detection | Done |
 
-### Phase 9: Snapshots (v0.8.0) - PLANNED
-
-| Feature | Status |
-|---------|--------|
-| Snapshot YAML config | Not started |
-| Timestamp strategy | Not started |
-| Check strategy | Not started |
-| Hard delete handling | Not started |
-
-### Phase 10: Hooks & Operations (v0.9.0) - PLANNED
+### Phase 9: Snapshots (v0.8.0) - COMPLETE
 
 | Feature | Status |
 |---------|--------|
-| Pre/post hooks | Not started |
-| Run hooks | Not started |
-| Operations | Not started |
+| Snapshot YAML config | Done |
+| Timestamp strategy | Done |
+| Check strategy | Done |
+| Hard delete handling | Done |
+
+### Phase 10: Hooks & Operations (v0.9.0) - COMPLETE
+
+| Feature | Status |
+|---------|--------|
+| Pre/post hooks | Done |
+| Run hooks | Done |
+| Operations | Done (run-operation command) |
 
 ---
 
