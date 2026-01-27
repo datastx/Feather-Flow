@@ -9,7 +9,7 @@ use serde::Serialize;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::cli::{FreshnessArgs, FreshnessOutput, GlobalArgs, SourceArgs, SourceCommands};
+use crate::cli::{FreshnessOutput, GlobalArgs, SourceArgs, SourceCommands, SourceFreshnessArgs};
 
 /// Execute the source command
 pub async fn execute(args: &SourceArgs, global: &GlobalArgs) -> Result<()> {
@@ -55,7 +55,7 @@ impl std::fmt::Display for FreshnessStatus {
 }
 
 /// Execute freshness check
-async fn execute_freshness(args: &FreshnessArgs, global: &GlobalArgs) -> Result<()> {
+async fn execute_freshness(args: &SourceFreshnessArgs, global: &GlobalArgs) -> Result<()> {
     let project_path = Path::new(&global.project_dir);
     let project = Project::load(project_path).context("Failed to load project")?;
 

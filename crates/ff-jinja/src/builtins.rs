@@ -5,6 +5,298 @@
 
 use minijinja::value::Value;
 use minijinja::Error;
+use serde::Serialize;
+
+// ===== Macro Metadata =====
+
+/// Parameter definition for a macro
+#[derive(Debug, Clone, Serialize)]
+pub struct MacroParam {
+    /// Parameter name
+    pub name: String,
+    /// Parameter type (string, integer, array)
+    pub param_type: String,
+    /// Whether this parameter is required
+    pub required: bool,
+    /// Description of the parameter
+    pub description: String,
+}
+
+impl MacroParam {
+    /// Create a new required parameter
+    pub fn required(name: &str, param_type: &str, description: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            param_type: param_type.to_string(),
+            required: true,
+            description: description.to_string(),
+        }
+    }
+
+    /// Create a new optional parameter
+    pub fn optional(name: &str, param_type: &str, description: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            param_type: param_type.to_string(),
+            required: false,
+            description: description.to_string(),
+        }
+    }
+}
+
+/// Metadata describing a built-in macro
+#[derive(Debug, Clone, Serialize)]
+pub struct MacroMetadata {
+    /// Macro name as used in templates
+    pub name: String,
+    /// Category of the macro (date, string, math, utility, cross_db)
+    pub category: String,
+    /// Brief description of what the macro does
+    pub description: String,
+    /// Parameters accepted by the macro
+    pub params: Vec<MacroParam>,
+    /// Example usage in a template
+    pub example: String,
+    /// Expected output from the example
+    pub example_output: String,
+}
+
+impl MacroMetadata {
+    /// Create new macro metadata
+    pub fn new(
+        name: &str,
+        category: &str,
+        description: &str,
+        params: Vec<MacroParam>,
+        example: &str,
+        example_output: &str,
+    ) -> Self {
+        Self {
+            name: name.to_string(),
+            category: category.to_string(),
+            description: description.to_string(),
+            params,
+            example: example.to_string(),
+            example_output: example_output.to_string(),
+        }
+    }
+}
+
+/// Get metadata for all built-in macros
+///
+/// Returns a vector of metadata for all 16 built-in macros,
+/// organized by category and including usage examples.
+pub fn get_builtin_macros() -> Vec<MacroMetadata> {
+    vec![
+        // Date/Time Macros
+        MacroMetadata::new(
+            "date_spine",
+            "date",
+            "Generate a date spine (range of dates) as SQL",
+            vec![
+                MacroParam::required("start_date", "string", "Start date in YYYY-MM-DD format"),
+                MacroParam::required("end_date", "string", "End date in YYYY-MM-DD format"),
+            ],
+            "{{ date_spine('2024-01-01', '2024-01-31') }}",
+            "SELECT CAST(unnest AS DATE) AS date_day FROM unnest(generate_series(DATE '2024-01-01', DATE '2024-01-31', INTERVAL '1 day'))",
+        ),
+        MacroMetadata::new(
+            "date_trunc",
+            "date",
+            "Truncate a date to a specific part (year, month, day, etc.)",
+            vec![
+                MacroParam::required("date_part", "string", "Part to truncate to (year, month, day, hour, etc.)"),
+                MacroParam::required("column", "string", "Column or expression to truncate"),
+            ],
+            "{{ date_trunc('month', 'created_at') }}",
+            "DATE_TRUNC('month', created_at)",
+        ),
+        MacroMetadata::new(
+            "date_add",
+            "date",
+            "Add an interval to a date column",
+            vec![
+                MacroParam::required("column", "string", "Column or expression to add to"),
+                MacroParam::required("amount", "integer", "Number of units to add"),
+                MacroParam::required("unit", "string", "Unit of time (day, week, month, year)"),
+            ],
+            "{{ date_add('order_date', 7, 'day') }}",
+            "order_date + INTERVAL '7 day'",
+        ),
+        MacroMetadata::new(
+            "date_diff",
+            "date",
+            "Calculate the difference between two dates",
+            vec![
+                MacroParam::required("unit", "string", "Unit for the result (day, week, month, year)"),
+                MacroParam::required("start_col", "string", "Start date column or expression"),
+                MacroParam::required("end_col", "string", "End date column or expression"),
+            ],
+            "{{ date_diff('day', 'start_date', 'end_date') }}",
+            "DATE_DIFF('day', start_date, end_date)",
+        ),
+        // String Macros
+        MacroMetadata::new(
+            "slugify",
+            "string",
+            "Convert a string column to a URL-friendly slug",
+            vec![
+                MacroParam::required("column", "string", "Column or expression to slugify"),
+            ],
+            "{{ slugify('title') }}",
+            "LOWER(REGEXP_REPLACE(REGEXP_REPLACE(TRIM(title), '[^a-zA-Z0-9]+', '-', 'g'), '^-|-$', '', 'g'))",
+        ),
+        MacroMetadata::new(
+            "clean_string",
+            "string",
+            "Remove special characters from a string column",
+            vec![
+                MacroParam::required("column", "string", "Column or expression to clean"),
+            ],
+            "{{ clean_string('name') }}",
+            "TRIM(REGEXP_REPLACE(name, '[^a-zA-Z0-9 ]', '', 'g'))",
+        ),
+        MacroMetadata::new(
+            "split_part",
+            "string",
+            "Extract a specific part from a delimited string",
+            vec![
+                MacroParam::required("column", "string", "Column or expression containing the string"),
+                MacroParam::required("delimiter", "string", "Delimiter character or string"),
+                MacroParam::required("part", "integer", "1-based index of the part to extract"),
+            ],
+            "{{ split_part('email', '@', 2) }}",
+            "SPLIT_PART(email, '@', 2)",
+        ),
+        // Math Macros
+        MacroMetadata::new(
+            "safe_divide",
+            "math",
+            "Safely divide two numbers, returning NULL if denominator is 0 or NULL",
+            vec![
+                MacroParam::required("numerator", "string", "Numerator column or expression"),
+                MacroParam::required("denominator", "string", "Denominator column or expression"),
+            ],
+            "{{ safe_divide('revenue', 'count') }}",
+            "CASE WHEN count = 0 OR count IS NULL THEN NULL ELSE CAST(revenue AS DOUBLE) / count END",
+        ),
+        MacroMetadata::new(
+            "round_money",
+            "math",
+            "Round a number to 2 decimal places (for monetary values)",
+            vec![
+                MacroParam::required("column", "string", "Column or expression to round"),
+            ],
+            "{{ round_money('amount') }}",
+            "ROUND(CAST(amount AS DOUBLE), 2)",
+        ),
+        MacroMetadata::new(
+            "percent_of",
+            "math",
+            "Calculate a value as a percentage of a total",
+            vec![
+                MacroParam::required("value", "string", "Value column or expression"),
+                MacroParam::required("total", "string", "Total column or expression"),
+            ],
+            "{{ percent_of('sales', 'total_sales') }}",
+            "CASE WHEN total_sales = 0 OR total_sales IS NULL THEN 0.0 ELSE ROUND(100.0 * sales / total_sales, 2) END",
+        ),
+        // Cross-DB Macros
+        MacroMetadata::new(
+            "limit_zero",
+            "cross_db",
+            "Generate a LIMIT 0 clause (useful for schema validation)",
+            vec![],
+            "{{ limit_zero() }}",
+            "LIMIT 0",
+        ),
+        MacroMetadata::new(
+            "bool_or",
+            "cross_db",
+            "Boolean OR aggregation that works across dialects",
+            vec![
+                MacroParam::required("column", "string", "Boolean column to aggregate"),
+            ],
+            "{{ bool_or('is_active') }}",
+            "BOOL_OR(is_active)",
+        ),
+        MacroMetadata::new(
+            "hash",
+            "cross_db",
+            "Hash a column value using MD5",
+            vec![
+                MacroParam::required("column", "string", "Column or expression to hash"),
+            ],
+            "{{ hash('user_id') }}",
+            "MD5(CAST(user_id AS VARCHAR))",
+        ),
+        MacroMetadata::new(
+            "hash_columns",
+            "utility",
+            "Hash multiple columns into a single value",
+            vec![
+                MacroParam::required("columns", "array", "Array of column names to hash"),
+            ],
+            "{{ hash_columns(['col1', 'col2', 'col3']) }}",
+            "MD5(COALESCE(CAST(col1 AS VARCHAR), '') || '|' || COALESCE(CAST(col2 AS VARCHAR), '') || '|' || COALESCE(CAST(col3 AS VARCHAR), ''))",
+        ),
+        // Utility Macros
+        MacroMetadata::new(
+            "surrogate_key",
+            "utility",
+            "Generate a surrogate key from multiple columns (alias for hash_columns)",
+            vec![
+                MacroParam::required("columns", "array", "Array of column names to combine into a key"),
+            ],
+            "{{ surrogate_key(['id', 'type']) }}",
+            "MD5(COALESCE(CAST(id AS VARCHAR), '') || '|' || COALESCE(CAST(type AS VARCHAR), ''))",
+        ),
+        MacroMetadata::new(
+            "coalesce_columns",
+            "utility",
+            "Return the first non-NULL value from multiple columns",
+            vec![
+                MacroParam::required("columns", "array", "Array of column names to coalesce"),
+            ],
+            "{{ coalesce_columns(['col1', 'col2', 'col3']) }}",
+            "COALESCE(col1, col2, col3)",
+        ),
+        MacroMetadata::new(
+            "not_null",
+            "utility",
+            "Generate a NOT NULL check expression",
+            vec![
+                MacroParam::required("column", "string", "Column to check"),
+            ],
+            "{{ not_null('email') }}",
+            "email IS NOT NULL",
+        ),
+    ]
+}
+
+/// Get metadata for a specific macro by name
+pub fn get_macro_by_name(name: &str) -> Option<MacroMetadata> {
+    get_builtin_macros().into_iter().find(|m| m.name == name)
+}
+
+/// Get all macros in a specific category
+pub fn get_macros_by_category(category: &str) -> Vec<MacroMetadata> {
+    get_builtin_macros()
+        .into_iter()
+        .filter(|m| m.category == category)
+        .collect()
+}
+
+/// Get all available macro categories
+pub fn get_macro_categories() -> Vec<String> {
+    let mut categories: Vec<String> = get_builtin_macros()
+        .into_iter()
+        .map(|m| m.category)
+        .collect();
+    categories.sort();
+    categories.dedup();
+    categories
+}
 
 // ===== Date/Time Macros =====
 
@@ -378,5 +670,103 @@ mod tests {
     fn test_not_null() {
         let result = not_null("email");
         assert_eq!(result, "email IS NOT NULL");
+    }
+
+    // ===== Macro Metadata Tests =====
+
+    #[test]
+    fn test_get_builtin_macros_count() {
+        let macros = get_builtin_macros();
+        assert_eq!(macros.len(), 17, "Expected 17 built-in macros");
+    }
+
+    #[test]
+    fn test_get_builtin_macros_all_have_required_fields() {
+        for m in get_builtin_macros() {
+            assert!(!m.name.is_empty(), "Macro name should not be empty");
+            assert!(!m.category.is_empty(), "Macro category should not be empty");
+            assert!(
+                !m.description.is_empty(),
+                "Macro description should not be empty"
+            );
+            assert!(!m.example.is_empty(), "Macro example should not be empty");
+            assert!(
+                !m.example_output.is_empty(),
+                "Macro example_output should not be empty"
+            );
+            // Verify example uses the macro
+            assert!(
+                m.example.contains(&m.name),
+                "Example '{}' should contain macro name '{}'",
+                m.example,
+                m.name
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_macro_by_name() {
+        let date_trunc = get_macro_by_name("date_trunc");
+        assert!(date_trunc.is_some());
+        let dt = date_trunc.unwrap();
+        assert_eq!(dt.name, "date_trunc");
+        assert_eq!(dt.category, "date");
+        assert_eq!(dt.params.len(), 2);
+
+        let not_found = get_macro_by_name("nonexistent_macro");
+        assert!(not_found.is_none());
+    }
+
+    #[test]
+    fn test_get_macros_by_category() {
+        let date_macros = get_macros_by_category("date");
+        assert_eq!(date_macros.len(), 4);
+        for m in &date_macros {
+            assert_eq!(m.category, "date");
+        }
+
+        let string_macros = get_macros_by_category("string");
+        assert_eq!(string_macros.len(), 3);
+
+        let math_macros = get_macros_by_category("math");
+        assert_eq!(math_macros.len(), 3);
+
+        let utility_macros = get_macros_by_category("utility");
+        assert_eq!(utility_macros.len(), 4);
+
+        let cross_db_macros = get_macros_by_category("cross_db");
+        assert_eq!(cross_db_macros.len(), 3);
+    }
+
+    #[test]
+    fn test_get_macro_categories() {
+        let categories = get_macro_categories();
+        assert_eq!(categories.len(), 5);
+        assert!(categories.contains(&"date".to_string()));
+        assert!(categories.contains(&"string".to_string()));
+        assert!(categories.contains(&"math".to_string()));
+        assert!(categories.contains(&"utility".to_string()));
+        assert!(categories.contains(&"cross_db".to_string()));
+    }
+
+    #[test]
+    fn test_macro_param_creation() {
+        let required_param = MacroParam::required("column", "string", "A column name");
+        assert!(required_param.required);
+        assert_eq!(required_param.name, "column");
+        assert_eq!(required_param.param_type, "string");
+
+        let optional_param = MacroParam::optional("limit", "integer", "Maximum rows");
+        assert!(!optional_param.required);
+        assert_eq!(optional_param.name, "limit");
+    }
+
+    #[test]
+    fn test_macro_metadata_serializable() {
+        let macros = get_builtin_macros();
+        // Should be serializable to JSON
+        let json = serde_json::to_string(&macros).expect("Failed to serialize macros");
+        assert!(json.contains("date_trunc"));
+        assert!(json.contains("surrogate_key"));
     }
 }

@@ -427,6 +427,8 @@ mod tests {
             depends_on: HashSet::from_iter(vec!["other_model".to_string()]),
             external_deps: HashSet::new(),
             schema: None,
+            base_name: None,
+            version: None,
         };
 
         manifest.add_model(

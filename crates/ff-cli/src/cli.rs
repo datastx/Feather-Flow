@@ -74,6 +74,15 @@ pub enum Commands {
 
     /// Execute a standalone operation (macro that returns SQL)
     RunOperation(RunOperationArgs),
+
+    /// Check model freshness (SLA monitoring)
+    Freshness(FreshnessArgs),
+
+    /// Work with semantic layer metrics
+    Metric(MetricArgs),
+
+    /// Compare model output between databases
+    Diff(DiffArgs),
 }
 
 /// Arguments for the parse command
@@ -103,6 +112,16 @@ pub enum ParseOutput {
     Deps,
 }
 
+/// Output formats for run/test/compile commands (for CI integration)
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OutputFormat {
+    /// Human-readable text output (default)
+    #[default]
+    Text,
+    /// Machine-readable JSON output
+    Json,
+}
+
 /// Arguments for the compile command
 #[derive(Args, Debug)]
 pub struct CompileArgs {
@@ -111,7 +130,7 @@ pub struct CompileArgs {
     pub models: Option<String>,
 
     /// Override output directory
-    #[arg(short, long)]
+    #[arg(short = 'd', long)]
     pub output_dir: Option<String>,
 
     /// Override/add variables as JSON
@@ -121,6 +140,10 @@ pub struct CompileArgs {
     /// Parse and validate only, don't write output files
     #[arg(long)]
     pub parse_only: bool,
+
+    /// Output format (text or json for CI integration)
+    #[arg(short, long, value_enum, default_value = "text")]
+    pub output: OutputFormat,
 }
 
 /// Arguments for the run command
@@ -161,6 +184,26 @@ pub struct RunArgs {
     /// Number of threads for parallel execution (default: 1)
     #[arg(long, default_value = "1")]
     pub threads: usize,
+
+    /// Resume from a previous failed run
+    #[arg(long)]
+    pub resume: bool,
+
+    /// Only retry failed models when resuming (skip pending)
+    #[arg(long)]
+    pub retry_failed: bool,
+
+    /// Path to run state file for resume (default: target/run_state.json)
+    #[arg(long)]
+    pub state_file: Option<String>,
+
+    /// Output format (text or json for CI integration)
+    #[arg(short, long, value_enum, default_value = "text")]
+    pub output: OutputFormat,
+
+    /// Suppress progress indicators (useful for CI)
+    #[arg(short, long)]
+    pub quiet: bool,
 }
 
 /// Arguments for the ls command
@@ -181,6 +224,14 @@ pub struct LsArgs {
     /// Filter by resource type
     #[arg(long, value_enum)]
     pub resource_type: Option<ResourceType>,
+
+    /// Filter models by owner (matches owner field or meta.owner)
+    #[arg(long)]
+    pub owner: Option<String>,
+
+    /// Show downstream exposures that depend on the listed models
+    #[arg(long)]
+    pub downstream_exposures: bool,
 }
 
 /// Resource types for filtering
@@ -231,6 +282,14 @@ pub struct TestArgs {
     /// Number of threads for parallel test execution (default: 1)
     #[arg(long, default_value = "1")]
     pub threads: usize,
+
+    /// Output format (text or json for CI integration)
+    #[arg(short, long, value_enum, default_value = "text")]
+    pub output: OutputFormat,
+
+    /// Suppress progress indicators (useful for CI)
+    #[arg(long)]
+    pub quiet: bool,
 }
 
 /// Arguments for the seed command
@@ -259,6 +318,14 @@ pub struct ValidateArgs {
     /// Enable strict mode (warnings become errors)
     #[arg(long)]
     pub strict: bool,
+
+    /// Validate schema contracts against a reference manifest
+    #[arg(long)]
+    pub contracts: bool,
+
+    /// Path to reference manifest for contract validation (used with --contracts)
+    #[arg(long, value_name = "FILE")]
+    pub state: Option<String>,
 }
 
 /// Arguments for the docs command
@@ -308,12 +375,12 @@ pub struct SourceArgs {
 #[derive(Subcommand, Debug)]
 pub enum SourceCommands {
     /// Check freshness of source data
-    Freshness(FreshnessArgs),
+    Freshness(SourceFreshnessArgs),
 }
 
-/// Arguments for the freshness subcommand
+/// Arguments for the source freshness subcommand
 #[derive(Args, Debug)]
-pub struct FreshnessArgs {
+pub struct SourceFreshnessArgs {
     /// Source names to check (comma-separated, default: all with freshness config)
     #[arg(short, long)]
     pub sources: Option<String>,
@@ -321,6 +388,22 @@ pub struct FreshnessArgs {
     /// Output format
     #[arg(short, long, value_enum, default_value = "table")]
     pub output: FreshnessOutput,
+}
+
+/// Arguments for the model freshness command
+#[derive(Args, Debug)]
+pub struct FreshnessArgs {
+    /// Model names to check (comma-separated, default: all with freshness config)
+    #[arg(short, long)]
+    pub models: Option<String>,
+
+    /// Output format
+    #[arg(short, long, value_enum, default_value = "table")]
+    pub output: FreshnessOutput,
+
+    /// Write results to a JSON file
+    #[arg(long)]
+    pub write_json: bool,
 }
 
 /// Freshness output formats
@@ -353,4 +436,50 @@ pub struct RunOperationArgs {
     /// Arguments to pass to the macro as JSON
     #[arg(long)]
     pub args: Option<String>,
+}
+
+/// Arguments for the metric command
+#[derive(Args, Debug)]
+pub struct MetricArgs {
+    /// Metric name to show/execute
+    pub name: Option<String>,
+
+    /// List all metrics
+    #[arg(short, long)]
+    pub list: bool,
+
+    /// Execute the metric query against the database
+    #[arg(short, long)]
+    pub execute: bool,
+
+    /// Output format (text or json)
+    #[arg(short, long, value_enum, default_value = "text")]
+    pub output: OutputFormat,
+}
+
+/// Arguments for the diff command
+#[derive(Args, Debug)]
+pub struct DiffArgs {
+    /// Model name to compare
+    pub model: String,
+
+    /// Path to the comparison database
+    #[arg(long, required = true)]
+    pub compare_to: String,
+
+    /// Specific columns to compare (comma-separated, default: all)
+    #[arg(long)]
+    pub columns: Option<String>,
+
+    /// Primary key column(s) for matching rows (comma-separated)
+    #[arg(long)]
+    pub key: Option<String>,
+
+    /// Maximum number of sample differences to show
+    #[arg(long, default_value = "10")]
+    pub sample_size: usize,
+
+    /// Output format (text or json)
+    #[arg(short, long, value_enum, default_value = "text")]
+    pub output: OutputFormat,
 }

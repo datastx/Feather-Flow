@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use ff_core::config::Materialization;
 use ff_core::dag::ModelDag;
+use ff_core::exposure::Exposure;
 use ff_core::selector::Selector;
 use ff_core::Project;
 use ff_jinja::JinjaEnvironment;
@@ -54,6 +55,8 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
             .and_then(|v| v.as_str())
             .map(|s| match s {
                 "table" => Materialization::Table,
+                "incremental" => Materialization::Incremental,
+                "ephemeral" => Materialization::Ephemeral,
                 _ => Materialization::View,
             })
             .unwrap_or(project.config.materialization);
@@ -146,15 +149,77 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
         filtered_info
     };
 
+    // Apply owner filter if provided
+    let filtered_info: Vec<&ModelInfo> = if let Some(owner_filter) = &args.owner {
+        let owner_lower = owner_filter.to_lowercase();
+        filtered_info
+            .into_iter()
+            .filter(|m| {
+                // Only filter models, not sources
+                if m.resource_type != "model" {
+                    return true;
+                }
+                // Get the model to check its owner
+                if let Some(model) = project.get_model(&m.name) {
+                    if let Some(model_owner) = model.get_owner() {
+                        return model_owner.to_lowercase().contains(&owner_lower);
+                    }
+                }
+                false
+            })
+            .collect()
+    } else {
+        filtered_info
+    };
+
+    // Find affected exposures if requested
+    let affected_exposures: Vec<&Exposure> = if args.downstream_exposures {
+        // Get the set of model names that are being listed
+        let model_names: HashSet<&str> = filtered_info
+            .iter()
+            .filter(|m| m.resource_type == "model")
+            .map(|m| m.name.as_str())
+            .collect();
+
+        // Find exposures that depend on any of these models
+        find_affected_exposures(&project.exposures, &model_names)
+    } else {
+        Vec::new()
+    };
+
     // Output based on format
     match args.output {
-        LsOutput::Table => print_table(&filtered_info),
-        LsOutput::Json => print_json(&filtered_info)?,
+        LsOutput::Table => print_table(
+            &filtered_info,
+            &affected_exposures,
+            args.downstream_exposures,
+        ),
+        LsOutput::Json => print_json(
+            &filtered_info,
+            &affected_exposures,
+            args.downstream_exposures,
+        )?,
         LsOutput::Tree => print_tree(&filtered_info, &dag)?,
         LsOutput::Path => print_paths(&filtered_info),
     }
 
     Ok(())
+}
+
+/// Find exposures that depend on any of the given models
+fn find_affected_exposures<'a>(
+    exposures: &'a [Exposure],
+    model_names: &HashSet<&str>,
+) -> Vec<&'a Exposure> {
+    exposures
+        .iter()
+        .filter(|exposure| {
+            exposure
+                .depends_on
+                .iter()
+                .any(|dep| model_names.contains(dep.as_str()))
+        })
+        .collect()
 }
 
 /// Model information for display
@@ -172,7 +237,7 @@ struct ModelInfo {
 }
 
 /// Print models in table format
-fn print_table(models: &[&ModelInfo]) {
+fn print_table(models: &[&ModelInfo], exposures: &[&Exposure], show_exposures: bool) {
     // Calculate column widths
     let name_width = models
         .iter()
@@ -266,13 +331,76 @@ fn print_table(models: &[&ModelInfo]) {
     } else {
         println!("{} models found", model_count);
     }
+
+    // Print affected exposures section if requested
+    if show_exposures && !exposures.is_empty() {
+        println!();
+        println!("Downstream Exposures ({} affected):", exposures.len());
+        println!("{:-<60}", "");
+
+        for exposure in exposures {
+            let type_str = format!("{}", exposure.exposure_type);
+            let models_affected: Vec<&str> = exposure
+                .depends_on
+                .iter()
+                .filter(|d| models.iter().any(|m| m.name == *d.as_str()))
+                .map(|s| s.as_str())
+                .collect();
+
+            println!(
+                "  {} ({}) - depends on: {}",
+                exposure.name,
+                type_str,
+                models_affected.join(", ")
+            );
+
+            if let Some(url) = &exposure.url {
+                println!("    URL: {}", url);
+            }
+        }
+    } else if show_exposures && exposures.is_empty() {
+        println!();
+        println!("No downstream exposures affected.");
+    }
 }
 
 /// Print models in JSON format
-fn print_json(models: &[&ModelInfo]) -> Result<()> {
-    let json = serde_json::to_string_pretty(models).context("Failed to serialize to JSON")?;
-    println!("{}", json);
+fn print_json(models: &[&ModelInfo], exposures: &[&Exposure], show_exposures: bool) -> Result<()> {
+    if show_exposures {
+        // Create a combined output with models and affected exposures
+        let exposure_info: Vec<ExposureInfo> = exposures
+            .iter()
+            .map(|e| ExposureInfo {
+                name: e.name.clone(),
+                exposure_type: format!("{}", e.exposure_type),
+                owner: e.owner.name.clone(),
+                depends_on: e.depends_on.clone(),
+                url: e.url.clone(),
+            })
+            .collect();
+
+        let output = serde_json::json!({
+            "models": models,
+            "affected_exposures": exposure_info,
+        });
+        let json = serde_json::to_string_pretty(&output).context("Failed to serialize to JSON")?;
+        println!("{}", json);
+    } else {
+        let json = serde_json::to_string_pretty(models).context("Failed to serialize to JSON")?;
+        println!("{}", json);
+    }
     Ok(())
+}
+
+/// Exposure info for JSON output
+#[derive(Debug, serde::Serialize)]
+struct ExposureInfo {
+    name: String,
+    exposure_type: String,
+    owner: String,
+    depends_on: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
 }
 
 /// Print models in tree format

@@ -40,6 +40,8 @@ pub enum SelectorType {
     Path { pattern: String },
     /// Tag-based selection
     Tag { tag: String },
+    /// Owner-based selection (matches owner field or meta.owner)
+    Owner { owner: String },
     /// State-based selection (requires reference manifest)
     State {
         state_type: StateType,
@@ -81,6 +83,19 @@ impl Selector {
             }
             return Ok(Self {
                 selector_type: SelectorType::Tag { tag },
+            });
+        }
+
+        if selector.starts_with("owner:") {
+            let owner = selector.strip_prefix("owner:").unwrap().to_string();
+            if owner.is_empty() {
+                return Err(CoreError::InvalidSelector {
+                    selector: selector.to_string(),
+                    reason: "owner: selector requires an owner name".to_string(),
+                });
+            }
+            return Ok(Self {
+                selector_type: SelectorType::Owner { owner },
             });
         }
 
@@ -168,6 +183,7 @@ impl Selector {
             } => self.select_by_model(name, *include_ancestors, *include_descendants, dag),
             SelectorType::Path { pattern } => self.select_by_path(pattern, models),
             SelectorType::Tag { tag } => self.select_by_tag(tag, models),
+            SelectorType::Owner { owner } => self.select_by_owner(owner, models),
             SelectorType::State {
                 state_type,
                 include_descendants,
@@ -291,6 +307,28 @@ impl Selector {
         Ok(selected)
     }
 
+    /// Select models by owner (matches owner field or meta.owner, supports partial matching)
+    fn select_by_owner(
+        &self,
+        owner: &str,
+        models: &HashMap<String, Model>,
+    ) -> CoreResult<Vec<String>> {
+        let mut selected = Vec::new();
+        let owner_lower = owner.to_lowercase();
+
+        for (name, model) in models {
+            // Use the get_owner() method which checks both direct owner and meta.owner
+            if let Some(model_owner) = model.get_owner() {
+                // Support partial matching (e.g., "data-team" matches "data-team@company.com")
+                if model_owner.to_lowercase().contains(&owner_lower) {
+                    selected.push(name.clone());
+                }
+            }
+        }
+
+        Ok(selected)
+    }
+
     /// Select models by state comparison
     fn select_by_state(
         &self,
@@ -329,10 +367,11 @@ impl Selector {
 
         // If include_descendants, add all downstream models
         if include_descendants {
-            let base_selected: Vec<String> = selected.iter().cloned().collect();
-            for name in base_selected {
-                selected.extend(dag.descendants(&name));
-            }
+            let descendants: Vec<String> = selected
+                .iter()
+                .flat_map(|name| dag.descendants(name))
+                .collect();
+            selected.extend(descendants);
         }
 
         // Return in topological order
@@ -372,9 +411,10 @@ impl Selector {
             return true;
         }
 
-        // For a more accurate comparison, we would compare the raw SQL content,
-        // but that would require reading the source file from the reference path.
-        // For now, we use structural comparison which catches most changes.
+        // Limitation: We compare structural metadata (deps, materialization, schema, tags)
+        // rather than raw SQL content. Full SQL comparison would require reading source
+        // files from the reference manifest path. This structural comparison catches most
+        // meaningful changes but may miss whitespace-only or comment-only modifications.
         false
     }
 }
@@ -580,5 +620,33 @@ mod tests {
 
         let state_selector = Selector::parse("state:modified").unwrap();
         assert!(state_selector.requires_state());
+    }
+
+    #[test]
+    fn test_parse_owner_selector() {
+        let s = Selector::parse("owner:data-team").unwrap();
+        match s.selector_type {
+            SelectorType::Owner { owner } => {
+                assert_eq!(owner, "data-team");
+            }
+            _ => panic!("Expected Owner selector"),
+        }
+    }
+
+    #[test]
+    fn test_parse_owner_selector_with_email() {
+        let s = Selector::parse("owner:data-team@company.com").unwrap();
+        match s.selector_type {
+            SelectorType::Owner { owner } => {
+                assert_eq!(owner, "data-team@company.com");
+            }
+            _ => panic!("Expected Owner selector"),
+        }
+    }
+
+    #[test]
+    fn test_parse_empty_owner() {
+        let result = Selector::parse("owner:");
+        assert!(result.is_err());
     }
 }

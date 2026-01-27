@@ -37,6 +37,14 @@ pub struct Model {
     /// Schema metadata from 1:1 .yml file (optional)
     #[serde(default)]
     pub schema: Option<ModelSchema>,
+
+    /// Base name without version suffix (e.g., "fct_orders" for "fct_orders_v2")
+    #[serde(default)]
+    pub base_name: Option<String>,
+
+    /// Version number if model follows _v{N} naming convention (e.g., 2 for "fct_orders_v2")
+    #[serde(default)]
+    pub version: Option<u32>,
 }
 
 /// Schema metadata for a single model (from 1:1 .yml file)
@@ -52,9 +60,13 @@ pub struct ModelSchema {
     #[serde(default)]
     pub description: Option<String>,
 
-    /// Model owner (team or person)
+    /// Model owner (team or person) - deprecated, use meta.owner
     #[serde(default)]
     pub owner: Option<String>,
+
+    /// Arbitrary metadata (owner, team, slack_channel, etc.)
+    #[serde(default)]
+    pub meta: std::collections::HashMap<String, serde_yaml::Value>,
 
     /// Tags for categorization
     #[serde(default)]
@@ -64,9 +76,112 @@ pub struct ModelSchema {
     #[serde(default)]
     pub config: Option<SchemaConfig>,
 
+    /// Data contract definition for schema enforcement
+    #[serde(default)]
+    pub contract: Option<SchemaContract>,
+
+    /// Freshness configuration for SLA monitoring
+    #[serde(default)]
+    pub freshness: Option<FreshnessConfig>,
+
     /// Column definitions
     #[serde(default)]
     pub columns: Vec<SchemaColumnDef>,
+
+    /// Whether this model is deprecated
+    #[serde(default)]
+    pub deprecated: bool,
+
+    /// Deprecation message to show users (e.g., "Use fct_orders_v2 instead")
+    #[serde(default)]
+    pub deprecation_message: Option<String>,
+}
+
+/// Freshness configuration for SLA monitoring
+///
+/// Defines when a model should be considered stale based on
+/// the maximum value of a timestamp column.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FreshnessConfig {
+    /// Column containing row timestamps (e.g., "updated_at", "loaded_at")
+    pub loaded_at_field: String,
+
+    /// Threshold after which to show a warning
+    #[serde(default)]
+    pub warn_after: Option<FreshnessThreshold>,
+
+    /// Threshold after which to show an error
+    #[serde(default)]
+    pub error_after: Option<FreshnessThreshold>,
+}
+
+/// A freshness threshold (count + period)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FreshnessThreshold {
+    /// Number of periods
+    pub count: u32,
+
+    /// Time period unit
+    pub period: FreshnessPeriod,
+}
+
+impl FreshnessThreshold {
+    /// Create a new threshold
+    pub fn new(count: u32, period: FreshnessPeriod) -> Self {
+        Self { count, period }
+    }
+
+    /// Convert the threshold to seconds
+    pub fn to_seconds(&self) -> u64 {
+        let period_seconds = match self.period {
+            FreshnessPeriod::Minute => 60,
+            FreshnessPeriod::Hour => 3600,
+            FreshnessPeriod::Day => 86400,
+        };
+        self.count as u64 * period_seconds
+    }
+}
+
+/// Time period unit for freshness thresholds
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FreshnessPeriod {
+    /// Minutes
+    Minute,
+    /// Hours
+    Hour,
+    /// Days
+    Day,
+}
+
+impl std::fmt::Display for FreshnessPeriod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FreshnessPeriod::Minute => write!(f, "minute"),
+            FreshnessPeriod::Hour => write!(f, "hour"),
+            FreshnessPeriod::Day => write!(f, "day"),
+        }
+    }
+}
+
+/// Data contract definition for enforcing schema stability
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SchemaContract {
+    /// Whether the contract is enforced (error on violation) or advisory (warning)
+    #[serde(default)]
+    pub enforced: bool,
+}
+
+/// Column constraint types for contracts
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColumnConstraint {
+    /// Column must not contain NULL values
+    NotNull,
+    /// Column is the primary key
+    PrimaryKey,
+    /// Column values must be unique
+    Unique,
 }
 
 /// Configuration from schema YAML that can override project defaults
@@ -87,6 +202,61 @@ impl ModelSchema {
         let content = std::fs::read_to_string(path)?;
         let schema: ModelSchema = serde_yaml::from_str(&content)?;
         Ok(schema)
+    }
+
+    /// Check if this model has an enforced contract
+    pub fn has_enforced_contract(&self) -> bool {
+        self.contract.as_ref().map(|c| c.enforced).unwrap_or(false)
+    }
+
+    /// Get the contract if defined
+    pub fn get_contract(&self) -> Option<&SchemaContract> {
+        self.contract.as_ref()
+    }
+
+    /// Get column definition by name
+    pub fn get_column(&self, name: &str) -> Option<&SchemaColumnDef> {
+        self.columns
+            .iter()
+            .find(|c| c.name.eq_ignore_ascii_case(name))
+    }
+
+    /// Get all column names defined in the schema
+    pub fn column_names(&self) -> Vec<&str> {
+        self.columns.iter().map(|c| c.name.as_str()).collect()
+    }
+
+    /// Check if this model has freshness configuration
+    pub fn has_freshness(&self) -> bool {
+        self.freshness.is_some()
+    }
+
+    /// Get the freshness config if defined
+    pub fn get_freshness(&self) -> Option<&FreshnessConfig> {
+        self.freshness.as_ref()
+    }
+
+    /// Get owner - prefers direct owner field, falls back to meta.owner
+    pub fn get_owner(&self) -> Option<String> {
+        // First check direct owner field
+        if let Some(owner) = &self.owner {
+            return Some(owner.clone());
+        }
+        // Fall back to meta.owner
+        self.get_meta_string("owner")
+    }
+
+    /// Get a metadata value as a string
+    pub fn get_meta_string(&self, key: &str) -> Option<String> {
+        self.meta.get(key).and_then(|v| match v {
+            serde_yaml::Value::String(s) => Some(s.clone()),
+            _ => None,
+        })
+    }
+
+    /// Get a metadata value
+    pub fn get_meta(&self, key: &str) -> Option<&serde_yaml::Value> {
+        self.meta.get(key)
     }
 
     /// Extract tests from this schema
@@ -294,6 +464,14 @@ pub enum TestType {
         #[serde(default)]
         field: Option<String>,
     },
+    /// Custom test macro (user-defined)
+    Custom {
+        /// Name of the test macro (without the test_ prefix)
+        name: String,
+        /// Additional keyword arguments passed to the macro
+        #[serde(default, flatten)]
+        kwargs: std::collections::HashMap<String, serde_json::Value>,
+    },
 }
 
 /// Test severity level
@@ -368,8 +546,8 @@ pub struct SchemaColumnDef {
     /// Column name
     pub name: String,
 
-    /// SQL data type (e.g., VARCHAR, INT, TIMESTAMP)
-    #[serde(rename = "type", default)]
+    /// SQL data type (e.g., VARCHAR, INT, TIMESTAMP, DECIMAL(10,2))
+    #[serde(rename = "type", alias = "data_type", default)]
     pub data_type: Option<String>,
 
     /// Column description
@@ -379,6 +557,10 @@ pub struct SchemaColumnDef {
     /// Whether this column is a primary key
     #[serde(default)]
     pub primary_key: bool,
+
+    /// Column constraints for schema contracts (not_null, primary_key, unique)
+    #[serde(default)]
+    pub constraints: Vec<ColumnConstraint>,
 
     /// Tests to run on this column
     #[serde(default)]
@@ -456,6 +638,9 @@ impl Model {
             None
         };
 
+        // Parse version from name (e.g., "fct_orders_v2" -> base="fct_orders", version=2)
+        let (base_name, version) = Self::parse_version(&name);
+
         Ok(Self {
             name,
             path,
@@ -465,7 +650,56 @@ impl Model {
             depends_on: HashSet::new(),
             external_deps: HashSet::new(),
             schema,
+            base_name,
+            version,
         })
+    }
+
+    /// Parse version suffix from model name
+    ///
+    /// Returns (base_name, version) where base_name is Some if the model follows _v{N} convention
+    /// Examples:
+    /// - "fct_orders_v2" -> (Some("fct_orders"), Some(2))
+    /// - "fct_orders_v10" -> (Some("fct_orders"), Some(10))
+    /// - "fct_orders" -> (None, None)
+    /// - "v2_model" -> (None, None) // v must be suffix, not prefix
+    pub fn parse_version(name: &str) -> (Option<String>, Option<u32>) {
+        // Look for _v{N} pattern at the end of the name
+        if let Some(idx) = name.rfind("_v") {
+            let suffix = &name[idx + 2..];
+            if let Ok(version) = suffix.parse::<u32>() {
+                let base_name = name[..idx].to_string();
+                return (Some(base_name), Some(version));
+            }
+        }
+        (None, None)
+    }
+
+    /// Get the base name for this model (name without version suffix)
+    pub fn get_base_name(&self) -> &str {
+        self.base_name.as_deref().unwrap_or(&self.name)
+    }
+
+    /// Check if this model is a versioned model (has _v{N} suffix)
+    pub fn is_versioned(&self) -> bool {
+        self.version.is_some()
+    }
+
+    /// Get the version number if this is a versioned model
+    pub fn get_version(&self) -> Option<u32> {
+        self.version
+    }
+
+    /// Check if this model is deprecated
+    pub fn is_deprecated(&self) -> bool {
+        self.schema.as_ref().map(|s| s.deprecated).unwrap_or(false)
+    }
+
+    /// Get the deprecation message if this model is deprecated
+    pub fn get_deprecation_message(&self) -> Option<&str> {
+        self.schema
+            .as_ref()
+            .and_then(|s| s.deprecation_message.as_deref())
     }
 
     /// Get the materialization for this model, falling back through the precedence chain:
@@ -564,6 +798,21 @@ impl Model {
             .on_schema_change
             .unwrap_or(OnSchemaChange::Ignore)
     }
+
+    /// Get the owner for this model from schema metadata
+    pub fn get_owner(&self) -> Option<String> {
+        self.schema.as_ref().and_then(|s| s.get_owner())
+    }
+
+    /// Get a metadata value from the model's schema
+    pub fn get_meta(&self, key: &str) -> Option<&serde_yaml::Value> {
+        self.schema.as_ref().and_then(|s| s.get_meta(key))
+    }
+
+    /// Get a metadata value as a string
+    pub fn get_meta_string(&self, key: &str) -> Option<String> {
+        self.schema.as_ref().and_then(|s| s.get_meta_string(key))
+    }
 }
 
 impl SchemaYml {
@@ -613,6 +862,7 @@ impl std::fmt::Display for TestType {
             TestType::MaxValue { .. } => write!(f, "max_value"),
             TestType::Regex { .. } => write!(f, "regex"),
             TestType::Relationship { .. } => write!(f, "relationship"),
+            TestType::Custom { name, .. } => write!(f, "{}", name),
         }
     }
 }
@@ -692,6 +942,65 @@ columns:
         assert_eq!(schema.owner, Some("data-team".to_string()));
         assert_eq!(schema.tags, vec!["staging", "orders"]);
         assert_eq!(schema.columns.len(), 2);
+        // get_owner should return the direct owner field
+        assert_eq!(schema.get_owner(), Some("data-team".to_string()));
+    }
+
+    #[test]
+    fn test_parse_owner_metadata() {
+        let yaml = r##"
+version: 1
+meta:
+  owner: analytics-team@example.com
+  team: Analytics
+  slack_channel: "#data-alerts"
+  pagerduty_service: data-platform
+"##;
+        let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
+
+        // Direct owner field should be None
+        assert!(schema.owner.is_none());
+
+        // Meta fields should be populated
+        assert_eq!(
+            schema.get_meta_string("owner"),
+            Some("analytics-team@example.com".to_string())
+        );
+        assert_eq!(
+            schema.get_meta_string("team"),
+            Some("Analytics".to_string())
+        );
+        assert_eq!(
+            schema.get_meta_string("slack_channel"),
+            Some("#data-alerts".to_string())
+        );
+
+        // get_owner should fall back to meta.owner
+        assert_eq!(
+            schema.get_owner(),
+            Some("analytics-team@example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_owner_direct_takes_precedence_over_meta() {
+        let yaml = r#"
+version: 1
+owner: direct-owner
+meta:
+  owner: meta-owner
+  team: Analytics
+"#;
+        let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
+
+        // get_owner should return direct owner over meta.owner
+        assert_eq!(schema.get_owner(), Some("direct-owner".to_string()));
+
+        // But we can still access meta.owner directly
+        assert_eq!(
+            schema.get_meta_string("owner"),
+            Some("meta-owner".to_string())
+        );
     }
 
     #[test]
@@ -959,13 +1268,20 @@ columns:
                 version: 1,
                 description: None,
                 owner: None,
+                meta: std::collections::HashMap::new(),
                 tags: vec![],
                 config: Some(SchemaConfig {
                     materialized: Some(Materialization::View), // Should be ignored
                     schema: Some("yaml_schema".to_string()),   // Should be ignored
                 }),
+                contract: None,
+                freshness: None,
                 columns: vec![],
+                deprecated: false,
+                deprecation_message: None,
             }),
+            base_name: None,
+            version: None,
         };
 
         // SQL config should win
@@ -993,13 +1309,20 @@ columns:
                 version: 1,
                 description: None,
                 owner: None,
+                meta: std::collections::HashMap::new(),
                 tags: vec![],
                 config: Some(SchemaConfig {
                     materialized: Some(Materialization::Table), // Should be used
                     schema: Some("yaml_schema".to_string()),    // Should be used
                 }),
+                contract: None,
+                freshness: None,
                 columns: vec![],
+                deprecated: false,
+                deprecation_message: None,
             }),
+            base_name: None,
+            version: None,
         };
 
         // YAML config should be used when SQL config is not set
@@ -1024,6 +1347,8 @@ columns:
             depends_on: HashSet::new(),
             external_deps: HashSet::new(),
             schema: None,
+            base_name: None,
+            version: None,
         };
 
         // Project default should be used
@@ -1196,5 +1521,391 @@ columns:
             }
             _ => panic!("Expected Relationship test type"),
         }
+    }
+
+    #[test]
+    fn test_parse_contract_definition() {
+        let yaml = r#"
+version: 1
+name: fct_orders
+contract:
+  enforced: true
+columns:
+  - name: order_id
+    data_type: INTEGER
+    constraints:
+      - not_null
+      - primary_key
+  - name: customer_id
+    data_type: INTEGER
+    constraints:
+      - not_null
+  - name: total_amount
+    data_type: DECIMAL
+"#;
+        let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
+
+        // Verify contract is parsed
+        assert!(schema.contract.is_some());
+        let contract = schema.contract.unwrap();
+        assert!(contract.enforced);
+
+        // Verify column constraints are parsed
+        assert_eq!(schema.columns.len(), 3);
+
+        let order_id_col = &schema.columns[0];
+        assert_eq!(order_id_col.name, "order_id");
+        assert_eq!(order_id_col.data_type, Some("INTEGER".to_string()));
+        assert_eq!(order_id_col.constraints.len(), 2);
+        assert!(order_id_col
+            .constraints
+            .contains(&ColumnConstraint::NotNull));
+        assert!(order_id_col
+            .constraints
+            .contains(&ColumnConstraint::PrimaryKey));
+
+        let customer_id_col = &schema.columns[1];
+        assert_eq!(customer_id_col.constraints.len(), 1);
+        assert!(customer_id_col
+            .constraints
+            .contains(&ColumnConstraint::NotNull));
+
+        let total_amount_col = &schema.columns[2];
+        assert!(total_amount_col.constraints.is_empty());
+    }
+
+    #[test]
+    fn test_contract_not_enforced() {
+        let yaml = r#"
+version: 1
+contract:
+  enforced: false
+columns:
+  - name: id
+"#;
+        let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
+
+        assert!(schema.contract.is_some());
+        assert!(!schema.has_enforced_contract());
+        let contract = schema.contract.as_ref().unwrap();
+        assert!(!contract.enforced);
+    }
+
+    #[test]
+    fn test_no_contract_section() {
+        let yaml = r#"
+version: 1
+columns:
+  - name: id
+"#;
+        let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
+
+        assert!(schema.contract.is_none());
+        assert!(!schema.has_enforced_contract());
+    }
+
+    #[test]
+    fn test_contract_helper_methods() {
+        let yaml = r#"
+version: 1
+contract:
+  enforced: true
+columns:
+  - name: order_id
+    data_type: INTEGER
+  - name: customer_id
+    data_type: VARCHAR
+"#;
+        let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
+
+        // Test has_enforced_contract
+        assert!(schema.has_enforced_contract());
+
+        // Test get_contract
+        assert!(schema.get_contract().is_some());
+
+        // Test get_column
+        let order_id = schema.get_column("order_id");
+        assert!(order_id.is_some());
+        assert_eq!(order_id.unwrap().data_type, Some("INTEGER".to_string()));
+
+        // Case-insensitive lookup
+        let order_id_upper = schema.get_column("ORDER_ID");
+        assert!(order_id_upper.is_some());
+
+        // Non-existent column
+        let missing = schema.get_column("nonexistent");
+        assert!(missing.is_none());
+
+        // Test column_names
+        let names = schema.column_names();
+        assert_eq!(names.len(), 2);
+        assert!(names.contains(&"order_id"));
+        assert!(names.contains(&"customer_id"));
+    }
+
+    #[test]
+    fn test_column_constraint_unique() {
+        let yaml = r#"
+version: 1
+columns:
+  - name: email
+    constraints:
+      - unique
+"#;
+        let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
+
+        let email_col = &schema.columns[0];
+        assert_eq!(email_col.constraints.len(), 1);
+        assert!(email_col.constraints.contains(&ColumnConstraint::Unique));
+    }
+
+    #[test]
+    fn test_parse_model_freshness() {
+        let yaml = r#"
+version: 1
+freshness:
+  loaded_at_field: updated_at
+  warn_after:
+    count: 4
+    period: hour
+  error_after:
+    count: 8
+    period: hour
+columns:
+  - name: id
+"#;
+        let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
+
+        assert!(schema.has_freshness());
+        let freshness = schema.get_freshness().unwrap();
+        assert_eq!(freshness.loaded_at_field, "updated_at");
+
+        let warn = freshness.warn_after.as_ref().unwrap();
+        assert_eq!(warn.count, 4);
+        assert_eq!(warn.period, FreshnessPeriod::Hour);
+        assert_eq!(warn.to_seconds(), 4 * 3600);
+
+        let error = freshness.error_after.as_ref().unwrap();
+        assert_eq!(error.count, 8);
+        assert_eq!(error.period, FreshnessPeriod::Hour);
+        assert_eq!(error.to_seconds(), 8 * 3600);
+    }
+
+    #[test]
+    fn test_freshness_warn_only() {
+        let yaml = r#"
+version: 1
+freshness:
+  loaded_at_field: created_at
+  warn_after:
+    count: 2
+    period: day
+columns:
+  - name: id
+"#;
+        let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
+
+        let freshness = schema.get_freshness().unwrap();
+        assert_eq!(freshness.loaded_at_field, "created_at");
+
+        let warn = freshness.warn_after.as_ref().unwrap();
+        assert_eq!(warn.count, 2);
+        assert_eq!(warn.period, FreshnessPeriod::Day);
+        assert_eq!(warn.to_seconds(), 2 * 86400);
+
+        // No error_after
+        assert!(freshness.error_after.is_none());
+    }
+
+    #[test]
+    fn test_freshness_minutes() {
+        let yaml = r#"
+version: 1
+freshness:
+  loaded_at_field: last_sync
+  warn_after:
+    count: 30
+    period: minute
+  error_after:
+    count: 60
+    period: minute
+columns: []
+"#;
+        let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
+
+        let freshness = schema.get_freshness().unwrap();
+        assert_eq!(freshness.loaded_at_field, "last_sync");
+
+        let warn = freshness.warn_after.as_ref().unwrap();
+        assert_eq!(warn.count, 30);
+        assert_eq!(warn.period, FreshnessPeriod::Minute);
+        assert_eq!(warn.to_seconds(), 30 * 60);
+
+        let error = freshness.error_after.as_ref().unwrap();
+        assert_eq!(error.to_seconds(), 60 * 60);
+    }
+
+    #[test]
+    fn test_no_freshness() {
+        let yaml = r#"
+version: 1
+columns:
+  - name: id
+"#;
+        let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
+
+        assert!(!schema.has_freshness());
+        assert!(schema.get_freshness().is_none());
+    }
+
+    #[test]
+    fn test_freshness_period_display() {
+        assert_eq!(FreshnessPeriod::Minute.to_string(), "minute");
+        assert_eq!(FreshnessPeriod::Hour.to_string(), "hour");
+        assert_eq!(FreshnessPeriod::Day.to_string(), "day");
+    }
+
+    #[test]
+    fn test_freshness_threshold_conversions() {
+        // Test various threshold conversions
+        assert_eq!(
+            FreshnessThreshold::new(1, FreshnessPeriod::Minute).to_seconds(),
+            60
+        );
+        assert_eq!(
+            FreshnessThreshold::new(1, FreshnessPeriod::Hour).to_seconds(),
+            3600
+        );
+        assert_eq!(
+            FreshnessThreshold::new(1, FreshnessPeriod::Day).to_seconds(),
+            86400
+        );
+
+        // Test larger counts
+        assert_eq!(
+            FreshnessThreshold::new(24, FreshnessPeriod::Hour).to_seconds(),
+            24 * 3600
+        );
+        assert_eq!(
+            FreshnessThreshold::new(7, FreshnessPeriod::Day).to_seconds(),
+            7 * 86400
+        );
+    }
+
+    #[test]
+    fn test_parse_version_suffix() {
+        // Standard version suffix
+        let (base, version) = Model::parse_version("fct_orders_v2");
+        assert_eq!(base, Some("fct_orders".to_string()));
+        assert_eq!(version, Some(2));
+
+        // Larger version number
+        let (base, version) = Model::parse_version("stg_customers_v10");
+        assert_eq!(base, Some("stg_customers".to_string()));
+        assert_eq!(version, Some(10));
+
+        // No version suffix
+        let (base, version) = Model::parse_version("dim_products");
+        assert_eq!(base, None);
+        assert_eq!(version, None);
+
+        // v at start (should NOT match)
+        let (base, version) = Model::parse_version("v2_model");
+        assert_eq!(base, None);
+        assert_eq!(version, None);
+
+        // Underscore but no number
+        let (base, version) = Model::parse_version("model_vx");
+        assert_eq!(base, None);
+        assert_eq!(version, None);
+
+        // Multiple underscores
+        let (base, version) = Model::parse_version("my_cool_model_v3");
+        assert_eq!(base, Some("my_cool_model".to_string()));
+        assert_eq!(version, Some(3));
+    }
+
+    #[test]
+    fn test_model_version_methods() {
+        // Create a versioned model
+        let mut model = Model {
+            name: "fct_orders_v2".to_string(),
+            path: std::path::PathBuf::from("models/fct_orders_v2.sql"),
+            raw_sql: "SELECT 1".to_string(),
+            compiled_sql: None,
+            config: ModelConfig::default(),
+            depends_on: std::collections::HashSet::new(),
+            external_deps: std::collections::HashSet::new(),
+            schema: None,
+            base_name: Some("fct_orders".to_string()),
+            version: Some(2),
+        };
+
+        assert!(model.is_versioned());
+        assert_eq!(model.get_version(), Some(2));
+        assert_eq!(model.get_base_name(), "fct_orders");
+
+        // Non-versioned model
+        model.base_name = None;
+        model.version = None;
+        model.name = "dim_products".to_string();
+
+        assert!(!model.is_versioned());
+        assert_eq!(model.get_version(), None);
+        assert_eq!(model.get_base_name(), "dim_products");
+    }
+
+    #[test]
+    fn test_deprecated_model() {
+        let yaml = r#"
+version: 1
+deprecated: true
+deprecation_message: "Use fct_orders_v2 instead"
+columns:
+  - name: id
+"#;
+        let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
+
+        assert!(schema.deprecated);
+        assert_eq!(
+            schema.deprecation_message,
+            Some("Use fct_orders_v2 instead".to_string())
+        );
+    }
+
+    #[test]
+    fn test_deprecated_model_via_model() {
+        let mut model = Model {
+            name: "fct_orders_v1".to_string(),
+            path: std::path::PathBuf::from("models/fct_orders_v1.sql"),
+            raw_sql: "SELECT 1".to_string(),
+            compiled_sql: None,
+            config: ModelConfig::default(),
+            depends_on: std::collections::HashSet::new(),
+            external_deps: std::collections::HashSet::new(),
+            schema: Some(ModelSchema {
+                version: 1,
+                description: None,
+                owner: None,
+                meta: std::collections::HashMap::new(),
+                tags: vec![],
+                config: None,
+                contract: None,
+                freshness: None,
+                columns: vec![],
+                deprecated: true,
+                deprecation_message: Some("Use v2".to_string()),
+            }),
+            base_name: Some("fct_orders".to_string()),
+            version: Some(1),
+        };
+
+        assert!(model.is_deprecated());
+        assert_eq!(model.get_deprecation_message(), Some("Use v2"));
+
+        // Non-deprecated model
+        model.schema.as_mut().unwrap().deprecated = false;
+        assert!(!model.is_deprecated());
     }
 }

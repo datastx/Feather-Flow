@@ -1,9 +1,12 @@
 //! Docs command implementation - Generate documentation from schema files
 
 use anyhow::{Context, Result};
+use ff_core::exposure::Exposure;
+use ff_core::metric::Metric;
 use ff_core::model::Model;
 use ff_core::source::SourceFile;
 use ff_core::Project;
+use ff_jinja::{get_builtin_macros, get_macro_categories, MacroMetadata};
 use ff_sql::{extract_column_lineage, suggest_tests, SqlParser};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -20,6 +23,10 @@ struct ModelDoc {
     description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     owner: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    team: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    contact: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -89,6 +96,8 @@ struct ModelSummary {
     name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner: Option<String>,
     has_schema: bool,
 }
 
@@ -133,6 +142,76 @@ struct SourceSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
     table_count: usize,
+}
+
+/// Exposure documentation data for JSON output
+#[derive(Debug, Serialize)]
+struct ExposureDoc {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    exposure_type: String,
+    owner: ExposureOwnerDoc,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    depends_on: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+    maturity: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tags: Vec<String>,
+}
+
+/// Exposure owner documentation data
+#[derive(Debug, Serialize)]
+struct ExposureOwnerDoc {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    email: Option<String>,
+}
+
+/// Exposure summary for index
+#[derive(Debug, Serialize)]
+struct ExposureSummary {
+    name: String,
+    exposure_type: String,
+    owner: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+}
+
+/// Metric documentation data for JSON output
+#[derive(Debug, Serialize)]
+struct MetricDoc {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    model: String,
+    calculation: String,
+    expression: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    timestamp: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    dimensions: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    filters: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner: Option<String>,
+    /// Generated SQL for this metric
+    sql: String,
+}
+
+/// Metric summary for index
+#[derive(Debug, Serialize)]
+struct MetricSummary {
+    name: String,
+    model: String,
+    calculation: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner: Option<String>,
 }
 
 /// Execute the docs command
@@ -188,6 +267,7 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
             index_entries.push(ModelSummary {
                 name: model.name.clone(),
                 description: doc.description.clone(),
+                owner: doc.owner.clone(),
                 has_schema,
             });
 
@@ -244,12 +324,83 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
+    // Generate exposure documentation
+    let mut exposure_docs: Vec<ExposureDoc> = Vec::new();
+    let mut exposure_entries: Vec<ExposureSummary> = Vec::new();
+
+    for exposure in &project.exposures {
+        let doc = build_exposure_doc(exposure);
+
+        exposure_entries.push(ExposureSummary {
+            name: exposure.name.clone(),
+            exposure_type: format!("{}", exposure.exposure_type),
+            owner: exposure.owner.name.clone(),
+            url: exposure.url.clone(),
+        });
+
+        match args.format {
+            DocsFormat::Markdown => {
+                let md_content = generate_exposure_markdown(&doc);
+                let md_path = output_dir.join(format!("exposure_{}.md", exposure.name));
+                fs::write(&md_path, md_content)?;
+                println!("  ✓ exposure_{}.md", exposure.name);
+            }
+            DocsFormat::Json => {
+                exposure_docs.push(doc);
+            }
+            DocsFormat::Html => {
+                let html_content = generate_exposure_html(&doc);
+                let html_path = output_dir.join(format!("exposure_{}.html", exposure.name));
+                fs::write(&html_path, html_content)?;
+                println!("  ✓ exposure_{}.html", exposure.name);
+            }
+        }
+    }
+
+    // Generate metric documentation
+    let mut metric_docs: Vec<MetricDoc> = Vec::new();
+    let mut metric_entries: Vec<MetricSummary> = Vec::new();
+
+    for metric in &project.metrics {
+        let doc = build_metric_doc(metric);
+
+        metric_entries.push(MetricSummary {
+            name: metric.name.clone(),
+            model: metric.model.clone(),
+            calculation: format!("{}", metric.calculation),
+            owner: metric.owner.clone(),
+        });
+
+        match args.format {
+            DocsFormat::Markdown => {
+                let md_content = generate_metric_markdown(&doc);
+                let md_path = output_dir.join(format!("metric_{}.md", metric.name));
+                fs::write(&md_path, md_content)?;
+                println!("  ✓ metric_{}.md", metric.name);
+            }
+            DocsFormat::Json => {
+                metric_docs.push(doc);
+            }
+            DocsFormat::Html => {
+                let html_content = generate_metric_html(&doc);
+                let html_path = output_dir.join(format!("metric_{}.html", metric.name));
+                fs::write(&html_path, html_content)?;
+                println!("  ✓ metric_{}.html", metric.name);
+            }
+        }
+    }
+
     // Generate index/output
     match args.format {
         DocsFormat::Markdown => {
             // Generate index.md
-            let index_content =
-                generate_index_markdown(&project.config.name, &index_entries, &source_entries);
+            let index_content = generate_index_markdown(
+                &project.config.name,
+                &index_entries,
+                &source_entries,
+                &exposure_entries,
+                &metric_entries,
+            );
             let index_path = output_dir.join("index.md");
             fs::write(&index_path, index_content)?;
             println!("  ✓ index.md");
@@ -266,15 +417,29 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
                 .map(|d| (d.name.clone(), d))
                 .collect();
 
+            let exposures_map: HashMap<String, ExposureDoc> = exposure_docs
+                .into_iter()
+                .map(|d| (d.name.clone(), d))
+                .collect();
+
+            let metrics_map: HashMap<String, MetricDoc> = metric_docs
+                .into_iter()
+                .map(|d| (d.name.clone(), d))
+                .collect();
+
             let json_output = serde_json::json!({
                 "project_name": project.config.name,
                 "models": docs_map,
                 "sources": sources_map,
+                "exposures": exposures_map,
+                "metrics": metrics_map,
                 "summary": {
                     "total_models": models_with_schema + models_without_schema,
                     "models_with_schema": models_with_schema,
                     "models_without_schema": models_without_schema,
                     "total_sources": source_entries.len(),
+                    "total_exposures": exposure_entries.len(),
+                    "total_metrics": metric_entries.len(),
                 }
             });
 
@@ -285,8 +450,13 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
         }
         DocsFormat::Html => {
             // Generate index.html
-            let index_content =
-                generate_index_html(&project.config.name, &index_entries, &source_entries);
+            let index_content = generate_index_html(
+                &project.config.name,
+                &index_entries,
+                &source_entries,
+                &exposure_entries,
+                &metric_entries,
+            );
             let index_path = output_dir.join("index.html");
             fs::write(&index_path, index_content)?;
             println!("  ✓ index.html");
@@ -299,13 +469,45 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
     fs::write(&lineage_path, lineage_content)?;
     println!("  ✓ lineage.dot");
 
+    // Generate macro documentation
+    match args.format {
+        DocsFormat::Markdown => {
+            let macros_content = generate_macros_markdown();
+            let macros_path = output_dir.join("macros.md");
+            fs::write(&macros_path, macros_content)?;
+            println!("  ✓ macros.md");
+        }
+        DocsFormat::Html => {
+            let macros_content = generate_macros_html();
+            let macros_path = output_dir.join("macros.html");
+            fs::write(&macros_path, macros_content)?;
+            println!("  ✓ macros.html");
+        }
+        DocsFormat::Json => {
+            // JSON already includes macros in the overall output, but let's also
+            // add a separate macros.json with full metadata
+            let macros_data = get_builtin_macros();
+            let macros_json = serde_json::to_string_pretty(&macros_data)?;
+            let macros_path = output_dir.join("macros.json");
+            fs::write(&macros_path, macros_json)?;
+            println!("  ✓ macros.json");
+        }
+    }
+
+    let macro_count = get_builtin_macros().len();
+    let exposure_count = exposure_entries.len();
+    let metric_count = metric_entries.len();
+
     println!();
     println!(
-        "Generated docs for {} models ({} with schema, {} without), {} sources",
+        "Generated docs for {} models ({} with schema, {} without), {} sources, {} exposures, {} metrics, {} macros",
         models_with_schema + models_without_schema,
         models_with_schema,
         models_without_schema,
-        source_entries.len()
+        source_entries.len(),
+        exposure_count,
+        metric_count,
+        macro_count
     );
     println!("Output: {}", output_dir.display());
 
@@ -316,13 +518,11 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
 fn build_model_doc(model: &Model) -> ModelDoc {
     let mut columns = Vec::new();
     let mut description = None;
-    let mut owner = None;
     let mut tags = Vec::new();
 
     // Extract from schema if available
     if let Some(schema) = &model.schema {
         description = schema.description.clone();
-        owner = schema.owner.clone();
         tags = schema.tags.clone();
 
         for col in &schema.columns {
@@ -382,10 +582,19 @@ fn build_model_doc(model: &Model) -> ModelDoc {
     // Generate test suggestions from SQL
     let test_suggestions = generate_test_suggestions(model);
 
+    // Get owner - uses get_owner() which checks direct owner field and meta.owner
+    let owner = model.get_owner();
+
+    // Get team and contact from meta
+    let team = model.get_meta_string("team");
+    let contact = model.get_meta_string("contact");
+
     ModelDoc {
         name: model.name.clone(),
         description,
         owner,
+        team,
+        contact,
         tags,
         materialized,
         schema,
@@ -485,9 +694,20 @@ fn generate_markdown(doc: &ModelDoc) -> String {
     }
 
     // Metadata
-    if doc.owner.is_some() || !doc.tags.is_empty() || doc.materialized.is_some() {
+    if doc.owner.is_some()
+        || doc.team.is_some()
+        || doc.contact.is_some()
+        || !doc.tags.is_empty()
+        || doc.materialized.is_some()
+    {
         if let Some(owner) = &doc.owner {
             md.push_str(&format!("**Owner**: {}\n\n", owner));
+        }
+        if let Some(team) = &doc.team {
+            md.push_str(&format!("**Team**: {}\n\n", team));
+        }
+        if let Some(contact) = &doc.contact {
+            md.push_str(&format!("**Contact**: {}\n\n", contact));
         }
         if !doc.tags.is_empty() {
             md.push_str(&format!("**Tags**: {}\n\n", doc.tags.join(", ")));
@@ -637,6 +857,314 @@ fn build_source_doc(source: &SourceFile) -> SourceDoc {
     }
 }
 
+/// Build exposure documentation from an Exposure
+fn build_exposure_doc(exposure: &Exposure) -> ExposureDoc {
+    ExposureDoc {
+        name: exposure.name.clone(),
+        description: exposure.description.clone(),
+        exposure_type: format!("{}", exposure.exposure_type),
+        owner: ExposureOwnerDoc {
+            name: exposure.owner.name.clone(),
+            email: exposure.owner.email.clone(),
+        },
+        depends_on: exposure.depends_on.clone(),
+        url: exposure.url.clone(),
+        maturity: format!("{}", exposure.maturity),
+        tags: exposure.tags.clone(),
+    }
+}
+
+/// Generate markdown documentation for an exposure
+fn generate_exposure_markdown(doc: &ExposureDoc) -> String {
+    let mut md = String::new();
+
+    // Title
+    md.push_str(&format!("# Exposure: {}\n\n", doc.name));
+
+    // Description
+    if let Some(desc) = &doc.description {
+        md.push_str(&format!("{}\n\n", desc));
+    }
+
+    // Metadata
+    md.push_str(&format!("**Type**: {}\n\n", doc.exposure_type));
+    md.push_str(&format!("**Owner**: {}", doc.owner.name));
+    if let Some(email) = &doc.owner.email {
+        md.push_str(&format!(" ({})", email));
+    }
+    md.push_str("\n\n");
+    md.push_str(&format!("**Maturity**: {}\n\n", doc.maturity));
+
+    if let Some(url) = &doc.url {
+        md.push_str(&format!("**URL**: [{}]({})\n\n", url, url));
+    }
+
+    if !doc.tags.is_empty() {
+        md.push_str(&format!("**Tags**: {}\n\n", doc.tags.join(", ")));
+    }
+
+    // Dependencies
+    if !doc.depends_on.is_empty() {
+        md.push_str("## Depends On\n\n");
+        for model in &doc.depends_on {
+            md.push_str(&format!("- [{}]({}.md)\n", model, model));
+        }
+        md.push('\n');
+    }
+
+    md
+}
+
+/// Generate HTML documentation for an exposure
+fn generate_exposure_html(doc: &ExposureDoc) -> String {
+    let mut html = String::new();
+
+    html.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
+    html.push_str(&format!(
+        "<meta charset=\"UTF-8\">\n<title>Exposure: {}</title>\n",
+        doc.name
+    ));
+    html.push_str(html_styles());
+    html.push_str("</head>\n<body>\n");
+
+    html.push_str("<nav><a href=\"index.html\">← Back to Index</a></nav>\n");
+    html.push_str(&format!("<h1>Exposure: {}</h1>\n", doc.name));
+
+    // Description
+    if let Some(desc) = &doc.description {
+        html.push_str(&format!("<p>{}</p>\n", html_escape(desc)));
+    }
+
+    // Metadata
+    html.push_str("<div class=\"metadata\">\n");
+    html.push_str(&format!(
+        "<p><strong>Type:</strong> {}</p>\n",
+        doc.exposure_type
+    ));
+    let owner_str = if let Some(email) = &doc.owner.email {
+        format!("{} ({})", doc.owner.name, email)
+    } else {
+        doc.owner.name.clone()
+    };
+    html.push_str(&format!(
+        "<p><strong>Owner:</strong> {}</p>\n",
+        html_escape(&owner_str)
+    ));
+    html.push_str(&format!(
+        "<p><strong>Maturity:</strong> {}</p>\n",
+        doc.maturity
+    ));
+    if let Some(url) = &doc.url {
+        html.push_str(&format!(
+            "<p><strong>URL:</strong> <a href=\"{}\" target=\"_blank\">{}</a></p>\n",
+            url,
+            html_escape(url)
+        ));
+    }
+    if !doc.tags.is_empty() {
+        html.push_str(&format!(
+            "<p><strong>Tags:</strong> {}</p>\n",
+            doc.tags.join(", ")
+        ));
+    }
+    html.push_str("</div>\n");
+
+    // Dependencies
+    if !doc.depends_on.is_empty() {
+        html.push_str("<h2>Depends On</h2>\n");
+        html.push_str("<ul>\n");
+        for model in &doc.depends_on {
+            html.push_str(&format!(
+                "<li><a href=\"{}.html\">{}</a></li>\n",
+                model, model
+            ));
+        }
+        html.push_str("</ul>\n");
+    }
+
+    html.push_str("</body>\n</html>\n");
+    html
+}
+
+/// Build documentation data for a metric
+fn build_metric_doc(metric: &Metric) -> MetricDoc {
+    MetricDoc {
+        name: metric.name.clone(),
+        label: metric.label.clone(),
+        description: metric.description.clone(),
+        model: metric.model.clone(),
+        calculation: format!("{}", metric.calculation),
+        expression: metric.expression.clone(),
+        timestamp: metric.timestamp.clone(),
+        dimensions: metric.dimensions.clone(),
+        filters: metric.filters.clone(),
+        tags: metric.tags.clone(),
+        owner: metric.owner.clone(),
+        sql: metric.generate_sql(),
+    }
+}
+
+/// Generate markdown documentation for a metric
+fn generate_metric_markdown(doc: &MetricDoc) -> String {
+    let mut md = String::new();
+
+    // Title
+    md.push_str(&format!("# Metric: {}\n\n", doc.name));
+
+    // Label
+    if let Some(label) = &doc.label {
+        md.push_str(&format!("*{}*\n\n", label));
+    }
+
+    // Description
+    if let Some(desc) = &doc.description {
+        md.push_str(&format!("{}\n\n", desc));
+    }
+
+    // Metadata
+    md.push_str("## Definition\n\n");
+    md.push_str(&format!(
+        "**Base Model**: [{}]({}.md)\n\n",
+        doc.model, doc.model
+    ));
+    md.push_str(&format!(
+        "**Calculation**: `{}({})`\n\n",
+        doc.calculation, doc.expression
+    ));
+
+    if let Some(ts) = &doc.timestamp {
+        md.push_str(&format!("**Timestamp Column**: `{}`\n\n", ts));
+    }
+
+    if let Some(owner) = &doc.owner {
+        md.push_str(&format!("**Owner**: {}\n\n", owner));
+    }
+
+    if !doc.tags.is_empty() {
+        md.push_str(&format!("**Tags**: {}\n\n", doc.tags.join(", ")));
+    }
+
+    // Dimensions
+    if !doc.dimensions.is_empty() {
+        md.push_str("## Dimensions\n\n");
+        md.push_str("Available dimensions for grouping:\n\n");
+        for dim in &doc.dimensions {
+            md.push_str(&format!("- `{}`\n", dim));
+        }
+        md.push('\n');
+    }
+
+    // Filters
+    if !doc.filters.is_empty() {
+        md.push_str("## Filters\n\n");
+        md.push_str("Applied filters:\n\n");
+        for filter in &doc.filters {
+            md.push_str(&format!("- `{}`\n", filter));
+        }
+        md.push('\n');
+    }
+
+    // Generated SQL
+    md.push_str("## Generated SQL\n\n");
+    md.push_str("```sql\n");
+    md.push_str(&doc.sql);
+    md.push_str("\n```\n");
+
+    md
+}
+
+/// Generate HTML documentation for a metric
+fn generate_metric_html(doc: &MetricDoc) -> String {
+    let mut html = String::new();
+
+    html.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
+    html.push_str(&format!(
+        "<meta charset=\"UTF-8\">\n<title>Metric: {}</title>\n",
+        doc.name
+    ));
+    html.push_str(html_styles());
+    html.push_str("</head>\n<body>\n");
+
+    html.push_str("<nav><a href=\"index.html\">← Back to Index</a></nav>\n");
+    html.push_str(&format!("<h1>Metric: {}</h1>\n", doc.name));
+
+    // Label
+    if let Some(label) = &doc.label {
+        html.push_str(&format!(
+            "<p class=\"metric-label\"><em>{}</em></p>\n",
+            html_escape(label)
+        ));
+    }
+
+    // Description
+    if let Some(desc) = &doc.description {
+        html.push_str(&format!("<p>{}</p>\n", html_escape(desc)));
+    }
+
+    // Metadata
+    html.push_str("<h2>Definition</h2>\n");
+    html.push_str("<div class=\"metadata\">\n");
+    html.push_str(&format!(
+        "<p><strong>Base Model:</strong> <a href=\"{}.html\">{}</a></p>\n",
+        doc.model, doc.model
+    ));
+    html.push_str(&format!(
+        "<p><strong>Calculation:</strong> <code>{}({})</code></p>\n",
+        doc.calculation,
+        html_escape(&doc.expression)
+    ));
+    if let Some(ts) = &doc.timestamp {
+        html.push_str(&format!(
+            "<p><strong>Timestamp Column:</strong> <code>{}</code></p>\n",
+            html_escape(ts)
+        ));
+    }
+    if let Some(owner) = &doc.owner {
+        html.push_str(&format!(
+            "<p><strong>Owner:</strong> {}</p>\n",
+            html_escape(owner)
+        ));
+    }
+    if !doc.tags.is_empty() {
+        html.push_str(&format!(
+            "<p><strong>Tags:</strong> {}</p>\n",
+            doc.tags.join(", ")
+        ));
+    }
+    html.push_str("</div>\n");
+
+    // Dimensions
+    if !doc.dimensions.is_empty() {
+        html.push_str("<h2>Dimensions</h2>\n");
+        html.push_str("<p>Available dimensions for grouping:</p>\n");
+        html.push_str("<ul>\n");
+        for dim in &doc.dimensions {
+            html.push_str(&format!("<li><code>{}</code></li>\n", html_escape(dim)));
+        }
+        html.push_str("</ul>\n");
+    }
+
+    // Filters
+    if !doc.filters.is_empty() {
+        html.push_str("<h2>Filters</h2>\n");
+        html.push_str("<p>Applied filters:</p>\n");
+        html.push_str("<ul>\n");
+        for filter in &doc.filters {
+            html.push_str(&format!("<li><code>{}</code></li>\n", html_escape(filter)));
+        }
+        html.push_str("</ul>\n");
+    }
+
+    // Generated SQL
+    html.push_str("<h2>Generated SQL</h2>\n");
+    html.push_str("<pre><code>");
+    html.push_str(&html_escape(&doc.sql));
+    html.push_str("</code></pre>\n");
+
+    html.push_str("</body>\n</html>\n");
+    html
+}
+
 /// Generate markdown documentation for a source
 fn generate_source_markdown(doc: &SourceDoc) -> String {
     let mut md = String::new();
@@ -695,6 +1223,8 @@ fn generate_index_markdown(
     project_name: &str,
     models: &[ModelSummary],
     sources: &[SourceSummary],
+    exposures: &[ExposureSummary],
+    metrics: &[MetricSummary],
 ) -> String {
     let mut md = String::new();
 
@@ -719,16 +1249,37 @@ fn generate_index_markdown(
         ));
     }
 
+    if !exposures.is_empty() {
+        md.push_str(&format!(
+            "**Exposures**: {} (downstream dependencies)\n\n",
+            exposures.len()
+        ));
+    }
+
+    if !metrics.is_empty() {
+        md.push_str(&format!(
+            "**Metrics**: {} (semantic layer)\n\n",
+            metrics.len()
+        ));
+    }
+
+    let macro_count = get_builtin_macros().len();
+    md.push_str(&format!(
+        "**Macros**: {} built-in macros ([view documentation](macros.md))\n\n",
+        macro_count
+    ));
+
     md.push_str("## Models\n\n");
-    md.push_str("| Model | Description | Has Schema |\n");
-    md.push_str("|-------|-------------|------------|\n");
+    md.push_str("| Model | Description | Owner | Has Schema |\n");
+    md.push_str("|-------|-------------|-------|------------|\n");
 
     for model in models {
         let desc = model.description.as_deref().unwrap_or("-");
+        let owner = model.owner.as_deref().unwrap_or("-");
         let has_schema = if model.has_schema { "✓" } else { "-" };
         md.push_str(&format!(
-            "| [{}]({}.md) | {} | {} |\n",
-            model.name, model.name, desc, has_schema
+            "| [{}]({}.md) | {} | {} | {} |\n",
+            model.name, model.name, desc, owner, has_schema
         ));
     }
     md.push('\n');
@@ -743,6 +1294,40 @@ fn generate_index_markdown(
             md.push_str(&format!(
                 "| [{}](source_{}.md) | {} | {} |\n",
                 source.name, source.name, desc, source.table_count
+            ));
+        }
+        md.push('\n');
+    }
+
+    if !exposures.is_empty() {
+        md.push_str("## Exposures\n\n");
+        md.push_str("| Name | Type | Owner | URL |\n");
+        md.push_str("|------|------|-------|-----|\n");
+
+        for exposure in exposures {
+            let url = exposure
+                .url
+                .as_ref()
+                .map(|u| format!("[Link]({})", u))
+                .unwrap_or_else(|| "-".to_string());
+            md.push_str(&format!(
+                "| [{}](exposure_{}.md) | {} | {} | {} |\n",
+                exposure.name, exposure.name, exposure.exposure_type, exposure.owner, url
+            ));
+        }
+        md.push('\n');
+    }
+
+    if !metrics.is_empty() {
+        md.push_str("## Metrics\n\n");
+        md.push_str("| Metric | Base Model | Calculation | Owner |\n");
+        md.push_str("|--------|------------|-------------|-------|\n");
+
+        for metric in metrics {
+            let owner = metric.owner.as_deref().unwrap_or("-");
+            md.push_str(&format!(
+                "| [{}](metric_{}.md) | [{}]({}.md) | {} | {} |\n",
+                metric.name, metric.name, metric.model, metric.model, metric.calculation, owner
             ));
         }
         md.push('\n');
@@ -812,6 +1397,8 @@ fn generate_html(doc: &ModelDoc) -> String {
 
     // Metadata
     if doc.owner.is_some()
+        || doc.team.is_some()
+        || doc.contact.is_some()
         || !doc.tags.is_empty()
         || doc.materialized.is_some()
         || doc.schema.is_some()
@@ -822,6 +1409,27 @@ fn generate_html(doc: &ModelDoc) -> String {
                 "<p><strong>Owner:</strong> {}</p>\n",
                 html_escape(owner)
             ));
+        }
+        if let Some(team) = &doc.team {
+            html.push_str(&format!(
+                "<p><strong>Team:</strong> {}</p>\n",
+                html_escape(team)
+            ));
+        }
+        if let Some(contact) = &doc.contact {
+            // Format contact as mailto link if it looks like an email
+            if contact.contains('@') {
+                html.push_str(&format!(
+                    "<p><strong>Contact:</strong> <a href=\"mailto:{}\">{}</a></p>\n",
+                    html_escape(contact),
+                    html_escape(contact)
+                ));
+            } else {
+                html.push_str(&format!(
+                    "<p><strong>Contact:</strong> {}</p>\n",
+                    html_escape(contact)
+                ));
+            }
         }
         if !doc.tags.is_empty() {
             html.push_str(&format!(
@@ -1031,6 +1639,8 @@ fn generate_index_html(
     project_name: &str,
     models: &[ModelSummary],
     sources: &[SourceSummary],
+    exposures: &[ExposureSummary],
+    metrics: &[MetricSummary],
 ) -> String {
     let mut html = String::new();
 
@@ -1063,23 +1673,50 @@ fn generate_index_html(
             total_tables
         ));
     }
+
+    if !exposures.is_empty() {
+        html.push_str(&format!(
+            "<p><strong>Exposures:</strong> {} (downstream dependencies)</p>\n",
+            exposures.len()
+        ));
+    }
+
+    if !metrics.is_empty() {
+        html.push_str(&format!(
+            "<p><strong>Metrics:</strong> {} (semantic layer)</p>\n",
+            metrics.len()
+        ));
+    }
+
+    let macro_count = get_builtin_macros().len();
+    html.push_str(&format!(
+        "<p><strong>Macros:</strong> {} built-in macros (<a href=\"macros.html\">view documentation</a>)</p>\n",
+        macro_count
+    ));
+
     html.push_str("</div>\n");
 
     html.push_str("<h2>Models</h2>\n");
-    html.push_str("<table>\n<thead><tr><th>Model</th><th>Description</th><th>Has Schema</th></tr></thead>\n<tbody>\n");
+    html.push_str("<table>\n<thead><tr><th>Model</th><th>Description</th><th>Owner</th><th>Has Schema</th></tr></thead>\n<tbody>\n");
 
     for model in models {
         let desc = model.description.as_deref().unwrap_or("-");
+        let owner = model
+            .owner
+            .as_ref()
+            .map(|o| html_escape(o))
+            .unwrap_or_else(|| "-".to_string());
         let has_schema = if model.has_schema {
             "<span class=\"badge badge-schema\">Yes</span>"
         } else {
             "-"
         };
         html.push_str(&format!(
-            "<tr><td><a href=\"{}.html\">{}</a></td><td>{}</td><td>{}</td></tr>\n",
+            "<tr><td><a href=\"{}.html\">{}</a></td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
             model.name,
             model.name,
             html_escape(desc),
+            owner,
             has_schema
         ));
     }
@@ -1097,6 +1734,51 @@ fn generate_index_html(
                 source.name,
                 html_escape(desc),
                 source.table_count
+            ));
+        }
+        html.push_str("</tbody></table>\n");
+    }
+
+    if !exposures.is_empty() {
+        html.push_str("<h2>Exposures</h2>\n");
+        html.push_str("<table>\n<thead><tr><th>Name</th><th>Type</th><th>Owner</th><th>URL</th></tr></thead>\n<tbody>\n");
+
+        for exposure in exposures {
+            let url = exposure
+                .url
+                .as_ref()
+                .map(|u| format!("<a href=\"{}\" target=\"_blank\">Link</a>", html_escape(u)))
+                .unwrap_or_else(|| "-".to_string());
+            html.push_str(&format!(
+                "<tr><td><a href=\"exposure_{}.html\">{}</a></td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+                exposure.name,
+                exposure.name,
+                exposure.exposure_type,
+                html_escape(&exposure.owner),
+                url
+            ));
+        }
+        html.push_str("</tbody></table>\n");
+    }
+
+    if !metrics.is_empty() {
+        html.push_str("<h2>Metrics</h2>\n");
+        html.push_str("<table>\n<thead><tr><th>Metric</th><th>Base Model</th><th>Calculation</th><th>Owner</th></tr></thead>\n<tbody>\n");
+
+        for metric in metrics {
+            let owner = metric
+                .owner
+                .as_ref()
+                .map(|o| html_escape(o))
+                .unwrap_or_else(|| "-".to_string());
+            html.push_str(&format!(
+                "<tr><td><a href=\"metric_{}.html\">{}</a></td><td><a href=\"{}.html\">{}</a></td><td>{}</td><td>{}</td></tr>\n",
+                metric.name,
+                metric.name,
+                metric.model,
+                metric.model,
+                metric.calculation,
+                owner
             ));
         }
         html.push_str("</tbody></table>\n");
@@ -1138,7 +1820,7 @@ fn generate_lineage_dot(project: &Project) -> String {
     }
 
     dot.push_str(
-        "\n    // Model nodes (blue for views, green for tables, orange for incremental)\n",
+        "\n    // Model nodes (blue for views, green for tables, gold for incremental, gray for ephemeral)\n",
     );
     if let Some(ref manifest) = manifest {
         for (name, model) in &manifest.models {
@@ -1146,6 +1828,7 @@ fn generate_lineage_dot(project: &Project) -> String {
                 ff_core::config::Materialization::Table => "#90EE90", // light green
                 ff_core::config::Materialization::View => "#ADD8E6",  // light blue
                 ff_core::config::Materialization::Incremental => "#FFD700", // gold
+                ff_core::config::Materialization::Ephemeral => "#E8E8E8", // light gray
             };
             dot.push_str(&format!(
                 "    \"{}\" [label=\"{}\" fillcolor=\"{}\"];\n",
@@ -1159,6 +1842,7 @@ fn generate_lineage_dot(project: &Project) -> String {
                 ff_core::config::Materialization::Table => "#90EE90", // light green
                 ff_core::config::Materialization::View => "#ADD8E6",  // light blue
                 ff_core::config::Materialization::Incremental => "#FFD700", // gold
+                ff_core::config::Materialization::Ephemeral => "#E8E8E8", // light gray
             };
             dot.push_str(&format!(
                 "    \"{}\" [label=\"{}\" fillcolor=\"{}\"];\n",
@@ -1212,4 +1896,191 @@ fn generate_lineage_dot(project: &Project) -> String {
 
     dot.push_str("}\n");
     dot
+}
+
+/// Generate markdown documentation for built-in macros
+fn generate_macros_markdown() -> String {
+    let mut md = String::new();
+
+    md.push_str("# Built-in Macros\n\n");
+    md.push_str(
+        "Featherflow provides a set of built-in macros that are available in all templates.\n\n",
+    );
+
+    // Get all macros grouped by category
+    let categories = get_macro_categories();
+    let all_macros = get_builtin_macros();
+
+    for category in &categories {
+        let category_macros: Vec<&MacroMetadata> = all_macros
+            .iter()
+            .filter(|m| &m.category == category)
+            .collect();
+
+        if category_macros.is_empty() {
+            continue;
+        }
+
+        // Format category as title case
+        let category_title = category
+            .chars()
+            .enumerate()
+            .map(|(i, c)| {
+                if i == 0 {
+                    c.to_uppercase().next().unwrap()
+                } else if c == '_' {
+                    ' '
+                } else {
+                    c
+                }
+            })
+            .collect::<String>();
+
+        md.push_str(&format!("## {} Macros\n\n", category_title));
+
+        for macro_info in category_macros {
+            md.push_str(&format!("### `{}`\n\n", macro_info.name));
+            md.push_str(&format!("{}\n\n", macro_info.description));
+
+            // Parameters
+            if !macro_info.params.is_empty() {
+                md.push_str("**Parameters:**\n\n");
+                md.push_str("| Parameter | Type | Required | Description |\n");
+                md.push_str("|-----------|------|----------|-------------|\n");
+                for param in &macro_info.params {
+                    let required = if param.required { "Yes" } else { "No" };
+                    md.push_str(&format!(
+                        "| `{}` | {} | {} | {} |\n",
+                        param.name, param.param_type, required, param.description
+                    ));
+                }
+                md.push('\n');
+            }
+
+            // Example
+            md.push_str("**Example:**\n\n");
+            md.push_str(&format!("```jinja\n{}\n```\n\n", macro_info.example));
+            md.push_str("**Output:**\n\n");
+            md.push_str(&format!("```sql\n{}\n```\n\n", macro_info.example_output));
+            md.push_str("---\n\n");
+        }
+    }
+
+    md
+}
+
+/// Generate HTML documentation for built-in macros
+fn generate_macros_html() -> String {
+    let mut html = String::new();
+
+    html.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
+    html.push_str("<meta charset=\"UTF-8\">\n<title>Built-in Macros</title>\n");
+    html.push_str(html_styles());
+    html.push_str(
+        r#"
+    <style>
+        .macro-section { margin-bottom: 30px; }
+        .macro-card { background: #f9f9f9; border: 1px solid #ddd; padding: 20px; margin: 15px 0; border-radius: 5px; }
+        .macro-name { font-size: 1.3em; color: #2c3e50; margin-bottom: 10px; }
+        .param-table { margin: 15px 0; }
+        pre { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        code { font-family: 'Consolas', 'Monaco', monospace; }
+        .example-label { font-weight: bold; margin-top: 15px; display: block; }
+    </style>
+"#,
+    );
+    html.push_str("</head>\n<body>\n");
+
+    // Navigation
+    html.push_str("<nav><a href=\"index.html\">Home</a></nav>\n");
+
+    html.push_str("<h1>Built-in Macros</h1>\n");
+    html.push_str("<p>Featherflow provides a set of built-in macros that are available in all templates.</p>\n");
+
+    // Get all macros grouped by category
+    let categories = get_macro_categories();
+    let all_macros = get_builtin_macros();
+
+    for category in &categories {
+        let category_macros: Vec<&MacroMetadata> = all_macros
+            .iter()
+            .filter(|m| &m.category == category)
+            .collect();
+
+        if category_macros.is_empty() {
+            continue;
+        }
+
+        // Format category as title case
+        let category_title = category
+            .chars()
+            .enumerate()
+            .map(|(i, c)| {
+                if i == 0 {
+                    c.to_uppercase().next().unwrap()
+                } else if c == '_' {
+                    ' '
+                } else {
+                    c
+                }
+            })
+            .collect::<String>();
+
+        html.push_str(&format!(
+            "<div class=\"macro-section\">\n<h2>{} Macros</h2>\n",
+            category_title
+        ));
+
+        for macro_info in category_macros {
+            html.push_str("<div class=\"macro-card\">\n");
+            html.push_str(&format!(
+                "<div class=\"macro-name\"><code>{}</code></div>\n",
+                macro_info.name
+            ));
+            html.push_str(&format!(
+                "<p>{}</p>\n",
+                html_escape(&macro_info.description)
+            ));
+
+            // Parameters
+            if !macro_info.params.is_empty() {
+                html.push_str("<table class=\"param-table\">\n");
+                html.push_str("<thead><tr><th>Parameter</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>\n<tbody>\n");
+                for param in &macro_info.params {
+                    let required = if param.required {
+                        "<span class=\"badge badge-pass\">Yes</span>"
+                    } else {
+                        "No"
+                    };
+                    html.push_str(&format!(
+                        "<tr><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+                        param.name,
+                        param.param_type,
+                        required,
+                        html_escape(&param.description)
+                    ));
+                }
+                html.push_str("</tbody></table>\n");
+            }
+
+            // Example
+            html.push_str("<span class=\"example-label\">Example:</span>\n");
+            html.push_str(&format!(
+                "<pre><code>{}</code></pre>\n",
+                html_escape(&macro_info.example)
+            ));
+            html.push_str("<span class=\"example-label\">Output:</span>\n");
+            html.push_str(&format!(
+                "<pre><code>{}</code></pre>\n",
+                html_escape(&macro_info.example_output)
+            ));
+
+            html.push_str("</div>\n");
+        }
+
+        html.push_str("</div>\n");
+    }
+
+    html.push_str("</body>\n</html>\n");
+    html
 }

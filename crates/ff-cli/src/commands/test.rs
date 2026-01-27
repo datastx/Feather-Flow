@@ -1,13 +1,15 @@
 //! Test command implementation
 
 use anyhow::{Context, Result};
-use ff_core::model::{parse_test_definition, SchemaTest, SingularTest, TestSeverity};
+use chrono::{DateTime, Utc};
+use ff_core::model::{parse_test_definition, SchemaTest, SingularTest, TestSeverity, TestType};
 use ff_core::source::SourceFile;
 use ff_core::Project;
 use ff_db::{Database, DuckDbBackend};
-use ff_jinja::JinjaEnvironment;
+use ff_jinja::{CustomTestRegistry, JinjaEnvironment};
 use ff_test::{generator::GeneratedTest, TestRunner};
 use futures::stream::{self, StreamExt};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -15,7 +17,33 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Mutex;
 
-use crate::cli::{GlobalArgs, TestArgs};
+use crate::cli::{GlobalArgs, OutputFormat, TestArgs};
+
+/// Test result for JSON output
+#[derive(Debug, Clone, Serialize)]
+struct TestResultOutput {
+    name: String,
+    status: String, // "pass", "fail", "warn", "error"
+    test_type: String,
+    model: Option<String>,
+    column: Option<String>,
+    failure_count: usize,
+    duration_secs: f64,
+    error: Option<String>,
+}
+
+/// Test results summary for JSON output
+#[derive(Debug, Serialize)]
+struct TestResults {
+    timestamp: DateTime<Utc>,
+    elapsed_secs: f64,
+    total_tests: usize,
+    passed: usize,
+    failed: usize,
+    warned: usize,
+    errors: usize,
+    results: Vec<TestResultOutput>,
+}
 
 /// Generate tests from source files
 fn generate_source_tests(sources: &[SourceFile]) -> Vec<SchemaTest> {
@@ -44,19 +72,57 @@ fn generate_source_tests(sources: &[SourceFile]) -> Vec<SchemaTest> {
 
 /// Execute the test command
 pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
+    use ff_core::config::Config;
+
     let project_path = Path::new(&global.project_dir);
     let project = Project::load(project_path).context("Failed to load project")?;
 
-    // Create database connection (use --target override if provided)
-    let db_path = global
-        .target
-        .as_ref()
-        .unwrap_or(&project.config.database.path);
+    // Resolve target from CLI flag or FF_TARGET env var
+    let target = Config::resolve_target(global.target.as_deref());
+
+    // Get database config, applying target overrides if specified
+    let db_config = project
+        .config
+        .get_database_config(target.as_deref())
+        .context("Failed to get database configuration")?;
+
+    if global.verbose {
+        if let Some(ref target_name) = target {
+            eprintln!(
+                "[verbose] Using target '{}' with database: {}",
+                target_name, db_config.path
+            );
+        }
+    }
+
     let db: Arc<dyn Database> =
-        Arc::new(DuckDbBackend::new(db_path).context("Failed to connect to database")?);
+        Arc::new(DuckDbBackend::new(&db_config.path).context("Failed to connect to database")?);
+
+    // Get merged vars with target overrides
+    let merged_vars = project.config.get_merged_vars(target.as_deref());
+
+    // Get macro paths and set up Jinja environment for custom tests
+    let macro_paths = project.config.macro_paths_absolute(&project.root);
+    let jinja = JinjaEnvironment::with_macros(&merged_vars, &macro_paths);
+
+    // Discover custom test macros
+    let mut custom_test_registry = CustomTestRegistry::new();
+    custom_test_registry.discover(&macro_paths);
+
+    if global.verbose && !custom_test_registry.is_empty() {
+        eprintln!(
+            "[verbose] Discovered {} custom test macro(s): {}",
+            custom_test_registry.len(),
+            custom_test_registry
+                .list()
+                .iter()
+                .map(|m| m.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
 
     // Build a map of model name -> qualified name (with schema if specified)
-    let jinja = JinjaEnvironment::new(&project.config.vars);
     let mut model_qualified_names: HashMap<String, String> = HashMap::new();
 
     for (name, model) in &project.models {
@@ -131,22 +197,40 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
 
     let total_schema_tests = tests_to_run.len();
     let total_singular_tests = project.singular_tests.len();
+    let json_mode = args.output == OutputFormat::Json;
+    let start_time = Instant::now();
 
     if total_schema_tests == 0 && total_singular_tests == 0 {
-        println!("No tests to run.");
+        if json_mode {
+            let empty_result = TestResults {
+                timestamp: Utc::now(),
+                elapsed_secs: 0.0,
+                total_tests: 0,
+                passed: 0,
+                failed: 0,
+                warned: 0,
+                errors: 0,
+                results: vec![],
+            };
+            println!("{}", serde_json::to_string_pretty(&empty_result)?);
+        } else {
+            println!("No tests to run.");
+        }
         return Ok(());
     }
 
     let total_tests = total_schema_tests + total_singular_tests;
     let thread_count = args.threads.max(1);
 
-    if thread_count > 1 {
-        println!(
-            "Running {} tests with {} threads...\n",
-            total_tests, thread_count
-        );
-    } else {
-        println!("Running {} tests...\n", total_tests);
+    if !json_mode {
+        if thread_count > 1 {
+            println!(
+                "Running {} tests with {} threads...\n",
+                total_tests, thread_count
+            );
+        } else {
+            println!("Running {} tests...\n", total_tests);
+        }
     }
 
     // Create target/test_failures directory if --store-failures is set
@@ -165,6 +249,11 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
     let errors = Arc::new(AtomicUsize::new(0));
     let early_stop = Arc::new(AtomicBool::new(false));
     let output_lock = Arc::new(Mutex::new(()));
+    let test_results: Arc<Mutex<Vec<TestResultOutput>>> = Arc::new(Mutex::new(Vec::new()));
+
+    // Wrap Jinja environment and custom registry in Arc for sharing
+    let jinja_env = Arc::new(jinja);
+    let custom_registry = Arc::new(custom_test_registry);
 
     // Run tests based on thread count
     if thread_count > 1 {
@@ -183,6 +272,11 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
             &errors,
             &early_stop,
             &output_lock,
+            &test_results,
+            json_mode,
+            &jinja_env,
+            &custom_registry,
+            &macro_paths,
         )
         .await;
     } else {
@@ -200,6 +294,11 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
             &errors,
             &early_stop,
             &output_lock,
+            &test_results,
+            json_mode,
+            &jinja_env,
+            &custom_registry,
+            &macro_paths,
         )
         .await;
     }
@@ -209,20 +308,35 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
     let final_warned = warned.load(Ordering::SeqCst);
     let final_errors = errors.load(Ordering::SeqCst);
 
-    println!();
-    if final_warned > 0 {
-        println!(
-            "Passed: {}, Failed: {}, Warned: {}",
-            final_passed,
-            final_failed + final_errors,
-            final_warned
-        );
+    if json_mode {
+        let results = test_results.lock().await.clone();
+        let output = TestResults {
+            timestamp: Utc::now(),
+            elapsed_secs: start_time.elapsed().as_secs_f64(),
+            total_tests,
+            passed: final_passed,
+            failed: final_failed + final_errors,
+            warned: final_warned,
+            errors: final_errors,
+            results,
+        };
+        println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
-        println!(
-            "Passed: {}, Failed: {}",
-            final_passed,
-            final_failed + final_errors
-        );
+        println!();
+        if final_warned > 0 {
+            println!(
+                "Passed: {}, Failed: {}, Warned: {}",
+                final_passed,
+                final_failed + final_errors,
+                final_warned
+            );
+        } else {
+            println!(
+                "Passed: {}, Failed: {}",
+                final_passed,
+                final_failed + final_errors
+            );
+        }
     }
 
     if (final_failed > 0 || final_errors > 0) && !args.warn_only {
@@ -248,6 +362,11 @@ async fn run_tests_sequential(
     errors: &Arc<AtomicUsize>,
     early_stop: &Arc<AtomicBool>,
     _output_lock: &Arc<Mutex<()>>,
+    test_results: &Arc<Mutex<Vec<TestResultOutput>>>,
+    json_mode: bool,
+    jinja_env: &Arc<JinjaEnvironment<'_>>,
+    custom_registry: &Arc<CustomTestRegistry>,
+    macro_paths: &[std::path::PathBuf],
 ) {
     let runner = TestRunner::new(db.as_ref());
 
@@ -261,7 +380,15 @@ async fn run_tests_sequential(
             .get(&schema_test.model)
             .map(|s| s.as_str())
             .unwrap_or(&schema_test.model);
-        let generated = GeneratedTest::from_schema_test_qualified(schema_test, qualified_name);
+
+        // Generate test SQL, handling custom tests specially
+        let generated = generate_test_with_custom_support(
+            schema_test,
+            qualified_name,
+            jinja_env,
+            custom_registry,
+            macro_paths,
+        );
         let result = runner.run_test(&generated).await;
 
         process_schema_test_result(
@@ -274,6 +401,8 @@ async fn run_tests_sequential(
             failed,
             warned,
             errors,
+            test_results,
+            json_mode,
         )
         .await;
 
@@ -299,6 +428,8 @@ async fn run_tests_sequential(
             passed,
             failed,
             errors,
+            test_results,
+            json_mode,
         )
         .await;
 
@@ -325,17 +456,37 @@ async fn run_tests_parallel(
     errors: &Arc<AtomicUsize>,
     early_stop: &Arc<AtomicBool>,
     output_lock: &Arc<Mutex<()>>,
+    test_results: &Arc<Mutex<Vec<TestResultOutput>>>,
+    json_mode: bool,
+    jinja_env: &Arc<JinjaEnvironment<'_>>,
+    custom_registry: &Arc<CustomTestRegistry>,
+    macro_paths: &[std::path::PathBuf],
 ) {
-    // Prepare schema test tasks
-    let schema_test_futures: Vec<_> = schema_tests
+    // Pre-generate all test SQL (including custom tests) before parallel execution
+    // This is done synchronously since Jinja rendering isn't async
+    let generated_tests: Vec<(SchemaTest, String, GeneratedTest)> = schema_tests
         .iter()
         .map(|schema_test| {
-            let db = db.clone();
             let qualified_name = model_qualified_names
                 .get(&schema_test.model)
                 .cloned()
                 .unwrap_or_else(|| schema_test.model.clone());
-            let schema_test = (*schema_test).clone();
+            let generated = generate_test_with_custom_support(
+                schema_test,
+                &qualified_name,
+                jinja_env,
+                custom_registry,
+                macro_paths,
+            );
+            ((*schema_test).clone(), qualified_name, generated)
+        })
+        .collect();
+
+    // Prepare schema test tasks
+    let schema_test_futures: Vec<_> = generated_tests
+        .into_iter()
+        .map(|(schema_test, _qualified_name, generated)| {
+            let db = db.clone();
             let failures_dir = failures_dir.clone();
             let passed = passed.clone();
             let failed = failed.clone();
@@ -343,6 +494,7 @@ async fn run_tests_parallel(
             let errors = errors.clone();
             let early_stop = early_stop.clone();
             let output_lock = output_lock.clone();
+            let test_results = test_results.clone();
             let fail_fast = args.fail_fast;
 
             async move {
@@ -351,8 +503,6 @@ async fn run_tests_parallel(
                 }
 
                 let runner = TestRunner::new(db.as_ref());
-                let generated =
-                    GeneratedTest::from_schema_test_qualified(&schema_test, &qualified_name);
                 let result = runner.run_test(&generated).await;
 
                 // Lock for output
@@ -368,6 +518,8 @@ async fn run_tests_parallel(
                     &failed,
                     &warned,
                     &errors,
+                    &test_results,
+                    json_mode,
                 )
                 .await;
 
@@ -398,6 +550,7 @@ async fn run_tests_parallel(
             let errors = errors.clone();
             let early_stop = early_stop.clone();
             let output_lock = output_lock.clone();
+            let test_results = test_results.clone();
             let fail_fast = args.fail_fast;
 
             async move {
@@ -418,6 +571,8 @@ async fn run_tests_parallel(
                     &passed,
                     &failed,
                     &errors,
+                    &test_results,
+                    json_mode,
                 )
                 .await;
 
@@ -448,60 +603,89 @@ async fn process_schema_test_result(
     failed: &Arc<AtomicUsize>,
     warned: &Arc<AtomicUsize>,
     errors: &Arc<AtomicUsize>,
+    test_results: &Arc<Mutex<Vec<TestResultOutput>>>,
+    json_mode: bool,
 ) {
-    if result.passed {
+    let (status, error_msg) = if result.passed {
         passed.fetch_add(1, Ordering::SeqCst);
-        println!("  ✓ {} [{}ms]", result.name, result.duration.as_millis());
+        if !json_mode {
+            println!("  ✓ {} [{}ms]", result.name, result.duration.as_millis());
+        }
+        ("pass".to_string(), None)
     } else if let Some(error) = &result.error {
         errors.fetch_add(1, Ordering::SeqCst);
-        println!(
-            "  ✗ {} - {} [{}ms]",
-            result.name,
-            error,
-            result.duration.as_millis()
-        );
+        if !json_mode {
+            println!(
+                "  ✗ {} - {} [{}ms]",
+                result.name,
+                error,
+                result.duration.as_millis()
+            );
+        }
+        ("error".to_string(), Some(error.clone()))
     } else {
         let is_warning = schema_test.config.severity == TestSeverity::Warn;
         if is_warning {
             warned.fetch_add(1, Ordering::SeqCst);
-            println!(
-                "  ⚠ {} ({} failures, warn) [{}ms]",
-                result.name,
-                result.failure_count,
-                result.duration.as_millis()
-            );
+            if !json_mode {
+                println!(
+                    "  ⚠ {} ({} failures, warn) [{}ms]",
+                    result.name,
+                    result.failure_count,
+                    result.duration.as_millis()
+                );
+            }
+            ("warn".to_string(), None)
         } else {
             failed.fetch_add(1, Ordering::SeqCst);
+            if !json_mode {
+                println!(
+                    "  ✗ {} ({} failures) [{}ms]",
+                    result.name,
+                    result.failure_count,
+                    result.duration.as_millis()
+                );
+            }
+            ("fail".to_string(), None)
+        }
+    };
+
+    // Add to results for JSON output
+    let test_output = TestResultOutput {
+        name: result.name.clone(),
+        status,
+        test_type: format!("{:?}", schema_test.test_type),
+        model: Some(schema_test.model.clone()),
+        column: Some(schema_test.column.clone()),
+        failure_count: result.failure_count,
+        duration_secs: result.duration.as_secs_f64(),
+        error: error_msg,
+    };
+    test_results.lock().await.push(test_output);
+
+    // Show sample failing rows (text mode only)
+    if !json_mode && !result.passed && result.error.is_none() && !result.sample_failures.is_empty()
+    {
+        println!("    Sample failing rows:");
+        for (i, row) in result.sample_failures.iter().enumerate() {
+            println!("      {}. {}", i + 1, row);
+        }
+        if result.failure_count > result.sample_failures.len() {
             println!(
-                "  ✗ {} ({} failures) [{}ms]",
-                result.name,
-                result.failure_count,
-                result.duration.as_millis()
+                "      ... and {} more",
+                result.failure_count - result.sample_failures.len()
             );
         }
 
-        // Show sample failing rows (always show up to 5)
-        if !result.sample_failures.is_empty() {
-            println!("    Sample failing rows:");
-            for (i, row) in result.sample_failures.iter().enumerate() {
-                println!("      {}. {}", i + 1, row);
-            }
-            if result.failure_count > result.sample_failures.len() {
-                println!(
-                    "      ... and {} more",
-                    result.failure_count - result.sample_failures.len()
-                );
-            }
-
-            // Store failures if requested
-            if let Some(ref dir) = failures_dir {
-                store_test_failures(db, &result.name, &generated.sql, dir).await;
-            }
+        // Store failures if requested
+        if let Some(ref dir) = failures_dir {
+            store_test_failures(db, &result.name, &generated.sql, dir).await;
         }
     }
 }
 
 /// Process and print singular test result
+#[allow(clippy::too_many_arguments)]
 async fn process_singular_test_result(
     result: &SingularTestResult,
     singular_test: &SingularTest,
@@ -510,48 +694,73 @@ async fn process_singular_test_result(
     passed: &Arc<AtomicUsize>,
     failed: &Arc<AtomicUsize>,
     errors: &Arc<AtomicUsize>,
+    test_results: &Arc<Mutex<Vec<TestResultOutput>>>,
+    json_mode: bool,
 ) {
-    if result.passed {
+    let (status, error_msg) = if result.passed {
         passed.fetch_add(1, Ordering::SeqCst);
-        println!(
-            "  ✓ {} (singular) [{}ms]",
-            result.name,
-            result.duration.as_millis()
-        );
+        if !json_mode {
+            println!(
+                "  ✓ {} (singular) [{}ms]",
+                result.name,
+                result.duration.as_millis()
+            );
+        }
+        ("pass".to_string(), None)
     } else if let Some(error) = &result.error {
         errors.fetch_add(1, Ordering::SeqCst);
-        println!(
-            "  ✗ {} (singular) - {} [{}ms]",
-            result.name,
-            error,
-            result.duration.as_millis()
-        );
+        if !json_mode {
+            println!(
+                "  ✗ {} (singular) - {} [{}ms]",
+                result.name,
+                error,
+                result.duration.as_millis()
+            );
+        }
+        ("error".to_string(), Some(error.clone()))
     } else {
         failed.fetch_add(1, Ordering::SeqCst);
-        println!(
-            "  ✗ {} (singular) ({} failures) [{}ms]",
-            result.name,
-            result.failure_count,
-            result.duration.as_millis()
-        );
+        if !json_mode {
+            println!(
+                "  ✗ {} (singular) ({} failures) [{}ms]",
+                result.name,
+                result.failure_count,
+                result.duration.as_millis()
+            );
+        }
+        ("fail".to_string(), None)
+    };
 
-        // Show sample failing rows
-        if !result.sample_failures.is_empty() {
-            println!("    Sample failing rows:");
-            for (i, row) in result.sample_failures.iter().enumerate() {
-                println!("      {}. {}", i + 1, row);
-            }
-            if result.failure_count > result.sample_failures.len() {
-                println!(
-                    "      ... and {} more",
-                    result.failure_count - result.sample_failures.len()
-                );
-            }
+    // Add to results for JSON output
+    let test_output = TestResultOutput {
+        name: result.name.clone(),
+        status,
+        test_type: "singular".to_string(),
+        model: None,
+        column: None,
+        failure_count: result.failure_count,
+        duration_secs: result.duration.as_secs_f64(),
+        error: error_msg,
+    };
+    test_results.lock().await.push(test_output);
 
-            // Store failures if requested
-            if let Some(ref dir) = failures_dir {
-                store_test_failures(db, &result.name, &singular_test.sql, dir).await;
-            }
+    // Show sample failing rows (text mode only)
+    if !json_mode && !result.passed && result.error.is_none() && !result.sample_failures.is_empty()
+    {
+        println!("    Sample failing rows:");
+        for (i, row) in result.sample_failures.iter().enumerate() {
+            println!("      {}. {}", i + 1, row);
+        }
+        if result.failure_count > result.sample_failures.len() {
+            println!(
+                "      ... and {} more",
+                result.failure_count - result.sample_failures.len()
+            );
+        }
+
+        // Store failures if requested
+        if let Some(ref dir) = failures_dir {
+            store_test_failures(db, &result.name, &singular_test.sql, dir).await;
         }
     }
 }
@@ -627,5 +836,64 @@ async fn store_test_failures(
         // Create table with failing rows
         let create_sql = format!("CREATE TABLE IF NOT EXISTS failures AS {}", sql);
         let _ = failures_db.execute(&create_sql).await;
+    }
+}
+
+/// Generate test SQL with support for custom test macros
+///
+/// For built-in test types, uses the standard generator.
+/// For custom test types, looks up the macro in the registry and renders it.
+fn generate_test_with_custom_support(
+    schema_test: &SchemaTest,
+    qualified_name: &str,
+    _jinja_env: &JinjaEnvironment<'_>,
+    custom_registry: &CustomTestRegistry,
+    macro_paths: &[std::path::PathBuf],
+) -> GeneratedTest {
+    match &schema_test.test_type {
+        TestType::Custom { name, kwargs } => {
+            // Look up the custom test macro
+            if let Some(macro_info) = custom_registry.get(name) {
+                // Create a minijinja Environment with the macro paths loaded
+                let mut env = minijinja::Environment::new();
+                for macro_path in macro_paths {
+                    if macro_path.exists() && macro_path.is_dir() {
+                        env.set_loader(minijinja::path_loader(macro_path.clone()));
+                        break;
+                    }
+                }
+
+                // Try to render the custom test SQL
+                match ff_jinja::generate_custom_test_sql(
+                    &env,
+                    &macro_info.source_file,
+                    &macro_info.macro_name,
+                    qualified_name,
+                    &schema_test.column,
+                    kwargs,
+                ) {
+                    Ok(sql) => GeneratedTest::with_custom_sql(schema_test, sql),
+                    Err(e) => {
+                        // Return a test that will fail with the error message
+                        let error_sql = format!(
+                            "-- Error rendering custom test '{}': {}\nSELECT 1 WHERE FALSE",
+                            name, e
+                        );
+                        GeneratedTest::with_custom_sql(schema_test, error_sql)
+                    }
+                }
+            } else {
+                // Custom test not found - return a placeholder that shows an error
+                let error_sql = format!(
+                    "-- Custom test '{}' not found in registered macros\nSELECT 1 AS error_custom_test_not_found",
+                    name
+                );
+                GeneratedTest::with_custom_sql(schema_test, error_sql)
+            }
+        }
+        _ => {
+            // Built-in test types use the standard generator
+            GeneratedTest::from_schema_test_qualified(schema_test, qualified_name)
+        }
     }
 }
