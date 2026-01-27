@@ -3,13 +3,14 @@
 use anyhow::{Context, Result};
 use ff_core::config::Materialization;
 use ff_core::dag::ModelDag;
+use ff_core::selector::Selector;
 use ff_core::Project;
 use ff_jinja::JinjaEnvironment;
 use ff_sql::{extract_dependencies, SqlParser};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use crate::cli::{GlobalArgs, LsArgs, LsOutput};
+use crate::cli::{GlobalArgs, LsArgs, LsOutput, ResourceType};
 
 /// Execute the ls command
 pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
@@ -69,6 +70,7 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
         model_info.push(ModelInfo {
             name: name.to_string(),
             resource_type: "model".to_string(),
+            path: Some(model.path.display().to_string()),
             materialized: Some(mat),
             schema,
             model_deps,
@@ -83,6 +85,7 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
             model_info.push(ModelInfo {
                 name: source_name,
                 resource_type: "source".to_string(),
+                path: None, // Sources don't have a file path
                 materialized: None,
                 schema: Some(source.schema.clone()),
                 model_deps: Vec::new(),
@@ -95,26 +98,60 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
     let dag = ModelDag::build(&dependencies).context("Failed to build dependency graph")?;
 
     // Filter models if selector is provided
-    let filtered_names: HashSet<String> = if let Some(selector) = &args.select {
-        dag.select(selector)
-            .context("Invalid selector")?
+    let filtered_names: HashSet<String> = if let Some(selector_str) = &args.select {
+        let selector = Selector::parse(selector_str).context("Invalid selector")?;
+        selector
+            .apply(&project.models, &dag)
+            .context("Failed to apply selector")?
             .into_iter()
             .collect()
     } else {
         model_info.iter().map(|m| m.name.clone()).collect()
     };
 
-    // Filter model_info
+    // Apply exclusion filter if provided
+    let filtered_names: HashSet<String> = if let Some(exclude) = &args.exclude {
+        let excluded: HashSet<String> = exclude
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        filtered_names
+            .into_iter()
+            .filter(|m| !excluded.contains(m))
+            .collect()
+    } else {
+        filtered_names
+    };
+
+    // Filter model_info by name
     let filtered_info: Vec<&ModelInfo> = model_info
         .iter()
         .filter(|m| filtered_names.contains(&m.name))
         .collect();
+
+    // Apply resource type filter if provided
+    let filtered_info: Vec<&ModelInfo> = if let Some(resource_type) = &args.resource_type {
+        let type_str = match resource_type {
+            ResourceType::Model => "model",
+            ResourceType::Source => "source",
+            ResourceType::Seed => "seed",
+            ResourceType::Test => "test",
+        };
+        filtered_info
+            .into_iter()
+            .filter(|m| m.resource_type == type_str)
+            .collect()
+    } else {
+        filtered_info
+    };
 
     // Output based on format
     match args.output {
         LsOutput::Table => print_table(&filtered_info),
         LsOutput::Json => print_json(&filtered_info)?,
         LsOutput::Tree => print_tree(&filtered_info, &dag)?,
+        LsOutput::Path => print_paths(&filtered_info),
     }
 
     Ok(())
@@ -126,6 +163,8 @@ struct ModelInfo {
     name: String,
     #[serde(rename = "type")]
     resource_type: String, // "model" or "source"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
     materialized: Option<Materialization>,
     schema: Option<String>,
     model_deps: Vec<String>,
@@ -288,5 +327,14 @@ fn print_tree_node(
             &new_prefix,
             is_last_child,
         );
+    }
+}
+
+/// Print model file paths only (one per line)
+fn print_paths(models: &[&ModelInfo]) {
+    for model in models {
+        if let Some(path) = &model.path {
+            println!("{}", path);
+        }
     }
 }

@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use ff_core::model::Model;
 use ff_core::source::SourceFile;
 use ff_core::Project;
+use ff_sql::{extract_column_lineage, suggest_tests, SqlParser};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
@@ -28,6 +29,23 @@ struct ModelDoc {
     columns: Vec<ColumnDoc>,
     depends_on: Vec<String>,
     external_deps: Vec<String>,
+    /// Column-level lineage extracted from SQL AST
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    column_lineage: Vec<ColumnLineageDoc>,
+    /// Suggested tests from AST analysis
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    test_suggestions: Vec<TestSuggestionDoc>,
+}
+
+/// Test suggestion documentation data
+#[derive(Debug, Serialize)]
+struct TestSuggestionDoc {
+    /// Column name
+    column: String,
+    /// Suggested test type
+    test_type: String,
+    /// Reason for suggestion
+    reason: String,
 }
 
 /// Column documentation data
@@ -50,6 +68,19 @@ struct ColumnDoc {
 struct ColumnRefDoc {
     model: String,
     column: String,
+}
+
+/// Column lineage documentation data (from AST analysis)
+#[derive(Debug, Serialize)]
+struct ColumnLineageDoc {
+    /// Output column name
+    output_column: String,
+    /// Source columns that contribute to this output
+    source_columns: Vec<String>,
+    /// Whether this is a direct pass-through
+    is_direct: bool,
+    /// Expression type (column, function, expression, etc.)
+    expr_type: String,
 }
 
 /// Model summary for index
@@ -345,6 +376,12 @@ fn build_model_doc(model: &Model) -> ModelDoc {
     let depends_on: Vec<String> = model.depends_on.iter().cloned().collect();
     let external_deps: Vec<String> = model.external_deps.iter().cloned().collect();
 
+    // Extract column lineage from SQL
+    let column_lineage = extract_column_lineage_from_model(model);
+
+    // Generate test suggestions from SQL
+    let test_suggestions = generate_test_suggestions(model);
+
     ModelDoc {
         name: model.name.clone(),
         description,
@@ -355,7 +392,84 @@ fn build_model_doc(model: &Model) -> ModelDoc {
         columns,
         depends_on,
         external_deps,
+        column_lineage,
+        test_suggestions,
     }
+}
+
+/// Extract column-level lineage from a model's SQL
+fn extract_column_lineage_from_model(model: &Model) -> Vec<ColumnLineageDoc> {
+    let parser = SqlParser::duckdb();
+
+    // Use compiled SQL if available, otherwise raw SQL
+    let sql = model.compiled_sql.as_ref().unwrap_or(&model.raw_sql);
+
+    // Try to parse the SQL
+    let stmts = match parser.parse(sql) {
+        Ok(stmts) => stmts,
+        Err(_) => return Vec::new(),
+    };
+
+    // Extract lineage from the first statement
+    let lineage = match stmts
+        .first()
+        .and_then(|stmt| extract_column_lineage(stmt, &model.name))
+    {
+        Some(l) => l,
+        None => return Vec::new(),
+    };
+
+    // Convert to documentation format
+    lineage
+        .columns
+        .into_iter()
+        .map(|col| ColumnLineageDoc {
+            output_column: col.output_column,
+            source_columns: col
+                .source_columns
+                .into_iter()
+                .map(|c| c.to_string())
+                .collect(),
+            is_direct: col.is_direct,
+            expr_type: col.expr_type,
+        })
+        .collect()
+}
+
+/// Generate test suggestions from a model's SQL
+fn generate_test_suggestions(model: &Model) -> Vec<TestSuggestionDoc> {
+    let parser = SqlParser::duckdb();
+
+    // Use compiled SQL if available, otherwise raw SQL
+    let sql = model.compiled_sql.as_ref().unwrap_or(&model.raw_sql);
+
+    // Try to parse the SQL
+    let stmts = match parser.parse(sql) {
+        Ok(stmts) => stmts,
+        Err(_) => return Vec::new(),
+    };
+
+    // Get suggestions from the first statement
+    let suggestions = match stmts.first() {
+        Some(stmt) => suggest_tests(stmt, &model.name),
+        None => return Vec::new(),
+    };
+
+    // Convert to documentation format
+    let mut docs: Vec<TestSuggestionDoc> = Vec::new();
+    for (column, col_suggestions) in suggestions.columns {
+        for suggestion in col_suggestions.suggestions {
+            docs.push(TestSuggestionDoc {
+                column: column.clone(),
+                test_type: suggestion.test_name().to_string(),
+                reason: suggestion.reason(),
+            });
+        }
+    }
+
+    // Sort by column name
+    docs.sort_by(|a, b| a.column.cmp(&b.column));
+    docs
 }
 
 /// Generate markdown documentation for a model
@@ -438,6 +552,42 @@ fn generate_markdown(doc: &ModelDoc) -> String {
         }
     } else {
         md.push_str("*No schema file found for this model.*\n\n");
+    }
+
+    // Column Lineage section
+    if !doc.column_lineage.is_empty() {
+        md.push_str("## Column Lineage\n\n");
+        md.push_str("| Output Column | Sources | Type | Direct |\n");
+        md.push_str("|---------------|---------|------|--------|\n");
+
+        for col in &doc.column_lineage {
+            let sources = if col.source_columns.is_empty() {
+                "-".to_string()
+            } else {
+                col.source_columns.join(", ")
+            };
+            let direct = if col.is_direct { "✓" } else { "-" };
+            md.push_str(&format!(
+                "| {} | {} | {} | {} |\n",
+                col.output_column, sources, col.expr_type, direct
+            ));
+        }
+        md.push('\n');
+    }
+
+    // Test Suggestions section
+    if !doc.test_suggestions.is_empty() {
+        md.push_str("## Suggested Tests\n\n");
+        md.push_str("| Column | Suggested Test | Reason |\n");
+        md.push_str("|--------|----------------|--------|\n");
+
+        for sugg in &doc.test_suggestions {
+            md.push_str(&format!(
+                "| {} | {} | {} |\n",
+                sugg.column, sugg.test_type, sugg.reason
+            ));
+        }
+        md.push('\n');
     }
 
     md
@@ -752,6 +902,48 @@ fn generate_html(doc: &ModelDoc) -> String {
         html.push_str("<p><em>No schema file found for this model.</em></p>\n");
     }
 
+    // Column Lineage section
+    if !doc.column_lineage.is_empty() {
+        html.push_str("<h2>Column Lineage</h2>\n");
+        html.push_str("<table>\n<thead><tr><th>Output Column</th><th>Sources</th><th>Type</th><th>Direct</th></tr></thead>\n<tbody>\n");
+
+        for col in &doc.column_lineage {
+            let sources = if col.source_columns.is_empty() {
+                "-".to_string()
+            } else {
+                col.source_columns
+                    .iter()
+                    .map(|s| format!("<code>{}</code>", html_escape(s)))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            let direct = if col.is_direct {
+                "<span class=\"badge badge-pass\">Direct</span>"
+            } else {
+                "-"
+            };
+            html.push_str(&format!(
+                "<tr><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+                col.output_column, sources, col.expr_type, direct
+            ));
+        }
+        html.push_str("</tbody></table>\n");
+    }
+
+    // Test Suggestions section
+    if !doc.test_suggestions.is_empty() {
+        html.push_str("<h2>Suggested Tests</h2>\n");
+        html.push_str("<table>\n<thead><tr><th>Column</th><th>Suggested Test</th><th>Reason</th></tr></thead>\n<tbody>\n");
+
+        for sugg in &doc.test_suggestions {
+            html.push_str(&format!(
+                "<tr><td><code>{}</code></td><td><span class=\"badge badge-schema\">{}</span></td><td>{}</td></tr>\n",
+                sugg.column, sugg.test_type, html_escape(&sugg.reason)
+            ));
+        }
+        html.push_str("</tbody></table>\n");
+    }
+
     html.push_str("</body>\n</html>\n");
     html
 }
@@ -945,12 +1137,15 @@ fn generate_lineage_dot(project: &Project) -> String {
         }
     }
 
-    dot.push_str("\n    // Model nodes (blue for views, green for tables)\n");
+    dot.push_str(
+        "\n    // Model nodes (blue for views, green for tables, orange for incremental)\n",
+    );
     if let Some(ref manifest) = manifest {
         for (name, model) in &manifest.models {
             let color = match model.materialized {
                 ff_core::config::Materialization::Table => "#90EE90", // light green
                 ff_core::config::Materialization::View => "#ADD8E6",  // light blue
+                ff_core::config::Materialization::Incremental => "#FFD700", // gold
             };
             dot.push_str(&format!(
                 "    \"{}\" [label=\"{}\" fillcolor=\"{}\"];\n",
@@ -963,6 +1158,7 @@ fn generate_lineage_dot(project: &Project) -> String {
             let color = match mat {
                 ff_core::config::Materialization::Table => "#90EE90", // light green
                 ff_core::config::Materialization::View => "#ADD8E6",  // light blue
+                ff_core::config::Materialization::Incremental => "#FFD700", // gold
             };
             dot.push_str(&format!(
                 "    \"{}\" [label=\"{}\" fillcolor=\"{}\"];\n",

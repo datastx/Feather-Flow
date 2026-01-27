@@ -1,6 +1,6 @@
 //! Manifest types for compiled project output
 
-use crate::config::Materialization;
+use crate::config::{IncrementalStrategy, Materialization, OnSchemaChange};
 use crate::model::Model;
 use crate::source::SourceFile;
 use serde::{Deserialize, Serialize};
@@ -58,6 +58,26 @@ pub struct ManifestModel {
 
     /// All tables referenced in the SQL
     pub referenced_tables: Vec<String>,
+
+    /// Unique key column(s) for incremental models
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unique_key: Option<Vec<String>>,
+
+    /// Incremental strategy (append, merge, delete+insert)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub incremental_strategy: Option<IncrementalStrategy>,
+
+    /// How to handle schema changes for incremental models
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_schema_change: Option<OnSchemaChange>,
+
+    /// SQL statements to execute before the model runs
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pre_hook: Vec<String>,
+
+    /// SQL statements to execute after the model runs
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub post_hook: Vec<String>,
 }
 
 /// A source entry in the manifest
@@ -120,6 +140,21 @@ impl Manifest {
         }
     }
 
+    /// Create a new manifest with pre-populated models (for testing)
+    #[cfg(test)]
+    pub fn new_with_models(project_name: &str, models: Vec<ManifestModel>) -> Self {
+        let model_count = models.len();
+        let models_map: HashMap<String, ManifestModel> =
+            models.into_iter().map(|m| (m.name.clone(), m)).collect();
+        Self {
+            project_name: project_name.to_string(),
+            compiled_at: chrono_lite_now(),
+            models: models_map,
+            sources: HashMap::new(),
+            model_count,
+        }
+    }
+
     /// Add a source to the manifest
     pub fn add_source(&mut self, source: &SourceFile) {
         for table in &source.tables {
@@ -177,17 +212,36 @@ impl Manifest {
             .map(|s| s.tags.clone())
             .unwrap_or_default();
 
+        let materialized = model.materialization(default_materialization);
+
+        // Only include incremental fields if model is incremental
+        let (unique_key, incremental_strategy, on_schema_change) =
+            if materialized == Materialization::Incremental {
+                (
+                    model.unique_key(),
+                    Some(model.incremental_strategy()),
+                    Some(model.on_schema_change()),
+                )
+            } else {
+                (None, None, None)
+            };
+
         // Use paths as-is (caller should provide relative paths)
         let manifest_model = ManifestModel {
             name: model.name.clone(),
             source_path: model.path.display().to_string(),
             compiled_path: compiled_path.display().to_string(),
-            materialized: model.materialization(default_materialization),
+            materialized,
             schema: model.target_schema(default_schema),
             tags,
             depends_on: model.depends_on.iter().cloned().collect(),
             external_deps: model.external_deps.iter().cloned().collect(),
             referenced_tables: model.all_dependencies().into_iter().collect(),
+            unique_key,
+            incremental_strategy,
+            on_schema_change,
+            pre_hook: model.config.pre_hook.clone(),
+            post_hook: model.config.post_hook.clone(),
         };
 
         self.models.insert(model.name.clone(), manifest_model);
@@ -222,16 +276,35 @@ impl Manifest {
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| compiled_path.display().to_string());
 
+        let materialized = model.materialization(default_materialization);
+
+        // Only include incremental fields if model is incremental
+        let (unique_key, incremental_strategy, on_schema_change) =
+            if materialized == Materialization::Incremental {
+                (
+                    model.unique_key(),
+                    Some(model.incremental_strategy()),
+                    Some(model.on_schema_change()),
+                )
+            } else {
+                (None, None, None)
+            };
+
         let manifest_model = ManifestModel {
             name: model.name.clone(),
             source_path,
             compiled_path: compiled_path_rel,
-            materialized: model.materialization(default_materialization),
+            materialized,
             schema: model.target_schema(default_schema),
             tags,
             depends_on: model.depends_on.iter().cloned().collect(),
             external_deps: model.external_deps.iter().cloned().collect(),
             referenced_tables: model.all_dependencies().into_iter().collect(),
+            unique_key,
+            incremental_strategy,
+            on_schema_change,
+            pre_hook: model.config.pre_hook.clone(),
+            post_hook: model.config.post_hook.clone(),
         };
 
         self.models.insert(model.name.clone(), manifest_model);

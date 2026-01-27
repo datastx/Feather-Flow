@@ -6,4 +6,4 @@ SELECT
     email,
     created_at AS signup_date,
     tier AS customer_tier
-FROM raw_customers
+FROM analytics.raw_customers

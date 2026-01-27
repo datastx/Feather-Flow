@@ -1,6 +1,6 @@
 //! Model representation
 
-use crate::config::Materialization;
+use crate::config::{IncrementalStrategy, Materialization, OnSchemaChange};
 use crate::error::CoreError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -100,6 +100,7 @@ impl ModelSchema {
                         test_type,
                         column: column.name.clone(),
                         model: model_name.to_string(),
+                        config: TestConfig::default(),
                     });
                 }
             }
@@ -146,6 +147,12 @@ pub fn parse_test_definition(test_def: &TestDefinition) -> Option<TestType> {
                     .pattern
                     .clone()
                     .map(|pattern| TestType::Regex { pattern }),
+                "relationship" | "relationships" => {
+                    params.to.clone().map(|to| TestType::Relationship {
+                        to,
+                        field: params.field.clone(),
+                    })
+                }
                 _ => None,
             }
         }
@@ -155,7 +162,7 @@ pub fn parse_test_definition(test_def: &TestDefinition) -> Option<TestType> {
 /// Configuration for a model extracted from config() function
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ModelConfig {
-    /// Materialization type (view or table)
+    /// Materialization type (view, table, or incremental)
     #[serde(default)]
     pub materialized: Option<Materialization>,
 
@@ -166,6 +173,27 @@ pub struct ModelConfig {
     /// Additional tags
     #[serde(default)]
     pub tags: Vec<String>,
+
+    /// Unique key column(s) for incremental merge
+    /// Can be a single column name or comma-separated list
+    #[serde(default)]
+    pub unique_key: Option<String>,
+
+    /// Incremental strategy (append, merge, delete+insert)
+    #[serde(default)]
+    pub incremental_strategy: Option<IncrementalStrategy>,
+
+    /// Schema change handling for incremental models
+    #[serde(default)]
+    pub on_schema_change: Option<OnSchemaChange>,
+
+    /// SQL statements to execute before the model runs
+    #[serde(default)]
+    pub pre_hook: Vec<String>,
+
+    /// SQL statements to execute after the model runs
+    #[serde(default)]
+    pub post_hook: Vec<String>,
 }
 
 /// Schema test definition from schema.yml
@@ -179,6 +207,48 @@ pub struct SchemaTest {
 
     /// Model name
     pub model: String,
+
+    /// Test configuration (severity, where, limit, etc.)
+    #[serde(default)]
+    pub config: TestConfig,
+}
+
+/// Singular test - standalone SQL test file that should return 0 rows
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SingularTest {
+    /// Test name (derived from filename without extension)
+    pub name: String,
+
+    /// Path to the SQL test file
+    pub path: PathBuf,
+
+    /// SQL content - query that should return 0 rows if test passes
+    pub sql: String,
+}
+
+impl SingularTest {
+    /// Load a singular test from a SQL file
+    pub fn from_file(path: PathBuf) -> Result<Self, CoreError> {
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| CoreError::ModelParseError {
+                name: path.display().to_string(),
+                message: "Invalid file name".to_string(),
+            })?
+            .to_string();
+
+        let sql = std::fs::read_to_string(&path)?;
+
+        if sql.trim().is_empty() {
+            return Err(CoreError::ModelParseError {
+                name: name.clone(),
+                message: "Test file is empty".to_string(),
+            });
+        }
+
+        Ok(Self { name, path, sql })
+    }
 }
 
 /// Types of schema tests
@@ -216,6 +286,58 @@ pub enum TestType {
         /// Regex pattern to match
         pattern: String,
     },
+    /// Column values must exist in referenced table (foreign key relationship)
+    Relationship {
+        /// Referenced model/table name
+        to: String,
+        /// Column in the referenced table (defaults to same column name)
+        #[serde(default)]
+        field: Option<String>,
+    },
+}
+
+/// Test severity level
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TestSeverity {
+    /// Test failure causes run to fail (default)
+    #[default]
+    Error,
+    /// Test failure is logged as warning but doesn't fail run
+    Warn,
+}
+
+impl std::fmt::Display for TestSeverity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TestSeverity::Error => write!(f, "error"),
+            TestSeverity::Warn => write!(f, "warn"),
+        }
+    }
+}
+
+/// Configuration options for tests
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TestConfig {
+    /// Test severity level
+    #[serde(default)]
+    pub severity: TestSeverity,
+
+    /// SQL WHERE clause to filter test
+    #[serde(default)]
+    pub where_clause: Option<String>,
+
+    /// Max failing rows to return
+    #[serde(default)]
+    pub limit: Option<usize>,
+
+    /// SQL condition that triggers error (e.g., "> 100")
+    #[serde(default)]
+    pub error_if: Option<String>,
+
+    /// SQL condition that triggers warning (e.g., "> 10")
+    #[serde(default)]
+    pub warn_if: Option<String>,
 }
 
 /// Schema definition from schema.yml
@@ -301,6 +423,12 @@ pub struct TestParams {
     /// Pattern for regex tests
     #[serde(default)]
     pub pattern: Option<String>,
+    /// Referenced model for relationship tests
+    #[serde(default)]
+    pub to: Option<String>,
+    /// Referenced field for relationship tests (defaults to same column name)
+    #[serde(default)]
+    pub field: Option<String>,
 }
 
 impl Model {
@@ -407,6 +535,35 @@ impl Model {
             None => Vec::new(),
         }
     }
+
+    /// Check if this model is configured for incremental materialization
+    pub fn is_incremental_model(&self, default: Materialization) -> bool {
+        self.materialization(default) == Materialization::Incremental
+    }
+
+    /// Get the incremental strategy for this model
+    pub fn incremental_strategy(&self) -> IncrementalStrategy {
+        self.config
+            .incremental_strategy
+            .unwrap_or(IncrementalStrategy::Append)
+    }
+
+    /// Get the unique key(s) for incremental merge
+    pub fn unique_key(&self) -> Option<Vec<String>> {
+        self.config.unique_key.as_ref().map(|k| {
+            k.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+    }
+
+    /// Get the on_schema_change behavior
+    pub fn on_schema_change(&self) -> OnSchemaChange {
+        self.config
+            .on_schema_change
+            .unwrap_or(OnSchemaChange::Ignore)
+    }
 }
 
 impl SchemaYml {
@@ -433,6 +590,7 @@ impl SchemaYml {
                             test_type,
                             column: column_def.name.clone(),
                             model: model_def.name.clone(),
+                            config: TestConfig::default(),
                         });
                     }
                 }
@@ -454,6 +612,7 @@ impl std::fmt::Display for TestType {
             TestType::MinValue { .. } => write!(f, "min_value"),
             TestType::MaxValue { .. } => write!(f, "max_value"),
             TestType::Regex { .. } => write!(f, "regex"),
+            TestType::Relationship { .. } => write!(f, "relationship"),
         }
     }
 }
@@ -788,6 +947,11 @@ columns:
                 materialized: Some(Materialization::Table), // SQL wins
                 schema: Some("sql_schema".to_string()),
                 tags: vec![],
+                unique_key: None,
+                incremental_strategy: None,
+                on_schema_change: None,
+                pre_hook: vec![],
+                post_hook: vec![],
             },
             depends_on: HashSet::new(),
             external_deps: HashSet::new(),
@@ -871,5 +1035,166 @@ columns:
             model.target_schema(Some("default_schema")),
             Some("default_schema".to_string())
         );
+    }
+
+    #[test]
+    fn test_model_config_hooks_default() {
+        let config = ModelConfig::default();
+        assert!(config.pre_hook.is_empty());
+        assert!(config.post_hook.is_empty());
+    }
+
+    #[test]
+    fn test_model_config_with_hooks() {
+        let config = ModelConfig {
+            materialized: None,
+            schema: None,
+            tags: vec![],
+            unique_key: None,
+            incremental_strategy: None,
+            on_schema_change: None,
+            pre_hook: vec!["CREATE INDEX IF NOT EXISTS idx_id ON {{ this }}(id)".to_string()],
+            post_hook: vec![
+                "ANALYZE {{ this }}".to_string(),
+                "GRANT SELECT ON {{ this }} TO analyst".to_string(),
+            ],
+        };
+        assert_eq!(config.pre_hook.len(), 1);
+        assert_eq!(config.post_hook.len(), 2);
+        assert!(config.pre_hook[0].contains("CREATE INDEX"));
+        assert!(config.post_hook[0].contains("ANALYZE"));
+    }
+
+    #[test]
+    fn test_test_severity_default() {
+        let severity = TestSeverity::default();
+        assert_eq!(severity, TestSeverity::Error);
+    }
+
+    #[test]
+    fn test_test_severity_display() {
+        assert_eq!(TestSeverity::Error.to_string(), "error");
+        assert_eq!(TestSeverity::Warn.to_string(), "warn");
+    }
+
+    #[test]
+    fn test_test_config_default() {
+        let config = TestConfig::default();
+        assert_eq!(config.severity, TestSeverity::Error);
+        assert!(config.where_clause.is_none());
+        assert!(config.limit.is_none());
+        assert!(config.error_if.is_none());
+        assert!(config.warn_if.is_none());
+    }
+
+    #[test]
+    fn test_test_config_with_severity() {
+        let config = TestConfig {
+            severity: TestSeverity::Warn,
+            where_clause: Some("status = 'active'".to_string()),
+            limit: Some(100),
+            error_if: Some("> 100".to_string()),
+            warn_if: Some("> 10".to_string()),
+        };
+        assert_eq!(config.severity, TestSeverity::Warn);
+        assert_eq!(config.where_clause, Some("status = 'active'".to_string()));
+        assert_eq!(config.limit, Some(100));
+        assert_eq!(config.error_if, Some("> 100".to_string()));
+        assert_eq!(config.warn_if, Some("> 10".to_string()));
+    }
+
+    #[test]
+    fn test_schema_test_with_config() {
+        let test = SchemaTest {
+            test_type: TestType::Unique,
+            column: "id".to_string(),
+            model: "users".to_string(),
+            config: TestConfig {
+                severity: TestSeverity::Warn,
+                ..Default::default()
+            },
+        };
+        assert_eq!(test.config.severity, TestSeverity::Warn);
+    }
+
+    #[test]
+    fn test_parse_relationship_test() {
+        let yaml = r#"
+version: 1
+columns:
+  - name: customer_id
+    tests:
+      - relationship:
+          to: customers
+          field: id
+"#;
+        let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
+        let tests = schema.extract_tests("orders");
+
+        assert_eq!(tests.len(), 1);
+        match &tests[0].test_type {
+            TestType::Relationship { to, field } => {
+                assert_eq!(to, "customers");
+                assert_eq!(field, &Some("id".to_string()));
+            }
+            _ => panic!("Expected Relationship test type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_relationship_test_default_field() {
+        let yaml = r#"
+version: 1
+columns:
+  - name: user_id
+    tests:
+      - relationship:
+          to: users
+"#;
+        let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
+        let tests = schema.extract_tests("posts");
+
+        assert_eq!(tests.len(), 1);
+        match &tests[0].test_type {
+            TestType::Relationship { to, field } => {
+                assert_eq!(to, "users");
+                assert!(field.is_none());
+            }
+            _ => panic!("Expected Relationship test type"),
+        }
+    }
+
+    #[test]
+    fn test_relationship_test_display() {
+        let test_type = TestType::Relationship {
+            to: "customers".to_string(),
+            field: Some("id".to_string()),
+        };
+        assert_eq!(test_type.to_string(), "relationship");
+    }
+
+    #[test]
+    fn test_parse_relationships_alias() {
+        // dbt uses "relationships" (plural) - we support both
+        let yaml = r#"
+version: 1
+columns:
+  - name: order_id
+    tests:
+      - relationships:
+          to: orders
+          field: id
+"#;
+        let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
+        let tests = schema.extract_tests("order_items");
+
+        assert_eq!(tests.len(), 1);
+        match &tests[0].test_type {
+            TestType::Relationship { to, field } => {
+                assert_eq!(to, "orders");
+                assert_eq!(field, &Some("id".to_string()));
+            }
+            _ => panic!("Expected Relationship test type"),
+        }
     }
 }

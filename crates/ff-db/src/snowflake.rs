@@ -1,7 +1,7 @@
 //! Snowflake database backend stub
 
 use crate::error::{DbError, DbResult};
-use crate::traits::Database;
+use crate::traits::{CsvLoadOptions, Database, SnapshotResult};
 use async_trait::async_trait;
 
 /// Snowflake database backend (stub implementation)
@@ -72,6 +72,25 @@ impl Database for SnowflakeBackend {
         })
     }
 
+    async fn load_csv_with_options(
+        &self,
+        _table: &str,
+        _path: &str,
+        _options: CsvLoadOptions,
+    ) -> DbResult<()> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "load_csv_with_options".to_string(),
+        })
+    }
+
+    async fn infer_csv_schema(&self, _path: &str) -> DbResult<Vec<(String, String)>> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "infer_csv_schema".to_string(),
+        })
+    }
+
     fn db_type(&self) -> &'static str {
         "snowflake"
     }
@@ -94,6 +113,113 @@ impl Database for SnowflakeBackend {
         Err(DbError::NotImplemented {
             backend: "snowflake".to_string(),
             feature: "query_sample_rows".to_string(),
+        })
+    }
+
+    async fn query_one(&self, _sql: &str) -> DbResult<Option<String>> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "query_one".to_string(),
+        })
+    }
+
+    async fn merge_into(
+        &self,
+        _target_table: &str,
+        _source_sql: &str,
+        _unique_keys: &[String],
+    ) -> DbResult<()> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "merge_into".to_string(),
+        })
+    }
+
+    async fn delete_insert(
+        &self,
+        _target_table: &str,
+        _source_sql: &str,
+        _unique_keys: &[String],
+    ) -> DbResult<()> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "delete_insert".to_string(),
+        })
+    }
+
+    async fn get_table_schema(&self, _table: &str) -> DbResult<Vec<(String, String)>> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "get_table_schema".to_string(),
+        })
+    }
+
+    async fn describe_query(&self, _sql: &str) -> DbResult<Vec<(String, String)>> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "describe_query".to_string(),
+        })
+    }
+
+    async fn add_columns(&self, _table: &str, _columns: &[(String, String)]) -> DbResult<()> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "add_columns".to_string(),
+        })
+    }
+
+    // ===== Snapshot Operations =====
+
+    async fn execute_snapshot(
+        &self,
+        _snapshot_table: &str,
+        _source_table: &str,
+        _unique_keys: &[String],
+        _updated_at_column: Option<&str>,
+        _check_cols: Option<&[String]>,
+        _invalidate_hard_deletes: bool,
+    ) -> DbResult<SnapshotResult> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "execute_snapshot".to_string(),
+        })
+    }
+
+    async fn snapshot_insert_new(
+        &self,
+        _snapshot_table: &str,
+        _source_table: &str,
+        _unique_keys: &[String],
+    ) -> DbResult<usize> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "snapshot_insert_new".to_string(),
+        })
+    }
+
+    async fn snapshot_update_changed(
+        &self,
+        _snapshot_table: &str,
+        _source_table: &str,
+        _unique_keys: &[String],
+        _updated_at_column: Option<&str>,
+        _check_cols: Option<&[String]>,
+    ) -> DbResult<usize> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "snapshot_update_changed".to_string(),
+        })
+    }
+
+    async fn snapshot_invalidate_deleted(
+        &self,
+        _snapshot_table: &str,
+        _source_table: &str,
+        _unique_keys: &[String],
+    ) -> DbResult<usize> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "snapshot_invalidate_deleted".to_string(),
         })
     }
 }

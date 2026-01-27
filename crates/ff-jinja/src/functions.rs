@@ -8,6 +8,62 @@ use std::sync::{Arc, Mutex};
 /// Captured config values from config() calls
 pub type ConfigCapture = Arc<Mutex<HashMap<String, Value>>>;
 
+/// State for is_incremental() function
+#[derive(Debug, Clone, Default)]
+pub struct IncrementalState {
+    /// Whether the model is configured as incremental
+    pub is_incremental_model: bool,
+    /// Whether the model already exists in the database
+    pub model_exists: bool,
+    /// Whether --full-refresh was specified
+    pub full_refresh: bool,
+}
+
+impl IncrementalState {
+    /// Create a new incremental state
+    pub fn new(is_incremental_model: bool, model_exists: bool, full_refresh: bool) -> Self {
+        Self {
+            is_incremental_model,
+            model_exists,
+            full_refresh,
+        }
+    }
+
+    /// Check if this run should be incremental
+    ///
+    /// Returns true when:
+    /// 1. Model is configured as incremental
+    /// 2. Model already exists in database
+    /// 3. --full-refresh was NOT specified
+    pub fn is_incremental_run(&self) -> bool {
+        self.is_incremental_model && self.model_exists && !self.full_refresh
+    }
+}
+
+/// Create the is_incremental() function
+///
+/// Usage in templates:
+/// ```jinja
+/// {% if is_incremental() %}
+///   WHERE updated_at > (SELECT MAX(updated_at) FROM {{ this }})
+/// {% endif %}
+/// ```
+pub fn make_is_incremental_fn(
+    state: IncrementalState,
+) -> impl Fn() -> bool + Send + Sync + Clone + 'static {
+    move || state.is_incremental_run()
+}
+
+/// Create the this() function that returns the current model's table name
+///
+/// Usage in templates:
+/// ```jinja
+/// SELECT MAX(updated_at) FROM {{ this }}
+/// ```
+pub fn make_this_fn(qualified_name: String) -> impl Fn() -> String + Send + Sync + Clone + 'static {
+    move || qualified_name.clone()
+}
+
 /// Create the config() function that captures model configuration
 ///
 /// Usage in templates:
@@ -141,5 +197,33 @@ mod tests {
         let yaml: serde_yaml::Value = serde_yaml::from_str("key: value").unwrap();
         let json = yaml_to_json(&yaml);
         assert_eq!(json["key"], "value");
+    }
+
+    #[test]
+    fn test_incremental_state_first_run() {
+        // First run: model doesn't exist yet
+        let state = IncrementalState::new(true, false, false);
+        assert!(!state.is_incremental_run());
+    }
+
+    #[test]
+    fn test_incremental_state_subsequent_run() {
+        // Subsequent run: model exists
+        let state = IncrementalState::new(true, true, false);
+        assert!(state.is_incremental_run());
+    }
+
+    #[test]
+    fn test_incremental_state_full_refresh() {
+        // Full refresh: should not be incremental
+        let state = IncrementalState::new(true, true, true);
+        assert!(!state.is_incremental_run());
+    }
+
+    #[test]
+    fn test_incremental_state_not_incremental_model() {
+        // Not an incremental model
+        let state = IncrementalState::new(false, true, false);
+        assert!(!state.is_incremental_run());
     }
 }

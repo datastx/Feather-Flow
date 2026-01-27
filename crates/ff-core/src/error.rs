@@ -37,6 +37,10 @@ pub enum CoreError {
     #[error("[E008] Duplicate model name: {name}")]
     DuplicateModel { name: String },
 
+    /// E009: Invalid selector
+    #[error("[E009] Invalid selector '{selector}': {reason}")]
+    InvalidSelector { selector: String, reason: String },
+
     // Source error types (SRC001-SRC007)
     /// SRC001: Source file missing required 'kind' field
     #[error("[SRC001] Source file missing required 'kind' field: {path}. Add `kind: sources`")]

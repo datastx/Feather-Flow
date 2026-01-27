@@ -14,6 +14,33 @@ use std::path::Path;
 use crate::cli::{CompileArgs, GlobalArgs};
 use ff_core::source::build_source_lookup;
 
+/// Parse hooks from config() values (minijinja::Value)
+/// Hooks can be specified as a single string or an array of strings
+fn parse_hooks_from_config(
+    config_values: &HashMap<String, minijinja::Value>,
+    key: &str,
+) -> Vec<String> {
+    config_values
+        .get(key)
+        .map(|v| {
+            if let Some(s) = v.as_str() {
+                // Single string hook
+                vec![s.to_string()]
+            } else if v.kind() == minijinja::value::ValueKind::Seq {
+                // Array of hooks
+                v.try_iter()
+                    .map(|iter| {
+                        iter.filter_map(|item| item.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            }
+        })
+        .unwrap_or_default()
+}
+
 /// Execute the compile command
 pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
     let project_path = Path::new(&global.project_dir);
@@ -29,7 +56,11 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
     let external_tables = build_external_tables_lookup(&project);
     let known_models: HashSet<String> = project.models.keys().cloned().collect();
 
-    println!("Compiling {} models...\n", model_names.len());
+    if args.parse_only {
+        println!("Validating {} models (parse-only)...\n", model_names.len());
+    } else {
+        println!("Compiling {} models...\n", model_names.len());
+    }
 
     if global.verbose {
         eprintln!("[verbose] Compiling {} models", model_names.len());
@@ -41,10 +72,14 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
         .map(|p| Path::new(p).to_path_buf())
         .unwrap_or_else(|| project.compiled_dir());
 
-    std::fs::create_dir_all(&output_dir).context("Failed to create output directory")?;
+    if !args.parse_only {
+        std::fs::create_dir_all(&output_dir).context("Failed to create output directory")?;
+    }
 
     let project_root = project.root.clone();
     let mut dependencies: HashMap<String, Vec<String>> = HashMap::new();
+
+    let default_materialization = project.config.materialization;
 
     for name in &model_names {
         let model_deps = compile_model(
@@ -57,24 +92,34 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
             &project_root,
             &output_dir,
             global.verbose,
+            args.parse_only,
+            default_materialization,
         )?;
         dependencies.insert(name.clone(), model_deps);
     }
 
-    validate_dag_and_write_manifest(
-        &project,
-        &model_names,
-        &dependencies,
-        &output_dir,
-        global.verbose,
-    )?;
+    // Validate DAG (always done even in parse-only mode)
+    let dag = ModelDag::build(&dependencies).context("Failed to build dependency graph")?;
+    let _ = dag
+        .topological_order()
+        .context("Circular dependency detected")?;
 
-    println!(
-        "\nCompiled {} models to {}",
-        model_names.len(),
-        output_dir.display()
-    );
-    println!("Manifest written to {}", project.manifest_path().display());
+    if args.parse_only {
+        println!(
+            "\nValidated {} models successfully (no files written)",
+            model_names.len()
+        );
+    } else {
+        // Write manifest only if not in parse-only mode
+        write_manifest(&project, &model_names, &output_dir, global.verbose)?;
+
+        println!(
+            "\nCompiled {} models to {}",
+            model_names.len(),
+            output_dir.display()
+        );
+        println!("Manifest written to {}", project.manifest_path().display());
+    }
 
     Ok(())
 }
@@ -114,6 +159,8 @@ fn compile_model(
     project_root: &Path,
     output_dir: &Path,
     verbose: bool,
+    parse_only: bool,
+    default_materialization: Materialization,
 ) -> Result<Vec<String>> {
     let model = project
         .get_model_mut(name)
@@ -151,6 +198,7 @@ fn compile_model(
             .and_then(|v| v.as_str())
             .map(|s| match s {
                 "table" => Materialization::Table,
+                "incremental" => Materialization::Incremental,
                 _ => Materialization::View,
             }),
         schema: config_values
@@ -166,49 +214,67 @@ fn compile_model(
                 })
             })
             .unwrap_or_default(),
+        unique_key: config_values
+            .get("unique_key")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        incremental_strategy: config_values
+            .get("incremental_strategy")
+            .and_then(|v| v.as_str())
+            .map(|s| match s {
+                "merge" => ff_core::config::IncrementalStrategy::Merge,
+                "delete_insert" | "delete+insert" => {
+                    ff_core::config::IncrementalStrategy::DeleteInsert
+                }
+                _ => ff_core::config::IncrementalStrategy::Append,
+            }),
+        on_schema_change: config_values
+            .get("on_schema_change")
+            .and_then(|v| v.as_str())
+            .map(|s| match s {
+                "fail" => ff_core::config::OnSchemaChange::Fail,
+                "append_new_columns" => ff_core::config::OnSchemaChange::AppendNewColumns,
+                _ => ff_core::config::OnSchemaChange::Ignore,
+            }),
+        pre_hook: parse_hooks_from_config(&config_values, "pre_hook"),
+        post_hook: parse_hooks_from_config(&config_values, "post_hook"),
     };
 
-    let output_path = compute_compiled_path(&model.path, project_root, output_dir);
+    let mat = model.config.materialized.unwrap_or(default_materialization);
 
-    if let Some(parent) = output_path.parent() {
-        std::fs::create_dir_all(parent)
-            .context(format!("Failed to create directory for model: {}", name))?;
-    }
+    if parse_only {
+        println!("  ✓ {} ({}) [validated]", name, mat);
+        if verbose {
+            eprintln!("[verbose] Validated {} (parse-only mode)", name);
+        }
+    } else {
+        let output_path = compute_compiled_path(&model.path, project_root, output_dir);
 
-    std::fs::write(&output_path, &rendered)
-        .context(format!("Failed to write compiled SQL for model: {}", name))?;
+        if let Some(parent) = output_path.parent() {
+            std::fs::create_dir_all(parent)
+                .context(format!("Failed to create directory for model: {}", name))?;
+        }
 
-    let mat = model
-        .config
-        .materialized
-        .unwrap_or(project.config.materialization);
-    println!("  ✓ {} ({})", name, mat);
+        std::fs::write(&output_path, &rendered)
+            .context(format!("Failed to write compiled SQL for model: {}", name))?;
 
-    if verbose {
-        eprintln!("[verbose] Compiled {} -> {}", name, output_path.display());
+        println!("  ✓ {} ({})", name, mat);
+
+        if verbose {
+            eprintln!("[verbose] Compiled {} -> {}", name, output_path.display());
+        }
     }
 
     Ok(model_deps)
 }
 
-/// Validate DAG and write manifest file
-fn validate_dag_and_write_manifest(
+/// Write manifest file
+fn write_manifest(
     project: &Project,
     model_names: &[String],
-    dependencies: &HashMap<String, Vec<String>>,
     output_dir: &Path,
     verbose: bool,
 ) -> Result<()> {
-    let dag = ModelDag::build(dependencies).context("Failed to build dependency graph")?;
-
-    let execution_order = dag
-        .topological_order()
-        .context("Circular dependency detected")?;
-
-    if verbose {
-        eprintln!("[verbose] Execution order: {:?}", execution_order);
-    }
-
     let mut manifest = Manifest::new(&project.config.name);
 
     for name in model_names {
@@ -232,6 +298,10 @@ fn validate_dag_and_write_manifest(
     manifest
         .save(&manifest_path)
         .context("Failed to write manifest")?;
+
+    if verbose {
+        eprintln!("[verbose] Manifest written to {}", manifest_path.display());
+    }
 
     Ok(())
 }
