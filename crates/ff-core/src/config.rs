@@ -91,6 +91,10 @@ pub struct Config {
     /// Each target can override database settings and variables
     #[serde(default)]
     pub targets: HashMap<String, TargetConfig>,
+
+    /// Data classification governance settings
+    #[serde(default)]
+    pub data_classification: DataClassificationConfig,
 }
 
 /// Target-specific configuration overrides
@@ -460,6 +464,26 @@ impl std::fmt::Display for Dialect {
             Dialect::Snowflake => write!(f, "snowflake"),
         }
     }
+}
+
+/// Data classification governance settings
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DataClassificationConfig {
+    /// Whether all columns must have a classification assigned
+    #[serde(default)]
+    pub require_classification: bool,
+
+    /// Default classification for columns that don't specify one
+    #[serde(default)]
+    pub default_classification: Option<crate::model::DataClassification>,
+
+    /// Whether classification propagates through lineage (default: true)
+    #[serde(default = "default_true")]
+    pub propagate: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[cfg(test)]

@@ -1,0 +1,6 @@
+version: 1
+description: "Circular dependency test model B"
+columns:
+  - name: id
+  - name: name
+  - name: total_value

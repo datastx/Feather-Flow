@@ -3,6 +3,7 @@
 //! This module extracts column-level lineage information from SQL queries,
 //! tracking which source columns flow into which output columns.
 
+use serde::{Deserialize, Serialize};
 use sqlparser::ast::{
     Expr, FunctionArg, FunctionArgExpr, ObjectName, Query, Select, SelectItem, SetExpr, Statement,
     TableFactor, TableWithJoins,
@@ -10,7 +11,7 @@ use sqlparser::ast::{
 use std::collections::{HashMap, HashSet};
 
 /// Represents a column reference with its source table
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ColumnRef {
     /// Table name (or alias) the column belongs to
     pub table: Option<String>,
@@ -51,7 +52,7 @@ impl std::fmt::Display for ColumnRef {
 }
 
 /// Represents column lineage for a single output column
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ColumnLineage {
     /// The output column name
     pub output_column: String,
@@ -105,7 +106,7 @@ impl ColumnLineage {
 }
 
 /// Model-level lineage containing all column lineages
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ModelLineage {
     /// Model name
     pub model_name: String,
@@ -143,6 +144,161 @@ impl ModelLineage {
         self.get_column(output_column)
             .map(|c| c.source_columns.clone())
             .unwrap_or_default()
+    }
+}
+
+/// A cross-model lineage edge connecting a source column to a target column
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LineageEdge {
+    /// Source model name
+    pub source_model: String,
+    /// Source column name
+    pub source_column: String,
+    /// Target model name
+    pub target_model: String,
+    /// Target column name
+    pub target_column: String,
+    /// Whether this is a direct pass-through (no transformation)
+    pub is_direct: bool,
+    /// Expression type (column, function, expression, etc.)
+    pub expr_type: String,
+    /// Data classification from source column (propagated from schema)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub classification: Option<String>,
+}
+
+/// Project-wide column lineage across all models
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProjectLineage {
+    /// Per-model lineage
+    pub models: HashMap<String, ModelLineage>,
+    /// Cross-model lineage edges
+    pub edges: Vec<LineageEdge>,
+}
+
+impl ProjectLineage {
+    /// Create a new empty project lineage
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add a model's lineage
+    pub fn add_model_lineage(&mut self, lineage: ModelLineage) {
+        self.models.insert(lineage.model_name.clone(), lineage);
+    }
+
+    /// Resolve cross-model edges by matching source tables to known models
+    pub fn resolve_edges(&mut self, known_models: &HashSet<String>) {
+        let models_snapshot: HashMap<String, ModelLineage> = self.models.clone();
+
+        for (target_model, lineage) in &models_snapshot {
+            for col_lineage in &lineage.columns {
+                for source_ref in &col_lineage.source_columns {
+                    // Resolve the table reference to a model name
+                    let source_table = source_ref.table.as_deref().unwrap_or("");
+
+                    // Check table aliases to get actual table name
+                    let resolved_table = lineage
+                        .table_aliases
+                        .get(source_table)
+                        .map(|s| s.as_str())
+                        .unwrap_or(source_table);
+
+                    if known_models.contains(resolved_table) {
+                        self.edges.push(LineageEdge {
+                            source_model: resolved_table.to_string(),
+                            source_column: source_ref.column.clone(),
+                            target_model: target_model.clone(),
+                            target_column: col_lineage.output_column.clone(),
+                            is_direct: col_lineage.is_direct,
+                            expr_type: col_lineage.expr_type.clone(),
+                            classification: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    /// Trace a column upstream — find all source columns that contribute to it
+    pub fn trace_column(&self, model: &str, column: &str) -> Vec<&LineageEdge> {
+        self.edges
+            .iter()
+            .filter(|e| e.target_model == model && e.target_column == column)
+            .collect()
+    }
+
+    /// Find all downstream consumers of a column
+    pub fn column_consumers(&self, model: &str, column: &str) -> Vec<&LineageEdge> {
+        self.edges
+            .iter()
+            .filter(|e| e.source_model == model && e.source_column == column)
+            .collect()
+    }
+
+    /// Propagate data classifications from schema definitions onto lineage edges
+    ///
+    /// For each edge, looks up the source column's classification in the provided
+    /// lookup map and sets it on the edge.
+    pub fn propagate_classifications(
+        &mut self,
+        column_classifications: &HashMap<String, HashMap<String, String>>,
+    ) {
+        for edge in &mut self.edges {
+            if let Some(model_cols) = column_classifications.get(&edge.source_model) {
+                if let Some(cls) = model_cols.get(&edge.source_column) {
+                    edge.classification = Some(cls.clone());
+                }
+            }
+        }
+    }
+
+    /// Get all edges flowing into a model that have a specific classification
+    pub fn classified_inputs<'a>(
+        &'a self,
+        model: &str,
+        classification: &str,
+    ) -> Vec<&'a LineageEdge> {
+        self.edges
+            .iter()
+            .filter(|e| {
+                e.target_model == model && e.classification.as_deref() == Some(classification)
+            })
+            .collect()
+    }
+
+    /// Generate DOT graph output for visualization
+    pub fn to_dot(&self) -> String {
+        let mut dot = String::from("digraph lineage {\n  rankdir=LR;\n  node [shape=record];\n\n");
+
+        // Create nodes for each model with columns
+        for (name, lineage) in &self.models {
+            let cols: Vec<String> = lineage
+                .columns
+                .iter()
+                .map(|c| c.output_column.clone())
+                .collect();
+            let label = format!("{}|{}", name, cols.join("\\l"));
+            dot.push_str(&format!("  \"{}\" [label=\"{{{}}}\"];\n", name, label));
+        }
+
+        dot.push('\n');
+
+        // Create edges
+        for edge in &self.edges {
+            let style = if edge.is_direct {
+                ""
+            } else {
+                " [style=dashed]"
+            };
+            dot.push_str(&format!(
+                "  \"{}\":\"{}\" -> \"{}\":\"{}\"{};\n",
+                edge.source_model, edge.source_column, edge.target_model, edge.target_column, style
+            ));
+        }
+
+        dot.push_str("}\n");
+        dot
     }
 }
 

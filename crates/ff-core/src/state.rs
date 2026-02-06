@@ -35,6 +35,14 @@ pub struct ModelState {
     /// SHA256 hash of compiled SQL
     pub checksum: String,
 
+    /// SHA256 hash of the model's schema YAML
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_checksum: Option<String>,
+
+    /// SHA256 hashes of upstream model SQL (model_name → checksum)
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub input_checksums: HashMap<String, String>,
+
     /// Configuration snapshot
     pub config: ModelStateConfig,
 }
@@ -116,6 +124,57 @@ impl StateFile {
             None => true,
         }
     }
+
+    /// Check if a model or any of its inputs have been modified since last run
+    ///
+    /// Returns true if:
+    /// - Model doesn't exist in state
+    /// - SQL checksum has changed
+    /// - Schema checksum has changed
+    /// - Any upstream input checksum has changed
+    pub fn is_model_or_inputs_modified(
+        &self,
+        name: &str,
+        current_sql_checksum: &str,
+        current_schema_checksum: Option<&str>,
+        current_input_checksums: &HashMap<String, String>,
+    ) -> bool {
+        let state = match self.models.get(name) {
+            Some(s) => s,
+            None => return true,
+        };
+
+        // SQL changed
+        if state.checksum != current_sql_checksum {
+            return true;
+        }
+
+        // Schema changed
+        match (&state.schema_checksum, current_schema_checksum) {
+            (Some(old), Some(new)) if old != new => return true,
+            (None, Some(_)) => return true,
+            (Some(_), None) => return true,
+            _ => {}
+        }
+
+        // Any upstream input changed
+        for (input_name, current_checksum) in current_input_checksums {
+            match state.input_checksums.get(input_name) {
+                Some(old_checksum) if old_checksum != current_checksum => return true,
+                None => return true,
+                _ => {}
+            }
+        }
+
+        // Check if inputs were removed
+        for input_name in state.input_checksums.keys() {
+            if !current_input_checksums.contains_key(input_name) {
+                return true;
+            }
+        }
+
+        false
+    }
 }
 
 impl ModelState {
@@ -131,6 +190,28 @@ impl ModelState {
             last_run: Utc::now(),
             row_count,
             checksum: compute_checksum(compiled_sql),
+            schema_checksum: None,
+            input_checksums: HashMap::new(),
+            config,
+        }
+    }
+
+    /// Create a new model state with full checksums for smart builds
+    pub fn new_with_checksums(
+        name: String,
+        compiled_sql: &str,
+        row_count: Option<usize>,
+        config: ModelStateConfig,
+        schema_checksum: Option<String>,
+        input_checksums: HashMap<String, String>,
+    ) -> Self {
+        Self {
+            name,
+            last_run: Utc::now(),
+            row_count,
+            checksum: compute_checksum(compiled_sql),
+            schema_checksum,
+            input_checksums,
             config,
         }
     }
@@ -226,5 +307,113 @@ mod tests {
 
         // Unknown model should be modified
         assert!(state_file.is_model_modified("unknown_model", &same_checksum));
+    }
+
+    #[test]
+    fn test_is_model_or_inputs_modified_new_model() {
+        let state_file = StateFile::new();
+        let inputs = HashMap::new();
+        assert!(state_file.is_model_or_inputs_modified("new_model", "abc", None, &inputs));
+    }
+
+    #[test]
+    fn test_is_model_or_inputs_modified_unchanged() {
+        let mut state_file = StateFile::new();
+        let config = ModelStateConfig::new(Materialization::Table, None, None, None, None);
+        let sql = "SELECT * FROM users";
+        let schema = "version: 1\ncolumns: []";
+        let mut inputs = HashMap::new();
+        inputs.insert("upstream".to_string(), compute_checksum("SELECT 1"));
+
+        let model_state = ModelState::new_with_checksums(
+            "my_model".to_string(),
+            sql,
+            None,
+            config,
+            Some(compute_checksum(schema)),
+            inputs.clone(),
+        );
+        state_file.upsert_model(model_state);
+
+        assert!(!state_file.is_model_or_inputs_modified(
+            "my_model",
+            &compute_checksum(sql),
+            Some(&compute_checksum(schema)),
+            &inputs,
+        ));
+    }
+
+    #[test]
+    fn test_is_model_or_inputs_modified_sql_changed() {
+        let mut state_file = StateFile::new();
+        let config = ModelStateConfig::new(Materialization::Table, None, None, None, None);
+        let model_state = ModelState::new_with_checksums(
+            "my_model".to_string(),
+            "SELECT * FROM users",
+            None,
+            config,
+            None,
+            HashMap::new(),
+        );
+        state_file.upsert_model(model_state);
+
+        assert!(state_file.is_model_or_inputs_modified(
+            "my_model",
+            &compute_checksum("SELECT * FROM customers"),
+            None,
+            &HashMap::new(),
+        ));
+    }
+
+    #[test]
+    fn test_is_model_or_inputs_modified_schema_changed() {
+        let mut state_file = StateFile::new();
+        let config = ModelStateConfig::new(Materialization::Table, None, None, None, None);
+        let sql = "SELECT * FROM users";
+        let model_state = ModelState::new_with_checksums(
+            "my_model".to_string(),
+            sql,
+            None,
+            config,
+            Some(compute_checksum("old schema")),
+            HashMap::new(),
+        );
+        state_file.upsert_model(model_state);
+
+        assert!(state_file.is_model_or_inputs_modified(
+            "my_model",
+            &compute_checksum(sql),
+            Some(&compute_checksum("new schema")),
+            &HashMap::new(),
+        ));
+    }
+
+    #[test]
+    fn test_is_model_or_inputs_modified_input_changed() {
+        let mut state_file = StateFile::new();
+        let config = ModelStateConfig::new(Materialization::Table, None, None, None, None);
+        let sql = "SELECT * FROM users";
+        let mut old_inputs = HashMap::new();
+        old_inputs.insert("upstream".to_string(), compute_checksum("SELECT 1"));
+
+        let model_state = ModelState::new_with_checksums(
+            "my_model".to_string(),
+            sql,
+            None,
+            config,
+            None,
+            old_inputs,
+        );
+        state_file.upsert_model(model_state);
+
+        let mut new_inputs = HashMap::new();
+        new_inputs.insert("upstream".to_string(), compute_checksum("SELECT 2"));
+
+        assert!(state_file.is_model_or_inputs_modified(
+            "my_model",
+            &compute_checksum(sql),
+            None,
+            &new_inputs,
+        ));
     }
 }

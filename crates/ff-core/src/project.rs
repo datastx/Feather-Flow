@@ -4,7 +4,7 @@ use crate::config::Config;
 use crate::error::{CoreError, CoreResult};
 use crate::exposure::{discover_exposures, Exposure};
 use crate::metric::{discover_metrics, Metric};
-use crate::model::{Model, SchemaTest, SchemaYml, SingularTest};
+use crate::model::{Model, SchemaTest, SingularTest};
 use crate::source::{discover_sources, SourceFile};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -67,12 +67,8 @@ impl Project {
         let source_paths = config.source_paths_absolute(&root);
         let sources = discover_sources(&root, &source_paths).unwrap_or_default();
 
-        // Collect tests from both:
-        // 1. Legacy schema.yml files (backward compatibility)
-        // 2. 1:1 schema files (.yml files matching model names)
-        let mut tests = Self::discover_tests(&root, &config)?;
-
-        // Also collect tests from 1:1 schema files loaded with each model
+        // Collect tests from 1:1 schema files loaded with each model
+        let mut tests = Vec::new();
         for model in models.values() {
             tests.extend(model.get_schema_tests());
         }
@@ -100,7 +96,10 @@ impl Project {
         })
     }
 
-    /// Discover all SQL model files in the project
+    /// Discover all SQL model files in the project using flat directory-per-model layout
+    ///
+    /// Each model lives in `models/<model_name>/<model_name>.sql + .yml`.
+    /// Loose SQL files at the root of a model_path are rejected.
     fn discover_models(root: &Path, config: &Config) -> CoreResult<HashMap<String, Model>> {
         let mut models = HashMap::new();
 
@@ -109,25 +108,67 @@ impl Project {
                 continue;
             }
 
-            Self::discover_models_recursive(&model_path, &mut models)?;
+            Self::discover_models_flat(&model_path, &mut models)?;
         }
 
         Ok(models)
     }
 
-    /// Recursively discover SQL files in a directory
-    fn discover_models_recursive(
-        dir: &Path,
-        models: &mut HashMap<String, Model>,
-    ) -> CoreResult<()> {
+    /// Discover models using flat directory-per-model layout
+    ///
+    /// Direct children of the models root MUST be directories. Each directory
+    /// must contain exactly one `.sql` file whose stem matches the directory name.
+    fn discover_models_flat(dir: &Path, models: &mut HashMap<String, Model>) -> CoreResult<()> {
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
 
             if path.is_dir() {
-                Self::discover_models_recursive(&path, models)?;
-            } else if path.extension().is_some_and(|e| e == "sql") {
-                let model = Model::from_file(path)?;
+                let dir_name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                // Find SQL files in this directory (non-recursive)
+                let sql_files: Vec<PathBuf> = std::fs::read_dir(&path)?
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.path())
+                    .filter(|p| p.is_file() && p.extension().is_some_and(|e| e == "sql"))
+                    .collect();
+
+                if sql_files.is_empty() {
+                    return Err(CoreError::InvalidModelDirectory {
+                        path: path.display().to_string(),
+                        reason: "directory contains no .sql files".to_string(),
+                    });
+                }
+
+                if sql_files.len() > 1 {
+                    return Err(CoreError::InvalidModelDirectory {
+                        path: path.display().to_string(),
+                        reason: format!(
+                            "directory contains {} .sql files (expected exactly 1)",
+                            sql_files.len()
+                        ),
+                    });
+                }
+
+                let sql_path = &sql_files[0];
+                let sql_stem = sql_path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                if sql_stem != dir_name {
+                    return Err(CoreError::ModelDirectoryMismatch {
+                        directory: dir_name,
+                        sql_file: sql_stem,
+                    });
+                }
+
+                let model = Model::from_file(sql_path.clone())?;
 
                 if models.contains_key(&model.name) {
                     return Err(CoreError::DuplicateModel {
@@ -136,42 +177,13 @@ impl Project {
                 }
 
                 models.insert(model.name.clone(), model);
+            } else if path.extension().is_some_and(|e| e == "sql") {
+                return Err(CoreError::InvalidModelDirectory {
+                    path: path.display().to_string(),
+                    reason: "loose .sql files are not allowed at the model root — each model must be in its own directory (models/<name>/<name>.sql)".to_string(),
+                });
             }
-        }
-
-        Ok(())
-    }
-
-    /// Discover schema tests from schema.yml files
-    fn discover_tests(root: &Path, config: &Config) -> CoreResult<Vec<SchemaTest>> {
-        let mut tests = Vec::new();
-
-        for model_path in config.model_paths_absolute(root) {
-            if !model_path.exists() {
-                continue;
-            }
-
-            Self::discover_tests_recursive(&model_path, &mut tests)?;
-        }
-
-        Ok(tests)
-    }
-
-    /// Recursively discover schema.yml files
-    fn discover_tests_recursive(dir: &Path, tests: &mut Vec<SchemaTest>) -> CoreResult<()> {
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.is_dir() {
-                Self::discover_tests_recursive(&path, tests)?;
-            } else if path
-                .file_name()
-                .is_some_and(|n| n == "schema.yml" || n == "schema.yaml")
-            {
-                let schema = SchemaYml::load(&path)?;
-                tests.extend(schema.extract_tests());
-            }
+            // Ignore non-SQL files at root level (e.g., .gitkeep, README)
         }
 
         Ok(())
@@ -433,27 +445,26 @@ external_tables:
         )
         .unwrap();
 
-        // Create models directory
-        std::fs::create_dir_all(dir.path().join("models/staging")).unwrap();
+        // Create directory-per-model layout
+        std::fs::create_dir_all(dir.path().join("models/stg_orders")).unwrap();
 
         // Create a model file
         std::fs::write(
-            dir.path().join("models/staging/stg_orders.sql"),
+            dir.path().join("models/stg_orders/stg_orders.sql"),
             "SELECT * FROM raw.orders",
         )
         .unwrap();
 
-        // Create schema.yml
+        // Create 1:1 schema file for the model
         std::fs::write(
-            dir.path().join("models/schema.yml"),
+            dir.path().join("models/stg_orders/stg_orders.yml"),
             r#"
 version: 1
-models:
-  - name: stg_orders
-    columns:
-      - name: order_id
-        tests:
-          - unique
+description: "Staged orders"
+columns:
+  - name: order_id
+    tests:
+      - unique
 "#,
         )
         .unwrap();
@@ -477,38 +488,48 @@ models:
         let dir = setup_test_project();
         let project = Project::load(dir.path()).unwrap();
 
+        // Tests come exclusively from 1:1 schema files
         assert_eq!(project.tests.len(), 1);
-        assert_eq!(project.tests[0].model, "stg_orders");
-        assert_eq!(project.tests[0].column, "order_id");
+        assert!(project.tests.iter().all(|t| t.model == "stg_orders"));
+        assert!(project.tests.iter().all(|t| t.column == "order_id"));
     }
 
     #[test]
     fn test_duplicate_model_detection() {
         let dir = TempDir::new().unwrap();
 
-        // Create featherflow.yml
+        // Create featherflow.yml with TWO model_paths roots
         std::fs::write(
             dir.path().join("featherflow.yml"),
             r#"
 name: test_project
-model_paths: ["models"]
+model_paths: ["models_a", "models_b"]
 "#,
         )
         .unwrap();
 
-        // Create models directory with subdirectories
-        std::fs::create_dir_all(dir.path().join("models/staging")).unwrap();
-        std::fs::create_dir_all(dir.path().join("models/marts")).unwrap();
+        // Create directory-per-model in both roots with the same model name
+        std::fs::create_dir_all(dir.path().join("models_a/orders")).unwrap();
+        std::fs::create_dir_all(dir.path().join("models_b/orders")).unwrap();
 
-        // Create two model files with the same name in different directories
         std::fs::write(
-            dir.path().join("models/staging/orders.sql"),
+            dir.path().join("models_a/orders/orders.sql"),
             "SELECT * FROM raw_orders",
         )
         .unwrap();
         std::fs::write(
-            dir.path().join("models/marts/orders.sql"),
+            dir.path().join("models_a/orders/orders.yml"),
+            "version: 1\ncolumns:\n  - name: id\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("models_b/orders/orders.sql"),
             "SELECT * FROM staging_orders",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("models_b/orders/orders.yml"),
+            "version: 1\ncolumns:\n  - name: id\n",
         )
         .unwrap();
 
@@ -538,9 +559,18 @@ exposure_paths: ["exposures"]
         )
         .unwrap();
 
-        // Create models directory with a model
-        std::fs::create_dir_all(dir.path().join("models")).unwrap();
-        std::fs::write(dir.path().join("models/orders.sql"), "SELECT 1 AS id").unwrap();
+        // Create models directory with a model (directory-per-model)
+        std::fs::create_dir_all(dir.path().join("models/orders")).unwrap();
+        std::fs::write(
+            dir.path().join("models/orders/orders.sql"),
+            "SELECT 1 AS id",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("models/orders/orders.yml"),
+            "version: 1\ncolumns:\n  - name: id\n",
+        )
+        .unwrap();
 
         // Create exposures directory
         std::fs::create_dir_all(dir.path().join("exposures")).unwrap();
@@ -611,9 +641,18 @@ model_paths: ["models"]
         )
         .unwrap();
 
-        // Create models directory
-        std::fs::create_dir_all(dir.path().join("models")).unwrap();
-        std::fs::write(dir.path().join("models/orders.sql"), "SELECT 1 AS id").unwrap();
+        // Create models directory (directory-per-model)
+        std::fs::create_dir_all(dir.path().join("models/orders")).unwrap();
+        std::fs::write(
+            dir.path().join("models/orders/orders.sql"),
+            "SELECT 1 AS id",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("models/orders/orders.yml"),
+            "version: 1\ncolumns:\n  - name: id\n",
+        )
+        .unwrap();
 
         // Note: not creating exposures directory
 
@@ -636,17 +675,38 @@ model_paths: ["models"]
         )
         .unwrap();
 
-        // Create models directory with versioned models
-        std::fs::create_dir_all(dir.path().join("models")).unwrap();
-        std::fs::write(dir.path().join("models/fct_orders.sql"), "SELECT 1 AS id").unwrap();
+        // Create models directory with versioned models (directory-per-model)
+        std::fs::create_dir_all(dir.path().join("models/fct_orders")).unwrap();
         std::fs::write(
-            dir.path().join("models/fct_orders_v2.sql"),
+            dir.path().join("models/fct_orders/fct_orders.sql"),
+            "SELECT 1 AS id",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("models/fct_orders/fct_orders.yml"),
+            "version: 1\ncolumns:\n  - name: id\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("models/fct_orders_v2")).unwrap();
+        std::fs::write(
+            dir.path().join("models/fct_orders_v2/fct_orders_v2.sql"),
             "SELECT 2 AS id",
         )
         .unwrap();
         std::fs::write(
-            dir.path().join("models/fct_orders_v3.sql"),
+            dir.path().join("models/fct_orders_v2/fct_orders_v2.yml"),
+            "version: 1\ncolumns:\n  - name: id\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("models/fct_orders_v3")).unwrap();
+        std::fs::write(
+            dir.path().join("models/fct_orders_v3/fct_orders_v3.sql"),
             "SELECT 3 AS id",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("models/fct_orders_v3/fct_orders_v3.yml"),
+            "version: 1\ncolumns:\n  - name: id\n",
         )
         .unwrap();
 
@@ -683,9 +743,28 @@ model_paths: ["models"]
         )
         .unwrap();
 
-        std::fs::create_dir_all(dir.path().join("models")).unwrap();
-        std::fs::write(dir.path().join("models/fct_orders_v1.sql"), "SELECT 1").unwrap();
-        std::fs::write(dir.path().join("models/fct_orders_v2.sql"), "SELECT 2").unwrap();
+        std::fs::create_dir_all(dir.path().join("models/fct_orders_v1")).unwrap();
+        std::fs::write(
+            dir.path().join("models/fct_orders_v1/fct_orders_v1.sql"),
+            "SELECT 1",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("models/fct_orders_v1/fct_orders_v1.yml"),
+            "version: 1\ncolumns:\n  - name: id\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("models/fct_orders_v2")).unwrap();
+        std::fs::write(
+            dir.path().join("models/fct_orders_v2/fct_orders_v2.sql"),
+            "SELECT 2",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("models/fct_orders_v2/fct_orders_v2.yml"),
+            "version: 1\ncolumns:\n  - name: id\n",
+        )
+        .unwrap();
 
         let project = Project::load(dir.path()).unwrap();
 
@@ -714,10 +793,39 @@ model_paths: ["models"]
         )
         .unwrap();
 
-        std::fs::create_dir_all(dir.path().join("models")).unwrap();
-        std::fs::write(dir.path().join("models/fct_orders_v1.sql"), "SELECT 1").unwrap();
-        std::fs::write(dir.path().join("models/fct_orders_v2.sql"), "SELECT 2").unwrap();
-        std::fs::write(dir.path().join("models/dim_products.sql"), "SELECT 1").unwrap();
+        std::fs::create_dir_all(dir.path().join("models/fct_orders_v1")).unwrap();
+        std::fs::write(
+            dir.path().join("models/fct_orders_v1/fct_orders_v1.sql"),
+            "SELECT 1",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("models/fct_orders_v1/fct_orders_v1.yml"),
+            "version: 1\ncolumns:\n  - name: id\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("models/fct_orders_v2")).unwrap();
+        std::fs::write(
+            dir.path().join("models/fct_orders_v2/fct_orders_v2.sql"),
+            "SELECT 2",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("models/fct_orders_v2/fct_orders_v2.yml"),
+            "version: 1\ncolumns:\n  - name: id\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("models/dim_products")).unwrap();
+        std::fs::write(
+            dir.path().join("models/dim_products/dim_products.sql"),
+            "SELECT 1",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("models/dim_products/dim_products.yml"),
+            "version: 1\ncolumns:\n  - name: id\n",
+        )
+        .unwrap();
 
         let project = Project::load(dir.path()).unwrap();
 
@@ -745,6 +853,40 @@ model_paths: ["models"]
     }
 
     #[test]
+    fn test_missing_schema_file_enforcement() {
+        let dir = TempDir::new().unwrap();
+
+        // Create featherflow.yml (schema files are always required)
+        std::fs::write(
+            dir.path().join("featherflow.yml"),
+            r#"
+name: test_project
+model_paths: ["models"]
+"#,
+        )
+        .unwrap();
+
+        // Create a model directory without a matching .yml file
+        std::fs::create_dir_all(dir.path().join("models/no_schema_model")).unwrap();
+        std::fs::write(
+            dir.path()
+                .join("models/no_schema_model/no_schema_model.sql"),
+            "SELECT 1 AS id",
+        )
+        .unwrap();
+
+        // Should fail with MissingSchemaFile error
+        let result = Project::load(dir.path());
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, CoreError::MissingSchemaFile { ref model, .. } if model == "no_schema_model"),
+            "Expected MissingSchemaFile error, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
     fn test_deprecation_warning_in_resolution() {
         let dir = TempDir::new().unwrap();
 
@@ -757,10 +899,14 @@ model_paths: ["models"]
         )
         .unwrap();
 
-        std::fs::create_dir_all(dir.path().join("models")).unwrap();
-        std::fs::write(dir.path().join("models/fct_orders_v1.sql"), "SELECT 1").unwrap();
+        std::fs::create_dir_all(dir.path().join("models/fct_orders_v1")).unwrap();
         std::fs::write(
-            dir.path().join("models/fct_orders_v1.yml"),
+            dir.path().join("models/fct_orders_v1/fct_orders_v1.sql"),
+            "SELECT 1",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("models/fct_orders_v1/fct_orders_v1.yml"),
             r#"
 version: 1
 deprecated: true

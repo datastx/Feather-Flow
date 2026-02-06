@@ -8,5 +8,7 @@ description = "SQL parsing layer for Featherflow - parser wrapper and table extr
 [dependencies]
 thiserror.workspace = true
 sqlparser.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 
 [dev-dependencies]

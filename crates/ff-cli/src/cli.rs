@@ -39,6 +39,9 @@ pub struct GlobalArgs {
 /// Available subcommands
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Initialize a new Featherflow project
+    Init(InitArgs),
+
     /// Parse SQL files and output AST/dependencies
     Parse(ParseArgs),
 
@@ -83,6 +86,9 @@ pub enum Commands {
 
     /// Compare model output between databases
     Diff(DiffArgs),
+
+    /// Show column-level lineage across models
+    Lineage(LineageArgs),
 }
 
 /// Arguments for the parse command
@@ -204,6 +210,10 @@ pub struct RunArgs {
     /// Suppress progress indicators (useful for CI)
     #[arg(short, long)]
     pub quiet: bool,
+
+    /// Smart build: skip models whose SQL, schema, and inputs haven't changed
+    #[arg(long)]
+    pub smart: bool,
 }
 
 /// Arguments for the ls command
@@ -326,6 +336,10 @@ pub struct ValidateArgs {
     /// Path to reference manifest for contract validation (used with --contracts)
     #[arg(long, value_name = "FILE")]
     pub state: Option<String>,
+
+    /// Enable governance checks (data classification completeness)
+    #[arg(long)]
+    pub governance: bool,
 }
 
 /// Arguments for the docs command
@@ -457,6 +471,18 @@ pub struct MetricArgs {
     pub output: OutputFormat,
 }
 
+/// Arguments for the init command
+#[derive(Args, Debug)]
+pub struct InitArgs {
+    /// Project name (also used as directory name)
+    #[arg(long)]
+    pub name: String,
+
+    /// Database file path (default: dev.duckdb)
+    #[arg(long, default_value = "dev.duckdb")]
+    pub database_path: String,
+}
+
 /// Arguments for the diff command
 #[derive(Args, Debug)]
 pub struct DiffArgs {
@@ -482,4 +508,50 @@ pub struct DiffArgs {
     /// Output format (text or json)
     #[arg(short, long, value_enum, default_value = "text")]
     pub output: OutputFormat,
+}
+
+/// Arguments for the lineage command
+#[derive(Args, Debug)]
+pub struct LineageArgs {
+    /// Filter to a specific model
+    #[arg(short, long)]
+    pub model: Option<String>,
+
+    /// Filter to a specific column (requires --model)
+    #[arg(short, long)]
+    pub column: Option<String>,
+
+    /// Direction to trace lineage
+    #[arg(short, long, value_enum, default_value = "both")]
+    pub direction: LineageDirection,
+
+    /// Output format
+    #[arg(short, long, value_enum, default_value = "table")]
+    pub output: LineageOutput,
+
+    /// Filter edges by data classification (e.g., pii, sensitive)
+    #[arg(long)]
+    pub classification: Option<String>,
+}
+
+/// Lineage trace direction
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineageDirection {
+    /// Trace upstream (sources)
+    Upstream,
+    /// Trace downstream (consumers)
+    Downstream,
+    /// Show both directions
+    Both,
+}
+
+/// Lineage output formats
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineageOutput {
+    /// Human-readable table
+    Table,
+    /// JSON output
+    Json,
+    /// DOT graph for Graphviz
+    Dot,
 }

@@ -14,6 +14,7 @@ columns:
   - name: order_id
     type: INTEGER
     description: "Unique identifier for the order"
+    classification: internal
     primary_key: true
     tests:
       - unique
@@ -22,6 +23,7 @@ columns:
   - name: customer_id
     type: INTEGER
     description: "Foreign key to stg_customers"
+    classification: pii
     tests:
       - not_null
     references:
@@ -31,12 +33,14 @@ columns:
   - name: order_date
     type: DATE
     description: "Date the order was placed"
+    classification: internal
     tests:
       - not_null
 
   - name: amount
     type: DECIMAL(10,2)
     description: "Order total in USD"
+    classification: sensitive
     tests:
       - not_null
       - positive
@@ -44,6 +48,7 @@ columns:
   - name: status
     type: VARCHAR
     description: "Order status"
+    classification: internal
     tests:
       - not_null
       - accepted_values:

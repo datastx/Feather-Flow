@@ -24,6 +24,14 @@ pub enum SqlError {
     /// Validation error (S004)
     #[error("[S004] SQL validation failed: {0}")]
     ValidationError(String),
+
+    /// CTE not allowed (S005)
+    #[error("[S005] CTEs are not allowed — each transform must be its own model. Found CTE(s): {cte_names}")]
+    CteNotAllowed { cte_names: String },
+
+    /// Derived table not allowed (S006)
+    #[error("[S006] Derived tables (subqueries in FROM clause) are not allowed — each transform must be its own model")]
+    DerivedTableNotAllowed,
 }
 
 /// Result type alias for SqlError

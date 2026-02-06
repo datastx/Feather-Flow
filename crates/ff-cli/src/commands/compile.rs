@@ -410,6 +410,11 @@ fn compile_model_phase1(
         .parse(&rendered)
         .context(format!("Failed to parse SQL for model: {}", name))?;
 
+    // Reject CTEs and derived tables — each transform must be its own model
+    ff_sql::validate_no_complex_queries(&statements)
+        .map_err(|e| anyhow::anyhow!("{}", e))
+        .context(format!("Model '{}' uses forbidden SQL constructs", name))?;
+
     let deps = extract_dependencies(&statements);
     let (model_deps, ext_deps, unknown_deps) =
         ff_sql::extractor::categorize_dependencies_with_unknown(

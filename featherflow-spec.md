@@ -91,9 +91,9 @@ Featherflow's parser automatically detects that this model depends on `stg_order
 
 **dbt approach**: One `schema.yml` file can define multiple models, leading to large files and ambiguity.
 
-**Featherflow approach**: Each model has its own schema file with matching name.
+**Featherflow approach**: Each model lives in its own directory with a matching schema file.
 
-**Example scenario**: You have `stg_orders.sql` in your staging folder.
+**Example scenario**: You have a `stg_orders` model.
 
 In dbt, you add to a shared `schema.yml`:
 ```
@@ -106,7 +106,15 @@ models:
     columns: ...
 ```
 
-In Featherflow, you create `stg_orders.yml` alongside `stg_orders.sql`:
+In Featherflow, you create a directory-per-model structure:
+```
+models/
+  stg_orders/
+    stg_orders.sql
+    stg_orders.yml
+```
+
+The schema file `stg_orders.yml` contains:
 ```
 name: stg_orders
 columns: ...
@@ -145,14 +153,15 @@ columns: ...
 
 **How it works**:
 1. Parse each SQL file using the configured dialect
-2. Walk the AST to find all table references (FROM, JOIN, subqueries, CTEs)
-3. Filter out CTE names defined within the same query
+2. Walk the AST to find all table references (FROM, JOIN)
+3. Reject CTEs (S005) and FROM-clause derived tables (S006) as hard errors
 4. Match remaining tables against known models, seeds, and sources
 5. Build a dependency graph for execution ordering
 
 **Edge cases handled**:
-- CTEs are not treated as external dependencies
-- Subqueries are recursively analyzed
+- CTEs produce hard error `S005 CteNotAllowed` — each transform must be its own model
+- FROM-clause derived tables (subqueries in FROM) produce hard error `S006 DerivedTableNotAllowed`
+- Scalar subqueries in SELECT, WHERE, and HAVING clauses remain allowed
 - Schema-qualified names are resolved correctly
 - Case-insensitive matching for table names
 
@@ -296,18 +305,20 @@ From highest to lowest priority:
 ```
 my_project/
 ├── featherflow.yml          # Project configuration
-├── models/
-│   ├── staging/
-│   │   ├── stg_orders.sql
-│   │   ├── stg_orders.yml   # Schema for stg_orders
+├── models/                  # Directory-per-model (flat layout)
+│   ├── stg_customers/
 │   │   ├── stg_customers.sql
 │   │   └── stg_customers.yml
-│   ├── intermediate/
+│   ├── stg_orders/
+│   │   ├── stg_orders.sql
+│   │   └── stg_orders.yml
+│   ├── int_orders_enriched/
 │   │   ├── int_orders_enriched.sql
 │   │   └── int_orders_enriched.yml
-│   └── marts/
-│       ├── fct_orders.sql
-│       ├── fct_orders.yml
+│   ├── fct_orders/
+│   │   ├── fct_orders.sql
+│   │   └── fct_orders.yml
+│   └── dim_customers/
 │       ├── dim_customers.sql
 │       └── dim_customers.yml
 ├── seeds/
@@ -328,6 +339,8 @@ my_project/
     └── manifest.json
 ```
 
+> **Note**: Featherflow uses a **directory-per-model** flat layout. Each model lives in its own subdirectory under `models/`, with the directory name matching the model name. No nesting of model directories is allowed. See [File Discovery Rules](#file-discovery-rules) for enforcement details.
+
 ### Model Naming Conventions
 
 | Layer | Prefix | Purpose | Example |
@@ -340,12 +353,20 @@ my_project/
 
 ### File Discovery Rules
 
-1. **Models**: Any `.sql` file in `model_paths` directories
-2. **Schemas**: `.yml` file with same name as `.sql` file in same directory
-3. **Seeds**: Any `.csv` file in `seed_paths` directories
-4. **Macros**: Any `.jinja` file in `macro_paths` directories
-5. **Tests**: Any `.sql` file in `test_paths` directories
-6. **Sources**: Any `.yml` file in `source_paths` with `kind: sources`
+**Models** are discovered via the `discover_models_flat()` algorithm:
+
+1. Each immediate subdirectory of `model_paths` is treated as a model directory
+2. Each model directory must contain exactly one `.sql` file whose name matches the directory name (e.g., `stg_orders/stg_orders.sql`)
+3. A matching `.yml` or `.yaml` schema file is required for every model (enforced by `Model::from_file()`); missing schema files produce `E010 MissingSchemaFile`
+4. Loose `.sql` files at the `model_paths` root are rejected with error `E011 InvalidModelDirectory`
+5. A `.sql` file whose stem does not match its parent directory name is rejected with error `E012 ModelDirectoryMismatch`
+
+**Other resources**:
+
+1. **Seeds**: Any `.csv` file in `seed_paths` directories
+2. **Macros**: Any `.jinja` file in `macro_paths` directories
+3. **Tests**: Any `.sql` file in `test_paths` directories
+4. **Sources**: Any `.yml` file in `source_paths` with `kind: sources`
 
 ---
 
@@ -382,7 +403,7 @@ my_project/
 **Definition of Done**:
 - [x] Parses all model files in project
 - [x] Extracts table dependencies from AST
-- [x] Filters out CTE names from dependencies
+- [x] Rejects CTEs with error S005 (CteNotAllowed)
 - [x] Categorizes dependencies as model, seed, source, or external
 - [x] Reports parse errors with file path, line, column
 - [x] JSON output includes full AST structure
@@ -406,7 +427,7 @@ my_project/
 
 *Preview compiled SQL*:
 - Command: `ff compile --models fct_orders`
-- Output: Compiled SQL in `target/compiled/models/marts/fct_orders.sql`
+- Output: Compiled SQL in `target/compiled/models/fct_orders/fct_orders.sql`
 - Use case: See what SQL will actually execute
 
 *Compile with different variables*:
@@ -574,7 +595,7 @@ The manifest (`target/manifest.json`) contains:
 - [x] Handles parameterized tests correctly
 - [x] Reports pass/fail with timing
 - [x] Shows sample failing rows (limit 5)
-- [x] Skips models without schema files (with info message)
+- [x] Schema files required for all models (E010 if missing)
 - [x] `--store-failures` saves failing rows to tables
 - [x] `--fail-fast` stops on first failure
 - [x] `--threads` enables parallel execution
@@ -688,7 +709,7 @@ For each model, documentation includes:
 - [x] Includes column descriptions from schema
 - [x] Shows dependencies as linked graph (lineage.dot)
 - [x] Works without database connection
-- [x] Skips models without schema files (with note)
+- [x] Schema files required for all models (E010 if missing)
 - [x] Markdown format is readable and complete
 - [x] HTML format includes navigation and search
 - [x] JSON format includes all metadata
@@ -719,8 +740,8 @@ For each model, documentation includes:
 - Use case: Enforce clean project in CI
 
 *Validate specific models*:
-- Command: `ff validate --models staging/*`
-- Behavior: Only validates staging models
+- Command: `ff validate --models stg_orders`
+- Behavior: Only validates the specified model
 - Use case: Quick check of changes
 
 **Validation Checks**:
@@ -733,8 +754,12 @@ For each model, documentation includes:
 | Undefined variables | Error | var() references without default |
 | Invalid schema YAML | Error | Malformed YAML structure |
 | Invalid test type | Error | Unknown test type used |
+| Missing schema file (E010) | Error | Model without matching `.yml`/`.yaml` schema file |
+| Invalid model directory (E011) | Error | Loose `.sql` file at model_paths root |
+| Model directory mismatch (E012) | Error | SQL file stem doesn't match directory name |
+| CTE not allowed (S005) | Error | CTEs prohibited — each transform must be its own model |
+| Derived table not allowed (S006) | Error | FROM-clause subqueries prohibited |
 | Orphaned schema files | Warning | Schema without corresponding model |
-| Missing schema files | Warning | Model without schema (optional) |
 | Undeclared external tables | Warning | References to unknown tables |
 | Unused macros | Warning | Macros defined but never used |
 | Model without description | Info | Missing documentation |
@@ -858,6 +883,66 @@ For each model, documentation includes:
 - [x] Writes results to target/sources.json
 - [x] Unit tests for freshness check
 
+### 11. `ff lineage`
+
+**Purpose**: Trace column-level lineage across models using SQL AST analysis.
+
+**Options**:
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--model` | `-m` | Model to trace lineage for (required) |
+| `--column` | `-c` | Specific column to trace |
+| `--direction` | `-d` | Direction: `upstream`, `downstream`, `both` (default: `both`) |
+| `--output` | `-o` | Output format: `table`, `json`, `dot` (default: `table`) |
+
+**Example scenarios**:
+
+*Trace full lineage for a model*:
+- Command: `ff lineage --model fct_orders`
+- Behavior: Shows all upstream and downstream column-level lineage
+- Output: Table showing column references across models
+
+*Trace a specific column upstream*:
+- Command: `ff lineage --model fct_orders --column total_amount --direction upstream`
+- Behavior: Traces where the `total_amount` column originates
+- Output: Chain of column transformations back to source
+
+*Export lineage as Graphviz DOT*:
+- Command: `ff lineage --model fct_orders --output dot > lineage.dot`
+- Behavior: Generates DOT graph of column-level lineage
+- Use case: Visualize data flow with `dot -Tpng lineage.dot -o lineage.png`
+
+*Export lineage as JSON*:
+- Command: `ff lineage --model fct_orders --output json`
+- Behavior: Outputs structured lineage data
+- Use case: Integration with data catalogs or custom tooling
+
+**Lineage Types** (defined in `ff-sql`):
+
+| Type | Description |
+|------|-------------|
+| `ProjectLineage` | Full project lineage graph with all models |
+| `ModelLineage` | Lineage for a single model |
+| `ColumnLineage` | Lineage for a single column |
+| `ColumnRef` | Reference to a specific column in a model |
+| `LineageEdge` | Connection between column references across models |
+
+**Behavior**:
+- Lineage is extracted from the SQL AST using `sqlparser-rs`
+- `ProjectLineage::resolve_edges()` connects cross-model column references
+- Column aliases, expressions, and pass-through columns are tracked
+- DOT output can be rendered with Graphviz for visualization
+
+**Definition of Done**:
+- [x] `--model` selects target model for lineage
+- [x] `--column` narrows to specific column
+- [x] `--direction` supports upstream, downstream, both
+- [x] Table output is human-readable
+- [x] JSON output includes full lineage structure
+- [x] DOT output is valid Graphviz format
+- [x] Cross-model column references resolved
+- [x] Integration test: lineage matches expected output
+
 ---
 
 ## Sources Specification
@@ -940,7 +1025,7 @@ Behavior:
 | Managed by | Featherflow | Featherflow | External |
 | Created by | `ff run` | `ff seed` | External ETL |
 | Definition | SQL file | CSV file | YAML definition |
-| Schema file | Optional .yml | Optional .yml | Included in source YAML |
+| Schema file | Required .yml | Optional .yml | Included in source YAML |
 | In dependency graph | Yes | Yes | Yes (as leaf nodes) |
 | Can be tested | Yes | Yes | Freshness only |
 
@@ -1003,7 +1088,7 @@ Macros can accept:
 | Limitation | Reason | Workaround |
 |------------|--------|------------|
 | No macro imports | Minijinja doesn't support import | Define all macros in single namespace |
-| No recursive macros | Stack overflow protection | Use CTEs in SQL instead |
+| No recursive macros | Stack overflow protection | Break logic into separate models |
 | Compile-time only | Macros expand during compile | Use SQL functions for runtime |
 | No adapter methods | Simplified architecture | Use dialect-specific SQL |
 
@@ -1053,14 +1138,15 @@ This runs:
 
 | Syntax | Description | Example |
 |--------|-------------|---------|
-| `path:staging/` | All models in directory | `path:staging/` |
-| `path:staging/*` | Direct children only | `path:staging/*` |
-| `path:staging/**` | All nested models | `path:staging/**` |
-| `models/staging/stg_orders.sql` | Exact file path | `models/staging/stg_orders.sql` |
+| `path:models/` | All models in directory | `path:models/` |
+| `path:stg_orders/` | Specific model directory | `path:stg_orders/` |
+| `models/stg_orders/stg_orders.sql` | Exact file path | `models/stg_orders/stg_orders.sql` |
 
-**Example scenario**: You want to run all staging models.
+**Example scenario**: You want to run all staging models (use tag selection with flat layout).
 
-Command: `ff run --select path:models/staging/`
+Command: `ff run --select tag:staging`
+
+> **Note**: With directory-per-model flat layout, use tag selection (`tag:staging`) or name-based selection (`stg_*`) to select groups of models by layer, rather than path-based selection.
 
 ### Tag Selection
 
@@ -1109,7 +1195,7 @@ Command: `ff run --select state:modified+ --state prod-manifest.json`
 |--------|-------------|---------|
 | `a b` | Union (space) | `tag:daily tag:weekly` |
 | `a,b` | Union (comma) | `fct_orders,fct_revenue` |
-| `intersection(a b)` | Both conditions | `intersection(tag:daily path:marts/)` |
+| `intersection(a b)` | Both conditions | `intersection(tag:daily tag:marts)` |
 | `a --exclude b` | Difference | `tag:daily --exclude fct_legacy` |
 
 **Example scenario**: Run daily models except the slow legacy one.
@@ -1482,9 +1568,9 @@ Standalone SQL operations not tied to models:
 | E007 | CircularDependency | Cycle detected in DAG |
 | E008 | DuplicateModel | Same model name in multiple paths |
 | E009 | JinjaRenderError | Template rendering failed |
-| E010 | SchemaParseError | Invalid YAML in schema file |
-| E011 | DatabaseError | Database operation failed |
-| E012 | SourceNotFound | Referenced source doesn't exist |
+| E010 | SchemaParseError | Invalid YAML in schema file / missing schema file |
+| E011 | InvalidModelDirectory | Loose SQL file or malformed model directory |
+| E012 | ModelDirectoryMismatch | SQL file stem doesn't match directory name |
 | E013 | MacroNotFound | Referenced macro doesn't exist |
 | E014 | MacroError | Macro execution failed |
 | E015 | SelectionError | Invalid selection syntax |
@@ -1493,6 +1579,8 @@ Standalone SQL operations not tied to models:
 | E018 | SnapshotError | Snapshot execution failed |
 | E019 | ValidationError | Validation check failed |
 | E020 | StateError | State file corrupted or invalid |
+| S005 | CteNotAllowed | CTEs prohibited — each transform must be its own model |
+| S006 | DerivedTableNotAllowed | FROM-clause subqueries prohibited |
 
 ### Exit Codes
 
@@ -1511,7 +1599,7 @@ Errors follow a consistent format:
 
 ```
 Error [E006]: SQL parse error
-  --> models/staging/stg_orders.sql:15:23
+  --> models/stg_orders/stg_orders.sql:15:23
    |
 15 |     SELECT * FORM raw_orders
    |                   ^^^^^^^^^^
@@ -1565,7 +1653,7 @@ Errors include relevant context:
 | Limitation | Workaround |
 |------------|------------|
 | Macro imports not supported | Put all macros in global namespace |
-| No recursive macros | Use CTEs in SQL instead |
+| No recursive macros | Break logic into separate models |
 | No Python in macros | Macros are pure Jinja |
 | Single database connection | Use --threads for parallelism |
 
@@ -1574,10 +1662,10 @@ Errors include relevant context:
 | Case | Behavior |
 |------|----------|
 | Model references itself | Error: circular dependency |
-| CTE has same name as model | CTE filtered from deps |
+| CTE in model SQL | Hard error S005 (CteNotAllowed) |
 | Empty SQL file | Error: no SQL statements |
 | Schema file without model | Warning during validation |
-| Model without schema | Works, but limited testing |
+| Model without schema | Error E010 (MissingSchemaFile) — schema file required |
 | Duplicate table across schemas | Both tracked with qualified names |
 | Table function reference | Not detected as dependency |
 
@@ -1619,7 +1707,7 @@ Errors include relevant context:
 
 | Command | Critical Tests |
 |---------|----------------|
-| `ff parse` | Dependency extraction, CTE filtering, parse errors |
+| `ff parse` | Dependency extraction, CTE rejection (S005), parse errors |
 | `ff compile` | Jinja rendering, manifest structure, circular deps |
 | `ff run` | Execution order, materializations, error handling |
 | `ff test` | All test types, pass/fail cases, store failures |
@@ -1783,6 +1871,23 @@ Errors include relevant context:
 | Exposure Docs & Impact Analysis | 2 | Done |
 
 **Key Files**: `inline.rs`, `builtins.rs`, `model.rs`, `project.rs`, `metric.rs`
+
+### Phase D: dbt-Fusion Features (v1.3.0) - PLANNED
+
+| Feature | Work Units | Status |
+|---------|------------|--------|
+| PII/sensitive data classification with lineage propagation | 4 | Not started |
+| Smart builds (skip unchanged models) | 3 | Not started |
+| Impact analysis for compliance | 3 | Not started |
+| IDE integration | 4 | Not started |
+
+**PII/Sensitive Data Classification**: Tag columns as PII or sensitive in schema YAML, then use column-level lineage to automatically propagate classification downstream. Any model that derives from a PII column inherits the classification, enabling compliance teams to track sensitive data flow across the entire project.
+
+**Smart Builds**: Compare model SQL checksums and upstream data freshness against the last successful run. Skip models whose inputs and SQL have not changed, dramatically reducing build times for large projects.
+
+**Impact Analysis for Compliance**: Given a source column change or deprecation, use lineage to enumerate every downstream model, metric, exposure, and test affected. Generate compliance reports showing the full blast radius of schema changes.
+
+**IDE Integration**: Language server protocol (LSP) support for Featherflow projects, providing autocomplete for model names, column references, and Jinja variables, inline validation errors, go-to-definition for model dependencies, and lineage visualization in the editor.
 
 ---
 
@@ -2073,16 +2178,17 @@ Build targets:
 |---------|-----|-------------|-------|
 | SQL templating | Jinja2 | Minijinja | Minijinja is subset |
 | Dependencies | ref(), source() | AST extraction | FF is simpler |
-| Materializations | view, table, incremental, ephemeral | view, table, incremental | Planned |
-| Tests | Built-in + custom | Built-in | Custom planned |
-| Documentation | Yes | Yes | Similar |
-| Sources | Yes | Yes | Planned |
+| Materializations | view, table, incremental, ephemeral | view, table, incremental, ephemeral | Done |
+| Tests | Built-in + custom | Built-in + custom | Done |
+| Documentation | Yes | Yes | Done |
+| Sources | Yes | Yes | Done |
 | Seeds | Yes | Yes | Done |
-| Snapshots | Yes | Yes | Planned |
+| Snapshots | Yes | Yes | Done |
 | Packages | Yes | No | Not planned |
-| Hooks | Yes | Yes | Planned |
-| Exposures | Yes | No | Future |
-| Metrics | Yes | No | Future |
+| Hooks | Yes | Yes | Done |
+| Exposures | Yes | Yes | Done |
+| Metrics | Yes | Yes | Done |
+| Column lineage | Limited | Full AST-based | Done |
 | Python models | Yes | No | Not planned |
 | Adapters | Many | DuckDB first | Others later |
 
@@ -2115,3 +2221,36 @@ Build targets:
 | `{{ config(...) }}` | Same syntax |
 | `{{ var(...) }}` | Same syntax |
 | Custom macros | Same concept, `.jinja` files |
+
+### Directory-Per-Model Migration Steps
+
+When migrating from dbt (or from an earlier flat-file layout), follow these steps to adopt the directory-per-model structure:
+
+1. **Create a subdirectory for each model**: For every `.sql` model file, create a subdirectory under `models/` with the same name as the model (without the `.sql` extension). For example, `models/stg_orders.sql` becomes `models/stg_orders/`.
+
+2. **Move each `.sql` and `.yml` file into its matching directory**: Move `stg_orders.sql` and `stg_orders.yml` into `models/stg_orders/`. If migrating from dbt's shared `schema.yml`, split it into individual `.yml` files first.
+
+3. **Ensure file names match directory names**: The `.sql` file stem must match the directory name exactly. `models/stg_orders/stg_orders.sql` is valid; `models/stg_orders/orders.sql` will produce error `E012 ModelDirectoryMismatch`.
+
+4. **Remove nested subdirectories**: If you had `models/staging/stg_orders.sql`, flatten to `models/stg_orders/stg_orders.sql`. Featherflow does not support nested model directories — use naming conventions (e.g., `stg_`, `int_`, `fct_`) to indicate layers instead.
+
+5. **Ensure every model has a schema file**: Featherflow requires a matching `.yml` or `.yaml` file for every model. Missing schema files will produce error `E010 MissingSchemaFile`.
+
+**Example migration**:
+```
+# Before (dbt layout)
+models/
+  staging/
+    stg_orders.sql
+    stg_customers.sql
+    schema.yml          # shared
+
+# After (Featherflow layout)
+models/
+  stg_orders/
+    stg_orders.sql
+    stg_orders.yml      # extracted from schema.yml
+  stg_customers/
+    stg_customers.sql
+    stg_customers.yml   # extracted from schema.yml
+```

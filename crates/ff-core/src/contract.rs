@@ -272,6 +272,7 @@ mod tests {
                     constraints: vec![],
                     tests: vec![],
                     references: None,
+                    classification: None,
                 })
                 .collect(),
             deprecated: false,

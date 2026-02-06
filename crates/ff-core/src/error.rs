@@ -74,6 +74,21 @@ pub enum CoreError {
     #[error("[SRC007] Duplicate table '{table}' in source '{source_name}'")]
     SourceDuplicateTable { table: String, source_name: String },
 
+    /// E010: Missing schema file for model
+    #[error("[E010] Model '{model}' is missing a required schema file ({expected_path}). Every model must have a corresponding YAML file.")]
+    MissingSchemaFile {
+        model: String,
+        expected_path: String,
+    },
+
+    /// E011: Invalid model directory structure
+    #[error("[E011] Invalid model directory at '{path}': {reason}")]
+    InvalidModelDirectory { path: String, reason: String },
+
+    /// E012: Model directory name doesn't match SQL file name
+    #[error("[E012] Model directory mismatch: directory '{directory}' contains SQL file '{sql_file}' (must match)")]
+    ModelDirectoryMismatch { directory: String, sql_file: String },
+
     /// E009: IO error
     #[error("[E009] IO error: {0}")]
     Io(#[from] std::io::Error),

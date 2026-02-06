@@ -5,6 +5,7 @@
 //! Featherflow components.
 
 pub mod breaking_changes;
+pub mod classification;
 pub mod config;
 pub mod contract;
 pub mod dag;
@@ -32,8 +33,8 @@ pub use exposure::{discover_exposures, Exposure, ExposureMaturity, ExposureOwner
 pub use manifest::Manifest;
 pub use metric::{discover_metrics, Metric, MetricCalculation};
 pub use model::{
-    ColumnConstraint, FreshnessConfig, FreshnessPeriod, FreshnessThreshold, Model, ModelSchema,
-    SchemaContract,
+    ColumnConstraint, DataClassification, FreshnessConfig, FreshnessPeriod, FreshnessThreshold,
+    Model, ModelSchema, SchemaContract,
 };
 pub use project::Project;
 pub use run_state::{CompletedModel, FailedModel, RunState, RunStateSummary, RunStatus};

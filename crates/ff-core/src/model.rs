@@ -569,6 +569,35 @@ pub struct SchemaColumnDef {
     /// Foreign key reference to another model's column
     #[serde(default)]
     pub references: Option<ColumnReference>,
+
+    /// Data classification for governance (pii, sensitive, internal, public)
+    #[serde(default)]
+    pub classification: Option<DataClassification>,
+}
+
+/// Data classification level for governance and compliance
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DataClassification {
+    /// Personally Identifiable Information (highest sensitivity)
+    Pii,
+    /// Sensitive business data
+    Sensitive,
+    /// Internal-only data
+    Internal,
+    /// Public data (lowest sensitivity)
+    Public,
+}
+
+impl std::fmt::Display for DataClassification {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DataClassification::Pii => write!(f, "pii"),
+            DataClassification::Sensitive => write!(f, "sensitive"),
+            DataClassification::Internal => write!(f, "internal"),
+            DataClassification::Public => write!(f, "public"),
+        }
+    }
 }
 
 /// Foreign key reference to another model's column
@@ -616,8 +645,9 @@ pub struct TestParams {
 impl Model {
     /// Create a new model from a file path
     ///
-    /// This also looks for a matching 1:1 schema file (same name with .yml or .yaml extension)
-    pub fn from_file(path: PathBuf) -> Result<Self, std::io::Error> {
+    /// This also looks for a matching 1:1 schema file (same name with .yml or .yaml extension).
+    /// Every model must have a corresponding YAML schema file — returns an error if missing.
+    pub fn from_file(path: PathBuf) -> Result<Self, crate::error::CoreError> {
         let name = path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -626,7 +656,7 @@ impl Model {
 
         let raw_sql = std::fs::read_to_string(&path)?;
 
-        // Look for matching 1:1 schema file
+        // Look for matching 1:1 schema file (required)
         let yml_path = path.with_extension("yml");
         let yaml_path = path.with_extension("yaml");
 
@@ -635,7 +665,10 @@ impl Model {
         } else if yaml_path.exists() {
             ModelSchema::load(&yaml_path).ok()
         } else {
-            None
+            return Err(crate::error::CoreError::MissingSchemaFile {
+                model: name,
+                expected_path: yml_path.display().to_string(),
+            });
         };
 
         // Parse version from name (e.g., "fct_orders_v2" -> base="fct_orders", version=2)

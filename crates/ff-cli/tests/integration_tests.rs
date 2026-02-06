@@ -1113,8 +1113,8 @@ fn test_invalid_yaml_schema_error() {
     let dir = tempdir().unwrap();
     let project_dir = dir.path();
 
-    // Create minimal project structure
-    std::fs::create_dir_all(project_dir.join("models")).unwrap();
+    // Create minimal project structure (directory-per-model)
+    std::fs::create_dir_all(project_dir.join("models/test_model")).unwrap();
 
     // Create config file
     let config_content = r#"
@@ -1128,7 +1128,11 @@ model_paths:
     std::fs::write(project_dir.join("featherflow.yml"), config_content).unwrap();
 
     // Create a valid model SQL file
-    std::fs::write(project_dir.join("models/test_model.sql"), "SELECT 1 as id").unwrap();
+    std::fs::write(
+        project_dir.join("models/test_model/test_model.sql"),
+        "SELECT 1 as id",
+    )
+    .unwrap();
 
     // Create an INVALID YAML schema file (malformed YAML)
     let invalid_yaml = r#"
@@ -1137,7 +1141,11 @@ name: test_model
   columns:  # Wrong indentation
 - name: id
 "#;
-    std::fs::write(project_dir.join("models/test_model.yml"), invalid_yaml).unwrap();
+    std::fs::write(
+        project_dir.join("models/test_model/test_model.yml"),
+        invalid_yaml,
+    )
+    .unwrap();
 
     // Try to load the project - it should handle the invalid YAML gracefully
     let result = Project::load(project_dir);

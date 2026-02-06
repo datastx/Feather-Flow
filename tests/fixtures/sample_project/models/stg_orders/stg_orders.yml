@@ -9,16 +9,21 @@ tags:
 columns:
   - name: order_id
     description: "Unique identifier for the order"
+    classification: internal
     tests:
       - unique
       - not_null
   - name: customer_id
     description: "Reference to the customer"
+    classification: pii
     tests:
       - not_null
   - name: order_date
     description: "Date the order was placed"
+    classification: internal
   - name: amount
     description: "Order amount in dollars"
+    classification: sensitive
   - name: status
     description: "Order status"
+    classification: internal

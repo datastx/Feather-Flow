@@ -68,6 +68,8 @@ struct ColumnDoc {
     tests: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     references: Option<ColumnRefDoc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    classification: Option<String>,
 }
 
 /// Column reference documentation data
@@ -547,6 +549,9 @@ fn build_model_doc(model: &Model) -> ModelDoc {
                 primary_key: col.primary_key,
                 tests: test_names,
                 references,
+                classification: col
+                    .classification
+                    .map(|c| format!("{:?}", c).to_lowercase()),
             });
         }
     }
@@ -736,20 +741,21 @@ fn generate_markdown(doc: &ModelDoc) -> String {
     // Columns
     if !doc.columns.is_empty() {
         md.push_str("## Columns\n\n");
-        md.push_str("| Column | Type | Description | Tests |\n");
-        md.push_str("|--------|------|-------------|-------|\n");
+        md.push_str("| Column | Type | Description | Classification | Tests |\n");
+        md.push_str("|--------|------|-------------|----------------|-------|\n");
 
         for col in &doc.columns {
             let data_type = col.data_type.as_deref().unwrap_or("-");
             let desc = col.description.as_deref().unwrap_or("-");
+            let cls = col.classification.as_deref().unwrap_or("-");
             let tests = if col.tests.is_empty() {
                 "-".to_string()
             } else {
                 col.tests.join(", ")
             };
             md.push_str(&format!(
-                "| {} | {} | {} | {} |\n",
-                col.name, data_type, desc, tests
+                "| {} | {} | {} | {} | {} |\n",
+                col.name, data_type, desc, cls, tests
             ));
         }
         md.push('\n');
@@ -1470,21 +1476,23 @@ fn generate_html(doc: &ModelDoc) -> String {
     // Columns
     if !doc.columns.is_empty() {
         html.push_str("<h2>Columns</h2>\n");
-        html.push_str("<table>\n<thead><tr><th>Column</th><th>Type</th><th>Description</th><th>Tests</th></tr></thead>\n<tbody>\n");
+        html.push_str("<table>\n<thead><tr><th>Column</th><th>Type</th><th>Description</th><th>Classification</th><th>Tests</th></tr></thead>\n<tbody>\n");
 
         for col in &doc.columns {
             let data_type = col.data_type.as_deref().unwrap_or("-");
             let desc = col.description.as_deref().unwrap_or("-");
+            let cls = col.classification.as_deref().unwrap_or("-");
             let tests = if col.tests.is_empty() {
                 "-".to_string()
             } else {
                 col.tests.join(", ")
             };
             html.push_str(&format!(
-                "<tr><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+                "<tr><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
                 col.name,
                 html_escape(data_type),
                 html_escape(desc),
+                cls,
                 tests
             ));
         }

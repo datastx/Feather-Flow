@@ -137,6 +137,13 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
 
     let compiled_models = load_or_compile_models(&project, args, global)?;
 
+    // Smart build: filter out unchanged models
+    let smart_skipped: HashSet<String> = if args.smart {
+        compute_smart_skips(&project, &compiled_models, global)?
+    } else {
+        HashSet::new()
+    };
+
     // Compute config hash for run state validation
     let config_hash = compute_config_hash(&project);
 
@@ -160,6 +167,24 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     } else {
         let order = determine_execution_order(&compiled_models, &project, args, global)?;
         (order, None)
+    };
+
+    // Apply smart build filtering
+    let execution_order: Vec<String> = if !smart_skipped.is_empty() {
+        let before = execution_order.len();
+        let filtered: Vec<String> = execution_order
+            .into_iter()
+            .filter(|m| !smart_skipped.contains(m))
+            .collect();
+        if !json_mode {
+            println!(
+                "Smart build: skipping {} unchanged model(s)\n",
+                before - filtered.len()
+            );
+        }
+        filtered
+    } else {
+        execution_order
     };
 
     if execution_order.is_empty() {
@@ -1290,7 +1315,7 @@ async fn execute_models_sequential(
                     .await
                     .ok();
 
-                // Update state for this model
+                // Update state for this model (with checksums for smart builds)
                 let state_config = ModelStateConfig::new(
                     compiled.materialization,
                     compiled.schema.clone(),
@@ -1298,8 +1323,16 @@ async fn execute_models_sequential(
                     compiled.incremental_strategy,
                     compiled.on_schema_change,
                 );
-                let model_state =
-                    ModelState::new(name.clone(), &compiled.sql, row_count, state_config);
+                let schema_checksum = compute_schema_checksum(name, compiled_models);
+                let input_checksums = compute_input_checksums(name, compiled_models);
+                let model_state = ModelState::new_with_checksums(
+                    name.clone(),
+                    &compiled.sql,
+                    row_count,
+                    state_config,
+                    schema_checksum,
+                    input_checksums,
+                );
                 state_file.upsert_model(model_state);
 
                 run_results.push(ModelRunResult {
@@ -1661,8 +1694,16 @@ async fn execute_models_parallel(
                     compiled.incremental_strategy,
                     compiled.on_schema_change,
                 );
-                let model_state =
-                    ModelState::new(result.model.clone(), &compiled.sql, None, state_config);
+                let schema_checksum = compute_schema_checksum(&result.model, compiled_models);
+                let input_checksums = compute_input_checksums(&result.model, compiled_models);
+                let model_state = ModelState::new_with_checksums(
+                    result.model.clone(),
+                    &compiled.sql,
+                    None,
+                    state_config,
+                    schema_checksum,
+                    input_checksums,
+                );
                 state_file.upsert_model(model_state);
             }
         }
@@ -1780,6 +1821,73 @@ fn write_run_results(
     std::fs::write(&results_path, results_json).context("Failed to write run_results.json")?;
 
     Ok(())
+}
+
+/// Compute which models can be skipped in smart build mode
+fn compute_smart_skips(
+    project: &Project,
+    compiled_models: &HashMap<String, CompiledModel>,
+    global: &GlobalArgs,
+) -> Result<HashSet<String>> {
+    let state_path = project.target_dir().join("state.json");
+    let state_file = StateFile::load(&state_path).unwrap_or_default();
+
+    let mut skipped = HashSet::new();
+
+    for (name, compiled) in compiled_models {
+        let sql_checksum = compute_checksum(&compiled.sql);
+        let schema_checksum = compute_schema_checksum(name, compiled_models);
+        let input_checksums = compute_input_checksums(name, compiled_models);
+
+        if !state_file.is_model_or_inputs_modified(
+            name,
+            &sql_checksum,
+            schema_checksum.as_deref(),
+            &input_checksums,
+        ) {
+            if global.verbose {
+                eprintln!("[verbose] Smart build: skipping unchanged model '{}'", name);
+            }
+            skipped.insert(name.clone());
+        }
+    }
+
+    Ok(skipped)
+}
+
+/// Compute schema checksum for a model (from its YAML schema)
+fn compute_schema_checksum(
+    name: &str,
+    compiled_models: &HashMap<String, CompiledModel>,
+) -> Option<String> {
+    compiled_models
+        .get(name)
+        .and_then(|c| c.model_schema.as_ref())
+        .map(|schema| {
+            let yaml = serde_json::to_string(schema).unwrap_or_default();
+            compute_checksum(&yaml)
+        })
+}
+
+/// Compute input checksums for a model (upstream model SQL checksums)
+fn compute_input_checksums(
+    name: &str,
+    compiled_models: &HashMap<String, CompiledModel>,
+) -> HashMap<String, String> {
+    compiled_models
+        .get(name)
+        .map(|compiled| {
+            compiled
+                .dependencies
+                .iter()
+                .filter_map(|dep| {
+                    compiled_models
+                        .get(dep)
+                        .map(|dep_compiled| (dep.clone(), compute_checksum(&dep_compiled.sql)))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Find exposures that depend on any of the models being run

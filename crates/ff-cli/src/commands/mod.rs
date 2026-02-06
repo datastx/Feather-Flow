@@ -5,6 +5,8 @@ pub mod compile;
 pub mod diff;
 pub mod docs;
 pub mod freshness;
+pub mod init;
+pub mod lineage;
 pub mod ls;
 pub mod metric;
 pub mod parse;

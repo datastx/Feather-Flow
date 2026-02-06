@@ -137,6 +137,11 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
         validate_contracts(&project, &models_to_validate, &args.state, &mut ctx)?;
     }
 
+    // Validate governance if --governance flag is set
+    if args.governance {
+        validate_governance(&project, &models_to_validate, &mut ctx);
+    }
+
     print_issues_and_summary(&ctx, args.strict)
 }
 
@@ -200,6 +205,18 @@ fn validate_sql_syntax(
 
             match parser.parse(&rendered) {
                 Ok(stmts) => {
+                    // Reject CTEs and derived tables — each transform must be its own model
+                    if let Err(e) = ff_sql::validate_no_complex_queries(&stmts) {
+                        let code = match &e {
+                            ff_sql::SqlError::CteNotAllowed { .. } => "S005",
+                            ff_sql::SqlError::DerivedTableNotAllowed => "S006",
+                            _ => "S004",
+                        };
+                        ctx.error(code, e.to_string(), Some(model.path.display().to_string()));
+                        sql_errors += 1;
+                        continue;
+                    }
+
                     let deps = ff_sql::extract_dependencies(&stmts);
                     let (model_deps, _, unknown_deps) =
                         ff_sql::extractor::categorize_dependencies_with_unknown(
@@ -347,6 +364,25 @@ fn validate_schemas(
                     );
                     schema_warnings += 1;
                 }
+            }
+        }
+    }
+
+    // Check for missing schema files (1:1 YAML per model is always enforced)
+    for name in models {
+        if let Some(model) = project.get_model(name) {
+            if model.schema.is_none() {
+                let expected = model.path.with_extension("yml");
+                ctx.error(
+                    "E010",
+                    format!(
+                        "Model '{}' is missing a required schema file ({})",
+                        name,
+                        expected.display()
+                    ),
+                    Some(model.path.display().to_string()),
+                );
+                schema_warnings += 1;
             }
         }
     }
@@ -582,6 +618,87 @@ fn validate_contracts(
     }
 
     Ok(())
+}
+
+/// Validate data governance rules
+///
+/// Checks:
+/// - G001: Column missing classification (when `require_classification` is true)
+/// - G002: PII column has no description
+/// - G003: PII column missing not_null test
+fn validate_governance(project: &Project, models: &[String], ctx: &mut ValidationContext) {
+    print!("Checking data governance... ");
+    let require_classification = project.config.data_classification.require_classification;
+    let mut governance_issues = 0;
+
+    for name in models {
+        if let Some(model) = project.get_model(name) {
+            if let Some(schema) = &model.schema {
+                let file_path = model.path.with_extension("yml").display().to_string();
+
+                for column in &schema.columns {
+                    // G001: Missing classification (when require_classification is true)
+                    if require_classification && column.classification.is_none() {
+                        ctx.warning(
+                            "G001",
+                            format!(
+                                "Column '{}' in model '{}' has no data classification",
+                                column.name, name
+                            ),
+                            Some(file_path.clone()),
+                        );
+                        governance_issues += 1;
+                    }
+
+                    // G002: PII column has no description
+                    if column.classification == Some(ff_core::model::DataClassification::Pii)
+                        && column.description.is_none()
+                    {
+                        ctx.warning(
+                            "G002",
+                            format!(
+                                "PII column '{}' in model '{}' has no description",
+                                column.name, name
+                            ),
+                            Some(file_path.clone()),
+                        );
+                        governance_issues += 1;
+                    }
+
+                    // G003: PII column missing not_null test
+                    if column.classification == Some(ff_core::model::DataClassification::Pii) {
+                        let has_not_null = column.tests.iter().any(|t| {
+                            matches!(
+                                t,
+                                ff_core::model::TestDefinition::Simple(name) if name == "not_null"
+                            )
+                        });
+                        if !has_not_null {
+                            ctx.warning(
+                                "G003",
+                                format!(
+                                    "PII column '{}' in model '{}' is missing not_null test",
+                                    column.name, name
+                                ),
+                                Some(file_path.clone()),
+                            );
+                            governance_issues += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if governance_issues == 0 {
+        if require_classification {
+            println!("✓");
+        } else {
+            println!("✓ (classification optional)");
+        }
+    } else {
+        println!("{} issues", governance_issues);
+    }
 }
 
 /// Print all issues and final summary

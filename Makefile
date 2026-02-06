@@ -4,7 +4,7 @@
         ff-test ff-test-verbose ff-test-fail-fast ff-seed ff-seed-full-refresh \
         ff-docs ff-docs-json ff-validate ff-validate-strict ff-sources ff-help \
         dev-cycle dev-validate dev-fresh help run watch test-verbose test-integration \
-        test-unit fmt-check clippy doc-open update ci-quick ci-full install claude-auto-run
+        test-unit test-quick test-failed fmt-check clippy doc-open update ci-quick ci-full install claude-auto-run
 
 # =============================================================================
 # Configuration
@@ -33,10 +33,32 @@ watch: ## Watch and rebuild on changes
 # Rust Testing
 # =============================================================================
 
-test: ## Run all tests
-	cargo test --workspace --all-features
+test: ## Run all tests with summary
+	@echo "Running tests..."
+	@cargo test --workspace --all-features 2>&1 | tee /tmp/test-output.txt; \
+	EXIT_CODE=$${PIPESTATUS[0]}; \
+	echo ""; \
+	echo "============================================================"; \
+	echo "TEST SUMMARY"; \
+	echo "============================================================"; \
+	grep -E "^test result:" /tmp/test-output.txt | while read line; do \
+		echo "$$line"; \
+	done; \
+	echo ""; \
+	if [ $$EXIT_CODE -eq 0 ]; then \
+		echo "✓ All tests passed!"; \
+	else \
+		echo "✗ Some tests failed. See output above for details."; \
+		echo ""; \
+		echo "Failed tests:"; \
+		grep -E "^test .* FAILED" /tmp/test-output.txt || true; \
+	fi; \
+	exit $$EXIT_CODE
 
-test-verbose: ## Run tests with output
+test-quick: ## Run tests without output capture (faster feedback)
+	cargo test --workspace --all-features -- --test-threads=4
+
+test-verbose: ## Run tests with stdout/stderr output
 	cargo test --workspace -- --nocapture
 
 test-integration: ## Run integration tests only
@@ -44,6 +66,9 @@ test-integration: ## Run integration tests only
 
 test-unit: ## Run unit tests only
 	cargo test --workspace --lib
+
+test-failed: ## Re-run only previously failed tests
+	cargo test --workspace -- --failed
 
 # =============================================================================
 # Code Quality

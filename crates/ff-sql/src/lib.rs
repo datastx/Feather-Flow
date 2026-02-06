@@ -17,6 +17,9 @@ pub use dialect::{DuckDbDialect, SnowflakeDialect, SqlDialect};
 pub use error::SqlError;
 pub use extractor::extract_dependencies;
 pub use inline::{collect_ephemeral_dependencies, inline_ephemeral_ctes};
-pub use lineage::{extract_column_lineage, ColumnLineage, ColumnRef, ModelLineage};
+pub use lineage::{
+    extract_column_lineage, ColumnLineage, ColumnRef, LineageEdge, ModelLineage, ProjectLineage,
+};
 pub use parser::SqlParser;
 pub use suggestions::{suggest_tests, ColumnSuggestions, ModelSuggestions, TestSuggestion};
+pub use validator::validate_no_complex_queries;
