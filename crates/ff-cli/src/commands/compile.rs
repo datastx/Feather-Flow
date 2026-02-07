@@ -76,6 +76,8 @@ struct CompiledModel {
     materialization: Materialization,
     dependencies: Vec<String>,
     output_path: std::path::PathBuf,
+    /// Query comment to append when writing to disk
+    query_comment: Option<String>,
 }
 
 /// Execute the compile command
@@ -89,6 +91,16 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
 
     // Resolve target from CLI flag or FF_TARGET env var
     let target = Config::resolve_target(global.target.as_deref());
+
+    // Create query comment context if enabled
+    let comment_ctx = if project.config.query_comment.enabled {
+        Some(ff_core::query_comment::QueryCommentContext::new(
+            &project.config.name,
+            target.as_deref(),
+        ))
+    } else {
+        None
+    };
 
     // Get vars merged with target overrides, then merge with CLI --vars
     let base_vars = project.config.get_merged_vars(target.as_deref());
@@ -154,6 +166,7 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
             &project_root,
             &output_dir,
             default_materialization,
+            comment_ctx.as_ref(),
         ) {
             Ok(compiled) => {
                 dependencies.insert(name.clone(), compiled.dependencies.clone());
@@ -275,12 +288,17 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
                 ))?;
             }
 
-            std::fs::write(&compiled.output_path, &final_sql).context(format!(
+            // Append query comment to written file, but keep in-memory SQL clean for checksums
+            let sql_to_write = match &compiled.query_comment {
+                Some(comment) => ff_core::query_comment::append_query_comment(&final_sql, comment),
+                None => final_sql.clone(),
+            };
+            std::fs::write(&compiled.output_path, &sql_to_write).context(format!(
                 "Failed to write compiled SQL for model: {}",
                 compiled.name
             ))?;
 
-            // Also update the model's compiled_sql with the inlined version
+            // Also update the model's compiled_sql with the clean version (no comment)
             if let Some(model) = project.get_model_mut(&compiled.name) {
                 model.compiled_sql = Some(final_sql);
             }
@@ -397,6 +415,7 @@ fn compile_model_phase1(
     project_root: &Path,
     output_dir: &Path,
     default_materialization: Materialization,
+    comment_ctx: Option<&ff_core::query_comment::QueryCommentContext>,
 ) -> Result<CompiledModel> {
     let model = project
         .get_model_mut(name)
@@ -485,12 +504,18 @@ fn compile_model_phase1(
     let mat = model.config.materialized.unwrap_or(default_materialization);
     let output_path = compute_compiled_path(&model.path, project_root, output_dir);
 
+    let query_comment = comment_ctx.map(|ctx| {
+        let metadata = ctx.build_metadata(name, &mat.to_string());
+        ff_core::query_comment::build_query_comment(&metadata)
+    });
+
     Ok(CompiledModel {
         name: name.to_string(),
         sql: rendered,
         materialization: mat,
         dependencies: model_deps,
         output_path,
+        query_comment,
     })
 }
 

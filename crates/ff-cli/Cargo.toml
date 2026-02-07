@@ -26,6 +26,7 @@ ff-sql = { path = "../ff-sql" }
 ff-jinja = { path = "../ff-jinja" }
 ff-db = { path = "../ff-db" }
 ff-test = { path = "../ff-test" }
+ff-analysis = { path = "../ff-analysis" }
 
 [dev-dependencies]
 tempfile = "3.10"

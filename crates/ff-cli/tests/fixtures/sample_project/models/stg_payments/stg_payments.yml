@@ -1,0 +1,29 @@
+version: 1
+
+description: "Staged payments from raw source with renamed columns"
+owner: data-team
+tags:
+  - staging
+  - payments
+
+columns:
+  - name: payment_id
+    type: INTEGER
+    description: "Unique payment identifier"
+    tests:
+      - unique
+      - not_null
+  - name: order_id
+    type: INTEGER
+    description: "Reference to the order"
+    tests:
+      - not_null
+  - name: payment_method
+    type: VARCHAR
+    description: "Payment method used (credit_card, paypal, debit_card, gift_card)"
+  - name: amount
+    type: DECIMAL(10,2)
+    description: "Payment amount in dollars"
+  - name: payment_date
+    type: DATE
+    description: "Date the payment was made"

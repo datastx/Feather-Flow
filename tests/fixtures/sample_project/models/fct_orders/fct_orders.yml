@@ -1,6 +1,6 @@
 version: 1
 
-description: "Fact table for orders with customer details"
+description: "Fact table for orders with customer details and payment information"
 owner: analytics-team
 tags:
   - marts
@@ -9,17 +9,41 @@ tags:
 
 columns:
   - name: order_id
+    type: INTEGER
     description: "Unique identifier for the order"
     classification: internal
     tests:
       - unique
       - not_null
+  - name: customer_id
+    type: INTEGER
+    description: "Reference to the customer"
+    tests:
+      - not_null
   - name: customer_name
+    type: VARCHAR
     description: "Customer full name"
     classification: pii
+  - name: customer_tier
+    type: VARCHAR
+    description: "Customer tier at time of order"
   - name: order_date
+    type: DATE
     description: "Date the order was placed"
     classification: internal
   - name: amount
+    type: DECIMAL(10,2)
     description: "Order amount in dollars"
     classification: sensitive
+  - name: status
+    type: VARCHAR
+    description: "Order status"
+  - name: payment_total
+    type: DECIMAL(10,2)
+    description: "Total payments received"
+  - name: payment_count
+    type: INTEGER
+    description: "Number of payments made"
+  - name: balance_due
+    type: DECIMAL(10,2)
+    description: "Remaining balance (amount - payment_total)"

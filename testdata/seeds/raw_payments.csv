@@ -1,0 +1,16 @@
+id,order_id,payment_method,amount,created_at
+1,1,credit_card,29.99,2024-01-15
+2,1,credit_card,20.00,2024-01-15
+3,2,paypal,75.50,2024-01-16
+4,3,credit_card,120.00,2024-01-17
+5,4,debit_card,45.00,2024-01-18
+6,5,credit_card,89.99,2024-01-19
+7,5,gift_card,10.00,2024-01-19
+8,6,paypal,200.00,2024-01-20
+9,7,credit_card,150.00,2024-01-21
+10,8,debit_card,60.00,2024-01-22
+11,8,credit_card,5.50,2024-01-22
+12,9,credit_card,300.00,2024-01-23
+13,10,paypal,55.00,2024-01-24
+14,10,credit_card,20.00,2024-01-24
+15,10,gift_card,10.00,2024-01-24

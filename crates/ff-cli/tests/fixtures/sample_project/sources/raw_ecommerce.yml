@@ -36,3 +36,39 @@ tables:
         type: VARCHAR
       - name: email
         type: VARCHAR
+
+  - name: raw_products
+    description: "Raw product data loaded from CSV"
+    columns:
+      - name: id
+        type: INTEGER
+        tests:
+          - unique
+          - not_null
+      - name: name
+        type: VARCHAR
+      - name: category
+        type: VARCHAR
+      - name: price
+        type: DECIMAL(10,2)
+      - name: active
+        type: BOOLEAN
+
+  - name: raw_payments
+    description: "Raw payment data loaded from CSV"
+    columns:
+      - name: id
+        type: INTEGER
+        tests:
+          - unique
+          - not_null
+      - name: order_id
+        type: INTEGER
+        tests:
+          - not_null
+      - name: payment_method
+        type: VARCHAR
+      - name: amount
+        type: DECIMAL(10,2)
+      - name: created_at
+        type: DATE

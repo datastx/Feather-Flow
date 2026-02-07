@@ -666,12 +666,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
+name = "ff-analysis"
+version = "0.1.0"
+dependencies = [
+ "ff-core",
+ "ff-sql",
+ "serde",
+ "serde_json",
+ "sqlparser",
+ "thiserror",
+]
+
+[[package]]
 name = "ff-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "ff-analysis",
  "ff-core",
  "ff-db",
  "ff-jinja",

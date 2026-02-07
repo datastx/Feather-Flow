@@ -1,0 +1,39 @@
+version: 1
+
+description: "Customer dimension table with metrics and tier classification"
+owner: analytics-team
+tags:
+  - marts
+  - dimensions
+  - customers
+
+columns:
+  - name: customer_id
+    type: INTEGER
+    description: "Unique customer identifier"
+    tests:
+      - unique
+      - not_null
+  - name: customer_name
+    type: VARCHAR
+    description: "Customer full name"
+    classification: pii
+  - name: email
+    type: VARCHAR
+    description: "Customer email address"
+    classification: pii
+  - name: signup_date
+    type: DATE
+    description: "Date the customer signed up"
+  - name: total_orders
+    type: INTEGER
+    description: "Total number of orders placed"
+  - name: lifetime_value
+    type: DECIMAL(10,2)
+    description: "Total amount spent across all orders"
+  - name: last_order_date
+    type: DATE
+    description: "Date of the most recent order"
+  - name: computed_tier
+    type: VARCHAR
+    description: "Customer tier based on lifetime value (platinum, gold, silver, bronze)"

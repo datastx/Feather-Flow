@@ -89,6 +89,8 @@ struct CompiledModel {
     post_hook: Vec<String>,
     /// Model schema for contract validation (from .yml file)
     model_schema: Option<ModelSchema>,
+    /// Query comment to append when executing SQL
+    query_comment: Option<String>,
 }
 
 /// Check if manifest cache is valid (newer than all source files)
@@ -135,7 +137,18 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
 
     let db = create_database_connection(&project, global)?;
 
-    let compiled_models = load_or_compile_models(&project, args, global)?;
+    // Create query comment context if enabled
+    let comment_ctx = if project.config.query_comment.enabled {
+        let target = ff_core::config::Config::resolve_target(global.target.as_deref());
+        Some(ff_core::query_comment::QueryCommentContext::new(
+            &project.config.name,
+            target.as_deref(),
+        ))
+    } else {
+        None
+    };
+
+    let compiled_models = load_or_compile_models(&project, args, global, comment_ctx.as_ref())?;
 
     // Smart build: filter out unchanged models
     let smart_skipped: HashSet<String> = if args.smart {
@@ -469,6 +482,7 @@ fn load_or_compile_models(
     project: &Project,
     args: &RunArgs,
     global: &GlobalArgs,
+    comment_ctx: Option<&ff_core::query_comment::QueryCommentContext>,
 ) -> Result<HashMap<String, CompiledModel>> {
     let all_model_names: Vec<String> = project
         .model_names()
@@ -487,12 +501,12 @@ fn load_or_compile_models(
         if global.verbose {
             eprintln!("[verbose] Using cached manifest");
         }
-        load_from_manifest(project, manifest, &all_model_names)
+        load_from_manifest(project, manifest, &all_model_names, comment_ctx)
     } else {
         if global.verbose && !args.no_cache {
             eprintln!("[verbose] Cache invalid or missing, recompiling");
         }
-        compile_all_models(project, &all_model_names)
+        compile_all_models(project, &all_model_names, comment_ctx)
     }
 }
 
@@ -501,6 +515,7 @@ fn load_from_manifest(
     project: &Project,
     manifest: &Manifest,
     model_names: &[String],
+    comment_ctx: Option<&ff_core::query_comment::QueryCommentContext>,
 ) -> Result<HashMap<String, CompiledModel>> {
     let mut compiled_models = HashMap::new();
     let macro_paths = project.config.macro_paths_absolute(&project.root);
@@ -509,7 +524,7 @@ fn load_from_manifest(
     for name in model_names {
         if let Some(manifest_model) = manifest.get_model(name) {
             let compiled_path = project.root.join(&manifest_model.compiled_path);
-            let sql = std::fs::read_to_string(&compiled_path).unwrap_or_else(|_| {
+            let raw_sql = std::fs::read_to_string(&compiled_path).unwrap_or_else(|_| {
                 // Fall back to recompiling this model
                 project
                     .get_model(name)
@@ -522,8 +537,25 @@ fn load_from_manifest(
                     .unwrap_or_default()
             });
 
+            // Strip any existing query comment from cached compiled SQL
+            let sql = ff_core::query_comment::strip_query_comment(&raw_sql).to_string();
+
+            // Regenerate query comment for this invocation
+            let query_comment = comment_ctx.map(|ctx| {
+                let metadata = ctx.build_metadata(name, &manifest_model.materialized.to_string());
+                ff_core::query_comment::build_query_comment(&metadata)
+            });
+
             // Get model schema from project if available
             let model_schema = project.get_model(name).and_then(|m| m.schema.clone());
+
+            // Merge project-level hooks with manifest (model-level) hooks
+            // Project pre_hooks run BEFORE model pre_hooks
+            let mut pre_hook = project.config.pre_hook.clone();
+            pre_hook.extend(manifest_model.pre_hook.clone());
+            // Model post_hooks run BEFORE project post_hooks
+            let mut post_hook = manifest_model.post_hook.clone();
+            post_hook.extend(project.config.post_hook.clone());
 
             compiled_models.insert(
                 name.clone(),
@@ -535,9 +567,10 @@ fn load_from_manifest(
                     unique_key: manifest_model.unique_key.clone(),
                     incremental_strategy: manifest_model.incremental_strategy,
                     on_schema_change: manifest_model.on_schema_change,
-                    pre_hook: manifest_model.pre_hook.clone(),
-                    post_hook: manifest_model.post_hook.clone(),
+                    pre_hook,
+                    post_hook,
                     model_schema,
+                    query_comment,
                 },
             );
         }
@@ -550,6 +583,7 @@ fn load_from_manifest(
 fn compile_all_models(
     project: &Project,
     model_names: &[String],
+    comment_ctx: Option<&ff_core::query_comment::QueryCommentContext>,
 ) -> Result<HashMap<String, CompiledModel>> {
     let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
         .context("Invalid SQL dialect")?;
@@ -631,12 +665,22 @@ fn compile_all_models(
                 (None, None, None)
             };
 
-        // Parse hooks from config
-        let pre_hook = parse_hooks_from_config(&config_values, "pre_hook");
-        let post_hook = parse_hooks_from_config(&config_values, "post_hook");
+        // Parse hooks from config and merge with project-level hooks
+        // Project pre_hooks run BEFORE model pre_hooks
+        let mut pre_hook = project.config.pre_hook.clone();
+        pre_hook.extend(parse_hooks_from_config(&config_values, "pre_hook"));
+        // Model post_hooks run BEFORE project post_hooks
+        let mut post_hook = parse_hooks_from_config(&config_values, "post_hook");
+        post_hook.extend(project.config.post_hook.clone());
 
         // Get model schema for contract validation
         let model_schema = model.schema.clone();
+
+        // Build query comment for this model
+        let query_comment = comment_ctx.map(|ctx| {
+            let metadata = ctx.build_metadata(name, &mat.to_string());
+            ff_core::query_comment::build_query_comment(&metadata)
+        });
 
         compiled_models.insert(
             name.to_string(),
@@ -651,6 +695,7 @@ fn compile_all_models(
                 pre_hook,
                 post_hook,
                 model_schema,
+                query_comment,
             },
         );
     }
@@ -881,13 +926,14 @@ async fn execute_incremental(
     table_name: &str,
     compiled: &CompiledModel,
     full_refresh: bool,
+    exec_sql: &str,
 ) -> ff_db::error::DbResult<()> {
     // Check if table exists
     let exists = db.relation_exists(table_name).await.unwrap_or(false);
 
     if !exists || full_refresh {
         // First run or full refresh: create table from full query
-        return db.create_table_as(table_name, &compiled.sql, true).await;
+        return db.create_table_as(table_name, exec_sql, true).await;
     }
 
     // Check for schema changes
@@ -901,7 +947,7 @@ async fn execute_incremental(
             .map(|(name, _)| name.to_lowercase())
             .collect();
 
-        // Get new query schema
+        // Get new query schema (use clean SQL without comment for describe)
         let new_schema = db.describe_query(&compiled.sql).await?;
         let new_columns: std::collections::HashMap<String, String> = new_schema
             .iter()
@@ -964,7 +1010,7 @@ async fn execute_incremental(
 
     match strategy {
         IncrementalStrategy::Append => {
-            let insert_sql = format!("INSERT INTO {} {}", table_name, compiled.sql);
+            let insert_sql = format!("INSERT INTO {} {}", table_name, exec_sql);
             db.execute(&insert_sql).await.map(|_| ())
         }
         IncrementalStrategy::Merge => {
@@ -974,7 +1020,7 @@ async fn execute_incremental(
                     "Merge strategy requires unique_key to be specified".to_string(),
                 ))
             } else {
-                db.merge_into(table_name, &compiled.sql, &unique_keys).await
+                db.merge_into(table_name, exec_sql, &unique_keys).await
             }
         }
         IncrementalStrategy::DeleteInsert => {
@@ -984,8 +1030,7 @@ async fn execute_incremental(
                     "Delete+insert strategy requires unique_key to be specified".to_string(),
                 ))
             } else {
-                db.delete_insert(table_name, &compiled.sql, &unique_keys)
-                    .await
+                db.delete_insert(table_name, exec_sql, &unique_keys).await
             }
         }
     }
@@ -1215,17 +1260,18 @@ async fn execute_models_sequential(
             let _ = db.drop_if_exists(&qualified_name).await;
         }
 
+        // Append query comment to SQL for execution (but compiled.sql stays clean for checksums)
+        let exec_sql = match &compiled.query_comment {
+            Some(comment) => ff_core::query_comment::append_query_comment(&compiled.sql, comment),
+            None => compiled.sql.clone(),
+        };
+
         let result = match compiled.materialization {
-            Materialization::View => {
-                db.create_view_as(&qualified_name, &compiled.sql, true)
-                    .await
-            }
-            Materialization::Table => {
-                db.create_table_as(&qualified_name, &compiled.sql, true)
-                    .await
-            }
+            Materialization::View => db.create_view_as(&qualified_name, &exec_sql, true).await,
+            Materialization::Table => db.create_table_as(&qualified_name, &exec_sql, true).await,
             Materialization::Incremental => {
-                execute_incremental(db, &qualified_name, compiled, args.full_refresh).await
+                execute_incremental(db, &qualified_name, compiled, args.full_refresh, &exec_sql)
+                    .await
             }
             Materialization::Ephemeral => {
                 // Ephemeral models don't create database objects
@@ -1464,6 +1510,7 @@ async fn execute_models_parallel(
                 continue;
             }
             let sql = compiled.sql.clone();
+            let query_comment = compiled.query_comment.clone();
             let materialization = compiled.materialization;
             let schema = compiled.schema.clone();
             let unique_key = compiled.unique_key.clone();
@@ -1532,9 +1579,16 @@ async fn execute_models_parallel(
                     let _ = db.drop_if_exists(&qualified_name).await;
                 }
 
+                // Append query comment to SQL for execution
+                let exec_sql = match &query_comment {
+                    Some(comment) => ff_core::query_comment::append_query_comment(&sql, comment),
+                    None => sql.clone(),
+                };
+
                 // Create a temporary CompiledModel for execute_incremental
                 let compiled = CompiledModel {
                     sql: sql.clone(),
+                    query_comment: query_comment.clone(),
                     materialization,
                     schema: schema.clone(),
                     dependencies: vec![], // Not needed for execution
@@ -1547,10 +1601,21 @@ async fn execute_models_parallel(
                 };
 
                 let result = match materialization {
-                    Materialization::View => db.create_view_as(&qualified_name, &sql, true).await,
-                    Materialization::Table => db.create_table_as(&qualified_name, &sql, true).await,
+                    Materialization::View => {
+                        db.create_view_as(&qualified_name, &exec_sql, true).await
+                    }
+                    Materialization::Table => {
+                        db.create_table_as(&qualified_name, &exec_sql, true).await
+                    }
                     Materialization::Incremental => {
-                        execute_incremental(&db, &qualified_name, &compiled, full_refresh).await
+                        execute_incremental(
+                            &db,
+                            &qualified_name,
+                            &compiled,
+                            full_refresh,
+                            &exec_sql,
+                        )
+                        .await
                     }
                     Materialization::Ephemeral => {
                         // Ephemeral models don't create database objects

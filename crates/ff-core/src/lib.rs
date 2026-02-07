@@ -15,6 +15,7 @@ pub mod manifest;
 pub mod metric;
 pub mod model;
 pub mod project;
+pub mod query_comment;
 pub mod run_state;
 pub mod seed;
 pub mod selector;
@@ -37,6 +38,7 @@ pub use model::{
     Model, ModelSchema, SchemaContract,
 };
 pub use project::Project;
+pub use query_comment::{QueryCommentContext, QueryCommentMetadata};
 pub use run_state::{CompletedModel, FailedModel, RunState, RunStateSummary, RunStatus};
 pub use seed::{Seed, SeedConfig};
 pub use selector::Selector;

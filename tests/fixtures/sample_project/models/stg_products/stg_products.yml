@@ -1,0 +1,27 @@
+version: 1
+
+description: "Staged products from raw source with renamed columns"
+owner: data-team
+tags:
+  - staging
+  - products
+
+columns:
+  - name: product_id
+    type: INTEGER
+    description: "Unique product identifier"
+    tests:
+      - unique
+      - not_null
+  - name: product_name
+    type: VARCHAR
+    description: "Product display name"
+  - name: category
+    type: VARCHAR
+    description: "Product category"
+  - name: price
+    type: DECIMAL(10,2)
+    description: "Product price in dollars"
+  - name: active
+    type: BOOLEAN
+    description: "Whether the product is currently active"

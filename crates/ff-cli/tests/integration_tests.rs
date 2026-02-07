@@ -19,9 +19,15 @@ fn test_load_sample_project() {
     let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
 
     assert_eq!(project.config.name, "sample_project");
-    assert_eq!(project.models.len(), 3);
+    assert_eq!(project.models.len(), 9);
     assert!(project.models.contains_key("stg_orders"));
     assert!(project.models.contains_key("stg_customers"));
+    assert!(project.models.contains_key("stg_products"));
+    assert!(project.models.contains_key("stg_payments"));
+    assert!(project.models.contains_key("int_orders_enriched"));
+    assert!(project.models.contains_key("int_customer_metrics"));
+    assert!(project.models.contains_key("dim_customers"));
+    assert!(project.models.contains_key("dim_products"));
     assert!(project.models.contains_key("fct_orders"));
 }
 
@@ -350,7 +356,7 @@ fn test_source_discovery() {
         .expect("raw_ecommerce source should exist");
 
     assert_eq!(ecommerce_source.schema, "main");
-    assert_eq!(ecommerce_source.tables.len(), 2);
+    assert_eq!(ecommerce_source.tables.len(), 4);
 
     // Check raw_orders table
     let raw_orders_table = ecommerce_source
@@ -367,6 +373,22 @@ fn test_source_discovery() {
         .find(|t| t.name == "raw_customers")
         .expect("raw_customers table should exist");
     assert_eq!(raw_customers_table.columns.len(), 3);
+
+    // Check raw_products table
+    let raw_products_table = ecommerce_source
+        .tables
+        .iter()
+        .find(|t| t.name == "raw_products")
+        .expect("raw_products table should exist");
+    assert_eq!(raw_products_table.columns.len(), 5);
+
+    // Check raw_payments table
+    let raw_payments_table = ecommerce_source
+        .tables
+        .iter()
+        .find(|t| t.name == "raw_payments")
+        .expect("raw_payments table should exist");
+    assert_eq!(raw_payments_table.columns.len(), 5);
 }
 
 /// Test source has kind: sources validation
@@ -1838,4 +1860,276 @@ fn test_ephemeral_inlining_with_existing_cte() {
         ephemeral_pos < original_cte_pos,
         "Ephemeral CTE should come first"
     );
+}
+
+// ============================================================
+// ff-analysis integration tests
+// ============================================================
+
+/// Test analysis lowering on sample project models
+#[test]
+fn test_analysis_lower_sample_project() {
+    use ff_analysis::{lower_statement, SchemaCatalog};
+
+    let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
+    let parser = SqlParser::duckdb();
+    let jinja = JinjaEnvironment::new(&project.config.vars);
+
+    let mut catalog: SchemaCatalog = HashMap::new();
+
+    // Lower each model successfully (in topological order)
+    let model_names = [
+        "stg_orders",
+        "stg_customers",
+        "stg_products",
+        "stg_payments",
+        "int_orders_enriched",
+        "int_customer_metrics",
+        "dim_customers",
+        "dim_products",
+        "fct_orders",
+    ];
+    for name in &model_names {
+        let model = project.get_model(name).unwrap();
+        let rendered = jinja.render(&model.raw_sql).unwrap();
+        let stmts = parser.parse(&rendered).unwrap();
+        let stmt = stmts.first().unwrap();
+        let ir = lower_statement(stmt, &catalog)
+            .unwrap_or_else(|e| panic!("Failed to lower {}: {}", name, e));
+
+        // Output schema should have columns
+        assert!(
+            !ir.schema().is_empty(),
+            "Model '{}' should produce a non-empty schema",
+            name
+        );
+
+        // Register output for downstream models
+        catalog.insert(name.to_string(), ir.schema().clone());
+    }
+}
+
+/// Test the PassManager runs end-to-end on sample project
+#[test]
+fn test_analysis_pass_manager_sample_project() {
+    use ff_analysis::ir::schema::RelSchema;
+    use ff_analysis::ir::types::{Nullability, SqlType, TypedColumn};
+    use ff_analysis::{lower_statement, AnalysisContext, PassManager, RelOp, SchemaCatalog};
+    use ff_sql::{extract_column_lineage, ProjectLineage};
+
+    let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
+    let parser = SqlParser::duckdb();
+    let jinja = JinjaEnvironment::new(&project.config.vars);
+
+    let known_models: std::collections::HashSet<String> = project.models.keys().cloned().collect();
+
+    let mut catalog: SchemaCatalog = HashMap::new();
+    let mut yaml_schemas: HashMap<String, RelSchema> = HashMap::new();
+    let mut model_irs: HashMap<String, RelOp> = HashMap::new();
+    let mut project_lineage = ProjectLineage::new();
+
+    // Build schema catalog from YAML
+    for (name, model) in &project.models {
+        if let Some(schema) = &model.schema {
+            let columns: Vec<TypedColumn> = schema
+                .columns
+                .iter()
+                .map(|col| {
+                    let sql_type = col
+                        .data_type
+                        .as_ref()
+                        .map(|dt| ff_analysis::ir::types::parse_sql_type(dt))
+                        .unwrap_or_else(|| SqlType::Unknown("no type".to_string()));
+                    TypedColumn {
+                        name: col.name.clone(),
+                        sql_type,
+                        nullability: Nullability::Unknown,
+                        provenance: vec![],
+                    }
+                })
+                .collect();
+            let rel_schema = RelSchema::new(columns);
+            catalog.insert(name.clone(), rel_schema.clone());
+            yaml_schemas.insert(name.clone(), rel_schema);
+        }
+    }
+
+    // Build dep map and DAG
+    let dep_map: HashMap<String, Vec<String>> = project
+        .models
+        .iter()
+        .map(|(name, model)| {
+            let deps: Vec<String> = model
+                .depends_on
+                .iter()
+                .filter(|d| known_models.contains(*d))
+                .cloned()
+                .collect();
+            (name.clone(), deps)
+        })
+        .collect();
+
+    let dag = ModelDag::build(&dep_map).unwrap();
+    let topo_order = dag.topological_order().unwrap();
+
+    // Lower models in topological order
+    for name in &topo_order {
+        let model = project.models.get(name).unwrap();
+        let rendered = jinja.render(&model.raw_sql).unwrap();
+        let stmts = parser.parse(&rendered).unwrap();
+        if let Some(stmt) = stmts.first() {
+            if let Some(lineage) = extract_column_lineage(stmt, name) {
+                project_lineage.add_model_lineage(lineage);
+            }
+            if let Ok(ir) = lower_statement(stmt, &catalog) {
+                catalog.insert(name.clone(), ir.schema().clone());
+                model_irs.insert(name.clone(), ir);
+            }
+        }
+    }
+    project_lineage.resolve_edges(&known_models);
+
+    assert!(
+        !model_irs.is_empty(),
+        "Should have lowered at least one model"
+    );
+
+    let ctx = AnalysisContext::new(project, dag, yaml_schemas, project_lineage);
+    let pass_manager = PassManager::with_defaults();
+
+    let order: Vec<String> = topo_order
+        .into_iter()
+        .filter(|n| model_irs.contains_key(n))
+        .collect();
+
+    // Run all passes
+    let diagnostics = pass_manager.run(&order, &model_irs, &ctx, None);
+
+    // Verify the run completed — diagnostics is a valid Vec (may be empty or non-empty
+    // depending on sample project content; we just verify no panics occurred)
+    let _ = diagnostics.len();
+
+    // Verify diagnostic structure
+    for d in &diagnostics {
+        assert!(!d.code.is_empty(), "Diagnostic code should not be empty");
+        assert!(!d.model.is_empty(), "Diagnostic model should not be empty");
+        assert!(
+            !d.pass_name.is_empty(),
+            "Diagnostic pass_name should not be empty"
+        );
+    }
+}
+
+/// Test pass filtering works
+#[test]
+fn test_analysis_pass_filter() {
+    use ff_analysis::{lower_statement, AnalysisContext, PassManager, RelOp, SchemaCatalog};
+    use ff_sql::ProjectLineage;
+
+    let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
+    let parser = SqlParser::duckdb();
+    let jinja = JinjaEnvironment::new(&project.config.vars);
+
+    let mut catalog: SchemaCatalog = HashMap::new();
+    let mut model_irs: HashMap<String, RelOp> = HashMap::new();
+
+    let known_models: std::collections::HashSet<String> = project.models.keys().cloned().collect();
+
+    let dep_map: HashMap<String, Vec<String>> = project
+        .models
+        .iter()
+        .map(|(name, model)| {
+            let deps: Vec<String> = model
+                .depends_on
+                .iter()
+                .filter(|d| known_models.contains(*d))
+                .cloned()
+                .collect();
+            (name.clone(), deps)
+        })
+        .collect();
+
+    let dag = ModelDag::build(&dep_map).unwrap();
+    let topo_order = dag.topological_order().unwrap();
+
+    for name in &topo_order {
+        let model = project.models.get(name).unwrap();
+        let rendered = jinja.render(&model.raw_sql).unwrap();
+        let stmts = parser.parse(&rendered).unwrap();
+        if let Some(stmt) = stmts.first() {
+            if let Ok(ir) = lower_statement(stmt, &catalog) {
+                catalog.insert(name.clone(), ir.schema().clone());
+                model_irs.insert(name.clone(), ir);
+            }
+        }
+    }
+
+    let ctx = AnalysisContext::new(project, dag, HashMap::new(), ProjectLineage::new());
+    let pass_manager = PassManager::with_defaults();
+    let order: Vec<String> = topo_order
+        .into_iter()
+        .filter(|n| model_irs.contains_key(n))
+        .collect();
+
+    // Run only type_inference pass
+    let filter = vec!["type_inference".to_string()];
+    let diags = pass_manager.run(&order, &model_irs, &ctx, Some(&filter));
+
+    // All diagnostics should come from type_inference
+    for d in &diags {
+        assert_eq!(
+            d.pass_name, "type_inference",
+            "With filter, all diagnostics should come from type_inference, got: {}",
+            d.pass_name
+        );
+    }
+}
+
+/// Test diagnostic severity ordering
+#[test]
+fn test_analysis_severity_ordering() {
+    use ff_analysis::Severity;
+
+    assert!(Severity::Info < Severity::Warning);
+    assert!(Severity::Warning < Severity::Error);
+    assert!(Severity::Info < Severity::Error);
+}
+
+/// Test diagnostic JSON serialization
+#[test]
+fn test_analysis_diagnostic_json_roundtrip() {
+    use ff_analysis::{Diagnostic, Severity};
+
+    let diag = Diagnostic {
+        code: "A001".to_string(),
+        severity: Severity::Info,
+        message: "Test message".to_string(),
+        model: "test_model".to_string(),
+        column: Some("col1".to_string()),
+        hint: Some("Fix it".to_string()),
+        pass_name: "type_inference".to_string(),
+    };
+
+    let json = serde_json::to_string(&diag).unwrap();
+    let deserialized: Diagnostic = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(deserialized.code, "A001");
+    assert_eq!(deserialized.severity, Severity::Info);
+    assert_eq!(deserialized.model, "test_model");
+    assert_eq!(deserialized.column, Some("col1".to_string()));
+}
+
+/// Test PassManager lists all pass names
+#[test]
+fn test_analysis_pass_names() {
+    use ff_analysis::PassManager;
+
+    let pm = PassManager::with_defaults();
+    let names = pm.pass_names();
+
+    assert!(names.contains(&"type_inference"));
+    assert!(names.contains(&"nullability"));
+    assert!(names.contains(&"join_keys"));
+    assert!(names.contains(&"unused_columns"));
+    assert_eq!(names.len(), 4);
 }

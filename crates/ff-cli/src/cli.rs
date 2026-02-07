@@ -89,6 +89,9 @@ pub enum Commands {
 
     /// Show column-level lineage across models
     Lineage(LineageArgs),
+
+    /// Analyze SQL models for potential issues
+    Analyze(AnalyzeArgs),
 }
 
 /// Arguments for the parse command
@@ -554,4 +557,44 @@ pub enum LineageOutput {
     Json,
     /// DOT graph for Graphviz
     Dot,
+}
+
+/// Arguments for the analyze command
+#[derive(Args, Debug)]
+pub struct AnalyzeArgs {
+    /// Model names to analyze (comma-separated, default: all)
+    #[arg(short, long)]
+    pub models: Option<String>,
+
+    /// Run only specific passes (comma-separated, e.g., type_inference,nullability)
+    #[arg(long)]
+    pub pass: Option<String>,
+
+    /// Output format
+    #[arg(short, long, value_enum, default_value = "table")]
+    pub output: AnalyzeOutput,
+
+    /// Minimum severity to display
+    #[arg(short, long, value_enum, default_value = "info")]
+    pub severity: AnalyzeSeverity,
+}
+
+/// Analyze output formats
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnalyzeOutput {
+    /// Human-readable table
+    Table,
+    /// JSON output
+    Json,
+}
+
+/// Minimum severity filter for analyze output
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AnalyzeSeverity {
+    /// Show all diagnostics
+    Info,
+    /// Show warnings and errors only
+    Warning,
+    /// Show errors only
+    Error,
 }

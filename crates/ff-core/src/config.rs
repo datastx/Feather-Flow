@@ -87,6 +87,14 @@ pub struct Config {
     #[serde(default)]
     pub on_run_end: Vec<String>,
 
+    /// SQL hooks to execute before each model runs (applied to all models)
+    #[serde(default)]
+    pub pre_hook: Vec<String>,
+
+    /// SQL hooks to execute after each model runs (applied to all models)
+    #[serde(default)]
+    pub post_hook: Vec<String>,
+
     /// Named target configurations (e.g., dev, staging, prod)
     /// Each target can override database settings and variables
     #[serde(default)]
@@ -95,6 +103,10 @@ pub struct Config {
     /// Data classification governance settings
     #[serde(default)]
     pub data_classification: DataClassificationConfig,
+
+    /// Query comment configuration for SQL observability
+    #[serde(default)]
+    pub query_comment: QueryCommentConfig,
 }
 
 /// Target-specific configuration overrides
@@ -482,6 +494,20 @@ pub struct DataClassificationConfig {
     pub propagate: bool,
 }
 
+/// Query comment configuration for SQL observability
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryCommentConfig {
+    /// Whether to append query comments to compiled SQL (default: true)
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for QueryCommentConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
 fn default_true() -> bool {
     true
 }
@@ -798,5 +824,29 @@ targets:
         if let Some(v) = original {
             std::env::set_var("FF_TARGET", v);
         }
+    }
+
+    #[test]
+    fn test_project_hooks_default_empty() {
+        let config: Config = serde_yaml::from_str("name: test").unwrap();
+        assert!(config.pre_hook.is_empty());
+        assert!(config.post_hook.is_empty());
+    }
+
+    #[test]
+    fn test_project_hooks_parsing() {
+        let yaml = r#"
+name: test_project
+pre_hook:
+  - "CREATE SCHEMA IF NOT EXISTS staging"
+post_hook:
+  - "ANALYZE {{ this }}"
+  - "GRANT SELECT ON {{ this }} TO analyst"
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.pre_hook.len(), 1);
+        assert_eq!(config.post_hook.len(), 2);
+        assert!(config.pre_hook[0].contains("CREATE SCHEMA"));
+        assert!(config.post_hook[0].contains("ANALYZE"));
     }
 }

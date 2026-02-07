@@ -1,5 +1,6 @@
 //! CLI command implementations
 
+pub mod analyze;
 pub mod clean;
 pub mod compile;
 pub mod diff;

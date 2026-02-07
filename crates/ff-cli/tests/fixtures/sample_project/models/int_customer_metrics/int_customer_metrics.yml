@@ -1,0 +1,27 @@
+version: 1
+
+description: "Customer-level aggregated metrics from orders"
+owner: data-team
+tags:
+  - intermediate
+  - customers
+
+columns:
+  - name: customer_id
+    type: INTEGER
+    description: "Unique customer identifier"
+    tests:
+      - unique
+      - not_null
+  - name: customer_name
+    type: VARCHAR
+    description: "Customer full name"
+  - name: total_orders
+    type: INTEGER
+    description: "Total number of orders placed"
+  - name: lifetime_value
+    type: DECIMAL(10,2)
+    description: "Total amount spent across all orders"
+  - name: last_order_date
+    type: DATE
+    description: "Date of the most recent order"

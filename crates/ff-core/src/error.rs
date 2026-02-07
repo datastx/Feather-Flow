@@ -89,6 +89,10 @@ pub enum CoreError {
     #[error("[E012] Model directory mismatch: directory '{directory}' contains SQL file '{sql_file}' (must match)")]
     ModelDirectoryMismatch { directory: String, sql_file: String },
 
+    /// E013: Model directory contains unexpected extra files
+    #[error("[E013] Model directory '{directory}' contains unexpected files: {files}. Each model directory must contain exactly one .sql and one .yml/.yaml file.")]
+    ExtraFilesInModelDirectory { directory: String, files: String },
+
     /// E009: IO error
     #[error("[E009] IO error: {0}")]
     Io(#[from] std::io::Error),

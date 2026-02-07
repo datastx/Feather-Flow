@@ -168,6 +168,40 @@ impl Project {
                     });
                 }
 
+                // E013: Check for extra files in the model directory
+                let all_files: Vec<PathBuf> = std::fs::read_dir(&path)?
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.path())
+                    .filter(|p| {
+                        p.is_file()
+                            && !p
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .is_some_and(|n| n.starts_with('.'))
+                    })
+                    .collect();
+
+                let extra_files: Vec<String> = all_files
+                    .iter()
+                    .filter(|p| {
+                        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+                        ext != "sql" && ext != "yml" && ext != "yaml"
+                    })
+                    .map(|p| {
+                        p.file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("unknown")
+                            .to_string()
+                    })
+                    .collect();
+
+                if !extra_files.is_empty() {
+                    return Err(CoreError::ExtraFilesInModelDirectory {
+                        directory: dir_name,
+                        files: extra_files.join(", "),
+                    });
+                }
+
                 let model = Model::from_file(sql_path.clone())?;
 
                 if models.contains_key(&model.name) {
@@ -884,6 +918,80 @@ model_paths: ["models"]
             "Expected MissingSchemaFile error, got: {:?}",
             err
         );
+    }
+
+    #[test]
+    fn test_extra_files_in_model_directory_rejected() {
+        let dir = TempDir::new().unwrap();
+
+        std::fs::write(
+            dir.path().join("featherflow.yml"),
+            r#"
+name: test_project
+model_paths: ["models"]
+"#,
+        )
+        .unwrap();
+
+        std::fs::create_dir_all(dir.path().join("models/orders")).unwrap();
+        std::fs::write(
+            dir.path().join("models/orders/orders.sql"),
+            "SELECT 1 AS id",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("models/orders/orders.yml"),
+            "version: 1\ncolumns:\n  - name: id\n",
+        )
+        .unwrap();
+        // Add an extra .txt file
+        std::fs::write(dir.path().join("models/orders/notes.txt"), "some notes").unwrap();
+
+        let result = Project::load(dir.path());
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, CoreError::ExtraFilesInModelDirectory { ref directory, .. } if directory == "orders"),
+            "Expected ExtraFilesInModelDirectory error for 'orders', got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_hidden_files_in_model_directory_allowed() {
+        let dir = TempDir::new().unwrap();
+
+        std::fs::write(
+            dir.path().join("featherflow.yml"),
+            r#"
+name: test_project
+model_paths: ["models"]
+"#,
+        )
+        .unwrap();
+
+        std::fs::create_dir_all(dir.path().join("models/orders")).unwrap();
+        std::fs::write(
+            dir.path().join("models/orders/orders.sql"),
+            "SELECT 1 AS id",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("models/orders/orders.yml"),
+            "version: 1\ncolumns:\n  - name: id\n",
+        )
+        .unwrap();
+        // Add hidden files — should be ignored
+        std::fs::write(dir.path().join("models/orders/.gitkeep"), "").unwrap();
+        std::fs::write(dir.path().join("models/orders/.DS_Store"), "").unwrap();
+
+        let result = Project::load(dir.path());
+        assert!(
+            result.is_ok(),
+            "Hidden files should be allowed: {:?}",
+            result.err()
+        );
+        assert_eq!(result.unwrap().models.len(), 1);
     }
 
     #[test]
