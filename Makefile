@@ -9,7 +9,7 @@ SHELL := /bin/bash
         test-unit test-quick test-failed fmt-check clippy doc-open update ci-quick ci-full install claude-auto-run \
         version version-bump-patch version-set version-tag release \
         build-linux clean-dist \
-        docker-build docker-push docker-login docker-run \
+        docker-build docker-build-release docker-push docker-login docker-run \
         create-release
 
 # =============================================================================
@@ -315,9 +315,16 @@ checksums: ## Create checksums (set ARTIFACTS_DIR=artifacts)
 # Docker
 # =============================================================================
 
-docker-build: ## Build Docker image
+docker-build: ## Build Docker image (full multi-stage, for local dev)
 	docker build \
 		--build-arg VERSION=$(VERSION) \
+		-t $(DOCKER_IMAGE):$(DOCKER_TAG) \
+		-t $(DOCKER_IMAGE):latest \
+		.
+
+docker-build-release: ## Build Docker image from pre-built binary (CI only)
+	docker build \
+		-f Dockerfile.release \
 		-t $(DOCKER_IMAGE):$(DOCKER_TAG) \
 		-t $(DOCKER_IMAGE):latest \
 		.
