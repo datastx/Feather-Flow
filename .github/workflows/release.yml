@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    tags: ['v*.*.*']
+    branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -17,8 +17,43 @@ permissions:
   packages: write
 
 jobs:
+  version-check:
+    name: Check if release needed
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+      tag: ${{ steps.get_version.outputs.tag }}
+      should_release: ${{ steps.check_tag.outputs.should_release }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version from Cargo.toml
+        id: get_version
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Detected version: ${VERSION}"
+
+      - name: Check if tag already exists
+        id: check_tag
+        run: |
+          TAG="v${{ steps.get_version.outputs.version }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists — skipping release"
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Tag $TAG does not exist — will release"
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build-linux:
     name: Build Linux (musl)
+    needs: [version-check]
+    if: needs.version-check.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -51,6 +86,8 @@ jobs:
 
   build-macos:
     name: Build macOS (${{ matrix.target }})
+    needs: [version-check]
+    if: needs.version-check.outputs.should_release == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -84,11 +121,16 @@ jobs:
 
   release:
     name: Create release and push Docker image
-    needs: [build-linux, build-macos]
+    needs: [version-check, build-linux, build-macos]
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Create and push tag
+        run: |
+          git tag ${{ needs.version-check.outputs.tag }}
+          git push origin ${{ needs.version-check.outputs.tag }}
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -106,7 +148,7 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: make create-release TAG=${{ github.ref_name }}
+        run: make create-release TAG=${{ needs.version-check.outputs.tag }}
 
       - name: Log in to GHCR
         run: make docker-login
