@@ -1,0 +1,11 @@
+target/
+dist/
+.git/
+.github/
+docs/
+tests/
+testdata/
+*.md
+!README.md
+.gitignore
+.dockerignore
