@@ -99,9 +99,7 @@ struct SearchEntry {
     resource_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     tags: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     columns: Vec<String>,
 }
 
