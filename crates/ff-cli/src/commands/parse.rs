@@ -8,6 +8,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use crate::cli::{GlobalArgs, ParseArgs, ParseOutput};
+use crate::commands::common::filter_models;
 
 /// Execute the parse command
 pub async fn execute(args: &ParseArgs, global: &GlobalArgs) -> Result<()> {
@@ -119,22 +120,6 @@ pub async fn execute(args: &ParseArgs, global: &GlobalArgs) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Filter models based on the --models argument
-fn filter_models(project: &Project, models_arg: &Option<String>) -> Vec<String> {
-    match models_arg {
-        Some(models) => models
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect(),
-        None => project
-            .model_names()
-            .into_iter()
-            .map(String::from)
-            .collect(),
-    }
 }
 
 /// Model dependencies for output

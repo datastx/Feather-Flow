@@ -68,7 +68,7 @@ pub fn inline_ephemeral_ctes(
     if upper_sql.starts_with("WITH ") {
         // Merge with existing WITH clause
         // Find the position after "WITH " and insert our CTEs before the existing ones
-        let with_end = 4; // length of "WITH"
+        let with_end = "WITH".len();
         let rest = &trimmed_sql[with_end..].trim_start();
         format!("WITH {},\n{}", ctes.join(",\n"), rest)
     } else {

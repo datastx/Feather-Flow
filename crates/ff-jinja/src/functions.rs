@@ -74,7 +74,12 @@ pub fn make_config_fn(
     capture: ConfigCapture,
 ) -> impl Fn(Kwargs) -> Result<String, Error> + Send + Sync + Clone + 'static {
     move |kwargs: Kwargs| {
-        let mut captured = capture.lock().unwrap();
+        let mut captured = capture.lock().map_err(|e| {
+            Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                format!("config mutex poisoned: {e}"),
+            )
+        })?;
 
         // Capture all keyword arguments
         for key in kwargs.args() {

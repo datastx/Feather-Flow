@@ -60,7 +60,10 @@ pub fn extract_dependencies(statements: &[Statement]) -> HashSet<String> {
     // Filter out CTE names from dependencies
     deps.retain(|dep| {
         // Normalize the name for comparison (take last component)
-        let normalized = dep.split('.').next_back().unwrap_or(dep);
+        let normalized = dep
+            .split('.')
+            .next_back()
+            .expect("split always yields at least one element");
         !all_cte_names.contains(normalized)
     });
 
@@ -120,9 +123,13 @@ pub fn categorize_dependencies_with_unknown(
         } else if external_tables.contains(&dep) || external_tables.contains(&dep_normalized) {
             external_deps.push(dep);
         } else {
-            // Unknown tables - not in models or external_tables
+            // Unknown tables — not in models or declared external_tables.
+            // They are added to external_deps (in addition to unknown_deps) for
+            // backward compatibility: callers that only inspect model_deps vs
+            // external_deps still see them, which avoids false "missing
+            // dependency" errors for tables managed outside the project
+            // (e.g. system tables, information_schema, temp tables).
             unknown_deps.push(dep.clone());
-            // Still add to external_deps for backward compatibility
             external_deps.push(dep);
         }
     }
@@ -137,7 +144,10 @@ pub fn categorize_dependencies_with_unknown(
 /// Normalize a table name by taking only the last component
 /// This handles cases like "schema.table" -> "table" for model matching
 fn normalize_table_name(name: &str) -> String {
-    name.split('.').next_back().unwrap_or(name).to_string()
+    name.split('.')
+        .next_back()
+        .expect("split always yields at least one element")
+        .to_string()
 }
 
 #[cfg(test)]

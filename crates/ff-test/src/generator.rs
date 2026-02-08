@@ -1,7 +1,6 @@
 //! Test SQL generation
 
 use ff_core::model::{SchemaTest, TestType};
-use ff_jinja::CustomTestRegistry;
 
 /// Generate SQL for a unique test
 ///
@@ -60,7 +59,10 @@ pub fn generate_accepted_values_test(
     quote: bool,
 ) -> String {
     let formatted_values: Vec<String> = if quote {
-        values.iter().map(|v| format!("'{}'", v)).collect()
+        values
+            .iter()
+            .map(|v| format!("'{}'", v.replace('\'', "''")))
+            .collect()
     } else {
         values.to_vec()
     };
@@ -140,14 +142,6 @@ WHERE src.{column} IS NOT NULL
 
 /// Generate SQL for a schema test
 pub fn generate_test_sql(test: &SchemaTest) -> String {
-    generate_test_sql_with_registry(test, None)
-}
-
-/// Generate SQL for a schema test, optionally using custom test registry
-pub fn generate_test_sql_with_registry(
-    test: &SchemaTest,
-    _registry: Option<&CustomTestRegistry>,
-) -> String {
     match &test.test_type {
         TestType::Unique => generate_unique_test(&test.model, &test.column),
         TestType::NotNull => generate_not_null_test(&test.model, &test.column),

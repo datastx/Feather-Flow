@@ -221,7 +221,12 @@ impl Snapshot {
             current = self.current_records_sql(),
             snapshot_alias = snapshot_alias,
             conditions = unique_key_conditions.join(" AND "),
-            first_key = self.config.unique_key.first().unwrap_or(&"id".to_string()),
+            first_key = self
+                .config
+                .unique_key
+                .first()
+                .map(String::as_str)
+                .unwrap_or("id"),
         )
     }
 
@@ -296,7 +301,12 @@ impl Snapshot {
             source = self.config.source,
             source_alias = source_alias,
             conditions = unique_key_conditions.join(" AND "),
-            first_key = self.config.unique_key.first().unwrap_or(&"id".to_string()),
+            first_key = self
+                .config
+                .unique_key
+                .first()
+                .map(String::as_str)
+                .unwrap_or("id"),
         )
     }
 

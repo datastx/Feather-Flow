@@ -8,6 +8,6 @@ pub mod error;
 pub mod snowflake;
 pub mod traits;
 
-pub use duckdb::DuckDbBackend;
+pub use duckdb::{quote_ident, quote_qualified, DuckDbBackend};
 pub use error::DbError;
 pub use traits::{CsvLoadOptions, Database, SnapshotResult};

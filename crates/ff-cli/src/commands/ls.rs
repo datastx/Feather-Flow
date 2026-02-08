@@ -32,7 +32,9 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
     let mut dependencies: HashMap<String, Vec<String>> = HashMap::new();
 
     for name in project.model_names() {
-        let model = project.get_model(name).unwrap();
+        let model = project
+            .get_model(name)
+            .ok_or_else(|| anyhow::anyhow!("Model '{}' not found in project", name))?;
 
         // Render Jinja template to get config
         let (rendered, config_values) = jinja
@@ -404,10 +406,7 @@ struct ExposureInfo {
 }
 
 /// Print models in tree format
-fn print_tree(models: &[&ModelInfo], dag: &ModelDag) -> Result<()> {
-    // Get topological order
-    let _order = dag.topological_order()?;
-
+fn print_tree(models: &[&ModelInfo], _dag: &ModelDag) -> Result<()> {
     // Find root nodes (no dependencies)
     let model_names: HashSet<_> = models.iter().map(|m| &m.name).collect();
     let roots: Vec<_> = models

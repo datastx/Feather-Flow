@@ -13,10 +13,10 @@ use commands::{
 };
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     let cli = Cli::parse();
 
-    match &cli.command {
+    let result: Result<()> = match &cli.command {
         cli::Commands::Init(args) => init::execute(args).await,
         cli::Commands::Parse(args) => parse::execute(args, &cli.global).await,
         cli::Commands::Compile(args) => compile::execute(args, &cli.global).await,
@@ -35,5 +35,15 @@ async fn main() -> Result<()> {
         cli::Commands::Diff(args) => diff::execute(args, &cli.global).await,
         cli::Commands::Lineage(args) => lineage::execute(args, &cli.global).await,
         cli::Commands::Analyze(args) => analyze::execute(args, &cli.global).await,
+    };
+
+    if let Err(err) = result {
+        // Check if this is an ExitCode (structured exit, not a real error)
+        if let Some(exit_code) = err.downcast_ref::<commands::common::ExitCode>() {
+            std::process::exit(exit_code.0);
+        }
+        // Real error — print and exit 1
+        eprintln!("Error: {:?}", err);
+        std::process::exit(1);
     }
 }

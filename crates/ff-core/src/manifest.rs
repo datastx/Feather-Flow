@@ -332,23 +332,22 @@ impl Manifest {
     }
 
     /// Save the manifest to a file
-    pub fn save(&self, path: &Path) -> Result<(), std::io::Error> {
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    pub fn save(&self, path: &Path) -> crate::error::CoreResult<()> {
+        let json = serde_json::to_string_pretty(self)?;
 
         // Create parent directories if needed
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
-        std::fs::write(path, json)
+        std::fs::write(path, json)?;
+        Ok(())
     }
 
     /// Load a manifest from a file
-    pub fn load(path: &Path) -> Result<Self, std::io::Error> {
+    pub fn load(path: &Path) -> crate::error::CoreResult<Self> {
         let content = std::fs::read_to_string(path)?;
-        serde_json::from_str(&content)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        Ok(serde_json::from_str(&content)?)
     }
 
     /// Get a model by name

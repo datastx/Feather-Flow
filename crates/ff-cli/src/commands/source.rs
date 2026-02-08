@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use ff_core::source::{FreshnessPeriodUnit, SourceFile};
 use ff_core::Project;
-use ff_db::{Database, DuckDbBackend};
+use ff_db::{quote_ident, quote_qualified, Database, DuckDbBackend};
 use serde::Serialize;
 use std::path::Path;
 use std::sync::Arc;
@@ -121,7 +121,8 @@ async fn execute_freshness(args: &SourceFreshnessArgs, global: &GlobalArgs) -> R
         // Query the max value of the loaded_at field
         let query = format!(
             "SELECT MAX({}) as max_loaded_at FROM {}",
-            freshness_config.loaded_at_field, qualified_name
+            quote_ident(&freshness_config.loaded_at_field),
+            quote_qualified(&qualified_name)
         );
 
         let result = match db.query_one(&query).await {
@@ -209,7 +210,7 @@ async fn execute_freshness(args: &SourceFreshnessArgs, global: &GlobalArgs) -> R
         .iter()
         .any(|r| r.status == FreshnessStatus::Error || r.status == FreshnessStatus::RuntimeError);
     if has_errors {
-        std::process::exit(1);
+        return Err(crate::commands::common::ExitCode(1).into());
     }
 
     Ok(())

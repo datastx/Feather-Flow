@@ -93,15 +93,15 @@ pub enum CoreError {
     #[error("[E013] Model directory '{directory}' contains unexpected files: {files}. Each model directory must contain exactly one .sql and one .yml/.yaml file.")]
     ExtraFilesInModelDirectory { directory: String, files: String },
 
-    /// E009: IO error
-    #[error("[E009] IO error: {0}")]
+    /// E014: IO error
+    #[error("[E014] IO error: {0}")]
     Io(#[from] std::io::Error),
 
-    /// E010: Schema/YAML parse error
-    #[error("[E010] Schema parse error: {0}")]
+    /// E015: Schema/YAML parse error
+    #[error("[E015] Schema parse error: {0}")]
     YamlParse(#[from] serde_yaml::Error),
 
-    /// JSON error (not in spec but needed for functionality)
+    /// JSON serialization/deserialization error
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 }

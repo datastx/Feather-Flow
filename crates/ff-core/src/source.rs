@@ -142,14 +142,6 @@ impl SourceFile {
                 details: e.to_string(),
             })?;
 
-        // Validate required kind field (SRC002)
-        if source.kind != SourceKind::Sources {
-            return Err(CoreError::SourceInvalidKind {
-                path: path.display().to_string(),
-                found: format!("{:?}", source.kind),
-            });
-        }
-
         // Validate tables not empty (SRC004)
         if source.tables.is_empty() {
             return Err(CoreError::SourceEmptyTables {
@@ -227,8 +219,9 @@ fn discover_sources_recursive(dir: &Path, sources: &mut Vec<SourceFile>) -> Core
             // Try to load as source file, skip if not a valid source
             match SourceFile::load(&path) {
                 Ok(source) => sources.push(source),
-                Err(_) => {
+                Err(e) => {
                     // Not a valid source file, skip (could be other YAML)
+                    eprintln!("[warn] Skipping YAML file {}: {}", path.display(), e);
                     continue;
                 }
             }

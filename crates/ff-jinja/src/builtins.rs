@@ -6,6 +6,7 @@
 use minijinja::value::Value;
 use minijinja::Error;
 use serde::Serialize;
+use std::sync::OnceLock;
 
 // ===== Macro Metadata =====
 
@@ -274,24 +275,36 @@ pub fn get_builtin_macros() -> Vec<MacroMetadata> {
     ]
 }
 
+/// Cached builtin macros — built once, reused on every call
+static BUILTIN_MACROS: OnceLock<Vec<MacroMetadata>> = OnceLock::new();
+
+/// Get the cached builtin macros slice
+fn cached_builtin_macros() -> &'static [MacroMetadata] {
+    BUILTIN_MACROS.get_or_init(get_builtin_macros)
+}
+
 /// Get metadata for a specific macro by name
 pub fn get_macro_by_name(name: &str) -> Option<MacroMetadata> {
-    get_builtin_macros().into_iter().find(|m| m.name == name)
+    cached_builtin_macros()
+        .iter()
+        .find(|m| m.name == name)
+        .cloned()
 }
 
 /// Get all macros in a specific category
 pub fn get_macros_by_category(category: &str) -> Vec<MacroMetadata> {
-    get_builtin_macros()
-        .into_iter()
+    cached_builtin_macros()
+        .iter()
         .filter(|m| m.category == category)
+        .cloned()
         .collect()
 }
 
 /// Get all available macro categories
 pub fn get_macro_categories() -> Vec<String> {
-    let mut categories: Vec<String> = get_builtin_macros()
-        .into_iter()
-        .map(|m| m.category)
+    let mut categories: Vec<String> = cached_builtin_macros()
+        .iter()
+        .map(|m| m.category.clone())
         .collect();
     categories.sort();
     categories.dedup();

@@ -189,9 +189,10 @@ impl ProjectLineage {
 
     /// Resolve cross-model edges by matching source tables to known models
     pub fn resolve_edges(&mut self, known_models: &HashSet<String>) {
-        let models_snapshot: HashMap<String, ModelLineage> = self.models.clone();
+        // Collect edges into a local Vec to avoid borrowing self.models while mutating self.edges
+        let mut new_edges = Vec::new();
 
-        for (target_model, lineage) in &models_snapshot {
+        for (target_model, lineage) in &self.models {
             for col_lineage in &lineage.columns {
                 for source_ref in &col_lineage.source_columns {
                     // Resolve the table reference to a model name
@@ -205,7 +206,7 @@ impl ProjectLineage {
                         .unwrap_or(source_table);
 
                     if known_models.contains(resolved_table) {
-                        self.edges.push(LineageEdge {
+                        new_edges.push(LineageEdge {
                             source_model: resolved_table.to_string(),
                             source_column: source_ref.column.clone(),
                             target_model: target_model.clone(),
@@ -218,6 +219,8 @@ impl ProjectLineage {
                 }
             }
         }
+
+        self.edges.extend(new_edges);
     }
 
     /// Trace a column upstream — find all source columns that contribute to it
@@ -396,8 +399,6 @@ fn extract_table_factor_alias(factor: &TableFactor, lineage: &mut ModelLineage) 
             alias, subquery, ..
         } => {
             if let Some(alias) = alias {
-                // For subqueries, we could recursively extract lineage
-                // For now, just record the alias
                 lineage.table_aliases.insert(
                     alias.name.value.clone(),
                     format!("(subquery:{})", alias.name.value),

@@ -29,10 +29,7 @@ impl SqlParser {
         match name.to_lowercase().as_str() {
             "duckdb" => Ok(Self::duckdb()),
             "snowflake" => Ok(Self::snowflake()),
-            _ => Err(SqlError::ValidationError(format!(
-                "Unknown dialect: {}",
-                name
-            ))),
+            _ => Err(SqlError::UnknownDialect(name.to_string())),
         }
     }
 

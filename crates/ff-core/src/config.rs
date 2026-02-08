@@ -411,12 +411,11 @@ impl Config {
 
     /// Get schema, optionally applying target overrides
     pub fn get_schema(&self, target: Option<&str>) -> Option<String> {
-        if let Some(name) = target {
-            if let Some(target_config) = self.targets.get(name) {
-                if target_config.schema.is_some() {
-                    return target_config.schema.clone();
-                }
-            }
+        if let Some(schema) = target
+            .and_then(|name| self.targets.get(name))
+            .and_then(|tc| tc.schema.clone())
+        {
+            return Some(schema);
         }
         self.schema.clone()
     }

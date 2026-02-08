@@ -419,19 +419,6 @@ impl Selector {
     }
 }
 
-/// Compare two models for content equality
-/// This is used for state:modified detection
-pub fn compute_model_checksum(sql: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = DefaultHasher::new();
-    // Normalize whitespace for comparison
-    let normalized: String = sql.split_whitespace().collect::<Vec<_>>().join(" ");
-    normalized.hash(&mut hasher);
-    format!("{:x}", hasher.finish())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
