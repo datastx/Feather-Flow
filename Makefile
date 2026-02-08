@@ -1,3 +1,5 @@
+SHELL := /bin/bash
+
 .PHONY: build build-release test lint fmt check doc clean ci build-target checksums \
         ff-parse ff-parse-json ff-parse-deps ff-compile ff-compile-verbose \
         ff-run ff-run-full-refresh ff-run-select ff-ls ff-ls-json ff-ls-tree \

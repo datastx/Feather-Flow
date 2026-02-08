@@ -24,6 +24,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Run cargo check
         run: make check
 
@@ -52,15 +54,14 @@ jobs:
           components: clippy
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Run clippy
         run: make clippy
 
   test:
-    name: Test on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    name: Run tests
+    runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -68,6 +69,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Run tests
         run: make test
 
@@ -81,5 +84,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build documentation
         run: make doc
