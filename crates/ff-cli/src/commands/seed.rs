@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use ff_core::seed::{discover_seeds, Seed};
 use ff_core::Project;
-use ff_db::{CsvLoadOptions, Database, DuckDbBackend};
+use ff_db::{quote_qualified, CsvLoadOptions, Database, DuckDbBackend};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -121,7 +121,7 @@ pub async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
         match result {
             Ok(_) => {
                 let row_count = db
-                    .query_count(&format!("SELECT * FROM {}", table_name))
+                    .query_count(&format!("SELECT * FROM {}", quote_qualified(&table_name)))
                     .await
                     .unwrap_or(0);
 
@@ -146,7 +146,7 @@ pub async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
     println!("Loaded {} seeds ({} total rows)", success_count, total_rows);
 
     if failure_count > 0 {
-        std::process::exit(4);
+        return Err(crate::commands::common::ExitCode(4).into());
     }
 
     Ok(())

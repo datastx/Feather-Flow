@@ -18,6 +18,7 @@ use std::time::Instant;
 use tokio::sync::Mutex;
 
 use crate::cli::{GlobalArgs, OutputFormat, TestArgs};
+use crate::commands::common::TestStatus;
 
 /// Test result for JSON output
 #[derive(Debug, Clone, Serialize)]
@@ -341,7 +342,7 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
 
     if (final_failed > 0 || final_errors > 0) && !args.warn_only {
         // Exit code 2 = Test failures (per spec)
-        std::process::exit(2);
+        return Err(crate::commands::common::ExitCode(2).into());
     }
 
     Ok(())
@@ -611,7 +612,7 @@ async fn process_schema_test_result(
         if !json_mode {
             println!("  ✓ {} [{}ms]", result.name, result.duration.as_millis());
         }
-        ("pass".to_string(), None)
+        (TestStatus::Pass.to_string(), None)
     } else if let Some(error) = &result.error {
         errors.fetch_add(1, Ordering::SeqCst);
         if !json_mode {
@@ -622,7 +623,7 @@ async fn process_schema_test_result(
                 result.duration.as_millis()
             );
         }
-        ("error".to_string(), Some(error.clone()))
+        (TestStatus::Error.to_string(), Some(error.clone()))
     } else {
         let is_warning = schema_test.config.severity == TestSeverity::Warn;
         if is_warning {
@@ -646,7 +647,7 @@ async fn process_schema_test_result(
                     result.duration.as_millis()
                 );
             }
-            ("fail".to_string(), None)
+            (TestStatus::Fail.to_string(), None)
         }
     };
 
@@ -706,7 +707,7 @@ async fn process_singular_test_result(
                 result.duration.as_millis()
             );
         }
-        ("pass".to_string(), None)
+        (TestStatus::Pass.to_string(), None)
     } else if let Some(error) = &result.error {
         errors.fetch_add(1, Ordering::SeqCst);
         if !json_mode {
@@ -717,7 +718,7 @@ async fn process_singular_test_result(
                 result.duration.as_millis()
             );
         }
-        ("error".to_string(), Some(error.clone()))
+        (TestStatus::Error.to_string(), Some(error.clone()))
     } else {
         failed.fetch_add(1, Ordering::SeqCst);
         if !json_mode {
@@ -728,7 +729,7 @@ async fn process_singular_test_result(
                 result.duration.as_millis()
             );
         }
-        ("fail".to_string(), None)
+        (TestStatus::Fail.to_string(), None)
     };
 
     // Add to results for JSON output

@@ -210,7 +210,7 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
     // Exit code 1 if any Error-severity diagnostics
     let has_errors = filtered.iter().any(|d| d.severity == Severity::Error);
     if has_errors {
-        std::process::exit(1);
+        return Err(crate::commands::common::ExitCode(1).into());
     }
 
     Ok(())

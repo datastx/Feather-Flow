@@ -25,6 +25,10 @@ pub enum DbError {
     #[error("[D005] Feature not implemented for {backend}: {feature}")]
     NotImplemented { backend: String, feature: String },
 
+    /// Mutex poisoned (D006)
+    #[error("[D006] Database mutex poisoned: {0}")]
+    MutexPoisoned(String),
+
     /// Internal error
     #[error("Internal database error: {0}")]
     Internal(String),

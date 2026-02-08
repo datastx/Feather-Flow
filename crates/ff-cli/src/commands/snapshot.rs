@@ -10,12 +10,13 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::cli::{GlobalArgs, SnapshotArgs};
+use crate::commands::common::RunStatus;
 
 /// Snapshot run result for a single snapshot
 #[derive(Debug, Clone, Serialize)]
 struct SnapshotRunResult {
     snapshot: String,
-    status: String,
+    status: RunStatus,
     new_records: usize,
     updated_records: usize,
     deleted_records: usize,
@@ -123,7 +124,7 @@ pub async fn execute(args: &SnapshotArgs, global: &GlobalArgs) -> Result<()> {
 
                 run_results.push(SnapshotRunResult {
                     snapshot: snapshot.name.clone(),
-                    status: "success".to_string(),
+                    status: RunStatus::Success,
                     new_records: snapshot_result.new_records,
                     updated_records: snapshot_result.updated_records,
                     deleted_records: snapshot_result.deleted_records,
@@ -137,7 +138,7 @@ pub async fn execute(args: &SnapshotArgs, global: &GlobalArgs) -> Result<()> {
 
                 run_results.push(SnapshotRunResult {
                     snapshot: snapshot.name.clone(),
-                    status: "failure".to_string(),
+                    status: RunStatus::Error,
                     new_records: 0,
                     updated_records: 0,
                     deleted_records: 0,
@@ -165,7 +166,7 @@ pub async fn execute(args: &SnapshotArgs, global: &GlobalArgs) -> Result<()> {
     println!("Total time: {}ms", start_time.elapsed().as_millis());
 
     if failure_count > 0 {
-        std::process::exit(4);
+        return Err(crate::commands::common::ExitCode(4).into());
     }
 
     Ok(())

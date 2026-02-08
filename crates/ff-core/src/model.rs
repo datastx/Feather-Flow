@@ -659,7 +659,10 @@ impl Model {
         let name = path
             .file_stem()
             .and_then(|s| s.to_str())
-            .unwrap_or("unknown")
+            .ok_or_else(|| crate::error::CoreError::ModelParseError {
+                name: path.display().to_string(),
+                message: "Cannot extract model name from path".to_string(),
+            })?
             .to_string();
 
         let raw_sql = std::fs::read_to_string(&path)?;
@@ -669,9 +672,9 @@ impl Model {
         let yaml_path = path.with_extension("yaml");
 
         let schema = if yml_path.exists() {
-            ModelSchema::load(&yml_path).ok()
+            Some(ModelSchema::load(&yml_path)?)
         } else if yaml_path.exists() {
-            ModelSchema::load(&yaml_path).ok()
+            Some(ModelSchema::load(&yaml_path)?)
         } else {
             return Err(crate::error::CoreError::MissingSchemaFile {
                 model: name,
@@ -754,12 +757,13 @@ impl Model {
         }
 
         // Then check schema YAML config
-        if let Some(schema) = &self.schema {
-            if let Some(config) = &schema.config {
-                if let Some(mat) = config.materialized {
-                    return mat;
-                }
-            }
+        if let Some(mat) = self
+            .schema
+            .as_ref()
+            .and_then(|s| s.config.as_ref())
+            .and_then(|c| c.materialized)
+        {
+            return mat;
         }
 
         // Finally use project default

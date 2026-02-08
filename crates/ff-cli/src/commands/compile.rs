@@ -17,13 +17,14 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::cli::{CompileArgs, GlobalArgs, OutputFormat};
+use crate::commands::common::RunStatus;
 use ff_core::source::build_source_lookup;
 
 /// Compile result for a single model
 #[derive(Debug, Clone, Serialize)]
 struct ModelCompileResult {
     model: String,
-    status: String,
+    status: RunStatus,
     materialization: String,
     output_path: Option<String>,
     dependencies: Vec<String>,
@@ -42,32 +43,7 @@ struct CompileResults {
     results: Vec<ModelCompileResult>,
 }
 
-/// Parse hooks from config() values (minijinja::Value)
-/// Hooks can be specified as a single string or an array of strings
-fn parse_hooks_from_config(
-    config_values: &HashMap<String, minijinja::Value>,
-    key: &str,
-) -> Vec<String> {
-    config_values
-        .get(key)
-        .map(|v| {
-            if let Some(s) = v.as_str() {
-                // Single string hook
-                vec![s.to_string()]
-            } else if v.kind() == minijinja::value::ValueKind::Seq {
-                // Array of hooks
-                v.try_iter()
-                    .map(|iter| {
-                        iter.filter_map(|item| item.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            } else {
-                Vec::new()
-            }
-        })
-        .unwrap_or_default()
-}
+use crate::commands::common::{filter_models, parse_hooks_from_config};
 
 /// Intermediate compilation result before ephemeral inlining
 struct CompiledModel {
@@ -177,7 +153,7 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
                 failure_count += 1;
                 compile_results.push(ModelCompileResult {
                     model: name.clone(),
-                    status: "failure".to_string(),
+                    status: RunStatus::Error,
                     materialization: "unknown".to_string(),
                     output_path: None,
                     dependencies: vec![],
@@ -221,7 +197,7 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
             success_count += 1;
             compile_results.push(ModelCompileResult {
                 model: compiled.name,
-                status: "success".to_string(),
+                status: RunStatus::Success,
                 materialization: "ephemeral".to_string(),
                 output_path: None, // Ephemeral models don't have output files
                 dependencies: compiled.dependencies,
@@ -274,7 +250,7 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
             success_count += 1;
             compile_results.push(ModelCompileResult {
                 model: compiled.name,
-                status: "success".to_string(),
+                status: RunStatus::Success,
                 materialization: compiled.materialization.to_string(),
                 output_path: None,
                 dependencies: compiled.dependencies,
@@ -318,7 +294,7 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
             success_count += 1;
             compile_results.push(ModelCompileResult {
                 model: compiled.name,
-                status: "success".to_string(),
+                status: RunStatus::Success,
                 materialization: compiled.materialization.to_string(),
                 output_path: Some(compiled.output_path.display().to_string()),
                 dependencies: compiled.dependencies,
@@ -373,7 +349,7 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
     }
 
     if failure_count > 0 {
-        std::process::exit(1);
+        return Err(crate::commands::common::ExitCode(1).into());
     }
 
     Ok(())
@@ -534,7 +510,9 @@ fn write_manifest(
     let mut manifest = Manifest::new(&project.config.name);
 
     for name in model_names {
-        let model = project.get_model(name).unwrap();
+        let model = project
+            .get_model(name)
+            .ok_or_else(|| anyhow::anyhow!("Model '{}' not found in project", name))?;
         let compiled_path = compute_compiled_path(&model.path, &project.root, output_dir);
 
         manifest.add_model_relative(
@@ -563,21 +541,6 @@ fn write_manifest(
 }
 
 /// Filter models based on the --models argument
-fn filter_models(project: &Project, models_arg: &Option<String>) -> Vec<String> {
-    match models_arg {
-        Some(models) => models
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect(),
-        None => project
-            .model_names()
-            .into_iter()
-            .map(String::from)
-            .collect(),
-    }
-}
-
 /// Compute the output path for a compiled model, preserving directory structure
 fn compute_compiled_path(
     model_path: &Path,

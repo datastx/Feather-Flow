@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use ff_core::config::Config;
 use ff_core::Project;
-use ff_db::{Database, DuckDbBackend};
+use ff_db::{quote_ident, quote_qualified, Database, DuckDbBackend};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -111,7 +111,7 @@ pub async fn execute(args: &DiffArgs, global: &GlobalArgs) -> Result<()> {
 
             if summary.row_count_diff != 0 || summary.changed_rows.unwrap_or(0) > 0 {
                 // Exit with non-zero code if there are differences
-                std::process::exit(1);
+                return Err(crate::commands::common::ExitCode(1).into());
             }
         }
         Err(e) => {
@@ -135,7 +135,7 @@ pub async fn execute(args: &DiffArgs, global: &GlobalArgs) -> Result<()> {
             } else {
                 eprintln!("Error comparing model: {}", e);
             }
-            std::process::exit(1);
+            return Err(crate::commands::common::ExitCode(1).into());
         }
     }
 
@@ -151,7 +151,8 @@ async fn compare_tables(
     global: &GlobalArgs,
 ) -> Result<DiffSummary> {
     // Get row counts
-    let current_count_sql = format!("SELECT COUNT(*) FROM {}", table_name);
+    let quoted_table = quote_qualified(table_name);
+    let current_count_sql = format!("SELECT COUNT(*) FROM {}", quoted_table);
     let compare_count_sql = current_count_sql.clone();
 
     let current_count = current_db
@@ -251,14 +252,23 @@ async fn find_differences(
     sample_size: usize,
     global: &GlobalArgs,
 ) -> Result<(usize, usize, usize, Vec<RowDifference>)> {
-    let key_expr = key_columns.join(", ");
-    let col_list = columns.join(", ");
+    let key_expr = key_columns
+        .iter()
+        .map(|k| quote_ident(k))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let col_list = columns
+        .iter()
+        .map(|c| quote_ident(c))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let quoted_table = quote_qualified(table_name);
 
     // Sample rows from current
     let sample_current_sql = format!(
         "SELECT {} FROM {} ORDER BY {} LIMIT {}",
         col_list,
-        table_name,
+        quoted_table,
         key_expr,
         sample_size * 2 // Get more rows for better comparison
     );

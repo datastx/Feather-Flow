@@ -79,9 +79,6 @@ pub struct Metric {
 /// Raw YAML structure for metric files
 #[derive(Debug, Deserialize)]
 struct MetricFile {
-    #[allow(dead_code)]
-    #[serde(default = "default_version")]
-    version: String,
     kind: String,
     name: String,
     #[serde(default)]
@@ -101,10 +98,6 @@ struct MetricFile {
     tags: Vec<String>,
     #[serde(default)]
     owner: Option<String>,
-}
-
-fn default_version() -> String {
-    "1".to_string()
 }
 
 impl Metric {

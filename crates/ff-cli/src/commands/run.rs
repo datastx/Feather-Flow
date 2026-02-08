@@ -11,7 +11,7 @@ use ff_core::run_state::RunState;
 use ff_core::selector::Selector;
 use ff_core::state::{compute_checksum, ModelState, ModelStateConfig, StateFile};
 use ff_core::Project;
-use ff_db::{Database, DuckDbBackend};
+use ff_db::{quote_qualified, Database, DuckDbBackend};
 use ff_jinja::JinjaEnvironment;
 use ff_sql::{extract_dependencies, SqlParser};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -23,39 +23,17 @@ use std::time::Instant;
 use tokio::sync::Semaphore;
 
 use crate::cli::{GlobalArgs, OutputFormat, RunArgs};
+use crate::commands::common::RunStatus;
 
 /// Parse hooks from config() values (minijinja::Value)
 /// Hooks can be specified as a single string or an array of strings
-fn parse_hooks_from_config(
-    config_values: &HashMap<String, minijinja::Value>,
-    key: &str,
-) -> Vec<String> {
-    config_values
-        .get(key)
-        .map(|v| {
-            if let Some(s) = v.as_str() {
-                // Single string hook
-                vec![s.to_string()]
-            } else if v.kind() == minijinja::value::ValueKind::Seq {
-                // Array of hooks
-                v.try_iter()
-                    .map(|iter| {
-                        iter.filter_map(|item| item.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            } else {
-                Vec::new()
-            }
-        })
-        .unwrap_or_default()
-}
+use crate::commands::common::parse_hooks_from_config;
 
 /// Run result for a single model
 #[derive(Debug, Clone, Serialize)]
 struct ModelRunResult {
     model: String,
-    status: String,
+    status: RunStatus,
     materialization: String,
     duration_secs: f64,
     error: Option<String>,
@@ -396,7 +374,7 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     }
 
     if failure_count > 0 {
-        std::process::exit(4);
+        return Err(crate::commands::common::ExitCode(4).into());
     }
 
     Ok(())
@@ -1383,9 +1361,13 @@ async fn execute_models_sequential(
 
     let mut executable_idx = 0;
     for name in execution_order.iter() {
-        let compiled = compiled_models.get(name).expect(
-            "model exists in compiled_models - validated during execution order construction",
-        );
+        let Some(compiled) = compiled_models.get(name) else {
+            eprintln!(
+                "[warn] Model '{}' missing from compiled_models, skipping",
+                name
+            );
+            continue;
+        };
 
         // Skip models whose upstream WAP failed
         if failed_models.contains(name) {
@@ -1393,7 +1375,7 @@ async fn execute_models_sequential(
             println!("  - {} (skipped: upstream WAP failure)", name);
             run_results.push(ModelRunResult {
                 model: name.clone(),
-                status: "skipped".to_string(),
+                status: RunStatus::Skipped,
                 materialization: compiled.materialization.to_string(),
                 duration_secs: 0.0,
                 error: Some("skipped: upstream WAP failure".to_string()),
@@ -1406,7 +1388,7 @@ async fn execute_models_sequential(
             success_count += 1;
             run_results.push(ModelRunResult {
                 model: name.clone(),
-                status: "success".to_string(),
+                status: RunStatus::Success,
                 materialization: "ephemeral".to_string(),
                 duration_secs: 0.0,
                 error: None,
@@ -1440,7 +1422,7 @@ async fn execute_models_sequential(
             );
             run_results.push(ModelRunResult {
                 model: name.clone(),
-                status: "failure".to_string(),
+                status: RunStatus::Error,
                 materialization: compiled.materialization.to_string(),
                 duration_secs: duration.as_secs_f64(),
                 error: Some(format!("pre-hook failed: {}", e)),
@@ -1515,7 +1497,7 @@ async fn execute_models_sequential(
                     );
                     run_results.push(ModelRunResult {
                         model: name.clone(),
-                        status: "failure".to_string(),
+                        status: RunStatus::Error,
                         materialization: compiled.materialization.to_string(),
                         duration_secs: final_duration.as_secs_f64(),
                         error: Some(format!("post-hook failed: {}", e)),
@@ -1549,7 +1531,7 @@ async fn execute_models_sequential(
                     );
                     run_results.push(ModelRunResult {
                         model: name.clone(),
-                        status: "failure".to_string(),
+                        status: RunStatus::Error,
                         materialization: compiled.materialization.to_string(),
                         duration_secs: final_duration.as_secs_f64(),
                         error: Some(contract_error),
@@ -1573,7 +1555,10 @@ async fn execute_models_sequential(
 
                 // Try to get row count for state tracking (non-blocking)
                 let row_count = db
-                    .query_count(&format!("SELECT * FROM {}", qualified_name))
+                    .query_count(&format!(
+                        "SELECT * FROM {}",
+                        quote_qualified(&qualified_name)
+                    ))
                     .await
                     .ok();
 
@@ -1599,7 +1584,7 @@ async fn execute_models_sequential(
 
                 run_results.push(ModelRunResult {
                     model: name.clone(),
-                    status: "success".to_string(),
+                    status: RunStatus::Success,
                     materialization: compiled.materialization.to_string(),
                     duration_secs: final_duration.as_secs_f64(),
                     error: None,
@@ -1610,7 +1595,7 @@ async fn execute_models_sequential(
                 println!("  ✗ {} - {} [{}ms]", name, e, duration.as_millis());
                 run_results.push(ModelRunResult {
                     model: name.clone(),
-                    status: "failure".to_string(),
+                    status: RunStatus::Error,
                     materialization: compiled.materialization.to_string(),
                     duration_secs: duration.as_secs_f64(),
                     error: Some(e.to_string()),
@@ -1718,21 +1703,31 @@ async fn execute_models_parallel(
 
             let name = name.clone();
             let db = Arc::clone(db);
-            let compiled = compiled_models.get(&name).expect(
-                "model exists in compiled_models - validated during execution order construction",
-            );
+            let Some(compiled) = compiled_models.get(&name) else {
+                eprintln!(
+                    "[warn] Model '{}' missing from compiled_models, skipping",
+                    name
+                );
+                continue;
+            };
 
             // Skip ephemeral models (they're inlined during compilation)
             if compiled.materialization == Materialization::Ephemeral {
                 success_count.fetch_add(1, Ordering::SeqCst);
-                run_results.lock().unwrap().push(ModelRunResult {
-                    model: name.clone(),
-                    status: "success".to_string(),
-                    materialization: "ephemeral".to_string(),
-                    duration_secs: 0.0,
-                    error: None,
-                });
-                completed.lock().unwrap().insert(name);
+                run_results
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .push(ModelRunResult {
+                        model: name.clone(),
+                        status: RunStatus::Success,
+                        materialization: "ephemeral".to_string(),
+                        duration_secs: 0.0,
+                        error: None,
+                    });
+                completed
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .insert(name);
                 continue;
             }
             let sql = compiled.sql.clone();
@@ -1793,13 +1788,19 @@ async fn execute_models_parallel(
                     }
                     let model_result = ModelRunResult {
                         model: name.clone(),
-                        status: "failure".to_string(),
+                        status: RunStatus::Error,
                         materialization: materialization.to_string(),
                         duration_secs: duration.as_secs_f64(),
                         error: Some(format!("pre-hook failed: {}", e)),
                     };
-                    run_results.lock().unwrap().push(model_result);
-                    completed.lock().unwrap().insert(name.clone());
+                    run_results
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .push(model_result);
+                    completed
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .insert(name.clone());
                     return (name, None);
                 }
 
@@ -1888,7 +1889,7 @@ async fn execute_models_parallel(
                             }
                             ModelRunResult {
                                 model: name.clone(),
-                                status: "failure".to_string(),
+                                status: RunStatus::Error,
                                 materialization: materialization.to_string(),
                                 duration_secs: duration.as_secs_f64(),
                                 error: Some(format!("post-hook failed: {}", e)),
@@ -1919,7 +1920,7 @@ async fn execute_models_parallel(
                                 }
                                 ModelRunResult {
                                     model: name.clone(),
-                                    status: "failure".to_string(),
+                                    status: RunStatus::Error,
                                     materialization: materialization.to_string(),
                                     duration_secs: duration.as_secs_f64(),
                                     error: Some(contract_error),
@@ -1937,7 +1938,7 @@ async fn execute_models_parallel(
                                 // Row count retrieved later in state update
                                 ModelRunResult {
                                     model: name.clone(),
-                                    status: "success".to_string(),
+                                    status: RunStatus::Success,
                                     materialization: materialization.to_string(),
                                     duration_secs: duration.as_secs_f64(),
                                     error: None,
@@ -1957,7 +1958,7 @@ async fn execute_models_parallel(
 
                         ModelRunResult {
                             model: name.clone(),
-                            status: "failure".to_string(),
+                            status: RunStatus::Error,
                             materialization: materialization.to_string(),
                             duration_secs: duration.as_secs_f64(),
                             error: Some(e.to_string()),
@@ -1965,8 +1966,14 @@ async fn execute_models_parallel(
                     }
                 };
 
-                run_results.lock().unwrap().push(model_result);
-                completed.lock().unwrap().insert(name.clone());
+                run_results
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .push(model_result);
+                completed
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .insert(name.clone());
 
                 // Update progress bar
                 if let Some(ref pb) = progress {
@@ -1981,7 +1988,9 @@ async fn execute_models_parallel(
 
         // Wait for all models in this level to complete
         for handle in handles {
-            let _ = handle.await;
+            if let Err(e) = handle.await {
+                eprintln!("[warn] Task join error: {}", e);
+            }
         }
     }
 
@@ -1990,14 +1999,17 @@ async fn execute_models_parallel(
         pb.finish_with_message("Complete");
     }
 
-    let final_results = run_results.lock().unwrap().clone();
+    let final_results = run_results
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
     let final_success = success_count.load(Ordering::SeqCst);
     let final_failure = failure_count.load(Ordering::SeqCst);
     let final_stopped = stopped.load(Ordering::SeqCst);
 
     // Update state file with results (need to do this after parallel execution)
     for result in &final_results {
-        if result.status == "success" {
+        if matches!(result.status, RunStatus::Success) {
             if let Some(compiled) = compiled_models.get(&result.model) {
                 let state_config = ModelStateConfig::new(
                     compiled.materialization,
@@ -2100,7 +2112,7 @@ async fn execute_models_with_state(
     // Update run state based on results
     for result in &run_results {
         let duration_ms = (result.duration_secs * 1000.0) as u64;
-        if result.status == "success" {
+        if matches!(result.status, RunStatus::Success) {
             run_state.mark_completed(&result.model, duration_ms);
         } else {
             run_state.mark_failed(

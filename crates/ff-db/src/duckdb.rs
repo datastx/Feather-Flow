@@ -52,23 +52,30 @@ impl DuckDbBackend {
         }
     }
 
+    /// Acquire the database connection lock, returning a descriptive error on poison.
+    fn lock_conn(&self) -> DbResult<std::sync::MutexGuard<'_, Connection>> {
+        self.conn
+            .lock()
+            .map_err(|e| DbError::MutexPoisoned(e.to_string()))
+    }
+
     /// Execute SQL synchronously
     fn execute_sync(&self, sql: &str) -> DbResult<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         conn.execute(sql, [])
             .map_err(|e| DbError::ExecutionError(format!("{}: {}", e, sql)))
     }
 
     /// Execute batch SQL synchronously
     fn execute_batch_sync(&self, sql: &str) -> DbResult<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         conn.execute_batch(sql)
             .map_err(|e| DbError::ExecutionError(e.to_string()))
     }
 
     /// Query count synchronously
     fn query_count_sync(&self, sql: &str) -> DbResult<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let count: i64 = conn
             .query_row(&format!("SELECT COUNT(*) FROM ({})", sql), [], |row| {
                 row.get(0)
@@ -79,7 +86,7 @@ impl DuckDbBackend {
 
     /// Check if relation exists synchronously
     fn relation_exists_sync(&self, name: &str) -> DbResult<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
 
         let (schema, table) = if let Some(pos) = name.rfind('.') {
             (&name[..pos], &name[pos + 1..])
@@ -87,13 +94,10 @@ impl DuckDbBackend {
             ("main", name)
         };
 
-        let sql = format!(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '{}' AND table_name = '{}'",
-            schema, table
-        );
+        let sql = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = ? AND table_name = ?";
 
         let count: i64 = conn
-            .query_row(&sql, [], |row| row.get(0))
+            .query_row(sql, duckdb::params![schema, table], |row| row.get(0))
             .map_err(|e| DbError::ExecutionError(e.to_string()))?;
 
         Ok(count > 0)
@@ -209,8 +213,11 @@ impl Database for DuckDbBackend {
     }
 
     async fn infer_csv_schema(&self, path: &str) -> DbResult<Vec<(String, String)>> {
-        let conn = self.conn.lock().unwrap();
-        let sql = format!("DESCRIBE SELECT * FROM read_csv_auto('{}')", path);
+        let conn = self.lock_conn()?;
+        let sql = format!(
+            "DESCRIBE SELECT * FROM read_csv_auto('{}')",
+            path.replace('\'', "''")
+        );
 
         let mut stmt = conn.prepare(&sql).to_db_err()?;
         let mut schema: Vec<(String, String)> = Vec::new();
@@ -230,8 +237,13 @@ impl Database for DuckDbBackend {
     }
 
     async fn drop_if_exists(&self, name: &str) -> DbResult<()> {
-        let _ = self.execute_sync(&format!("DROP VIEW IF EXISTS {}", name));
-        let _ = self.execute_sync(&format!("DROP TABLE IF EXISTS {}", name));
+        // Try both VIEW and TABLE; one may fail if the relation is the other type
+        if let Err(e) = self.execute_sync(&format!("DROP VIEW IF EXISTS {}", name)) {
+            eprintln!("[warn] DROP VIEW IF EXISTS {} failed: {}", name, e);
+        }
+        if let Err(e) = self.execute_sync(&format!("DROP TABLE IF EXISTS {}", name)) {
+            eprintln!("[warn] DROP TABLE IF EXISTS {} failed: {}", name, e);
+        }
         Ok(())
     }
 
@@ -242,7 +254,7 @@ impl Database for DuckDbBackend {
     }
 
     async fn query_sample_rows(&self, sql: &str, limit: usize) -> DbResult<Vec<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let limited_sql = format!("SELECT * FROM ({}) AS subq LIMIT {}", sql, limit);
 
         let mut stmt = conn.prepare(&limited_sql).to_db_err()?;
@@ -271,7 +283,7 @@ impl Database for DuckDbBackend {
     }
 
     async fn query_one(&self, sql: &str) -> DbResult<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
 
         let mut stmt = conn.prepare(sql).to_db_err()?;
         let mut result_rows = stmt.query([]).to_db_err()?;
@@ -363,7 +375,7 @@ impl Database for DuckDbBackend {
     }
 
     async fn get_table_schema(&self, table: &str) -> DbResult<Vec<(String, String)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
 
         let (schema, table_name) = if let Some(pos) = table.rfind('.') {
             (&table[..pos], &table[pos + 1..])
@@ -371,15 +383,14 @@ impl Database for DuckDbBackend {
             ("main", table)
         };
 
-        let sql = format!(
-            "SELECT column_name, data_type FROM information_schema.columns \
-             WHERE table_schema = '{}' AND table_name = '{}' ORDER BY ordinal_position",
-            schema, table_name
-        );
+        let sql = "SELECT column_name, data_type FROM information_schema.columns \
+             WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position";
 
-        let mut stmt = conn.prepare(&sql).to_db_err()?;
+        let mut stmt = conn.prepare(sql).to_db_err()?;
         let mut columns: Vec<(String, String)> = Vec::new();
-        let mut rows = stmt.query([]).to_db_err()?;
+        let mut rows = stmt
+            .query(duckdb::params![schema, table_name])
+            .to_db_err()?;
 
         while let Some(row) = rows.next().to_db_err()? {
             let column_name: String = row.get(0).to_db_err()?;
@@ -391,7 +402,7 @@ impl Database for DuckDbBackend {
     }
 
     async fn describe_query(&self, sql: &str) -> DbResult<Vec<(String, String)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let describe_sql = format!("DESCRIBE SELECT * FROM ({}) AS subq", sql);
 
         let mut stmt = conn.prepare(&describe_sql).to_db_err()?;
@@ -724,6 +735,23 @@ impl Database for DuckDbBackend {
 
         Ok(deleted_count)
     }
+}
+
+/// Quote a SQL identifier to prevent injection.
+///
+/// Wraps in double quotes and escapes any embedded double quotes.
+pub fn quote_ident(ident: &str) -> String {
+    format!("\"{}\"", ident.replace('"', "\"\""))
+}
+
+/// Quote a potentially schema-qualified name (e.g. `schema.table`).
+///
+/// Each component is individually quoted.
+pub fn quote_qualified(name: &str) -> String {
+    name.split('.')
+        .map(quote_ident)
+        .collect::<Vec<_>>()
+        .join(".")
 }
 
 /// Generate a unique identifier for temp table names.

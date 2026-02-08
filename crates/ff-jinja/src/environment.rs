@@ -71,7 +71,10 @@ impl<'a> JinjaEnvironment<'a> {
     /// Render a template string
     pub fn render(&self, template: &str) -> JinjaResult<String> {
         // Clear previous config captures
-        self.config_capture.lock().unwrap().clear();
+        self.config_capture
+            .lock()
+            .map_err(|e| JinjaError::Internal(format!("config mutex poisoned: {e}")))?
+            .clear();
 
         // Render the template
         let result = self
@@ -88,20 +91,27 @@ impl<'a> JinjaEnvironment<'a> {
         template: &str,
     ) -> JinjaResult<(String, HashMap<String, Value>)> {
         let rendered = self.render(template)?;
-        let config = self.config_capture.lock().unwrap().clone();
+        let config = self
+            .config_capture
+            .lock()
+            .map_err(|e| JinjaError::Internal(format!("config mutex poisoned: {e}")))?
+            .clone();
         Ok((rendered, config))
     }
 
     /// Get the captured config values from the last render
     pub fn get_captured_config(&self) -> HashMap<String, Value> {
-        self.config_capture.lock().unwrap().clone()
+        self.config_capture
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     /// Extract materialization from captured config
     pub fn get_materialization(&self) -> Option<String> {
         self.config_capture
             .lock()
-            .unwrap()
+            .unwrap_or_else(|p| p.into_inner())
             .get("materialized")
             .and_then(|v| v.as_str().map(String::from))
     }
@@ -110,7 +120,7 @@ impl<'a> JinjaEnvironment<'a> {
     pub fn get_schema(&self) -> Option<String> {
         self.config_capture
             .lock()
-            .unwrap()
+            .unwrap_or_else(|p| p.into_inner())
             .get("schema")
             .and_then(|v| v.as_str().map(String::from))
     }
@@ -119,7 +129,7 @@ impl<'a> JinjaEnvironment<'a> {
     pub fn get_tags(&self) -> Vec<String> {
         self.config_capture
             .lock()
-            .unwrap()
+            .unwrap_or_else(|p| p.into_inner())
             .get("tags")
             .and_then(|v| {
                 // Try to iterate over the value if it's a sequence

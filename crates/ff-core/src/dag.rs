@@ -75,7 +75,6 @@ impl ModelDag {
         match toposort(&self.graph, None) {
             Ok(_) => Ok(()),
             Err(cycle) => {
-                let _node_name = &self.graph[cycle.node_id()];
                 // Find the cycle path
                 let cycle_str = self.find_cycle_path(cycle.node_id());
                 Err(CoreError::CircularDependency { cycle: cycle_str })

@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result};
 use ff_core::Project;
-use ff_db::{Database, DuckDbBackend};
+use ff_db::{quote_ident, quote_qualified, Database, DuckDbBackend};
 use serde::Serialize;
 use std::path::Path;
 use std::sync::Arc;
@@ -119,7 +119,7 @@ pub async fn execute(args: &FreshnessArgs, global: &GlobalArgs) -> Result<()> {
             "Freshness check: {} passed, {} warnings, {} errors",
             pass_count, warn_count, error_count
         );
-        std::process::exit(1);
+        return Err(crate::commands::common::ExitCode(1).into());
     } else if warn_count > 0 {
         println!(
             "Freshness check: {} passed, {} warnings",
@@ -221,7 +221,8 @@ async fn check_model_freshness(
     // Query max timestamp
     let query = format!(
         "SELECT CAST(MAX({}) AS VARCHAR) as max_ts FROM {}",
-        freshness_config.loaded_at_field, qualified_name
+        quote_ident(&freshness_config.loaded_at_field),
+        quote_qualified(&qualified_name)
     );
 
     let max_timestamp = match db.query_one(&query).await {

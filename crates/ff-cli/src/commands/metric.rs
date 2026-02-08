@@ -332,7 +332,7 @@ async fn execute_metric(
                 println!("{}", sql);
                 println!("---");
             }
-            std::process::exit(1);
+            return Err(crate::commands::common::ExitCode(1).into());
         }
     }
 

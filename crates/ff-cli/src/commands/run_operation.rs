@@ -96,7 +96,7 @@ pub async fn execute(args: &RunOperationArgs, global: &GlobalArgs) -> Result<()>
         Err(e) => {
             println!("  ✗ {} failed: {}", args.macro_name, e);
             println!("\nTotal time: {}ms", duration.as_millis());
-            std::process::exit(4);
+            Err(crate::commands::common::ExitCode(4).into())
         }
     }
 }

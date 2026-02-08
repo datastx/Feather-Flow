@@ -462,32 +462,34 @@ fn validate_macros(
 
     for macro_dir in macro_paths {
         if macro_dir.exists() && macro_dir.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(macro_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().is_some_and(|e| e == "sql") {
-                        macro_count += 1;
-                        if let Ok(content) = std::fs::read_to_string(&path) {
-                            let test_env = JinjaEnvironment::new(vars);
-                            if let Err(e) = test_env.render(&content) {
-                                let err_str = e.to_string();
-                                if !err_str.contains("undefined") {
-                                    ctx.error(
-                                        "M002",
-                                        format!("Macro parse error: {}", e),
-                                        Some(path.display().to_string()),
-                                    );
-                                    macro_errors += 1;
-                                }
-                            }
-                        } else {
-                            ctx.error(
-                                "M001",
-                                "Failed to read macro file",
-                                Some(path.display().to_string()),
-                            );
-                            macro_errors += 1;
-                        }
+            let Ok(entries) = std::fs::read_dir(macro_dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_none_or(|e| e != "sql") {
+                    continue;
+                }
+                macro_count += 1;
+                let Ok(content) = std::fs::read_to_string(&path) else {
+                    ctx.error(
+                        "M001",
+                        "Failed to read macro file",
+                        Some(path.display().to_string()),
+                    );
+                    macro_errors += 1;
+                    continue;
+                };
+                let test_env = JinjaEnvironment::new(vars);
+                if let Err(e) = test_env.render(&content) {
+                    let err_str = e.to_string();
+                    if !err_str.contains("undefined") {
+                        ctx.error(
+                            "M002",
+                            format!("Macro parse error: {}", e),
+                            Some(path.display().to_string()),
+                        );
+                        macro_errors += 1;
                     }
                 }
             }
@@ -723,16 +725,17 @@ fn print_issues_and_summary(ctx: &ValidationContext, strict: bool) -> Result<()>
             "Validation failed (strict mode): {} errors, {} warnings",
             error_count, warning_count
         );
-        std::process::exit(1);
+        Err(crate::commands::common::ExitCode(1).into())
     } else {
         println!(
             "Validation failed: {} errors, {} warnings",
             error_count, warning_count
         );
         if ctx.has_circular_dependency() {
-            std::process::exit(3);
+            Err(crate::commands::common::ExitCode(3).into())
+        } else {
+            Err(crate::commands::common::ExitCode(1).into())
         }
-        std::process::exit(1);
     }
 }
 

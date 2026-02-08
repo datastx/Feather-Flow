@@ -32,6 +32,10 @@ pub enum SqlError {
     /// Derived table not allowed (S006)
     #[error("[S006] Derived tables (subqueries in FROM clause) are not allowed — each transform must be its own model")]
     DerivedTableNotAllowed,
+
+    /// Unknown SQL dialect (S007)
+    #[error("[S007] Unknown SQL dialect: {0}")]
+    UnknownDialect(String),
 }
 
 /// Result type alias for SqlError

@@ -76,7 +76,13 @@ impl QueryCommentContext {
 
 /// Build the query comment string for a model.
 pub fn build_query_comment(metadata: &QueryCommentMetadata) -> String {
-    let json = serde_json::to_string(metadata).unwrap_or_default();
+    let json = match serde_json::to_string(metadata) {
+        Ok(j) => j,
+        Err(e) => {
+            eprintln!("[warn] Failed to serialize query comment metadata: {}", e);
+            return String::new();
+        }
+    };
     format!("\n/* ff_metadata: {} */", json)
 }
 
