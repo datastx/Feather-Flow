@@ -1,14 +1,31 @@
+SHELL := /bin/bash
+
 .PHONY: build build-release test lint fmt check doc clean ci build-target checksums \
         ff-parse ff-parse-json ff-parse-deps ff-compile ff-compile-verbose \
         ff-run ff-run-full-refresh ff-run-select ff-ls ff-ls-json ff-ls-tree \
         ff-test ff-test-verbose ff-test-fail-fast ff-seed ff-seed-full-refresh \
         ff-docs ff-docs-json ff-validate ff-validate-strict ff-sources ff-help \
         dev-cycle dev-validate dev-fresh help run watch test-verbose test-integration \
-        test-unit test-quick test-failed fmt-check clippy doc-open update ci-quick ci-full install claude-auto-run
+        test-unit test-quick test-failed fmt-check clippy doc-open update ci-quick ci-full install claude-auto-run \
+        version version-bump-patch version-set version-tag release \
+        build-linux verify-binary clean-dist \
+        docker-build docker-push docker-login docker-run \
+        create-release
 
 # =============================================================================
 # Configuration
 # =============================================================================
+
+# Version (read from workspace Cargo.toml)
+VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+
+# Build output
+DIST_DIR := dist
+
+# Docker
+DOCKER_REGISTRY := ghcr.io
+DOCKER_IMAGE    := $(DOCKER_REGISTRY)/datastx/feather-flow
+DOCKER_TAG      := $(VERSION)
 
 # Default project for testing CLI commands
 PROJECT_DIR ?= tests/fixtures/sample_project
@@ -210,6 +227,48 @@ ci-full: ci ff-compile ff-validate ## CI + compile + validate
 	@echo "Full CI checks passed!"
 
 # =============================================================================
+# Version Management
+# =============================================================================
+
+version: ## Print current version
+	@echo $(VERSION)
+
+version-bump-patch: ## Bump patch version: 0.1.0 → 0.1.1
+	@CURRENT=$(VERSION); \
+	MAJOR=$$(echo $$CURRENT | cut -d. -f1); \
+	MINOR=$$(echo $$CURRENT | cut -d. -f2); \
+	PATCH=$$(echo $$CURRENT | cut -d. -f3); \
+	NEW="$$MAJOR.$$MINOR.$$((PATCH + 1))"; \
+	sed -i "s/^version = \"$$CURRENT\"/version = \"$$NEW\"/" Cargo.toml; \
+	cargo generate-lockfile; \
+	echo "Bumped $$CURRENT → $$NEW"
+
+version-set: ## Set explicit version (make version-set NEW_VERSION=0.2.0)
+	@if [ -z "$(NEW_VERSION)" ]; then \
+		echo "Error: NEW_VERSION not set. Usage: make version-set NEW_VERSION=0.2.0"; \
+		exit 1; \
+	fi
+	sed -i 's/^version = ".*"/version = "$(NEW_VERSION)"/' Cargo.toml
+	cargo generate-lockfile
+	@echo "Version set to $(NEW_VERSION)"
+
+version-tag: ## Create git tag from current Cargo.toml version
+	git tag -a "v$(VERSION)" -m "Release v$(VERSION)"
+
+release: ## Bump patch, commit, tag, and push (triggers release workflow)
+	@echo "==> Bumping patch version..."
+	@$(MAKE) version-bump-patch
+	@NEW_VERSION=$$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/'); \
+	echo "==> Committing v$$NEW_VERSION..."; \
+	git add Cargo.toml Cargo.lock; \
+	git commit -m "release: v$$NEW_VERSION"; \
+	echo "==> Tagging v$$NEW_VERSION..."; \
+	git tag -a "v$$NEW_VERSION" -m "Release v$$NEW_VERSION"; \
+	echo "==> Pushing to origin..."; \
+	git push origin main --follow-tags; \
+	echo "==> Done! Release v$$NEW_VERSION will build in CI."
+
+# =============================================================================
 # Release
 # =============================================================================
 
@@ -223,6 +282,30 @@ build-target: ## Build for target (set TARGET=x86_64-unknown-linux-gnu)
 	fi
 	cargo build --release --target $(TARGET) -p ff-cli
 
+build-linux: ## Build static Linux binary (musl)
+	cargo build --release --target x86_64-unknown-linux-musl -p ff-cli
+	mkdir -p $(DIST_DIR)
+	cp target/x86_64-unknown-linux-musl/release/ff $(DIST_DIR)/ff-x86_64-linux-musl
+	sha256sum $(DIST_DIR)/ff-x86_64-linux-musl > $(DIST_DIR)/ff-x86_64-linux-musl.sha256
+
+verify-binary: ## Verify the Linux binary is statically linked
+	@file $(DIST_DIR)/ff-x86_64-linux-musl | grep -q "statically linked" && \
+		echo "OK: binary is statically linked" || \
+		(echo "FAIL: binary is NOT statically linked" && exit 1)
+
+clean-dist: ## Remove dist artifacts
+	rm -rf $(DIST_DIR)
+
+create-release: ## Create GitHub release (CI only — requires gh CLI auth)
+	@if [ -z "$(TAG)" ]; then \
+		echo "Error: TAG not set. Usage: make create-release TAG=v0.1.1"; \
+		exit 1; \
+	fi
+	gh release create $(TAG) \
+		$(DIST_DIR)/* \
+		--title "$(TAG)" \
+		--generate-notes
+
 checksums: ## Create checksums (set ARTIFACTS_DIR=artifacts)
 	cd $(ARTIFACTS_DIR) && \
 	for dir in */; do \
@@ -232,6 +315,27 @@ checksums: ## Create checksums (set ARTIFACTS_DIR=artifacts)
 		done && \
 		cd ..; \
 	done
+
+# =============================================================================
+# Docker
+# =============================================================================
+
+docker-build: ## Build Docker image
+	docker build \
+		--build-arg VERSION=$(VERSION) \
+		-t $(DOCKER_IMAGE):$(DOCKER_TAG) \
+		-t $(DOCKER_IMAGE):latest \
+		.
+
+docker-push: ## Push Docker image to GHCR (requires: make docker-login)
+	docker push $(DOCKER_IMAGE):$(DOCKER_TAG)
+	docker push $(DOCKER_IMAGE):latest
+
+docker-login: ## Authenticate to GHCR (CI sets GITHUB_TOKEN and GITHUB_ACTOR)
+	@echo "$(GITHUB_TOKEN)" | docker login ghcr.io -u "$(GITHUB_ACTOR)" --password-stdin
+
+docker-run: ## Run ff in Docker (pass CMD="validate" etc.)
+	docker run --rm -v $(PWD):/workspace -w /workspace $(DOCKER_IMAGE):latest $(CMD)
 
 # =============================================================================
 # Claude Code
@@ -254,3 +358,7 @@ help: ## Show this help message
 	@echo ""
 	@echo "Environment Variables:"
 	@echo "  PROJECT_DIR    Test project path (default: tests/fixtures/sample_project)"
+	@echo "  TARGET         Rust build target (e.g., x86_64-unknown-linux-gnu)"
+	@echo "  NEW_VERSION    Version to set (e.g., 0.2.0)"
+	@echo "  TAG            Git tag for release (e.g., v0.1.1)"
+	@echo "  CMD            Docker command to run (e.g., validate)"
