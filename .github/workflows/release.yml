@@ -51,7 +51,7 @@ jobs:
           fi
 
   build-linux:
-    name: Build Linux (musl)
+    name: Build Linux (gnu)
     needs: [version-check]
     if: needs.version-check.outputs.should_release == 'true'
     runs-on: ubuntu-latest
@@ -61,32 +61,20 @@ jobs:
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-musl
-
-      - name: Install musl-tools
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Build static Linux binary
-        env:
-          CC_x86_64_unknown_linux_musl: musl-gcc
-          CXX_x86_64_unknown_linux_musl: g++
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+      - name: Build Linux binary
         run: make build-linux
-
-      - name: Verify binary is static
-        run: make verify-binary
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ff-x86_64-linux-musl
+          name: ff-x86_64-linux-gnu
           path: |
-            dist/ff-x86_64-linux-musl
-            dist/ff-x86_64-linux-musl.sha256
+            dist/ff-x86_64-linux-gnu
+            dist/ff-x86_64-linux-gnu.sha256
 
   build-macos:
     name: Build macOS (${{ matrix.target }})
