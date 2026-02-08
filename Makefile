@@ -4,7 +4,7 @@ SHELL := /bin/bash
         ff-parse ff-parse-json ff-parse-deps ff-compile ff-compile-verbose \
         ff-run ff-run-full-refresh ff-run-select ff-ls ff-ls-json ff-ls-tree \
         ff-test ff-test-verbose ff-test-fail-fast ff-seed ff-seed-full-refresh \
-        ff-docs ff-docs-json ff-validate ff-validate-strict ff-sources ff-help \
+        ff-docs ff-docs-json ff-docs-serve ff-docs-export ff-validate ff-validate-strict ff-sources ff-help \
         dev-cycle dev-validate dev-fresh help run watch test-verbose test-integration \
         test-unit test-quick test-failed fmt-check clippy doc-open update ci-quick ci-full install claude-auto-run \
         version version-bump-patch version-set version-tag release \
@@ -176,6 +176,12 @@ ff-docs: ## Generate documentation
 
 ff-docs-json: ## Generate documentation as JSON
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) docs --format json
+
+ff-docs-serve: ## Serve interactive documentation site
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) docs serve --no-browser
+
+ff-docs-export: ## Export static documentation site
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) docs serve --static-export $(PROJECT_DIR)/target/docs-site --no-browser
 
 ff-validate: ## Validate project
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) validate
