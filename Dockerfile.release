@@ -1,0 +1,12 @@
+# Minimal release image — uses pre-built binary from CI
+FROM debian:bookworm-slim
+RUN groupadd -r ff && useradd -r -g ff ff
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY dist/ff-x86_64-linux-gnu /usr/local/bin/ff
+RUN chmod +x /usr/local/bin/ff
+
+LABEL org.opencontainers.image.source="https://github.com/datastx/Feather-Flow"
+LABEL org.opencontainers.image.description="Feather-Flow: a lightweight dbt-like CLI for SQL transformation"
+
+USER ff
+ENTRYPOINT ["ff"]

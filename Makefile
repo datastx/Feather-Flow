@@ -8,8 +8,8 @@ SHELL := /bin/bash
         dev-cycle dev-validate dev-fresh help run watch test-verbose test-integration \
         test-unit test-quick test-failed fmt-check clippy doc-open update ci-quick ci-full install claude-auto-run \
         version version-bump-patch version-set version-tag release \
-        build-linux verify-binary clean-dist \
-        docker-build docker-push docker-login docker-run \
+        build-linux clean-dist \
+        docker-build docker-build-release docker-push docker-login docker-run \
         create-release
 
 # =============================================================================
@@ -282,16 +282,11 @@ build-target: ## Build for target (set TARGET=x86_64-unknown-linux-gnu)
 	fi
 	cargo build --release --target $(TARGET) -p ff-cli
 
-build-linux: ## Build static Linux binary (musl)
-	cargo build --release --target x86_64-unknown-linux-musl -p ff-cli
+build-linux: ## Build Linux binary (gnu)
+	cargo build --release --target x86_64-unknown-linux-gnu -p ff-cli
 	mkdir -p $(DIST_DIR)
-	cp target/x86_64-unknown-linux-musl/release/ff $(DIST_DIR)/ff-x86_64-linux-musl
-	sha256sum $(DIST_DIR)/ff-x86_64-linux-musl > $(DIST_DIR)/ff-x86_64-linux-musl.sha256
-
-verify-binary: ## Verify the Linux binary is statically linked
-	@file $(DIST_DIR)/ff-x86_64-linux-musl | grep -q "statically linked" && \
-		echo "OK: binary is statically linked" || \
-		(echo "FAIL: binary is NOT statically linked" && exit 1)
+	cp target/x86_64-unknown-linux-gnu/release/ff $(DIST_DIR)/ff-x86_64-linux-gnu
+	sha256sum $(DIST_DIR)/ff-x86_64-linux-gnu > $(DIST_DIR)/ff-x86_64-linux-gnu.sha256
 
 clean-dist: ## Remove dist artifacts
 	rm -rf $(DIST_DIR)
@@ -320,9 +315,16 @@ checksums: ## Create checksums (set ARTIFACTS_DIR=artifacts)
 # Docker
 # =============================================================================
 
-docker-build: ## Build Docker image
+docker-build: ## Build Docker image (full multi-stage, for local dev)
 	docker build \
 		--build-arg VERSION=$(VERSION) \
+		-t $(DOCKER_IMAGE):$(DOCKER_TAG) \
+		-t $(DOCKER_IMAGE):latest \
+		.
+
+docker-build-release: ## Build Docker image from pre-built binary (CI only)
+	docker build \
+		-f Dockerfile.release \
 		-t $(DOCKER_IMAGE):$(DOCKER_TAG) \
 		-t $(DOCKER_IMAGE):latest \
 		.

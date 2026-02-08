@@ -11,10 +11,13 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
+  SCCACHE_GHA_ENABLED: true
+  RUSTC_WRAPPER: sccache
 
 permissions:
   contents: write
   packages: write
+  actions: read
 
 jobs:
   version-check:
@@ -51,7 +54,7 @@ jobs:
           fi
 
   build-linux:
-    name: Build Linux (musl)
+    name: Build Linux (gnu)
     needs: [version-check]
     if: needs.version-check.outputs.should_release == 'true'
     runs-on: ubuntu-latest
@@ -61,28 +64,25 @@ jobs:
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-musl
 
-      - name: Install musl-tools
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
 
-      - name: Cache dependencies
+      - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-gnu
 
-      - name: Build static Linux binary
+      - name: Build Linux binary
         run: make build-linux
-
-      - name: Verify binary is static
-        run: make verify-binary
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ff-x86_64-linux-musl
+          name: ff-x86_64-linux-gnu
           path: |
-            dist/ff-x86_64-linux-musl
-            dist/ff-x86_64-linux-musl.sha256
+            dist/ff-x86_64-linux-gnu
+            dist/ff-x86_64-linux-gnu.sha256
 
   build-macos:
     name: Build macOS (${{ matrix.target }})
@@ -107,8 +107,13 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Cache dependencies
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+
+      - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ matrix.target }}
 
       - name: Build release binary
         run: make build-target TARGET=${{ matrix.target }}
@@ -156,8 +161,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_ACTOR: ${{ github.actor }}
 
-      - name: Build Docker image
-        run: make docker-build
+      - name: Build Docker image (from pre-built binary)
+        run: make docker-build-release
 
       - name: Push Docker image
         run: make docker-push

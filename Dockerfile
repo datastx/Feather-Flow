@@ -1,7 +1,6 @@
 # --- Stage 1: Dependency cache ---
 FROM rust:1-slim AS planner
-RUN apt-get update && apt-get install -y musl-tools make && rm -rf /var/lib/apt/lists/*
-RUN rustup target add x86_64-unknown-linux-musl
+RUN apt-get update && apt-get install -y make && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 
 # Copy only manifests first — this layer is cached until deps change
@@ -19,7 +18,7 @@ RUN for dir in crates/*/; do mkdir -p "$dir/src" && echo "" > "$dir/src/lib.rs";
 RUN mkdir -p crates/ff-cli/src && echo "fn main() {}" > crates/ff-cli/src/main.rs
 
 # Build only dependencies (cached until Cargo.toml or Cargo.lock changes)
-RUN cargo build --release --target x86_64-unknown-linux-musl -p ff-cli || true
+RUN cargo build --release -p ff-cli || true
 
 # --- Stage 2: Full build ---
 FROM planner AS builder
@@ -27,13 +26,13 @@ FROM planner AS builder
 COPY . .
 # Touch source files to ensure they're newer than the cached dependency build
 RUN find crates -name "*.rs" -exec touch {} +
-RUN cargo build --release --target x86_64-unknown-linux-musl -p ff-cli
+RUN cargo build --release -p ff-cli
 
 # --- Stage 3: Runtime ---
-FROM alpine:3.19 AS runtime
-RUN addgroup -S ff && adduser -S ff -G ff
-RUN apk add --no-cache ca-certificates
-COPY --from=builder /src/target/x86_64-unknown-linux-musl/release/ff /usr/local/bin/ff
+FROM debian:bookworm-slim AS runtime
+RUN groupadd -r ff && useradd -r -g ff ff
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /src/target/release/ff /usr/local/bin/ff
 
 LABEL org.opencontainers.image.source="https://github.com/datastx/Feather-Flow"
 LABEL org.opencontainers.image.description="Feather-Flow: a lightweight dbt-like CLI for SQL transformation"
