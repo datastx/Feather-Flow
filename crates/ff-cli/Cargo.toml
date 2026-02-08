@@ -9,6 +9,10 @@ description = "Featherflow CLI - a dbt-like tool for SQL templating and executio
 name = "ff"
 path = "src/main.rs"
 
+[features]
+default = ["docs-serve"]
+docs-serve = ["dep:axum", "dep:tower-http", "dep:rust-embed", "dep:mime_guess", "dep:open"]
+
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
@@ -20,6 +24,13 @@ serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
 tokio.workspace = true
+
+# docs-serve (optional)
+axum = { workspace = true, optional = true }
+tower-http = { workspace = true, optional = true }
+rust-embed = { version = "8", optional = true }
+mime_guess = { version = "2", optional = true }
+open = { version = "5", optional = true }
 
 ff-core = { path = "../ff-core" }
 ff-sql = { path = "../ff-sql" }

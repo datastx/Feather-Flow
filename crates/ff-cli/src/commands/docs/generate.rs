@@ -1,222 +1,19 @@
-//! Docs command implementation - Generate documentation from schema files
+//! Static documentation generation (markdown, HTML, JSON)
 
 use anyhow::{Context, Result};
-use ff_core::exposure::Exposure;
-use ff_core::metric::Metric;
-use ff_core::model::Model;
-use ff_core::source::SourceFile;
 use ff_core::Project;
 use ff_jinja::{get_builtin_macros, get_macro_categories, MacroMetadata};
-use ff_sql::{extract_column_lineage, suggest_tests, SqlParser};
-use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
 use crate::cli::{DocsArgs, DocsFormat, GlobalArgs};
 
-/// Model documentation data for JSON output
-#[derive(Debug, Serialize)]
-struct ModelDoc {
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    owner: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    team: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    contact: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    tags: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    materialized: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    schema: Option<String>,
-    columns: Vec<ColumnDoc>,
-    depends_on: Vec<String>,
-    external_deps: Vec<String>,
-    /// Column-level lineage extracted from SQL AST
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    column_lineage: Vec<ColumnLineageDoc>,
-    /// Suggested tests from AST analysis
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    test_suggestions: Vec<TestSuggestionDoc>,
-}
+use super::data::*;
 
-/// Test suggestion documentation data
-#[derive(Debug, Serialize)]
-struct TestSuggestionDoc {
-    /// Column name
-    column: String,
-    /// Suggested test type
-    test_type: String,
-    /// Reason for suggestion
-    reason: String,
-}
+const CHECKMARK: char = '\u{2713}';
 
-/// Column documentation data
-#[derive(Debug, Serialize)]
-struct ColumnDoc {
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    data_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    primary_key: bool,
-    tests: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    references: Option<ColumnRefDoc>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    classification: Option<String>,
-}
-
-/// Column reference documentation data
-#[derive(Debug, Serialize)]
-struct ColumnRefDoc {
-    model: String,
-    column: String,
-}
-
-/// Column lineage documentation data (from AST analysis)
-#[derive(Debug, Serialize)]
-struct ColumnLineageDoc {
-    /// Output column name
-    output_column: String,
-    /// Source columns that contribute to this output
-    source_columns: Vec<String>,
-    /// Whether this is a direct pass-through
-    is_direct: bool,
-    /// Expression type (column, function, expression, etc.)
-    expr_type: String,
-}
-
-/// Model summary for index
-#[derive(Debug, Serialize)]
-struct ModelSummary {
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    owner: Option<String>,
-    has_schema: bool,
-}
-
-/// Source documentation data for JSON output
-#[derive(Debug, Serialize)]
-struct SourceDoc {
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-    schema: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    owner: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    tags: Vec<String>,
-    tables: Vec<SourceTableDoc>,
-}
-
-/// Source table documentation data
-#[derive(Debug, Serialize)]
-struct SourceTableDoc {
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-    columns: Vec<SourceColumnDoc>,
-}
-
-/// Source column documentation data
-#[derive(Debug, Serialize)]
-struct SourceColumnDoc {
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    data_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-    tests: Vec<String>,
-}
-
-/// Source summary for index
-#[derive(Debug, Serialize)]
-struct SourceSummary {
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-    table_count: usize,
-}
-
-/// Exposure documentation data for JSON output
-#[derive(Debug, Serialize)]
-struct ExposureDoc {
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-    exposure_type: String,
-    owner: ExposureOwnerDoc,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    depends_on: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    url: Option<String>,
-    maturity: String,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    tags: Vec<String>,
-}
-
-/// Exposure owner documentation data
-#[derive(Debug, Serialize)]
-struct ExposureOwnerDoc {
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    email: Option<String>,
-}
-
-/// Exposure summary for index
-#[derive(Debug, Serialize)]
-struct ExposureSummary {
-    name: String,
-    exposure_type: String,
-    owner: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    url: Option<String>,
-}
-
-/// Metric documentation data for JSON output
-#[derive(Debug, Serialize)]
-struct MetricDoc {
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    label: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-    model: String,
-    calculation: String,
-    expression: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    timestamp: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    dimensions: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    filters: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    tags: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    owner: Option<String>,
-    /// Generated SQL for this metric
-    sql: String,
-}
-
-/// Metric summary for index
-#[derive(Debug, Serialize)]
-struct MetricSummary {
-    name: String,
-    model: String,
-    calculation: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    owner: Option<String>,
-}
-
-/// Execute the docs command
+/// Execute static documentation generation
 pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
     let project_path = Path::new(&global.project_dir);
     let project = Project::load(project_path).context("Failed to load project")?;
@@ -278,7 +75,7 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
                     let md_content = generate_markdown(&doc);
                     let md_path = output_dir.join(format!("{}.md", name));
                     fs::write(&md_path, md_content)?;
-                    println!("  ✓ {}.md", name);
+                    println!("  {} {}.md", CHECKMARK, name);
                 }
                 DocsFormat::Json => {
                     // For JSON, we collect all docs and output at the end
@@ -288,7 +85,7 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
                     let html_content = generate_html(&doc);
                     let html_path = output_dir.join(format!("{}.html", name));
                     fs::write(&html_path, html_content)?;
-                    println!("  ✓ {}.html", name);
+                    println!("  {} {}.html", CHECKMARK, name);
                 }
             }
         }
@@ -312,7 +109,7 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
                 let md_content = generate_source_markdown(&doc);
                 let md_path = output_dir.join(format!("source_{}.md", source.name));
                 fs::write(&md_path, md_content)?;
-                println!("  ✓ source_{}.md", source.name);
+                println!("  {} source_{}.md", CHECKMARK, source.name);
             }
             DocsFormat::Json => {
                 source_docs.push(doc);
@@ -321,7 +118,7 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
                 let html_content = generate_source_html(&doc);
                 let html_path = output_dir.join(format!("source_{}.html", source.name));
                 fs::write(&html_path, html_content)?;
-                println!("  ✓ source_{}.html", source.name);
+                println!("  {} source_{}.html", CHECKMARK, source.name);
             }
         }
     }
@@ -345,7 +142,7 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
                 let md_content = generate_exposure_markdown(&doc);
                 let md_path = output_dir.join(format!("exposure_{}.md", exposure.name));
                 fs::write(&md_path, md_content)?;
-                println!("  ✓ exposure_{}.md", exposure.name);
+                println!("  {} exposure_{}.md", CHECKMARK, exposure.name);
             }
             DocsFormat::Json => {
                 exposure_docs.push(doc);
@@ -354,7 +151,7 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
                 let html_content = generate_exposure_html(&doc);
                 let html_path = output_dir.join(format!("exposure_{}.html", exposure.name));
                 fs::write(&html_path, html_content)?;
-                println!("  ✓ exposure_{}.html", exposure.name);
+                println!("  {} exposure_{}.html", CHECKMARK, exposure.name);
             }
         }
     }
@@ -378,7 +175,7 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
                 let md_content = generate_metric_markdown(&doc);
                 let md_path = output_dir.join(format!("metric_{}.md", metric.name));
                 fs::write(&md_path, md_content)?;
-                println!("  ✓ metric_{}.md", metric.name);
+                println!("  {} metric_{}.md", CHECKMARK, metric.name);
             }
             DocsFormat::Json => {
                 metric_docs.push(doc);
@@ -387,7 +184,7 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
                 let html_content = generate_metric_html(&doc);
                 let html_path = output_dir.join(format!("metric_{}.html", metric.name));
                 fs::write(&html_path, html_content)?;
-                println!("  ✓ metric_{}.html", metric.name);
+                println!("  {} metric_{}.html", CHECKMARK, metric.name);
             }
         }
     }
@@ -405,7 +202,7 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
             );
             let index_path = output_dir.join("index.md");
             fs::write(&index_path, index_content)?;
-            println!("  ✓ index.md");
+            println!("  {} index.md", CHECKMARK);
         }
         DocsFormat::Json => {
             // Output all docs as a single JSON file
@@ -448,7 +245,7 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
             let json_path = output_dir.join("docs.json");
             let json_content = serde_json::to_string_pretty(&json_output)?;
             fs::write(&json_path, json_content)?;
-            println!("  ✓ docs.json");
+            println!("  {} docs.json", CHECKMARK);
         }
         DocsFormat::Html => {
             // Generate index.html
@@ -461,7 +258,7 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
             );
             let index_path = output_dir.join("index.html");
             fs::write(&index_path, index_content)?;
-            println!("  ✓ index.html");
+            println!("  {} index.html", CHECKMARK);
         }
     }
 
@@ -469,7 +266,7 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
     let lineage_content = generate_lineage_dot(&project);
     let lineage_path = output_dir.join("lineage.dot");
     fs::write(&lineage_path, lineage_content)?;
-    println!("  ✓ lineage.dot");
+    println!("  {} lineage.dot", CHECKMARK);
 
     // Generate macro documentation
     match args.format {
@@ -477,13 +274,13 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
             let macros_content = generate_macros_markdown();
             let macros_path = output_dir.join("macros.md");
             fs::write(&macros_path, macros_content)?;
-            println!("  ✓ macros.md");
+            println!("  {} macros.md", CHECKMARK);
         }
         DocsFormat::Html => {
             let macros_content = generate_macros_html();
             let macros_path = output_dir.join("macros.html");
             fs::write(&macros_path, macros_content)?;
-            println!("  ✓ macros.html");
+            println!("  {} macros.html", CHECKMARK);
         }
         DocsFormat::Json => {
             // JSON already includes macros in the overall output, but let's also
@@ -492,7 +289,7 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
             let macros_json = serde_json::to_string_pretty(&macros_data)?;
             let macros_path = output_dir.join("macros.json");
             fs::write(&macros_path, macros_json)?;
-            println!("  ✓ macros.json");
+            println!("  {} macros.json", CHECKMARK);
         }
     }
 
@@ -514,176 +311,6 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
     println!("Output: {}", output_dir.display());
 
     Ok(())
-}
-
-/// Build documentation data for a model
-fn build_model_doc(model: &Model) -> ModelDoc {
-    let mut columns = Vec::new();
-    let mut description = None;
-    let mut tags = Vec::new();
-
-    // Extract from schema if available
-    if let Some(schema) = &model.schema {
-        description = schema.description.clone();
-        tags = schema.tags.clone();
-
-        for col in &schema.columns {
-            let test_names: Vec<String> = col
-                .tests
-                .iter()
-                .map(|t| match t {
-                    ff_core::model::TestDefinition::Simple(name) => name.clone(),
-                    ff_core::model::TestDefinition::Parameterized(map) => {
-                        map.keys().next().cloned().unwrap_or_default()
-                    }
-                })
-                .collect();
-            let references = col.references.as_ref().map(|r| ColumnRefDoc {
-                model: r.model.clone(),
-                column: r.column.clone(),
-            });
-            columns.push(ColumnDoc {
-                name: col.name.clone(),
-                data_type: col.data_type.clone(),
-                description: col.description.clone(),
-                primary_key: col.primary_key,
-                tests: test_names,
-                references,
-                classification: col
-                    .classification
-                    .map(|c| format!("{:?}", c).to_lowercase()),
-            });
-        }
-    }
-
-    // Get materialization and schema from model config, falling back to schema file config
-    let materialized = model
-        .config
-        .materialized
-        .map(|m| m.to_string())
-        .or_else(|| {
-            model
-                .schema
-                .as_ref()
-                .and_then(|s| s.config.as_ref())
-                .and_then(|c| c.materialized)
-                .map(|m| m.to_string())
-        });
-    let schema = model.config.schema.clone().or_else(|| {
-        model
-            .schema
-            .as_ref()
-            .and_then(|s| s.config.as_ref())
-            .and_then(|c| c.schema.clone())
-    });
-
-    // Get dependencies
-    let depends_on: Vec<String> = model.depends_on.iter().cloned().collect();
-    let external_deps: Vec<String> = model.external_deps.iter().cloned().collect();
-
-    // Extract column lineage from SQL
-    let column_lineage = extract_column_lineage_from_model(model);
-
-    // Generate test suggestions from SQL
-    let test_suggestions = generate_test_suggestions(model);
-
-    // Get owner - uses get_owner() which checks direct owner field and meta.owner
-    let owner = model.get_owner();
-
-    // Get team and contact from meta
-    let team = model.get_meta_string("team");
-    let contact = model.get_meta_string("contact");
-
-    ModelDoc {
-        name: model.name.clone(),
-        description,
-        owner,
-        team,
-        contact,
-        tags,
-        materialized,
-        schema,
-        columns,
-        depends_on,
-        external_deps,
-        column_lineage,
-        test_suggestions,
-    }
-}
-
-/// Extract column-level lineage from a model's SQL
-fn extract_column_lineage_from_model(model: &Model) -> Vec<ColumnLineageDoc> {
-    let parser = SqlParser::duckdb();
-
-    // Use compiled SQL if available, otherwise raw SQL
-    let sql = model.compiled_sql.as_ref().unwrap_or(&model.raw_sql);
-
-    // Try to parse the SQL
-    let stmts = match parser.parse(sql) {
-        Ok(stmts) => stmts,
-        Err(_) => return Vec::new(),
-    };
-
-    // Extract lineage from the first statement
-    let lineage = match stmts
-        .first()
-        .and_then(|stmt| extract_column_lineage(stmt, &model.name))
-    {
-        Some(l) => l,
-        None => return Vec::new(),
-    };
-
-    // Convert to documentation format
-    lineage
-        .columns
-        .into_iter()
-        .map(|col| ColumnLineageDoc {
-            output_column: col.output_column,
-            source_columns: col
-                .source_columns
-                .into_iter()
-                .map(|c| c.to_string())
-                .collect(),
-            is_direct: col.is_direct,
-            expr_type: col.expr_type,
-        })
-        .collect()
-}
-
-/// Generate test suggestions from a model's SQL
-fn generate_test_suggestions(model: &Model) -> Vec<TestSuggestionDoc> {
-    let parser = SqlParser::duckdb();
-
-    // Use compiled SQL if available, otherwise raw SQL
-    let sql = model.compiled_sql.as_ref().unwrap_or(&model.raw_sql);
-
-    // Try to parse the SQL
-    let stmts = match parser.parse(sql) {
-        Ok(stmts) => stmts,
-        Err(_) => return Vec::new(),
-    };
-
-    // Get suggestions from the first statement
-    let suggestions = match stmts.first() {
-        Some(stmt) => suggest_tests(stmt, &model.name),
-        None => return Vec::new(),
-    };
-
-    // Convert to documentation format
-    let mut docs: Vec<TestSuggestionDoc> = Vec::new();
-    for (column, col_suggestions) in suggestions.columns {
-        for suggestion in col_suggestions.suggestions {
-            docs.push(TestSuggestionDoc {
-                column: column.clone(),
-                test_type: suggestion.test_name().to_string(),
-                reason: suggestion.reason(),
-            });
-        }
-    }
-
-    // Sort by column name
-    docs.sort_by(|a, b| a.column.cmp(&b.column));
-    docs
 }
 
 /// Generate markdown documentation for a model
@@ -792,7 +419,7 @@ fn generate_markdown(doc: &ModelDoc) -> String {
             } else {
                 col.source_columns.join(", ")
             };
-            let direct = if col.is_direct { "✓" } else { "-" };
+            let direct = if col.is_direct { "\u{2713}" } else { "-" };
             md.push_str(&format!(
                 "| {} | {} | {} | {} |\n",
                 col.output_column, sources, col.expr_type, direct
@@ -819,65 +446,57 @@ fn generate_markdown(doc: &ModelDoc) -> String {
     md
 }
 
-/// Build documentation data for a source
-fn build_source_doc(source: &SourceFile) -> SourceDoc {
-    let tables: Vec<SourceTableDoc> = source
-        .tables
-        .iter()
-        .map(|table| SourceTableDoc {
-            name: table.name.clone(),
-            description: table.description.clone(),
-            columns: table
-                .columns
-                .iter()
-                .map(|col| {
-                    // Convert TestDefinition to test name strings
-                    let tests: Vec<String> = col
-                        .tests
-                        .iter()
-                        .map(|t| match t {
-                            ff_core::model::TestDefinition::Simple(name) => name.clone(),
-                            ff_core::model::TestDefinition::Parameterized(map) => {
-                                map.keys().next().cloned().unwrap_or_default()
-                            }
-                        })
-                        .collect();
-                    SourceColumnDoc {
-                        name: col.name.clone(),
-                        data_type: col.data_type.clone(),
-                        description: col.description.clone(),
-                        tests,
-                    }
-                })
-                .collect(),
-        })
-        .collect();
+/// Generate markdown documentation for a source
+fn generate_source_markdown(doc: &SourceDoc) -> String {
+    let mut md = String::new();
 
-    SourceDoc {
-        name: source.name.clone(),
-        description: source.description.clone(),
-        schema: source.schema.clone(),
-        owner: source.owner.clone(),
-        tags: source.tags.clone(),
-        tables,
-    }
-}
+    // Title
+    md.push_str(&format!("# Source: {}\n\n", doc.name));
 
-/// Build exposure documentation from an Exposure
-fn build_exposure_doc(exposure: &Exposure) -> ExposureDoc {
-    ExposureDoc {
-        name: exposure.name.clone(),
-        description: exposure.description.clone(),
-        exposure_type: format!("{}", exposure.exposure_type),
-        owner: ExposureOwnerDoc {
-            name: exposure.owner.name.clone(),
-            email: exposure.owner.email.clone(),
-        },
-        depends_on: exposure.depends_on.clone(),
-        url: exposure.url.clone(),
-        maturity: format!("{}", exposure.maturity),
-        tags: exposure.tags.clone(),
+    // Description
+    if let Some(desc) = &doc.description {
+        md.push_str(&format!("{}\n\n", desc));
     }
+
+    // Metadata
+    md.push_str(&format!("**Schema**: {}\n\n", doc.schema));
+    if let Some(owner) = &doc.owner {
+        md.push_str(&format!("**Owner**: {}\n\n", owner));
+    }
+    if !doc.tags.is_empty() {
+        md.push_str(&format!("**Tags**: {}\n\n", doc.tags.join(", ")));
+    }
+
+    // Tables
+    md.push_str("## Tables\n\n");
+    for table in &doc.tables {
+        md.push_str(&format!("### {}\n\n", table.name));
+        if let Some(desc) = &table.description {
+            md.push_str(&format!("{}\n\n", desc));
+        }
+
+        if !table.columns.is_empty() {
+            md.push_str("| Column | Type | Description | Tests |\n");
+            md.push_str("|--------|------|-------------|-------|\n");
+
+            for col in &table.columns {
+                let data_type = col.data_type.as_deref().unwrap_or("-");
+                let desc = col.description.as_deref().unwrap_or("-");
+                let tests = if col.tests.is_empty() {
+                    "-".to_string()
+                } else {
+                    col.tests.join(", ")
+                };
+                md.push_str(&format!(
+                    "| {} | {} | {} | {} |\n",
+                    col.name, data_type, desc, tests
+                ));
+            }
+            md.push('\n');
+        }
+    }
+
+    md
 }
 
 /// Generate markdown documentation for an exposure
@@ -919,95 +538,6 @@ fn generate_exposure_markdown(doc: &ExposureDoc) -> String {
     }
 
     md
-}
-
-/// Generate HTML documentation for an exposure
-fn generate_exposure_html(doc: &ExposureDoc) -> String {
-    let mut html = String::new();
-
-    html.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
-    html.push_str(&format!(
-        "<meta charset=\"UTF-8\">\n<title>Exposure: {}</title>\n",
-        doc.name
-    ));
-    html.push_str(html_styles());
-    html.push_str("</head>\n<body>\n");
-
-    html.push_str("<nav><a href=\"index.html\">← Back to Index</a></nav>\n");
-    html.push_str(&format!("<h1>Exposure: {}</h1>\n", doc.name));
-
-    // Description
-    if let Some(desc) = &doc.description {
-        html.push_str(&format!("<p>{}</p>\n", html_escape(desc)));
-    }
-
-    // Metadata
-    html.push_str("<div class=\"metadata\">\n");
-    html.push_str(&format!(
-        "<p><strong>Type:</strong> {}</p>\n",
-        doc.exposure_type
-    ));
-    let owner_str = if let Some(email) = &doc.owner.email {
-        format!("{} ({})", doc.owner.name, email)
-    } else {
-        doc.owner.name.clone()
-    };
-    html.push_str(&format!(
-        "<p><strong>Owner:</strong> {}</p>\n",
-        html_escape(&owner_str)
-    ));
-    html.push_str(&format!(
-        "<p><strong>Maturity:</strong> {}</p>\n",
-        doc.maturity
-    ));
-    if let Some(url) = &doc.url {
-        html.push_str(&format!(
-            "<p><strong>URL:</strong> <a href=\"{}\" target=\"_blank\">{}</a></p>\n",
-            url,
-            html_escape(url)
-        ));
-    }
-    if !doc.tags.is_empty() {
-        html.push_str(&format!(
-            "<p><strong>Tags:</strong> {}</p>\n",
-            doc.tags.join(", ")
-        ));
-    }
-    html.push_str("</div>\n");
-
-    // Dependencies
-    if !doc.depends_on.is_empty() {
-        html.push_str("<h2>Depends On</h2>\n");
-        html.push_str("<ul>\n");
-        for model in &doc.depends_on {
-            html.push_str(&format!(
-                "<li><a href=\"{}.html\">{}</a></li>\n",
-                model, model
-            ));
-        }
-        html.push_str("</ul>\n");
-    }
-
-    html.push_str("</body>\n</html>\n");
-    html
-}
-
-/// Build documentation data for a metric
-fn build_metric_doc(metric: &Metric) -> MetricDoc {
-    MetricDoc {
-        name: metric.name.clone(),
-        label: metric.label.clone(),
-        description: metric.description.clone(),
-        model: metric.model.clone(),
-        calculation: format!("{}", metric.calculation),
-        expression: metric.expression.clone(),
-        timestamp: metric.timestamp.clone(),
-        dimensions: metric.dimensions.clone(),
-        filters: metric.filters.clone(),
-        tags: metric.tags.clone(),
-        owner: metric.owner.clone(),
-        sql: metric.generate_sql(),
-    }
 }
 
 /// Generate markdown documentation for a metric
@@ -1079,151 +609,6 @@ fn generate_metric_markdown(doc: &MetricDoc) -> String {
     md
 }
 
-/// Generate HTML documentation for a metric
-fn generate_metric_html(doc: &MetricDoc) -> String {
-    let mut html = String::new();
-
-    html.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
-    html.push_str(&format!(
-        "<meta charset=\"UTF-8\">\n<title>Metric: {}</title>\n",
-        doc.name
-    ));
-    html.push_str(html_styles());
-    html.push_str("</head>\n<body>\n");
-
-    html.push_str("<nav><a href=\"index.html\">← Back to Index</a></nav>\n");
-    html.push_str(&format!("<h1>Metric: {}</h1>\n", doc.name));
-
-    // Label
-    if let Some(label) = &doc.label {
-        html.push_str(&format!(
-            "<p class=\"metric-label\"><em>{}</em></p>\n",
-            html_escape(label)
-        ));
-    }
-
-    // Description
-    if let Some(desc) = &doc.description {
-        html.push_str(&format!("<p>{}</p>\n", html_escape(desc)));
-    }
-
-    // Metadata
-    html.push_str("<h2>Definition</h2>\n");
-    html.push_str("<div class=\"metadata\">\n");
-    html.push_str(&format!(
-        "<p><strong>Base Model:</strong> <a href=\"{}.html\">{}</a></p>\n",
-        doc.model, doc.model
-    ));
-    html.push_str(&format!(
-        "<p><strong>Calculation:</strong> <code>{}({})</code></p>\n",
-        doc.calculation,
-        html_escape(&doc.expression)
-    ));
-    if let Some(ts) = &doc.timestamp {
-        html.push_str(&format!(
-            "<p><strong>Timestamp Column:</strong> <code>{}</code></p>\n",
-            html_escape(ts)
-        ));
-    }
-    if let Some(owner) = &doc.owner {
-        html.push_str(&format!(
-            "<p><strong>Owner:</strong> {}</p>\n",
-            html_escape(owner)
-        ));
-    }
-    if !doc.tags.is_empty() {
-        html.push_str(&format!(
-            "<p><strong>Tags:</strong> {}</p>\n",
-            doc.tags.join(", ")
-        ));
-    }
-    html.push_str("</div>\n");
-
-    // Dimensions
-    if !doc.dimensions.is_empty() {
-        html.push_str("<h2>Dimensions</h2>\n");
-        html.push_str("<p>Available dimensions for grouping:</p>\n");
-        html.push_str("<ul>\n");
-        for dim in &doc.dimensions {
-            html.push_str(&format!("<li><code>{}</code></li>\n", html_escape(dim)));
-        }
-        html.push_str("</ul>\n");
-    }
-
-    // Filters
-    if !doc.filters.is_empty() {
-        html.push_str("<h2>Filters</h2>\n");
-        html.push_str("<p>Applied filters:</p>\n");
-        html.push_str("<ul>\n");
-        for filter in &doc.filters {
-            html.push_str(&format!("<li><code>{}</code></li>\n", html_escape(filter)));
-        }
-        html.push_str("</ul>\n");
-    }
-
-    // Generated SQL
-    html.push_str("<h2>Generated SQL</h2>\n");
-    html.push_str("<pre><code>");
-    html.push_str(&html_escape(&doc.sql));
-    html.push_str("</code></pre>\n");
-
-    html.push_str("</body>\n</html>\n");
-    html
-}
-
-/// Generate markdown documentation for a source
-fn generate_source_markdown(doc: &SourceDoc) -> String {
-    let mut md = String::new();
-
-    // Title
-    md.push_str(&format!("# Source: {}\n\n", doc.name));
-
-    // Description
-    if let Some(desc) = &doc.description {
-        md.push_str(&format!("{}\n\n", desc));
-    }
-
-    // Metadata
-    md.push_str(&format!("**Schema**: {}\n\n", doc.schema));
-    if let Some(owner) = &doc.owner {
-        md.push_str(&format!("**Owner**: {}\n\n", owner));
-    }
-    if !doc.tags.is_empty() {
-        md.push_str(&format!("**Tags**: {}\n\n", doc.tags.join(", ")));
-    }
-
-    // Tables
-    md.push_str("## Tables\n\n");
-    for table in &doc.tables {
-        md.push_str(&format!("### {}\n\n", table.name));
-        if let Some(desc) = &table.description {
-            md.push_str(&format!("{}\n\n", desc));
-        }
-
-        if !table.columns.is_empty() {
-            md.push_str("| Column | Type | Description | Tests |\n");
-            md.push_str("|--------|------|-------------|-------|\n");
-
-            for col in &table.columns {
-                let data_type = col.data_type.as_deref().unwrap_or("-");
-                let desc = col.description.as_deref().unwrap_or("-");
-                let tests = if col.tests.is_empty() {
-                    "-".to_string()
-                } else {
-                    col.tests.join(", ")
-                };
-                md.push_str(&format!(
-                    "| {} | {} | {} | {} |\n",
-                    col.name, data_type, desc, tests
-                ));
-            }
-            md.push('\n');
-        }
-    }
-
-    md
-}
-
 /// Generate markdown index file
 fn generate_index_markdown(
     project_name: &str,
@@ -1282,7 +667,7 @@ fn generate_index_markdown(
     for model in models {
         let desc = model.description.as_deref().unwrap_or("-");
         let owner = model.owner.as_deref().unwrap_or("-");
-        let has_schema = if model.has_schema { "✓" } else { "-" };
+        let has_schema = if model.has_schema { "\u{2713}" } else { "-" };
         md.push_str(&format!(
             "| [{}]({}.md) | {} | {} | {} |\n",
             model.name, model.name, desc, owner, has_schema
@@ -1642,6 +1027,169 @@ fn generate_source_html(doc: &SourceDoc) -> String {
     html
 }
 
+/// Generate HTML documentation for an exposure
+fn generate_exposure_html(doc: &ExposureDoc) -> String {
+    let mut html = String::new();
+
+    html.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
+    html.push_str(&format!(
+        "<meta charset=\"UTF-8\">\n<title>Exposure: {}</title>\n",
+        doc.name
+    ));
+    html.push_str(html_styles());
+    html.push_str("</head>\n<body>\n");
+
+    html.push_str("<nav><a href=\"index.html\">\u{2190} Back to Index</a></nav>\n");
+    html.push_str(&format!("<h1>Exposure: {}</h1>\n", doc.name));
+
+    // Description
+    if let Some(desc) = &doc.description {
+        html.push_str(&format!("<p>{}</p>\n", html_escape(desc)));
+    }
+
+    // Metadata
+    html.push_str("<div class=\"metadata\">\n");
+    html.push_str(&format!(
+        "<p><strong>Type:</strong> {}</p>\n",
+        doc.exposure_type
+    ));
+    let owner_str = if let Some(email) = &doc.owner.email {
+        format!("{} ({})", doc.owner.name, email)
+    } else {
+        doc.owner.name.clone()
+    };
+    html.push_str(&format!(
+        "<p><strong>Owner:</strong> {}</p>\n",
+        html_escape(&owner_str)
+    ));
+    html.push_str(&format!(
+        "<p><strong>Maturity:</strong> {}</p>\n",
+        doc.maturity
+    ));
+    if let Some(url) = &doc.url {
+        html.push_str(&format!(
+            "<p><strong>URL:</strong> <a href=\"{}\" target=\"_blank\">{}</a></p>\n",
+            url,
+            html_escape(url)
+        ));
+    }
+    if !doc.tags.is_empty() {
+        html.push_str(&format!(
+            "<p><strong>Tags:</strong> {}</p>\n",
+            doc.tags.join(", ")
+        ));
+    }
+    html.push_str("</div>\n");
+
+    // Dependencies
+    if !doc.depends_on.is_empty() {
+        html.push_str("<h2>Depends On</h2>\n");
+        html.push_str("<ul>\n");
+        for model in &doc.depends_on {
+            html.push_str(&format!(
+                "<li><a href=\"{}.html\">{}</a></li>\n",
+                model, model
+            ));
+        }
+        html.push_str("</ul>\n");
+    }
+
+    html.push_str("</body>\n</html>\n");
+    html
+}
+
+/// Generate HTML documentation for a metric
+fn generate_metric_html(doc: &MetricDoc) -> String {
+    let mut html = String::new();
+
+    html.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
+    html.push_str(&format!(
+        "<meta charset=\"UTF-8\">\n<title>Metric: {}</title>\n",
+        doc.name
+    ));
+    html.push_str(html_styles());
+    html.push_str("</head>\n<body>\n");
+
+    html.push_str("<nav><a href=\"index.html\">\u{2190} Back to Index</a></nav>\n");
+    html.push_str(&format!("<h1>Metric: {}</h1>\n", doc.name));
+
+    // Label
+    if let Some(label) = &doc.label {
+        html.push_str(&format!(
+            "<p class=\"metric-label\"><em>{}</em></p>\n",
+            html_escape(label)
+        ));
+    }
+
+    // Description
+    if let Some(desc) = &doc.description {
+        html.push_str(&format!("<p>{}</p>\n", html_escape(desc)));
+    }
+
+    // Metadata
+    html.push_str("<h2>Definition</h2>\n");
+    html.push_str("<div class=\"metadata\">\n");
+    html.push_str(&format!(
+        "<p><strong>Base Model:</strong> <a href=\"{}.html\">{}</a></p>\n",
+        doc.model, doc.model
+    ));
+    html.push_str(&format!(
+        "<p><strong>Calculation:</strong> <code>{}({})</code></p>\n",
+        doc.calculation,
+        html_escape(&doc.expression)
+    ));
+    if let Some(ts) = &doc.timestamp {
+        html.push_str(&format!(
+            "<p><strong>Timestamp Column:</strong> <code>{}</code></p>\n",
+            html_escape(ts)
+        ));
+    }
+    if let Some(owner) = &doc.owner {
+        html.push_str(&format!(
+            "<p><strong>Owner:</strong> {}</p>\n",
+            html_escape(owner)
+        ));
+    }
+    if !doc.tags.is_empty() {
+        html.push_str(&format!(
+            "<p><strong>Tags:</strong> {}</p>\n",
+            doc.tags.join(", ")
+        ));
+    }
+    html.push_str("</div>\n");
+
+    // Dimensions
+    if !doc.dimensions.is_empty() {
+        html.push_str("<h2>Dimensions</h2>\n");
+        html.push_str("<p>Available dimensions for grouping:</p>\n");
+        html.push_str("<ul>\n");
+        for dim in &doc.dimensions {
+            html.push_str(&format!("<li><code>{}</code></li>\n", html_escape(dim)));
+        }
+        html.push_str("</ul>\n");
+    }
+
+    // Filters
+    if !doc.filters.is_empty() {
+        html.push_str("<h2>Filters</h2>\n");
+        html.push_str("<p>Applied filters:</p>\n");
+        html.push_str("<ul>\n");
+        for filter in &doc.filters {
+            html.push_str(&format!("<li><code>{}</code></li>\n", html_escape(filter)));
+        }
+        html.push_str("</ul>\n");
+    }
+
+    // Generated SQL
+    html.push_str("<h2>Generated SQL</h2>\n");
+    html.push_str("<pre><code>");
+    html.push_str(&html_escape(&doc.sql));
+    html.push_str("</code></pre>\n");
+
+    html.push_str("</body>\n</html>\n");
+    html
+}
+
 /// Generate HTML index file
 fn generate_index_html(
     project_name: &str,
@@ -1797,7 +1345,7 @@ fn generate_index_html(
 }
 
 /// Escape HTML special characters
-fn html_escape(s: &str) -> String {
+pub(super) fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")

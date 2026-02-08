@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Feather-Flow Docs</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header id="header">
+    <div class="header-left">
+      <h1 class="logo">ff</h1>
+      <span id="project-name" class="project-name"></span>
+    </div>
+    <div class="header-right">
+      <div class="search-container">
+        <input type="text" id="search-input" placeholder="Search models, columns..." autocomplete="off">
+        <div id="search-results" class="search-results hidden"></div>
+      </div>
+      <div class="stats" id="stats"></div>
+      <button id="theme-toggle" class="theme-toggle" title="Toggle theme">
+        <span class="icon-sun">&#9788;</span>
+        <span class="icon-moon">&#9790;</span>
+      </button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <h2>Models</h2>
+      </div>
+      <nav id="model-list" class="model-list"></nav>
+      <div id="source-section" class="sidebar-section hidden">
+        <h3>Sources</h3>
+        <nav id="source-list" class="model-list"></nav>
+      </div>
+    </aside>
+
+    <main id="main">
+      <div id="graph-container" class="graph-container">
+        <div id="graph-viewport" class="graph-viewport">
+          <svg id="graph-edges" class="graph-edges">
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5"
+                      markerWidth="8" markerHeight="8" orient="auto-start-reverse"
+                      markerUnits="strokeWidth">
+                <path d="M 0 0 L 10 5 L 0 10 z" class="arrow-marker" />
+              </marker>
+              <marker id="arrow-highlight" viewBox="0 0 10 10" refX="10" refY="5"
+                      markerWidth="8" markerHeight="8" orient="auto-start-reverse"
+                      markerUnits="strokeWidth">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#ef4444" />
+              </marker>
+              <marker id="arrow-dimmed" viewBox="0 0 10 10" refX="10" refY="5"
+                      markerWidth="8" markerHeight="8" orient="auto-start-reverse"
+                      markerUnits="strokeWidth">
+                <path d="M 0 0 L 10 5 L 0 10 z" class="arrow-dimmed" />
+              </marker>
+            </defs>
+          </svg>
+          <div id="graph-nodes" class="graph-nodes"></div>
+        </div>
+        <div class="graph-controls">
+          <button id="zoom-in" title="Zoom in">+</button>
+          <button id="zoom-out" title="Zoom out">&minus;</button>
+          <button id="zoom-fit" title="Fit to view">&#8689;</button>
+        </div>
+        <div class="graph-hint" id="graph-hint">
+          Click a node to see details &middot; Drag to pan &middot; Scroll to zoom
+        </div>
+      </div>
+    </main>
+
+    <aside id="detail-panel" class="detail-panel hidden">
+      <div class="detail-header">
+        <h2 id="detail-title"></h2>
+        <button id="detail-close" class="detail-close">&times;</button>
+      </div>
+      <div id="detail-content" class="detail-content"></div>
+    </aside>
+  </div>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

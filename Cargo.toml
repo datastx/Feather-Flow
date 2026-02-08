@@ -31,8 +31,15 @@ sqlparser = { version = "0.52", features = ["visitor"] }
 duckdb = { version = "1.1", features = ["bundled"] }
 
 # Async
-tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "sync"] }
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "sync", "net"] }
 async-trait = "0.1"
+
+# Web server (docs-serve)
+axum = "0.8"
+tower-http = { version = "0.6", features = ["compression-gzip", "cors"] }
+rust-embed = "8"
+mime_guess = "2"
+open = "5"
 
 # Utilities
 petgraph = "0.6"

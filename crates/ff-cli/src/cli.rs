@@ -348,6 +348,10 @@ pub struct ValidateArgs {
 /// Arguments for the docs command
 #[derive(Args, Debug)]
 pub struct DocsArgs {
+    /// Docs subcommand (serve, etc.)
+    #[command(subcommand)]
+    pub command: Option<DocsCommands>,
+
     /// Model names to generate docs for (comma-separated, default: all with schemas)
     #[arg(short, long)]
     pub models: Option<String>,
@@ -359,6 +363,37 @@ pub struct DocsArgs {
     /// Output format
     #[arg(short, long, value_enum, default_value = "markdown")]
     pub format: DocsFormat,
+}
+
+/// Docs subcommands
+#[derive(Subcommand, Debug)]
+pub enum DocsCommands {
+    /// Launch interactive documentation server
+    Serve(DocsServeArgs),
+}
+
+/// Arguments for the docs serve subcommand
+#[derive(Args, Debug)]
+pub struct DocsServeArgs {
+    /// Port to serve on
+    #[arg(long, default_value = "4040")]
+    pub port: u16,
+
+    /// Host to bind to
+    #[arg(long, default_value = "127.0.0.1")]
+    pub host: String,
+
+    /// Filter models by selector
+    #[arg(long)]
+    pub select: Option<String>,
+
+    /// Don't open browser automatically
+    #[arg(long)]
+    pub no_browser: bool,
+
+    /// Export static site to directory instead of serving
+    #[arg(long)]
+    pub static_export: Option<String>,
 }
 
 /// Documentation output formats
