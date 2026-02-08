@@ -1486,6 +1486,7 @@ fn test_load_deferred_manifest() {
             on_schema_change: None,
             pre_hook: vec![],
             post_hook: vec![],
+            wap: None,
         },
     );
     manifest.model_count = 1;
@@ -1540,6 +1541,7 @@ fn test_defer_dependency_resolution() {
             on_schema_change: None,
             pre_hook: vec![],
             post_hook: vec![],
+            wap: None,
         },
     );
 
@@ -1560,6 +1562,7 @@ fn test_defer_dependency_resolution() {
             on_schema_change: None,
             pre_hook: vec![],
             post_hook: vec![],
+            wap: None,
         },
     );
 
@@ -1608,6 +1611,7 @@ fn test_defer_missing_upstream_detection() {
             on_schema_change: None,
             pre_hook: vec![],
             post_hook: vec![],
+            wap: None,
         },
     );
 
@@ -1648,6 +1652,7 @@ fn test_defer_transitive_dependencies() {
             on_schema_change: None,
             pre_hook: vec![],
             post_hook: vec![],
+            wap: None,
         },
     );
 
@@ -1668,6 +1673,7 @@ fn test_defer_transitive_dependencies() {
             on_schema_change: None,
             pre_hook: vec![],
             post_hook: vec![],
+            wap: None,
         },
     );
 
@@ -1721,6 +1727,7 @@ fn test_defer_slim_ci_scenario() {
                 on_schema_change: None,
                 pre_hook: vec![],
                 post_hook: vec![],
+                wap: None,
             },
         );
     }

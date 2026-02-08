@@ -499,6 +499,11 @@ fn compile_model_phase1(
             }),
         pre_hook: parse_hooks_from_config(&config_values, "pre_hook"),
         post_hook: parse_hooks_from_config(&config_values, "post_hook"),
+        wap: config_values.get("wap").map(|v| {
+            v.as_str()
+                .map(|s| s == "true")
+                .unwrap_or_else(|| v.is_true())
+        }),
     };
 
     let mat = model.config.materialized.unwrap_or(default_materialization);

@@ -91,6 +91,8 @@ struct CompiledModel {
     model_schema: Option<ModelSchema>,
     /// Query comment to append when executing SQL
     query_comment: Option<String>,
+    /// Whether this model uses Write-Audit-Publish pattern
+    wap: bool,
 }
 
 /// Check if manifest cache is valid (newer than all source files)
@@ -277,7 +279,18 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
+    // Resolve WAP schema from config
+    let target = ff_core::config::Config::resolve_target(global.target.as_deref());
+    let wap_schema = project.config.get_wap_schema(target.as_deref());
+
     create_schemas(&db, &compiled_models, global).await?;
+
+    // Create WAP schema if configured
+    if let Some(ref ws) = wap_schema {
+        db.create_schema_if_not_exists(ws)
+            .await
+            .context(format!("Failed to create WAP schema: {}", ws))?;
+    }
 
     // Execute on-run-start hooks (skip if resuming)
     if previous_run_state.is_none() && !project.config.on_run_start.is_empty() {
@@ -316,6 +329,7 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         &mut state_file,
         &mut run_state,
         &run_state_path,
+        wap_schema.as_deref(),
     )
     .await;
 
@@ -571,6 +585,7 @@ fn load_from_manifest(
                     post_hook,
                     model_schema,
                     query_comment,
+                    wap: manifest_model.wap.unwrap_or(false),
                 },
             );
         }
@@ -676,6 +691,16 @@ fn compile_all_models(
         // Get model schema for contract validation
         let model_schema = model.schema.clone();
 
+        // Resolve WAP from config() or YAML
+        let wap = config_values
+            .get("wap")
+            .map(|v| {
+                v.as_str()
+                    .map(|s| s == "true")
+                    .unwrap_or_else(|| v.is_true())
+            })
+            .unwrap_or_else(|| model.wap_enabled());
+
         // Build query comment for this model
         let query_comment = comment_ctx.map(|ctx| {
             let metadata = ctx.build_metadata(name, &mat.to_string());
@@ -696,6 +721,7 @@ fn compile_all_models(
                 post_hook,
                 model_schema,
                 query_comment,
+                wap,
             },
         );
     }
@@ -1053,6 +1079,144 @@ async fn execute_hooks(
     Ok(())
 }
 
+/// Execute Write-Audit-Publish flow for a model
+///
+/// 1. Create WAP schema if needed
+/// 2. For tables: CTAS into wap_schema
+///    For incremental: copy prod to wap_schema, then apply incremental
+/// 3. Run schema tests against wap_schema copy
+/// 4. If tests pass: DROP prod + CTAS from wap to prod
+/// 5. If tests fail: keep wap table, return error
+#[allow(clippy::too_many_arguments)]
+async fn execute_wap(
+    db: &Arc<dyn Database>,
+    name: &str,
+    qualified_name: &str,
+    wap_schema: &str,
+    compiled: &CompiledModel,
+    full_refresh: bool,
+    exec_sql: &str,
+) -> Result<(), ff_db::error::DbError> {
+    let wap_qualified = format!("{}.{}", wap_schema, name);
+
+    // 1. Create WAP schema
+    db.create_schema_if_not_exists(wap_schema).await?;
+
+    // 2. Materialize into WAP schema
+    match compiled.materialization {
+        Materialization::Table => {
+            db.create_table_as(&wap_qualified, exec_sql, true).await?;
+        }
+        Materialization::Incremental => {
+            // Copy existing prod table to WAP schema (if it exists and not full refresh)
+            if !full_refresh {
+                let exists = db.relation_exists(qualified_name).await.unwrap_or(false);
+                if exists {
+                    let copy_sql = format!(
+                        "CREATE OR REPLACE TABLE {} AS FROM {}",
+                        wap_qualified, qualified_name
+                    );
+                    db.execute(&copy_sql).await?;
+                }
+            }
+            // Apply incremental logic against the WAP copy
+            execute_incremental(db, &wap_qualified, compiled, full_refresh, exec_sql).await?;
+        }
+        _ => unreachable!("WAP only applies to table/incremental"),
+    }
+
+    // 3. Run schema tests against WAP copy
+    let test_failures =
+        run_wap_tests(db, name, &wap_qualified, compiled.model_schema.as_ref()).await;
+
+    if test_failures > 0 {
+        return Err(ff_db::error::DbError::ExecutionError(format!(
+            "WAP audit failed: {} test(s) failed for '{}'. \
+             Staging table preserved at '{}' for debugging. \
+             Production table is untouched.",
+            test_failures, name, wap_qualified
+        )));
+    }
+
+    // 4. Tests passed — publish: DROP prod + CTAS from WAP
+    db.drop_if_exists(qualified_name).await?;
+
+    let publish_sql = format!("CREATE TABLE {} AS FROM {}", qualified_name, wap_qualified);
+    db.execute(&publish_sql).await?;
+
+    // Clean up WAP table after successful publish
+    let _ = db.drop_if_exists(&wap_qualified).await;
+
+    Ok(())
+}
+
+/// Run schema tests for a single model against a specific qualified name
+///
+/// Returns the number of test failures
+async fn run_wap_tests(
+    db: &Arc<dyn Database>,
+    model_name: &str,
+    wap_qualified_name: &str,
+    model_schema: Option<&ModelSchema>,
+) -> usize {
+    let schema = match model_schema {
+        Some(s) => s,
+        None => return 0, // No schema = no tests = pass
+    };
+
+    let tests = schema.extract_tests(model_name);
+    if tests.is_empty() {
+        return 0;
+    }
+
+    let mut failures = 0;
+
+    for test in &tests {
+        let generated =
+            ff_test::generator::GeneratedTest::from_schema_test_qualified(test, wap_qualified_name);
+
+        match db.query_count(&generated.sql).await {
+            Ok(count) if count > 0 => {
+                println!(
+                    "    WAP audit FAIL: {} on {}.{} ({} failures)",
+                    test.test_type, model_name, test.column, count
+                );
+                failures += 1;
+            }
+            Err(e) => {
+                println!(
+                    "    WAP audit ERROR: {} on {}.{}: {}",
+                    test.test_type, model_name, test.column, e
+                );
+                failures += 1;
+            }
+            _ => {} // pass
+        }
+    }
+
+    failures
+}
+
+/// Get all transitive dependents of a model
+fn get_transitive_dependents(
+    model_name: &str,
+    compiled_models: &HashMap<String, CompiledModel>,
+) -> HashSet<String> {
+    let mut dependents = HashSet::new();
+    let mut to_check = vec![model_name.to_string()];
+
+    while let Some(current) = to_check.pop() {
+        for (name, compiled) in compiled_models {
+            if compiled.dependencies.contains(&current) && !dependents.contains(name) {
+                dependents.insert(name.clone());
+                to_check.push(name.clone());
+            }
+        }
+    }
+
+    dependents
+}
+
 /// Validate schema contract for a model after execution
 ///
 /// Returns Ok(Some(result)) if contract validation was performed,
@@ -1146,29 +1310,48 @@ async fn execute_models(
     execution_order: &[String],
     args: &RunArgs,
     state_file: &mut StateFile,
+    wap_schema: Option<&str>,
 ) -> (Vec<ModelRunResult>, usize, usize, bool) {
     // For single thread, use the simple sequential execution
     if args.threads <= 1 {
-        return execute_models_sequential(db, compiled_models, execution_order, args, state_file)
-            .await;
+        return execute_models_sequential(
+            db,
+            compiled_models,
+            execution_order,
+            args,
+            state_file,
+            wap_schema,
+        )
+        .await;
     }
 
     // Parallel execution using DAG levels
-    execute_models_parallel(db, compiled_models, execution_order, args, state_file).await
+    execute_models_parallel(
+        db,
+        compiled_models,
+        execution_order,
+        args,
+        state_file,
+        wap_schema,
+    )
+    .await
 }
 
 /// Execute models sequentially (original behavior for --threads=1)
+#[allow(clippy::too_many_arguments)]
 async fn execute_models_sequential(
     db: &Arc<dyn Database>,
     compiled_models: &HashMap<String, CompiledModel>,
     execution_order: &[String],
     args: &RunArgs,
     state_file: &mut StateFile,
+    wap_schema: Option<&str>,
 ) -> (Vec<ModelRunResult>, usize, usize, bool) {
     let mut success_count = 0;
     let mut failure_count = 0;
     let mut run_results: Vec<ModelRunResult> = Vec::new();
     let mut stopped_early = false;
+    let mut failed_models: HashSet<String> = HashSet::new();
 
     // Count non-ephemeral models for progress bar
     let executable_models: Vec<&String> = execution_order
@@ -1203,6 +1386,20 @@ async fn execute_models_sequential(
         let compiled = compiled_models.get(name).expect(
             "model exists in compiled_models - validated during execution order construction",
         );
+
+        // Skip models whose upstream WAP failed
+        if failed_models.contains(name) {
+            failure_count += 1;
+            println!("  - {} (skipped: upstream WAP failure)", name);
+            run_results.push(ModelRunResult {
+                model: name.clone(),
+                status: "skipped".to_string(),
+                materialization: compiled.materialization.to_string(),
+                duration_secs: 0.0,
+                error: Some("skipped: upstream WAP failure".to_string()),
+            });
+            continue;
+        }
 
         // Skip ephemeral models (they're inlined during compilation)
         if compiled.materialization == Materialization::Ephemeral {
@@ -1266,17 +1463,36 @@ async fn execute_models_sequential(
             None => compiled.sql.clone(),
         };
 
-        let result = match compiled.materialization {
-            Materialization::View => db.create_view_as(&qualified_name, &exec_sql, true).await,
-            Materialization::Table => db.create_table_as(&qualified_name, &exec_sql, true).await,
-            Materialization::Incremental => {
-                execute_incremental(db, &qualified_name, compiled, args.full_refresh, &exec_sql)
-                    .await
-            }
-            Materialization::Ephemeral => {
-                // Ephemeral models don't create database objects
-                // They are inlined as CTEs in downstream models during compilation
-                Ok(())
+        // Determine if this model should use WAP flow
+        let is_wap = compiled.wap
+            && wap_schema.is_some()
+            && matches!(
+                compiled.materialization,
+                Materialization::Table | Materialization::Incremental
+            );
+
+        let result = if is_wap {
+            execute_wap(
+                db,
+                name,
+                &qualified_name,
+                wap_schema.unwrap(),
+                compiled,
+                args.full_refresh,
+                &exec_sql,
+            )
+            .await
+        } else {
+            match compiled.materialization {
+                Materialization::View => db.create_view_as(&qualified_name, &exec_sql, true).await,
+                Materialization::Table => {
+                    db.create_table_as(&qualified_name, &exec_sql, true).await
+                }
+                Materialization::Incremental => {
+                    execute_incremental(db, &qualified_name, compiled, args.full_refresh, &exec_sql)
+                        .await
+                }
+                Materialization::Ephemeral => Ok(()),
             }
         };
 
@@ -1400,6 +1616,14 @@ async fn execute_models_sequential(
                     error: Some(e.to_string()),
                 });
 
+                // If WAP model failed, skip all transitive dependents
+                if is_wap {
+                    let dependents = get_transitive_dependents(name, compiled_models);
+                    for dep in &dependents {
+                        failed_models.insert(dep.clone());
+                    }
+                }
+
                 // Stop on first failure if --fail-fast is set
                 if args.fail_fast {
                     stopped_early = true;
@@ -1419,12 +1643,14 @@ async fn execute_models_sequential(
 }
 
 /// Execute models in parallel using DAG-aware scheduling
+#[allow(clippy::too_many_arguments)]
 async fn execute_models_parallel(
     db: &Arc<dyn Database>,
     compiled_models: &HashMap<String, CompiledModel>,
     execution_order: &[String],
     args: &RunArgs,
     state_file: &mut StateFile,
+    wap_schema: Option<&str>,
 ) -> (Vec<ModelRunResult>, usize, usize, bool) {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -1519,8 +1745,10 @@ async fn execute_models_parallel(
             let pre_hook = compiled.pre_hook.clone();
             let post_hook = compiled.post_hook.clone();
             let model_schema = compiled.model_schema.clone();
+            let model_wap = compiled.wap;
             let full_refresh = args.full_refresh;
             let fail_fast = args.fail_fast;
+            let wap_schema_owned = wap_schema.map(String::from);
 
             let semaphore = Arc::clone(&semaphore);
             let success_count = Arc::clone(&success_count);
@@ -1585,7 +1813,7 @@ async fn execute_models_parallel(
                     None => sql.clone(),
                 };
 
-                // Create a temporary CompiledModel for execute_incremental
+                // Create a temporary CompiledModel for execute_incremental/WAP
                 let compiled = CompiledModel {
                     sql: sql.clone(),
                     query_comment: query_comment.clone(),
@@ -1598,28 +1826,47 @@ async fn execute_models_parallel(
                     pre_hook: vec![],  // Already executed
                     post_hook: vec![], // Will execute separately
                     model_schema: model_schema.clone(),
+                    wap: model_wap,
                 };
 
-                let result = match materialization {
-                    Materialization::View => {
-                        db.create_view_as(&qualified_name, &exec_sql, true).await
-                    }
-                    Materialization::Table => {
-                        db.create_table_as(&qualified_name, &exec_sql, true).await
-                    }
-                    Materialization::Incremental => {
-                        execute_incremental(
-                            &db,
-                            &qualified_name,
-                            &compiled,
-                            full_refresh,
-                            &exec_sql,
-                        )
-                        .await
-                    }
-                    Materialization::Ephemeral => {
-                        // Ephemeral models don't create database objects
-                        Ok(())
+                // Determine if this model should use WAP flow
+                let is_wap = model_wap
+                    && wap_schema_owned.is_some()
+                    && matches!(
+                        materialization,
+                        Materialization::Table | Materialization::Incremental
+                    );
+
+                let result = if is_wap {
+                    execute_wap(
+                        &db,
+                        &name,
+                        &qualified_name,
+                        wap_schema_owned.as_ref().unwrap(),
+                        &compiled,
+                        full_refresh,
+                        &exec_sql,
+                    )
+                    .await
+                } else {
+                    match materialization {
+                        Materialization::View => {
+                            db.create_view_as(&qualified_name, &exec_sql, true).await
+                        }
+                        Materialization::Table => {
+                            db.create_table_as(&qualified_name, &exec_sql, true).await
+                        }
+                        Materialization::Incremental => {
+                            execute_incremental(
+                                &db,
+                                &qualified_name,
+                                &compiled,
+                                full_refresh,
+                                &exec_sql,
+                            )
+                            .await
+                        }
+                        Materialization::Ephemeral => Ok(()),
                     }
                 };
 
@@ -1828,6 +2075,7 @@ fn compute_execution_levels(
 }
 
 /// Execute all models in order with run state tracking for resume capability
+#[allow(clippy::too_many_arguments)]
 async fn execute_models_with_state(
     db: &Arc<dyn Database>,
     compiled_models: &HashMap<String, CompiledModel>,
@@ -1836,10 +2084,18 @@ async fn execute_models_with_state(
     state_file: &mut StateFile,
     run_state: &mut RunState,
     run_state_path: &Path,
+    wap_schema: Option<&str>,
 ) -> (Vec<ModelRunResult>, usize, usize, bool) {
     // Use the existing execute_models function and update run state after
-    let (run_results, success_count, failure_count, stopped_early) =
-        execute_models(db, compiled_models, execution_order, args, state_file).await;
+    let (run_results, success_count, failure_count, stopped_early) = execute_models(
+        db,
+        compiled_models,
+        execution_order,
+        args,
+        state_file,
+        wap_schema,
+    )
+    .await;
 
     // Update run state based on results
     for result in &run_results {

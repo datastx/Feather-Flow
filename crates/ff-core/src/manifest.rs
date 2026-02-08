@@ -78,6 +78,10 @@ pub struct ManifestModel {
     /// SQL statements to execute after the model runs
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub post_hook: Vec<String>,
+
+    /// Whether this model uses Write-Audit-Publish pattern
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wap: Option<bool>,
 }
 
 /// A source entry in the manifest
@@ -226,6 +230,13 @@ impl Manifest {
                 (None, None, None)
             };
 
+        // Resolve WAP setting
+        let wap = if model.wap_enabled() {
+            Some(true)
+        } else {
+            None
+        };
+
         // Use paths as-is (caller should provide relative paths)
         let manifest_model = ManifestModel {
             name: model.name.clone(),
@@ -242,6 +253,7 @@ impl Manifest {
             on_schema_change,
             pre_hook: model.config.pre_hook.clone(),
             post_hook: model.config.post_hook.clone(),
+            wap,
         };
 
         self.models.insert(model.name.clone(), manifest_model);
@@ -290,6 +302,13 @@ impl Manifest {
                 (None, None, None)
             };
 
+        // Resolve WAP setting
+        let wap = if model.wap_enabled() {
+            Some(true)
+        } else {
+            None
+        };
+
         let manifest_model = ManifestModel {
             name: model.name.clone(),
             source_path,
@@ -305,6 +324,7 @@ impl Manifest {
             on_schema_change,
             pre_hook: model.config.pre_hook.clone(),
             post_hook: model.config.post_hook.clone(),
+            wap,
         };
 
         self.models.insert(model.name.clone(), manifest_model);

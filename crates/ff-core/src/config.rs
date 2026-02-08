@@ -59,6 +59,10 @@ pub struct Config {
     #[serde(default)]
     pub schema: Option<String>,
 
+    /// Private schema for Write-Audit-Publish pattern
+    #[serde(default)]
+    pub wap_schema: Option<String>,
+
     /// SQL dialect for parsing
     #[serde(default = "default_dialect")]
     pub dialect: Dialect,
@@ -119,6 +123,10 @@ pub struct TargetConfig {
     /// Schema override
     #[serde(default)]
     pub schema: Option<String>,
+
+    /// WAP schema override
+    #[serde(default)]
+    pub wap_schema: Option<String>,
 
     /// Variable overrides (merged with base vars)
     #[serde(default)]
@@ -411,6 +419,18 @@ impl Config {
             }
         }
         self.schema.clone()
+    }
+
+    /// Get WAP schema, optionally applying target overrides
+    pub fn get_wap_schema(&self, target: Option<&str>) -> Option<String> {
+        if let Some(name) = target {
+            if let Some(target_config) = self.targets.get(name) {
+                if target_config.wap_schema.is_some() {
+                    return target_config.wap_schema.clone();
+                }
+            }
+        }
+        self.wap_schema.clone()
     }
 
     /// Get merged variables, with target overrides taking precedence

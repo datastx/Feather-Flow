@@ -349,6 +349,7 @@ mod tests {
             referenced_tables: Vec::new(),
             pre_hook: Vec::new(),
             post_hook: Vec::new(),
+            wap: None,
         }
     }
 

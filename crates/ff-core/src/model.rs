@@ -194,6 +194,10 @@ pub struct SchemaConfig {
     /// Target schema
     #[serde(default)]
     pub schema: Option<String>,
+
+    /// Whether this model uses Write-Audit-Publish pattern
+    #[serde(default)]
+    pub wap: Option<bool>,
 }
 
 impl ModelSchema {
@@ -364,6 +368,10 @@ pub struct ModelConfig {
     /// SQL statements to execute after the model runs
     #[serde(default)]
     pub post_hook: Vec<String>,
+
+    /// Whether this model uses Write-Audit-Publish pattern
+    #[serde(default)]
+    pub wap: Option<bool>,
 }
 
 /// Schema test definition from schema.yml
@@ -779,6 +787,28 @@ impl Model {
 
         // Finally use project default
         default.map(String::from)
+    }
+
+    /// Check if WAP is enabled for this model
+    ///
+    /// Follows the same precedence chain as other config options:
+    /// 1. SQL config() function (self.config.wap)
+    /// 2. Schema YAML config section (self.schema.config.wap)
+    /// 3. Default: false
+    pub fn wap_enabled(&self) -> bool {
+        // Check SQL config first
+        if let Some(wap) = self.config.wap {
+            return wap;
+        }
+        // Check schema YAML config
+        if let Some(schema) = &self.schema {
+            if let Some(config) = &schema.config {
+                if let Some(wap) = config.wap {
+                    return wap;
+                }
+            }
+        }
+        false
     }
 
     /// Get the schema for this model (deprecated, use target_schema instead)
@@ -1294,6 +1324,7 @@ columns:
                 on_schema_change: None,
                 pre_hook: vec![],
                 post_hook: vec![],
+                wap: None,
             },
             depends_on: HashSet::new(),
             external_deps: HashSet::new(),
@@ -1306,6 +1337,7 @@ columns:
                 config: Some(SchemaConfig {
                     materialized: Some(Materialization::View), // Should be ignored
                     schema: Some("yaml_schema".to_string()),   // Should be ignored
+                    wap: None,
                 }),
                 contract: None,
                 freshness: None,
@@ -1347,6 +1379,7 @@ columns:
                 config: Some(SchemaConfig {
                     materialized: Some(Materialization::Table), // Should be used
                     schema: Some("yaml_schema".to_string()),    // Should be used
+                    wap: None,
                 }),
                 contract: None,
                 freshness: None,
@@ -1416,6 +1449,7 @@ columns:
                 "ANALYZE {{ this }}".to_string(),
                 "GRANT SELECT ON {{ this }} TO analyst".to_string(),
             ],
+            wap: None,
         };
         assert_eq!(config.pre_hook.len(), 1);
         assert_eq!(config.post_hook.len(), 2);
