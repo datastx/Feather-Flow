@@ -197,8 +197,8 @@ function initSearch() {
     const matches = index.filter(entry => {
       if (entry.name.toLowerCase().includes(query)) return true;
       if (entry.description && entry.description.toLowerCase().includes(query)) return true;
-      if (entry.columns.some(c => c.toLowerCase().includes(query))) return true;
-      if (entry.tags.some(t => t.toLowerCase().includes(query))) return true;
+      if (entry.columns && entry.columns.some(c => c.toLowerCase().includes(query))) return true;
+      if (entry.tags && entry.tags.some(t => t.toLowerCase().includes(query))) return true;
       return false;
     }).slice(0, 10);
 

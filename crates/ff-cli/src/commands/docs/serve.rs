@@ -99,9 +99,7 @@ struct SearchEntry {
     resource_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     tags: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     columns: Vec<String>,
 }
 
@@ -175,7 +173,11 @@ fn build_app_state(project: &Project) -> Result<AppState> {
     let mut total_columns = 0;
 
     // Pre-compute known model names and source tables for dependency categorization
-    let known_models: HashSet<String> = project.model_names().into_iter().map(|s| s.to_string()).collect();
+    let known_models: HashSet<String> = project
+        .model_names()
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect();
     let external_tables = project.source_table_names();
     let parser = SqlParser::duckdb();
     let jinja = JinjaEnvironment::new(&project.config.vars);
