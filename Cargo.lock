@@ -752,8 +752,8 @@ version = "0.1.0"
 dependencies = [
  "ff-core",
  "ff-sql",
+ "log",
  "serde",
- "serde_json",
  "sqlparser",
  "thiserror",
 ]
@@ -833,7 +833,6 @@ name = "ff-sql"
 version = "0.1.0"
 dependencies = [
  "serde",
- "serde_json",
  "sqlparser",
  "thiserror",
 ]
@@ -844,8 +843,6 @@ version = "0.1.0"
 dependencies = [
  "ff-core",
  "ff-db",
- "ff-jinja",
- "thiserror",
  "tokio",
 ]
 

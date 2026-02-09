@@ -87,7 +87,10 @@ impl Default for SeedConfig {
 impl SeedConfig {
     /// Load seed configuration from a file path
     pub fn load(path: &Path) -> Result<Self, CoreError> {
-        let content = std::fs::read_to_string(path)?;
+        let content = std::fs::read_to_string(path).map_err(|e| CoreError::IoWithPath {
+            path: path.display().to_string(),
+            source: e,
+        })?;
         let config: SeedConfig = serde_yaml::from_str(&content)?;
         Ok(config)
     }

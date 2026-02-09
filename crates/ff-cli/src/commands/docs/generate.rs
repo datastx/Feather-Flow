@@ -64,7 +64,7 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
 
             // Add to index
             index_entries.push(ModelSummary {
-                name: model.name.clone(),
+                name: model.name.to_string(),
                 description: doc.description.clone(),
                 owner: doc.owner.clone(),
                 has_schema,
@@ -1423,9 +1423,9 @@ fn generate_lineage_dot(project: &Project) -> String {
                     .sources
                     .iter()
                     .flat_map(|s| s.tables.iter().map(move |t| (s, t)))
-                    .find(|(_, t)| t.name == *ext)
+                    .find(|(_, t)| *ext == t.name)
                     .map(|(s, t)| format!("{}_{}", s.name, t.name))
-                    .unwrap_or_else(|| ext.clone());
+                    .unwrap_or_else(|| ext.to_string());
 
                 dot.push_str(&format!("    \"{}\" -> \"{}\";\n", source_node, name));
             }
@@ -1441,9 +1441,9 @@ fn generate_lineage_dot(project: &Project) -> String {
                     .sources
                     .iter()
                     .flat_map(|s| s.tables.iter().map(move |t| (s, t)))
-                    .find(|(_, t)| t.name == *ext)
+                    .find(|(_, t)| *ext == t.name)
                     .map(|(s, t)| format!("{}_{}", s.name, t.name))
-                    .unwrap_or_else(|| ext.clone());
+                    .unwrap_or_else(|| ext.to_string());
 
                 dot.push_str(&format!("    \"{}\" -> \"{}\";\n", source_node, name));
             }

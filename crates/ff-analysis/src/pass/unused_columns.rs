@@ -3,7 +3,7 @@
 use crate::context::AnalysisContext;
 use crate::ir::expr::TypedExpr;
 use crate::ir::relop::RelOp;
-use crate::pass::{DagPass, Diagnostic, Severity};
+use crate::pass::{DagPass, Diagnostic, DiagnosticCode, Severity};
 use std::collections::{HashMap, HashSet};
 
 /// Unused column detection pass (DAG-level)
@@ -40,7 +40,7 @@ impl DagPass for UnusedColumnDetection {
             let has_wildcard = has_select_star(ir);
             if has_wildcard {
                 diagnostics.push(Diagnostic {
-                    code: "A021".to_string(),
+                    code: DiagnosticCode::A021,
                     severity: Severity::Info,
                     message: format!(
                         "Model '{}' uses SELECT * — cannot detect unused columns",
@@ -64,7 +64,7 @@ impl DagPass for UnusedColumnDetection {
             for col_name in &output_columns {
                 if !consumed.contains(&col_name.to_lowercase()) {
                     diagnostics.push(Diagnostic {
-                        code: "A020".to_string(),
+                        code: DiagnosticCode::A020,
                         severity: Severity::Info,
                         message: format!(
                             "Column '{}' produced but never used by any downstream model",
@@ -313,7 +313,9 @@ mod tests {
         let diags = pass.run_project(&models, &ctx);
 
         assert!(
-            diags.iter().any(|d| d.code == "A021" && d.model == "stg"),
+            diags
+                .iter()
+                .any(|d| d.code == DiagnosticCode::A021 && d.model == "stg"),
             "Expected A021 for model using SELECT *"
         );
     }
@@ -461,7 +463,7 @@ mod tests {
 
         let a020s: Vec<_> = diags
             .iter()
-            .filter(|d| d.code == "A020" && d.model == "stg")
+            .filter(|d| d.code == DiagnosticCode::A020 && d.model == "stg")
             .collect();
         assert!(
             a020s

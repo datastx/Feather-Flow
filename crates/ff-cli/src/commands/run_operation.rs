@@ -69,13 +69,25 @@ pub async fn execute(args: &RunOperationArgs, global: &GlobalArgs) -> Result<()>
         eprintln!("[verbose] Generated SQL:\n{}", sql);
     }
 
-    // Create database connection
-    let db_path = global
-        .target
-        .as_ref()
-        .unwrap_or(&project.config.database.path);
+    // Create database connection using target resolution (matches test/seed/freshness commands)
+    use ff_core::config::Config;
+    let target = Config::resolve_target(global.target.as_deref());
+    let db_config = project
+        .config
+        .get_database_config(target.as_deref())
+        .context("Failed to get database configuration")?;
+
+    if global.verbose {
+        if let Some(ref target_name) = target {
+            eprintln!(
+                "[verbose] Using target '{}' with database: {}",
+                target_name, db_config.path
+            );
+        }
+    }
+
     let db: Arc<dyn Database> =
-        Arc::new(DuckDbBackend::new(db_path).context("Failed to connect to database")?);
+        Arc::new(DuckDbBackend::new(&db_config.path).context("Failed to connect to database")?);
 
     println!("Running operation: {}\n", args.macro_name);
 

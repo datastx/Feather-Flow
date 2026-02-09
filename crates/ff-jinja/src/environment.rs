@@ -28,11 +28,15 @@ impl<'a> JinjaEnvironment<'a> {
         Self::with_macros(vars, &[])
     }
 
-    /// Create a new Jinja environment with variables and macro paths
+    /// Shared initialization: creates the environment, registers config/var
+    /// functions, built-in macros, and sets up the macro path loader.
     ///
-    /// This enables loading macros using `{% from "file.sql" import macro_name %}` syntax.
-    /// Macro files are loaded from the specified directories.
-    pub fn with_macros(vars: &HashMap<String, serde_yaml::Value>, macro_paths: &[PathBuf]) -> Self {
+    /// Returns the partially-built `(Environment, ConfigCapture)` so that
+    /// callers can register additional functions before finalising.
+    fn init_common(
+        vars: &HashMap<String, serde_yaml::Value>,
+        macro_paths: &[PathBuf],
+    ) -> (Environment<'a>, ConfigCapture) {
         let mut env = Environment::new();
         let config_capture: ConfigCapture = Arc::new(Mutex::new(HashMap::new()));
 
@@ -62,6 +66,15 @@ impl<'a> JinjaEnvironment<'a> {
             }
         }
 
+        (env, config_capture)
+    }
+
+    /// Create a new Jinja environment with variables and macro paths
+    ///
+    /// This enables loading macros using `{% from "file.sql" import macro_name %}` syntax.
+    /// Macro files are loaded from the specified directories.
+    pub fn with_macros(vars: &HashMap<String, serde_yaml::Value>, macro_paths: &[PathBuf]) -> Self {
+        let (env, config_capture) = Self::init_common(vars, macro_paths);
         Self {
             env,
             config_capture,
@@ -158,22 +171,7 @@ impl JinjaEnvironment<'_> {
         incremental_state: IncrementalState,
         qualified_name: &str,
     ) -> Self {
-        let mut env = Environment::new();
-        let config_capture: ConfigCapture = Arc::new(Mutex::new(HashMap::new()));
-
-        // Convert YAML vars to JSON for the var function
-        let json_vars: HashMap<String, serde_json::Value> = vars
-            .iter()
-            .map(|(k, v): (&String, &serde_yaml::Value)| (k.clone(), yaml_to_json(v)))
-            .collect();
-
-        // Register config() function
-        let config_fn = make_config_fn(config_capture.clone());
-        env.add_function("config", config_fn);
-
-        // Register var() function
-        let var_fn = make_var_fn(json_vars);
-        env.add_function("var", var_fn);
+        let (mut env, config_capture) = Self::init_common(vars, macro_paths);
 
         // Register is_incremental() function
         let is_incremental_fn = make_is_incremental_fn(incremental_state);
@@ -182,17 +180,6 @@ impl JinjaEnvironment<'_> {
         // Register this variable (the current model's qualified name)
         let this_fn = make_this_fn(qualified_name.to_string());
         env.add_function("this", this_fn);
-
-        // Register built-in macros
-        register_builtins(&mut env);
-
-        // Set up path loader for macros
-        for macro_path in macro_paths {
-            if macro_path.exists() && macro_path.is_dir() {
-                env.set_loader(path_loader(macro_path.clone()));
-                break;
-            }
-        }
 
         Self {
             env,

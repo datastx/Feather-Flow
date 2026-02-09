@@ -10,6 +10,92 @@ use crate::ir::relop::RelOp;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Strongly-typed diagnostic codes emitted by analysis passes.
+///
+/// Each variant corresponds to a specific diagnostic rule (e.g. A001 = unknown type).
+/// Using an enum instead of a bare `String` prevents typos and enables exhaustive matching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DiagnosticCode {
+    /// A001: Unknown type for column
+    A001,
+    /// A002: Type mismatch in UNION columns
+    A002,
+    /// A003: UNION column count mismatch
+    A003,
+    /// A004: SUM/AVG on string column
+    A004,
+    /// A005: Lossy cast
+    A005,
+    /// A010: Nullable from JOIN without guard
+    A010,
+    /// A011: YAML NOT NULL vs JOIN nullable
+    A011,
+    /// A012: Redundant IS NULL check
+    A012,
+    /// A020: Unused column
+    A020,
+    /// A021: SELECT * blocks detection
+    A021,
+    /// A030: Join key type mismatch
+    A030,
+    /// A032: Cross join
+    A032,
+    /// A033: Non-equi join
+    A033,
+}
+
+impl std::fmt::Display for DiagnosticCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            DiagnosticCode::A001 => "A001",
+            DiagnosticCode::A002 => "A002",
+            DiagnosticCode::A003 => "A003",
+            DiagnosticCode::A004 => "A004",
+            DiagnosticCode::A005 => "A005",
+            DiagnosticCode::A010 => "A010",
+            DiagnosticCode::A011 => "A011",
+            DiagnosticCode::A012 => "A012",
+            DiagnosticCode::A020 => "A020",
+            DiagnosticCode::A021 => "A021",
+            DiagnosticCode::A030 => "A030",
+            DiagnosticCode::A032 => "A032",
+            DiagnosticCode::A033 => "A033",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+impl Serialize for DiagnosticCode {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for DiagnosticCode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        match s.as_str() {
+            "A001" => Ok(DiagnosticCode::A001),
+            "A002" => Ok(DiagnosticCode::A002),
+            "A003" => Ok(DiagnosticCode::A003),
+            "A004" => Ok(DiagnosticCode::A004),
+            "A005" => Ok(DiagnosticCode::A005),
+            "A010" => Ok(DiagnosticCode::A010),
+            "A011" => Ok(DiagnosticCode::A011),
+            "A012" => Ok(DiagnosticCode::A012),
+            "A020" => Ok(DiagnosticCode::A020),
+            "A021" => Ok(DiagnosticCode::A021),
+            "A030" => Ok(DiagnosticCode::A030),
+            "A032" => Ok(DiagnosticCode::A032),
+            "A033" => Ok(DiagnosticCode::A033),
+            other => Err(serde::de::Error::custom(format!(
+                "unknown diagnostic code: {}",
+                other
+            ))),
+        }
+    }
+}
+
 /// Diagnostic severity level
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -35,8 +121,8 @@ impl std::fmt::Display for Severity {
 /// A diagnostic message produced by an analysis pass
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Diagnostic {
-    /// Diagnostic code (e.g. "A001")
-    pub code: String,
+    /// Diagnostic code (e.g. A001)
+    pub code: DiagnosticCode,
     /// Severity level
     pub severity: Severity,
     /// Human-readable message

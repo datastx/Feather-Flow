@@ -4,7 +4,7 @@ use crate::context::AnalysisContext;
 use crate::ir::expr::TypedExpr;
 use crate::ir::relop::{RelOp, SetOpKind};
 use crate::ir::types::SqlType;
-use crate::pass::{AnalysisPass, Diagnostic, Severity};
+use crate::pass::{AnalysisPass, Diagnostic, DiagnosticCode, Severity};
 
 /// Type inference analysis pass
 pub struct TypeInference;
@@ -33,7 +33,7 @@ fn walk_relop(model: &str, op: &RelOp, diags: &mut Vec<Diagnostic>) {
             for col in &schema.columns {
                 if col.sql_type.is_unknown() {
                     diags.push(Diagnostic {
-                        code: "A001".to_string(),
+                        code: DiagnosticCode::A001,
                         severity: Severity::Info,
                         message: format!(
                             "Unknown type for column '{}': {}",
@@ -106,7 +106,7 @@ fn walk_relop(model: &str, op: &RelOp, diags: &mut Vec<Diagnostic>) {
             // A003: UNION operands have different column counts
             if left_schema.len() != right_schema.len() {
                 diags.push(Diagnostic {
-                    code: "A003".to_string(),
+                    code: DiagnosticCode::A003,
                     severity: Severity::Error,
                     message: format!(
                         "{} operands have different column counts: left={}, right={}",
@@ -124,7 +124,7 @@ fn walk_relop(model: &str, op: &RelOp, diags: &mut Vec<Diagnostic>) {
                 for (l, r) in left_schema.columns.iter().zip(right_schema.columns.iter()) {
                     if !types_compatible(&l.sql_type, &r.sql_type) {
                         diags.push(Diagnostic {
-                            code: "A002".to_string(),
+                            code: DiagnosticCode::A002,
                             severity: Severity::Warning,
                             message: format!(
                                 "Type mismatch in {} column '{}': left is {}, right is {}",
@@ -157,7 +157,7 @@ fn check_expr_types(model: &str, context: &str, expr: &TypedExpr, diags: &mut Ve
             let source_type = inner.resolved_type();
             if is_lossy_cast(source_type, target_type) {
                 diags.push(Diagnostic {
-                    code: "A005".to_string(),
+                    code: DiagnosticCode::A005,
                     severity: Severity::Info,
                     message: format!(
                         "Potentially lossy cast from {} to {} in '{}'",
@@ -217,7 +217,7 @@ fn check_aggregate_type(
             if let Some(arg) = args.first() {
                 if arg.resolved_type().is_string() {
                     diags.push(Diagnostic {
-                        code: "A004".to_string(),
+                        code: DiagnosticCode::A004,
                         severity: Severity::Warning,
                         message: format!("{}() applied to string column '{}'", name, col_name),
                         model: model.to_string(),
@@ -328,7 +328,7 @@ mod tests {
         let diags = pass.run_model("test_model", &ir, &ctx);
 
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].code, "A001");
+        assert_eq!(diags[0].code, DiagnosticCode::A001);
         assert_eq!(diags[0].severity, Severity::Info);
         assert!(diags[0].message.contains("data"));
     }
@@ -366,8 +366,11 @@ mod tests {
         let ctx = make_ctx();
         let diags = TypeInference.run_model("test_model", &ir, &ctx);
 
-        assert!(diags.iter().any(|d| d.code == "A002"));
-        let a002 = diags.iter().find(|d| d.code == "A002").unwrap();
+        assert!(diags.iter().any(|d| d.code == DiagnosticCode::A002));
+        let a002 = diags
+            .iter()
+            .find(|d| d.code == DiagnosticCode::A002)
+            .unwrap();
         assert_eq!(a002.severity, Severity::Warning);
         assert!(a002.message.contains("val"));
     }
@@ -400,8 +403,11 @@ mod tests {
         let ctx = make_ctx();
         let diags = TypeInference.run_model("test_model", &ir, &ctx);
 
-        assert!(diags.iter().any(|d| d.code == "A003"));
-        let a003 = diags.iter().find(|d| d.code == "A003").unwrap();
+        assert!(diags.iter().any(|d| d.code == DiagnosticCode::A003));
+        let a003 = diags
+            .iter()
+            .find(|d| d.code == DiagnosticCode::A003)
+            .unwrap();
         assert_eq!(a003.severity, Severity::Error);
         assert!(a003.message.contains("left=2"));
         assert!(a003.message.contains("right=1"));
@@ -444,8 +450,11 @@ mod tests {
         let ctx = make_ctx();
         let diags = TypeInference.run_model("test_model", &ir, &ctx);
 
-        assert!(diags.iter().any(|d| d.code == "A004"));
-        let a004 = diags.iter().find(|d| d.code == "A004").unwrap();
+        assert!(diags.iter().any(|d| d.code == DiagnosticCode::A004));
+        let a004 = diags
+            .iter()
+            .find(|d| d.code == DiagnosticCode::A004)
+            .unwrap();
         assert_eq!(a004.severity, Severity::Warning);
         assert!(a004.message.contains("SUM"));
     }
@@ -481,8 +490,11 @@ mod tests {
         let ctx = make_ctx();
         let diags = TypeInference.run_model("test_model", &ir, &ctx);
 
-        assert!(diags.iter().any(|d| d.code == "A005"));
-        let a005 = diags.iter().find(|d| d.code == "A005").unwrap();
+        assert!(diags.iter().any(|d| d.code == DiagnosticCode::A005));
+        let a005 = diags
+            .iter()
+            .find(|d| d.code == DiagnosticCode::A005)
+            .unwrap();
         assert_eq!(a005.severity, Severity::Info);
         assert!(a005.message.contains("lossy"));
     }
@@ -539,6 +551,6 @@ mod tests {
         let ctx = make_ctx();
         let diags = TypeInference.run_model("test_model", &ir, &ctx);
         // INTEGER and BIGINT are compatible — no A002
-        assert!(diags.iter().all(|d| d.code != "A002"));
+        assert!(diags.iter().all(|d| d.code != DiagnosticCode::A002));
     }
 }

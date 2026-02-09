@@ -8,7 +8,7 @@ license.workspace = true
 ff-core = { path = "../ff-core" }
 ff-sql = { path = "../ff-sql" }
 
+log.workspace = true
 thiserror.workspace = true
 serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
 sqlparser.workspace = true

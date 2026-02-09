@@ -4,7 +4,7 @@ use crate::context::AnalysisContext;
 use crate::ir::expr::TypedExpr;
 use crate::ir::relop::{JoinType, RelOp};
 use crate::ir::types::Nullability;
-use crate::pass::{AnalysisPass, Diagnostic, Severity};
+use crate::pass::{AnalysisPass, Diagnostic, DiagnosticCode, Severity};
 use std::collections::HashSet;
 
 /// Nullability propagation analysis pass
@@ -34,7 +34,7 @@ impl AnalysisPass for NullabilityPropagation {
         for col_name in &nullable_from_join {
             if !guarded_columns.contains(col_name) {
                 diagnostics.push(Diagnostic {
-                    code: "A010".to_string(),
+                    code: DiagnosticCode::A010,
                     severity: Severity::Warning,
                     message: format!(
                         "Column '{}' is nullable after JOIN but used without a null guard (e.g., COALESCE)",
@@ -54,7 +54,7 @@ impl AnalysisPass for NullabilityPropagation {
                 if col.nullability == Nullability::NotNull && nullable_from_join.contains(&col.name)
                 {
                     diagnostics.push(Diagnostic {
-                        code: "A011".to_string(),
+                        code: DiagnosticCode::A011,
                         severity: Severity::Warning,
                         message: format!(
                             "Column '{}' is declared NOT NULL in YAML but becomes nullable after JOIN",
@@ -261,7 +261,7 @@ fn check_is_null_on_not_null(
                     if col.nullability == Nullability::NotNull {
                         let check_type = if *negated { "IS NOT NULL" } else { "IS NULL" };
                         diags.push(Diagnostic {
-                            code: "A012".to_string(),
+                            code: DiagnosticCode::A012,
                             severity: Severity::Info,
                             message: format!(
                                 "{} check on column '{}' which is always NOT NULL",
@@ -412,7 +412,10 @@ mod tests {
         let diags = NullabilityPropagation.run_model("test_model", &ir, &ctx);
 
         // `name` comes from right side of LEFT JOIN → nullable without guard → A010
-        let a010s: Vec<_> = diags.iter().filter(|d| d.code == "A010").collect();
+        let a010s: Vec<_> = diags
+            .iter()
+            .filter(|d| d.code == DiagnosticCode::A010)
+            .collect();
         assert!(
             a010s.iter().any(|d| d.column.as_deref() == Some("name")),
             "Expected A010 for 'name' column, got: {:?}",
@@ -485,7 +488,7 @@ mod tests {
         assert!(
             !diags
                 .iter()
-                .any(|d| d.code == "A010" && d.column.as_deref() == Some("name")),
+                .any(|d| d.code == DiagnosticCode::A010 && d.column.as_deref() == Some("name")),
             "Should NOT emit A010 for 'name' when wrapped in COALESCE"
         );
     }
@@ -536,7 +539,8 @@ mod tests {
         assert!(
             diags
                 .iter()
-                .any(|d| d.code == "A011" && d.column.as_deref() == Some("cust_name")),
+                .any(|d| d.code == DiagnosticCode::A011
+                    && d.column.as_deref() == Some("cust_name")),
             "Expected A011 for cust_name declared NOT NULL in YAML but nullable after LEFT JOIN"
         );
     }
@@ -576,7 +580,7 @@ mod tests {
         assert!(
             diags
                 .iter()
-                .any(|d| d.code == "A012" && d.column.as_deref() == Some("id")),
+                .any(|d| d.code == DiagnosticCode::A012 && d.column.as_deref() == Some("id")),
             "Expected A012 for IS NULL on NOT NULL column 'id'"
         );
     }
@@ -615,7 +619,7 @@ mod tests {
 
         // INNER JOIN doesn't make columns nullable → no A010
         assert!(
-            !diags.iter().any(|d| d.code == "A010"),
+            !diags.iter().any(|d| d.code == DiagnosticCode::A010),
             "INNER JOIN should not produce A010 diagnostics"
         );
     }

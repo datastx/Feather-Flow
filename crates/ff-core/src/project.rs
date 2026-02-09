@@ -124,11 +124,15 @@ impl Project {
             let path = entry.path();
 
             if path.is_dir() {
-                let dir_name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("")
-                    .to_string();
+                let dir_name = match path.file_name().and_then(|n| n.to_str()) {
+                    Some(name) if !name.is_empty() => name.to_string(),
+                    _ => {
+                        return Err(CoreError::InvalidModelDirectory {
+                            path: path.display().to_string(),
+                            reason: "directory name is not valid UTF-8".to_string(),
+                        });
+                    }
+                };
 
                 // Find SQL files in this directory (non-recursive)
                 let sql_files: Vec<PathBuf> = std::fs::read_dir(&path)?
@@ -155,11 +159,15 @@ impl Project {
                 }
 
                 let sql_path = &sql_files[0];
-                let sql_stem = sql_path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("")
-                    .to_string();
+                let sql_stem = match sql_path.file_stem().and_then(|s| s.to_str()) {
+                    Some(stem) if !stem.is_empty() => stem.to_string(),
+                    _ => {
+                        return Err(CoreError::InvalidModelDirectory {
+                            path: sql_path.display().to_string(),
+                            reason: "SQL file name is not valid UTF-8".to_string(),
+                        });
+                    }
+                };
 
                 if sql_stem != dir_name {
                     return Err(CoreError::ModelDirectoryMismatch {
@@ -204,13 +212,13 @@ impl Project {
 
                 let model = Model::from_file(sql_path.clone())?;
 
-                if models.contains_key(&model.name) {
+                if models.contains_key(model.name.as_str()) {
                     return Err(CoreError::DuplicateModel {
-                        name: model.name.clone(),
+                        name: model.name.to_string(),
                     });
                 }
 
-                models.insert(model.name.clone(), model);
+                models.insert(model.name.to_string(), model);
             } else if path.extension().is_some_and(|e| e == "sql") {
                 return Err(CoreError::InvalidModelDirectory {
                     path: path.display().to_string(),

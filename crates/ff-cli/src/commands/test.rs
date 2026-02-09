@@ -824,7 +824,17 @@ async fn store_test_failures(
     // Create a DuckDB file for the failures
     let db_path = failures_dir.join(format!("{}.duckdb", table_name));
 
-    match DuckDbBackend::new(db_path.to_str().unwrap_or(":memory:")) {
+    let db_path_str = match db_path.to_str() {
+        Some(s) => s,
+        None => {
+            eprintln!(
+                "[warn] Failed to store test failures for {}: database path is not valid UTF-8",
+                table_name
+            );
+            return;
+        }
+    };
+    match DuckDbBackend::new(db_path_str) {
         Ok(failures_db) => {
             // Create table with failing rows
             let create_sql = format!("CREATE TABLE IF NOT EXISTS failures AS {}", sql);

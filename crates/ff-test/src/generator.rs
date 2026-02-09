@@ -132,33 +132,54 @@ pub fn generate_relationship_test(
     )
 }
 
-/// Generate SQL for a schema test
-pub fn generate_test_sql(test: &SchemaTest) -> String {
-    match &test.test_type {
-        TestType::Unique => generate_unique_test(&test.model, &test.column),
-        TestType::NotNull => generate_not_null_test(&test.model, &test.column),
-        TestType::Positive => generate_positive_test(&test.model, &test.column),
-        TestType::NonNegative => generate_non_negative_test(&test.model, &test.column),
+/// Generate SQL for a `TestType` against a given table and column.
+///
+/// This is the single authoritative `TestType` -> SQL mapping. All entry
+/// points (`generate_test_sql`, `GeneratedTest::from_schema_test_qualified`,
+/// etc.) delegate here.
+///
+/// `ref_table_resolver` is called only for `Relationship` tests to
+/// qualify the referenced table name. Pass `None` to use the raw
+/// `to` value from the variant.
+fn generate_sql_for_test_type(
+    test_type: &TestType,
+    table: &str,
+    column: &str,
+    ref_table_resolver: Option<&dyn Fn(&str) -> String>,
+) -> String {
+    match test_type {
+        TestType::Unique => generate_unique_test(table, column),
+        TestType::NotNull => generate_not_null_test(table, column),
+        TestType::Positive => generate_positive_test(table, column),
+        TestType::NonNegative => generate_non_negative_test(table, column),
         TestType::AcceptedValues { values, quote } => {
-            generate_accepted_values_test(&test.model, &test.column, values, *quote)
+            generate_accepted_values_test(table, column, values, *quote)
         }
-        TestType::MinValue { value } => generate_min_value_test(&test.model, &test.column, *value),
-        TestType::MaxValue { value } => generate_max_value_test(&test.model, &test.column, *value),
-        TestType::Regex { pattern } => generate_regex_test(&test.model, &test.column, pattern),
+        TestType::MinValue { value } => generate_min_value_test(table, column, *value),
+        TestType::MaxValue { value } => generate_max_value_test(table, column, *value),
+        TestType::Regex { pattern } => generate_regex_test(table, column, pattern),
         TestType::Relationship { to, field } => {
-            let ref_column = field.as_deref().unwrap_or(&test.column);
-            generate_relationship_test(&test.model, &test.column, to, ref_column)
+            let ref_column = field.as_deref().unwrap_or(column);
+            let resolved_ref = ref_table_resolver
+                .map(|resolve| resolve(to))
+                .unwrap_or_else(|| to.clone());
+            generate_relationship_test(table, column, &resolved_ref, ref_column)
         }
         TestType::Custom { name, kwargs: _ } => {
-            // Custom tests require the Jinja environment to render
-            // For now, return a placeholder that can be replaced by actual SQL
-            // when the test command is executed with full context
+            // Custom tests require the Jinja environment to render.
+            // Return a placeholder that can be replaced by actual SQL
+            // when the test command is executed with full context.
             format!(
                 "-- Custom test '{}' for {}.{} requires Jinja environment",
-                name, test.model, test.column
+                name, table, column
             )
         }
     }
+}
+
+/// Generate SQL for a schema test
+pub fn generate_test_sql(test: &SchemaTest) -> String {
+    generate_sql_for_test_type(&test.test_type, &test.model, &test.column, None)
 }
 
 /// Test SQL with metadata
@@ -210,35 +231,7 @@ impl GeneratedTest {
 
     /// Create a generated test with a qualified model name (schema.model)
     pub fn from_schema_test_qualified(test: &SchemaTest, qualified_name: &str) -> Self {
-        let sql = match &test.test_type {
-            TestType::Unique => generate_unique_test(qualified_name, &test.column),
-            TestType::NotNull => generate_not_null_test(qualified_name, &test.column),
-            TestType::Positive => generate_positive_test(qualified_name, &test.column),
-            TestType::NonNegative => generate_non_negative_test(qualified_name, &test.column),
-            TestType::AcceptedValues { values, quote } => {
-                generate_accepted_values_test(qualified_name, &test.column, values, *quote)
-            }
-            TestType::MinValue { value } => {
-                generate_min_value_test(qualified_name, &test.column, *value)
-            }
-            TestType::MaxValue { value } => {
-                generate_max_value_test(qualified_name, &test.column, *value)
-            }
-            TestType::Regex { pattern } => {
-                generate_regex_test(qualified_name, &test.column, pattern)
-            }
-            TestType::Relationship { to, field } => {
-                let ref_column = field.as_deref().unwrap_or(&test.column);
-                generate_relationship_test(qualified_name, &test.column, to, ref_column)
-            }
-            TestType::Custom { name, kwargs: _ } => {
-                // Custom tests require Jinja environment - return placeholder
-                format!(
-                    "-- Custom test '{}' for {}.{} requires Jinja environment",
-                    name, qualified_name, test.column
-                )
-            }
-        };
+        let sql = generate_sql_for_test_type(&test.test_type, qualified_name, &test.column, None);
         let name = format!("{}_{}__{}", test.test_type, test.model, test.column);
 
         Self {
@@ -259,36 +252,12 @@ impl GeneratedTest {
         qualified_name: &str,
         ref_table_resolver: impl Fn(&str) -> String,
     ) -> Self {
-        let sql = match &test.test_type {
-            TestType::Unique => generate_unique_test(qualified_name, &test.column),
-            TestType::NotNull => generate_not_null_test(qualified_name, &test.column),
-            TestType::Positive => generate_positive_test(qualified_name, &test.column),
-            TestType::NonNegative => generate_non_negative_test(qualified_name, &test.column),
-            TestType::AcceptedValues { values, quote } => {
-                generate_accepted_values_test(qualified_name, &test.column, values, *quote)
-            }
-            TestType::MinValue { value } => {
-                generate_min_value_test(qualified_name, &test.column, *value)
-            }
-            TestType::MaxValue { value } => {
-                generate_max_value_test(qualified_name, &test.column, *value)
-            }
-            TestType::Regex { pattern } => {
-                generate_regex_test(qualified_name, &test.column, pattern)
-            }
-            TestType::Relationship { to, field } => {
-                let ref_column = field.as_deref().unwrap_or(&test.column);
-                let qualified_ref = ref_table_resolver(to);
-                generate_relationship_test(qualified_name, &test.column, &qualified_ref, ref_column)
-            }
-            TestType::Custom { name, kwargs: _ } => {
-                // Custom tests require Jinja environment - return placeholder
-                format!(
-                    "-- Custom test '{}' for {}.{} requires Jinja environment",
-                    name, qualified_name, test.column
-                )
-            }
-        };
+        let sql = generate_sql_for_test_type(
+            &test.test_type,
+            qualified_name,
+            &test.column,
+            Some(&ref_table_resolver),
+        );
         let name = format!("{}_{}__{}", test.test_type, test.model, test.column);
 
         Self {

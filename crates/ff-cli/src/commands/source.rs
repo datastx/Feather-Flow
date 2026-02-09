@@ -2,7 +2,8 @@
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use ff_core::source::{FreshnessPeriodUnit, SourceFile};
+use ff_core::model::FreshnessPeriod;
+use ff_core::source::SourceFile;
 use ff_core::Project;
 use ff_db::{quote_ident, quote_qualified, Database, DuckDbBackend};
 use serde::Serialize;
@@ -39,13 +40,25 @@ async fn execute_freshness(args: &SourceFreshnessArgs, global: &GlobalArgs) -> R
     let project_path = Path::new(&global.project_dir);
     let project = Project::load(project_path).context("Failed to load project")?;
 
-    // Get database connection
-    let db_path = global
-        .target
-        .as_ref()
-        .unwrap_or(&project.config.database.path);
+    // Get database connection using target resolution (matches test/seed/freshness commands)
+    use ff_core::config::Config;
+    let target = Config::resolve_target(global.target.as_deref());
+    let db_config = project
+        .config
+        .get_database_config(target.as_deref())
+        .context("Failed to get database configuration")?;
+
+    if global.verbose {
+        if let Some(ref target_name) = target {
+            eprintln!(
+                "[verbose] Using target '{}' with database: {}",
+                target_name, db_config.path
+            );
+        }
+    }
+
     let db: Arc<dyn Database> =
-        Arc::new(DuckDbBackend::new(db_path).context("Failed to connect to database")?);
+        Arc::new(DuckDbBackend::new(&db_config.path).context("Failed to connect to database")?);
 
     // Filter sources if specified
     let sources_to_check: Vec<&SourceFile> = if let Some(source_filter) = &args.sources {
@@ -211,11 +224,11 @@ fn write_results_to_file(project: &Project, results: &[FreshnessResult]) -> Resu
 }
 
 /// Convert period to hours
-fn period_to_hours(count: u32, period: &FreshnessPeriodUnit) -> f64 {
+fn period_to_hours(count: u32, period: &FreshnessPeriod) -> f64 {
     match period {
-        FreshnessPeriodUnit::Minute => count as f64 / 60.0,
-        FreshnessPeriodUnit::Hour => count as f64,
-        FreshnessPeriodUnit::Day => count as f64 * 24.0,
+        FreshnessPeriod::Minute => count as f64 / 60.0,
+        FreshnessPeriod::Hour => count as f64,
+        FreshnessPeriod::Day => count as f64 * 24.0,
     }
 }
 
@@ -380,9 +393,9 @@ mod tests {
 
     #[test]
     fn test_period_to_hours() {
-        assert_eq!(period_to_hours(30, &FreshnessPeriodUnit::Minute), 0.5);
-        assert_eq!(period_to_hours(2, &FreshnessPeriodUnit::Hour), 2.0);
-        assert_eq!(period_to_hours(1, &FreshnessPeriodUnit::Day), 24.0);
+        assert_eq!(period_to_hours(30, &FreshnessPeriod::Minute), 0.5);
+        assert_eq!(period_to_hours(2, &FreshnessPeriod::Hour), 2.0);
+        assert_eq!(period_to_hours(1, &FreshnessPeriod::Day), 24.0);
     }
 
     #[test]
