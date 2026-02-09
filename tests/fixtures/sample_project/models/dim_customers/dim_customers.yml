@@ -7,6 +7,10 @@ tags:
   - dimensions
   - customers
 
+config:
+  materialized: table
+  wap: true
+
 columns:
   - name: customer_id
     type: INTEGER

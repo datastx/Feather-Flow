@@ -219,6 +219,7 @@ fn validate_sql_syntax(
                         let code = match &e {
                             ff_sql::SqlError::CteNotAllowed { .. } => "S005",
                             ff_sql::SqlError::DerivedTableNotAllowed => "S006",
+                            ff_sql::SqlError::SelectStarNotAllowed => "S009",
                             _ => "S004",
                         };
                         ctx.error(code, e.to_string(), Some(model.path.display().to_string()));

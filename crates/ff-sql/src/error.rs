@@ -36,6 +36,10 @@ pub enum SqlError {
     /// Ephemeral model inlining failed (S008)
     #[error("[S008] Failed to inline ephemeral model '{model_name}': {reason}")]
     InlineError { model_name: String, reason: String },
+
+    /// SELECT * not allowed (S009)
+    #[error("[S009] SELECT * is not allowed — explicitly list all columns")]
+    SelectStarNotAllowed,
 }
 
 /// Result type alias for SqlError

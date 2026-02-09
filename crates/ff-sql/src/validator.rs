@@ -1,7 +1,7 @@
 //! SQL validation utilities
 
 use crate::error::{SqlError, SqlResult};
-use sqlparser::ast::{Query, SetExpr, Statement, TableFactor, TableWithJoins};
+use sqlparser::ast::{Query, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins};
 
 /// Validate that SQL contains only supported statements
 #[cfg(test)]
@@ -110,13 +110,71 @@ fn check_table_factor_for_derived(factor: &TableFactor) -> SqlResult<()> {
     }
 }
 
-/// Validate that SQL contains no CTEs and no derived tables in FROM clauses
+/// Validate that SQL contains no SELECT * or table.* wildcards
+///
+/// Every model must explicitly list its columns — wildcards hide schema
+/// changes and break the contract between models.
+fn validate_no_select_star(statements: &[Statement]) -> SqlResult<()> {
+    for stmt in statements {
+        if let Statement::Query(query) = stmt {
+            check_query_for_select_star(query)?;
+        }
+    }
+    Ok(())
+}
+
+/// Recursively check a query for SELECT * and table.* wildcards
+fn check_query_for_select_star(query: &Query) -> SqlResult<()> {
+    match query.body.as_ref() {
+        SetExpr::Select(select) => {
+            for item in &select.projection {
+                if matches!(
+                    item,
+                    SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(..)
+                ) {
+                    return Err(SqlError::SelectStarNotAllowed);
+                }
+            }
+        }
+        SetExpr::SetOperation { left, right, .. } => {
+            check_set_expr_for_select_star(left)?;
+            check_set_expr_for_select_star(right)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Check a SetExpr node for SELECT * wildcards
+fn check_set_expr_for_select_star(expr: &SetExpr) -> SqlResult<()> {
+    match expr {
+        SetExpr::Select(select) => {
+            for item in &select.projection {
+                if matches!(
+                    item,
+                    SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(..)
+                ) {
+                    return Err(SqlError::SelectStarNotAllowed);
+                }
+            }
+        }
+        SetExpr::SetOperation { left, right, .. } => {
+            check_set_expr_for_select_star(left)?;
+            check_set_expr_for_select_star(right)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Validate that SQL contains no CTEs, no derived tables, and no SELECT *
 ///
 /// This is the combined check that should be called during validation and compilation.
 /// Scalar subqueries in SELECT/WHERE/HAVING remain allowed.
 pub fn validate_no_complex_queries(statements: &[Statement]) -> SqlResult<()> {
     validate_no_ctes(statements)?;
     validate_no_derived_tables(statements)?;
+    validate_no_select_star(statements)?;
     Ok(())
 }
 
@@ -139,7 +197,7 @@ mod tests {
 
     #[test]
     fn test_validate_select() {
-        assert!(validate_sql("SELECT * FROM users").is_ok());
+        assert!(validate_sql("SELECT id FROM users").is_ok());
     }
 
     #[test]
@@ -180,7 +238,7 @@ mod tests {
     #[test]
     fn test_multiple_ctes_rejected() {
         let result = validate_no_complex(
-            "WITH a AS (SELECT 1), b AS (SELECT 2) SELECT * FROM a JOIN b ON true",
+            "WITH a AS (SELECT 1), b AS (SELECT 2) SELECT a.id FROM a JOIN b ON true",
         );
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -191,7 +249,7 @@ mod tests {
 
     #[test]
     fn test_derived_table_rejected() {
-        let result = validate_no_complex("SELECT * FROM (SELECT id, name FROM users) AS sub");
+        let result = validate_no_complex("SELECT id FROM (SELECT id, name FROM users) AS sub");
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -202,7 +260,7 @@ mod tests {
     #[test]
     fn test_derived_table_in_join_rejected() {
         let result = validate_no_complex(
-            "SELECT * FROM orders o JOIN (SELECT id FROM customers) AS c ON o.customer_id = c.id",
+            "SELECT o.id FROM orders o JOIN (SELECT id FROM customers) AS c ON o.customer_id = c.id",
         );
         assert!(result.is_err());
         assert!(matches!(
@@ -222,7 +280,7 @@ mod tests {
     #[test]
     fn test_where_subquery_allowed() {
         let result =
-            validate_no_complex("SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)");
+            validate_no_complex("SELECT id FROM users WHERE id IN (SELECT user_id FROM orders)");
         assert!(result.is_ok());
     }
 
@@ -237,6 +295,42 @@ mod tests {
         let result = validate_no_complex(
             "SELECT o.id, c.name FROM orders o JOIN customers c ON o.customer_id = c.id",
         );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_select_star_rejected() {
+        let result = validate_no_complex("SELECT * FROM users");
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            SqlError::SelectStarNotAllowed
+        ));
+    }
+
+    #[test]
+    fn test_qualified_wildcard_rejected() {
+        let result = validate_no_complex("SELECT t.* FROM users t");
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            SqlError::SelectStarNotAllowed
+        ));
+    }
+
+    #[test]
+    fn test_select_star_in_union_rejected() {
+        let result = validate_no_complex("SELECT * FROM users UNION ALL SELECT * FROM customers");
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            SqlError::SelectStarNotAllowed
+        ));
+    }
+
+    #[test]
+    fn test_explicit_columns_allowed() {
+        let result = validate_no_complex("SELECT id, name FROM users");
         assert!(result.is_ok());
     }
 }

@@ -155,13 +155,14 @@ columns: ...
 **How it works**:
 1. Parse each SQL file using the configured dialect
 2. Walk the AST to find all table references (FROM, JOIN)
-3. Reject CTEs (S005) and FROM-clause derived tables (S006) as hard errors
+3. Reject CTEs (S005), FROM-clause derived tables (S006), and SELECT * (S009) as hard errors
 4. Match remaining tables against known models, seeds, and sources
 5. Build a dependency graph for execution ordering
 
 **Edge cases handled**:
 - CTEs produce hard error `S005 CteNotAllowed` — each transform must be its own model
 - FROM-clause derived tables (subqueries in FROM) produce hard error `S006 DerivedTableNotAllowed`
+- `SELECT *` and `table.*` wildcards produce hard error `S009 SelectStarNotAllowed` — every model must explicitly list its columns
 - Scalar subqueries in SELECT, WHERE, and HAVING clauses remain allowed
 - Schema-qualified names are resolved correctly
 - Case-insensitive matching for table names
@@ -231,6 +232,7 @@ columns: ...
 | `schema` | string | No | - | Default schema for models |
 | `database` | object | Yes | - | Connection settings |
 | `vars` | object | No | `{}` | Variables for Jinja templates |
+| `wap_schema` | string | No | - | Private schema for Write-Audit-Publish pattern |
 | `targets` | object | No | - | Environment-specific overrides |
 
 ### Database Connection Settings
@@ -793,6 +795,7 @@ For each model, documentation includes:
 | Model directory mismatch (E012) | Error | SQL file stem doesn't match directory name |
 | CTE not allowed (S005) | Error | CTEs prohibited — each transform must be its own model |
 | Derived table not allowed (S006) | Error | FROM-clause subqueries prohibited |
+| SELECT * not allowed (S009) | Error | SELECT * prohibited — explicitly list all columns |
 | Static analysis: missing column (SA01) | Error | Column in YAML not produced by SQL |
 | Static analysis: mismatch (SA02) | Warning | Extra column, type mismatch, or nullability mismatch vs YAML |
 | Orphaned schema files | Warning | Schema without corresponding model |
@@ -1768,6 +1771,68 @@ Standalone SQL operations not tied to models:
 
 ---
 
+## Write-Audit-Publish (WAP) Pattern
+
+WAP materializes a model into a private staging schema, runs schema tests against the staging copy, and only publishes to production if all tests pass. This provides a safety net that prevents bad data from reaching downstream consumers.
+
+### Configuration
+
+**Project-level** (`featherflow.yml`):
+```yaml
+wap_schema: wap_staging
+```
+
+**Model-level** (YAML):
+```yaml
+config:
+  materialized: table
+  wap: true
+```
+
+**Model-level** (SQL config function):
+```sql
+{{ config(wap='true') }}
+SELECT ...
+```
+
+**Target override**:
+```yaml
+targets:
+  prod:
+    wap_schema: prod_wap
+```
+
+### Eligibility
+
+WAP only applies to `table` and `incremental` materializations. Views and ephemeral models are excluded — views are just SQL definitions with no data to audit, and ephemeral models are inlined at compile time.
+
+### Execution Flow
+
+When a WAP-enabled model runs during `ff run`:
+
+1. **Create WAP schema** — `CREATE SCHEMA IF NOT EXISTS <wap_schema>`
+2. **Write** — Materialize the model into `<wap_schema>.<model_name>`:
+   - For `table` materialization: full CTAS into WAP schema
+   - For `incremental` materialization: copy production table to WAP schema, then apply incremental logic
+3. **Audit** — Run the model's schema tests (from YAML) against the WAP copy
+4. **Publish** — If all tests pass, drop the production table and create it from the WAP copy
+5. **Cleanup** — Drop the WAP table after successful publish
+
+### Failure Behavior
+
+If any test fails during the audit step:
+- The WAP table is **preserved** in the staging schema for debugging
+- The production table remains **unchanged**
+- All transitive dependents of the failed model are **skipped**
+
+### Config Precedence
+
+SQL `config()` > YAML `config` > default (`false`)
+
+Target-level `wap_schema` > project-level `wap_schema`
+
+---
+
 ## Error Handling
 
 ### Error Code System
@@ -1796,6 +1861,7 @@ Standalone SQL operations not tied to models:
 | E020 | StateError | State file corrupted or invalid |
 | S005 | CteNotAllowed | CTEs prohibited — each transform must be its own model |
 | S006 | DerivedTableNotAllowed | FROM-clause subqueries prohibited |
+| S009 | SelectStarNotAllowed | SELECT * prohibited — explicitly list all columns |
 | SA01 | StaticAnalysisError | Column in YAML not produced by SQL (from schema propagation) |
 | SA02 | StaticAnalysisWarning | Extra column, type mismatch, or nullability mismatch vs YAML |
 | A001-A005 | AnalysisTypeInference | Type inference diagnostics (see Static Analysis Engine) |
@@ -1867,6 +1933,7 @@ Errors include relevant context:
 |------------|-----------|
 | No ref() function | AST extraction is cleaner |
 | No source() function | AST extraction handles this |
+| No SELECT * | Explicit columns enforce contracts and prevent hidden schema drift |
 | No adapters | Keep dialect handling simple |
 | No packages yet | Focus on core features first |
 | Minijinja vs Jinja2 | Rust native, 95% compatible |
@@ -1886,6 +1953,7 @@ Errors include relevant context:
 |------|----------|
 | Model references itself | Error: circular dependency |
 | CTE in model SQL | Hard error S005 (CteNotAllowed) |
+| SELECT * in model SQL | Hard error S009 (SelectStarNotAllowed) |
 | Empty SQL file | Error: no SQL statements |
 | Schema file without model | Warning during validation |
 | Model without schema | Error E010 (MissingSchemaFile) — schema file required |
