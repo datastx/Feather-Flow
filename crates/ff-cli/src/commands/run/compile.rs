@@ -161,7 +161,7 @@ fn load_from_manifest(
                     sql,
                     materialization: manifest_model.materialized,
                     schema: manifest_model.schema.clone(),
-                    dependencies: manifest_model.depends_on.clone(),
+                    dependencies: manifest_model.depends_on.iter().map(|m| m.to_string()).collect(),
                     unique_key: manifest_model.unique_key.clone(),
                     incremental_strategy: manifest_model.incremental_strategy,
                     on_schema_change: manifest_model.on_schema_change,
@@ -363,12 +363,13 @@ fn resolve_deferred_dependencies(
     while let Some(model_name) = to_check.pop() {
         if let Some(manifest_model) = deferred_manifest.get_model(&model_name) {
             for dep in &manifest_model.depends_on {
-                if !selected_set.contains(dep)
-                    && !deferred_models.contains(dep)
-                    && deferred_manifest.get_model(dep).is_some()
+                let dep_str = dep.as_str();
+                if !selected_set.contains(dep_str)
+                    && !deferred_models.contains(dep_str)
+                    && deferred_manifest.get_model(dep_str).is_some()
                 {
-                    deferred_models.insert(dep.clone());
-                    to_check.push(dep.clone());
+                    deferred_models.insert(dep_str.to_string());
+                    to_check.push(dep_str.to_string());
                     if global.verbose {
                         eprintln!(
                             "[verbose] Deferring {} to production manifest (transitive)",

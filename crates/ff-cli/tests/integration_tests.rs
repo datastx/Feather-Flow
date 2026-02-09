@@ -4,6 +4,7 @@ use ff_core::dag::ModelDag;
 use ff_core::manifest::Manifest;
 use ff_core::model::TestDefinition;
 use ff_core::run_state::{RunState, RunStatus};
+use ff_core::ModelName;
 use ff_core::Project;
 use ff_db::{DatabaseCore, DatabaseCsv, DatabaseIncremental, DatabaseSchema, DuckDbBackend};
 use ff_jinja::JinjaEnvironment;
@@ -1370,7 +1371,7 @@ async fn test_special_chars_in_column_names() {
 #[test]
 fn test_run_state_new_and_mark() {
     let mut state = RunState::new(
-        vec!["a".to_string(), "b".to_string(), "c".to_string()],
+        vec![ModelName::new("a"), ModelName::new("b"), ModelName::new("c")],
         Some("--select +c".to_string()),
         "config_hash_123".to_string(),
     );
@@ -1406,7 +1407,7 @@ fn test_run_state_persistence() {
     let state_path = dir.path().join("run_state.json");
 
     let mut state = RunState::new(
-        vec!["model_a".to_string(), "model_b".to_string()],
+        vec![ModelName::new("model_a"), ModelName::new("model_b")],
         None,
         "hash123".to_string(),
     );
@@ -1429,10 +1430,10 @@ fn test_run_state_persistence() {
 fn test_run_state_models_to_run() {
     let mut state = RunState::new(
         vec![
-            "a".to_string(),
-            "b".to_string(),
-            "c".to_string(),
-            "d".to_string(),
+            ModelName::new("a"),
+            ModelName::new("b"),
+            ModelName::new("c"),
+            ModelName::new("d"),
         ],
         None,
         "hash".to_string(),
@@ -1445,13 +1446,13 @@ fn test_run_state_models_to_run() {
     // models_to_run should include failed (c) and pending (d)
     let to_run = state.models_to_run();
     assert_eq!(to_run.len(), 2);
-    assert!(to_run.contains(&"c".to_string()));
-    assert!(to_run.contains(&"d".to_string()));
+    assert!(to_run.contains(&ModelName::new("c")));
+    assert!(to_run.contains(&ModelName::new("d")));
 
     // failed_model_names should only include c
     let failed = state.failed_model_names();
     assert_eq!(failed.len(), 1);
-    assert!(failed.contains(&"c".to_string()));
+    assert!(failed.contains(&ModelName::new("c")));
 }
 
 // ============================================================================
@@ -1463,16 +1464,15 @@ fn test_run_state_models_to_run() {
 fn test_load_deferred_manifest() {
     use ff_core::config::Materialization;
     use ff_core::manifest::{Manifest, ManifestModel};
-
     let dir = tempdir().unwrap();
     let manifest_path = dir.path().join("manifest.json");
 
     // Create a manifest with known models
     let mut manifest = Manifest::new("test_project");
     manifest.models.insert(
-        "stg_customers".to_string(),
+        ModelName::new("stg_customers"),
         ManifestModel {
-            name: "stg_customers".to_string(),
+            name: ModelName::new("stg_customers"),
             source_path: "models/staging/stg_customers.sql".to_string(),
             compiled_path: "target/compiled/stg_customers.sql".to_string(),
             materialized: Materialization::View,
@@ -1523,9 +1523,9 @@ fn test_defer_dependency_resolution() {
     let mut deferred = Manifest::new("prod_project");
 
     deferred.models.insert(
-        "stg_customers".to_string(),
+        ModelName::new("stg_customers"),
         ManifestModel {
-            name: "stg_customers".to_string(),
+            name: ModelName::new("stg_customers"),
             source_path: "models/stg_customers.sql".to_string(),
             compiled_path: "target/compiled/stg_customers.sql".to_string(),
             materialized: Materialization::View,
@@ -1544,9 +1544,9 @@ fn test_defer_dependency_resolution() {
     );
 
     deferred.models.insert(
-        "stg_orders".to_string(),
+        ModelName::new("stg_orders"),
         ManifestModel {
-            name: "stg_orders".to_string(),
+            name: ModelName::new("stg_orders"),
             source_path: "models/stg_orders.sql".to_string(),
             compiled_path: "target/compiled/stg_orders.sql".to_string(),
             materialized: Materialization::View,
@@ -1593,9 +1593,9 @@ fn test_defer_missing_upstream_detection() {
     let mut deferred = Manifest::new("prod_project");
 
     deferred.models.insert(
-        "stg_customers".to_string(),
+        ModelName::new("stg_customers"),
         ManifestModel {
-            name: "stg_customers".to_string(),
+            name: ModelName::new("stg_customers"),
             source_path: "models/stg_customers.sql".to_string(),
             compiled_path: "target/compiled/stg_customers.sql".to_string(),
             materialized: Materialization::View,
@@ -1634,15 +1634,15 @@ fn test_defer_transitive_dependencies() {
     let mut manifest = Manifest::new("prod");
 
     manifest.models.insert(
-        "stg_products".to_string(),
+        ModelName::new("stg_products"),
         ManifestModel {
-            name: "stg_products".to_string(),
+            name: ModelName::new("stg_products"),
             source_path: "models/stg_products.sql".to_string(),
             compiled_path: "target/compiled/stg_products.sql".to_string(),
             materialized: Materialization::View,
             schema: None,
             tags: vec![],
-            depends_on: vec!["raw_products".to_string()],
+            depends_on: vec![ModelName::new("raw_products")],
             external_deps: vec![],
             referenced_tables: vec!["raw_products".to_string()],
             unique_key: None,
@@ -1655,15 +1655,15 @@ fn test_defer_transitive_dependencies() {
     );
 
     manifest.models.insert(
-        "dim_products".to_string(),
+        ModelName::new("dim_products"),
         ManifestModel {
-            name: "dim_products".to_string(),
+            name: ModelName::new("dim_products"),
             source_path: "models/dim_products.sql".to_string(),
             compiled_path: "target/compiled/dim_products.sql".to_string(),
             materialized: Materialization::Table,
             schema: None,
             tags: vec![],
-            depends_on: vec!["stg_products".to_string()],
+            depends_on: vec![ModelName::new("stg_products")],
             external_deps: vec![],
             referenced_tables: vec!["stg_products".to_string()],
             unique_key: None,
@@ -1677,10 +1677,10 @@ fn test_defer_transitive_dependencies() {
 
     // Verify we can traverse the dependency chain
     let dim = manifest.get_model("dim_products").unwrap();
-    assert_eq!(dim.depends_on, vec!["stg_products"]);
+    assert_eq!(dim.depends_on, vec![ModelName::new("stg_products")]);
 
     let stg = manifest.get_model("stg_products").unwrap();
-    assert_eq!(stg.depends_on, vec!["raw_products"]);
+    assert_eq!(stg.depends_on, vec![ModelName::new("raw_products")]);
 }
 
 /// Test slim CI workflow scenario
@@ -1701,9 +1701,9 @@ fn test_defer_slim_ci_scenario() {
         "fct_revenue",
     ] {
         prod_manifest.models.insert(
-            model_name.to_string(),
+            ModelName::new(*model_name),
             ManifestModel {
-                name: model_name.to_string(),
+                name: ModelName::new(*model_name),
                 source_path: format!("models/{}.sql", model_name),
                 compiled_path: format!("target/compiled/{}.sql", model_name),
                 materialized: if model_name.starts_with("stg") {
@@ -1714,8 +1714,8 @@ fn test_defer_slim_ci_scenario() {
                 schema: None,
                 tags: vec![],
                 depends_on: match *model_name {
-                    "fct_orders" => vec!["stg_customers".to_string(), "stg_orders".to_string()],
-                    "fct_revenue" => vec!["stg_orders".to_string(), "stg_products".to_string()],
+                    "fct_orders" => vec![ModelName::new("stg_customers"), ModelName::new("stg_orders")],
+                    "fct_revenue" => vec![ModelName::new("stg_orders"), ModelName::new("stg_products")],
                     _ => vec![],
                 },
                 external_deps: vec![],

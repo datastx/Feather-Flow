@@ -402,7 +402,7 @@ impl Selector {
         // Compare by checking if dependencies changed
         let current_deps: HashSet<String> =
             current.depends_on.iter().map(|m| m.to_string()).collect();
-        let ref_deps: HashSet<String> = reference.depends_on.iter().cloned().collect();
+        let ref_deps: HashSet<String> = reference.depends_on.iter().map(|m| m.to_string()).collect();
 
         if current_deps != ref_deps {
             return true;

@@ -67,7 +67,8 @@ pub(super) fn handle_resume_mode(
     // Filter to only models that exist in compiled_models
     let execution_order: Vec<String> = models_to_run
         .into_iter()
-        .filter(|m| compiled_models.contains_key(m))
+        .filter(|m| compiled_models.contains_key(m.as_str()))
+        .map(|m| m.to_string())
         .collect();
 
     // Log what we're skipping
