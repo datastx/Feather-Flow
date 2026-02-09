@@ -371,10 +371,11 @@ mod tests {
             make_model("model_b", vec!["model_a"]),
         ]);
 
-        let current: HashMap<ModelName, ManifestModel> = vec![make_model("model_b", vec!["model_a"])]
-            .into_iter()
-            .map(|m| (m.name.clone(), m))
-            .collect();
+        let current: HashMap<ModelName, ManifestModel> =
+            vec![make_model("model_b", vec!["model_a"])]
+                .into_iter()
+                .map(|m| (m.name.clone(), m))
+                .collect();
 
         let report = detect_breaking_changes_simple(&previous, &current);
 

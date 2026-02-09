@@ -161,7 +161,11 @@ fn load_from_manifest(
                     sql,
                     materialization: manifest_model.materialized,
                     schema: manifest_model.schema.clone(),
-                    dependencies: manifest_model.depends_on.iter().map(|m| m.to_string()).collect(),
+                    dependencies: manifest_model
+                        .depends_on
+                        .iter()
+                        .map(|m| m.to_string())
+                        .collect(),
                     unique_key: manifest_model.unique_key.clone(),
                     incremental_strategy: manifest_model.incremental_strategy,
                     on_schema_change: manifest_model.on_schema_change,

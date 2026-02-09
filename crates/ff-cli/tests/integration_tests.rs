@@ -1371,7 +1371,11 @@ async fn test_special_chars_in_column_names() {
 #[test]
 fn test_run_state_new_and_mark() {
     let mut state = RunState::new(
-        vec![ModelName::new("a"), ModelName::new("b"), ModelName::new("c")],
+        vec![
+            ModelName::new("a"),
+            ModelName::new("b"),
+            ModelName::new("c"),
+        ],
         Some("--select +c".to_string()),
         "config_hash_123".to_string(),
     );
@@ -1714,8 +1718,13 @@ fn test_defer_slim_ci_scenario() {
                 schema: None,
                 tags: vec![],
                 depends_on: match *model_name {
-                    "fct_orders" => vec![ModelName::new("stg_customers"), ModelName::new("stg_orders")],
-                    "fct_revenue" => vec![ModelName::new("stg_orders"), ModelName::new("stg_products")],
+                    "fct_orders" => vec![
+                        ModelName::new("stg_customers"),
+                        ModelName::new("stg_orders"),
+                    ],
+                    "fct_revenue" => {
+                        vec![ModelName::new("stg_orders"), ModelName::new("stg_products")]
+                    }
                     _ => vec![],
                 },
                 external_deps: vec![],
