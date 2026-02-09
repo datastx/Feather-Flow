@@ -118,16 +118,7 @@ impl Default for RelSchema {
 mod tests {
     use super::*;
     use crate::ir::types::{IntBitWidth, Nullability, SqlType};
-
-    fn make_col(name: &str, ty: SqlType, null: Nullability) -> TypedColumn {
-        TypedColumn {
-            name: name.to_string(),
-            source_table: None,
-            sql_type: ty,
-            nullability: null,
-            provenance: vec![],
-        }
-    }
+    use crate::test_utils::make_col;
 
     #[test]
     fn test_find_column() {

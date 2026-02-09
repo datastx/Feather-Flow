@@ -372,7 +372,7 @@ fn generate_markdown(doc: &ModelDoc) -> String {
         md.push_str("|--------|------|-------------|----------------|-------|\n");
 
         for col in &doc.columns {
-            let data_type = col.data_type.as_deref().unwrap_or("-");
+            let data_type = col.data_type.as_str();
             let desc = col.description.as_deref().unwrap_or("-");
             let cls = col.classification.as_deref().unwrap_or("-");
             let tests = if col.tests.is_empty() {
@@ -480,7 +480,7 @@ fn generate_source_markdown(doc: &SourceDoc) -> String {
             md.push_str("|--------|------|-------------|-------|\n");
 
             for col in &table.columns {
-                let data_type = col.data_type.as_deref().unwrap_or("-");
+                let data_type = col.data_type.as_str();
                 let desc = col.description.as_deref().unwrap_or("-");
                 let tests = if col.tests.is_empty() {
                     "-".to_string()
@@ -864,7 +864,7 @@ fn generate_html(doc: &ModelDoc) -> String {
         html.push_str("<table>\n<thead><tr><th>Column</th><th>Type</th><th>Description</th><th>Classification</th><th>Tests</th></tr></thead>\n<tbody>\n");
 
         for col in &doc.columns {
-            let data_type = col.data_type.as_deref().unwrap_or("-");
+            let data_type = col.data_type.as_str();
             let desc = col.description.as_deref().unwrap_or("-");
             let cls = col.classification.as_deref().unwrap_or("-");
             let tests = if col.tests.is_empty() {
@@ -1004,7 +1004,7 @@ fn generate_source_html(doc: &SourceDoc) -> String {
             html.push_str("<table>\n<thead><tr><th>Column</th><th>Type</th><th>Description</th><th>Tests</th></tr></thead>\n<tbody>\n");
 
             for col in &table.columns {
-                let data_type = col.data_type.as_deref().unwrap_or("-");
+                let data_type = col.data_type.as_str();
                 let desc = col.description.as_deref().unwrap_or("-");
                 let tests = if col.tests.is_empty() {
                     "-".to_string()

@@ -263,16 +263,16 @@ fn compare_schemas(
     report: &mut BreakingChangeReport,
 ) {
     // SchemaColumnDef has name and data_type
-    let prev_cols: HashMap<&str, Option<&str>> = prev_schema
+    let prev_cols: HashMap<&str, &str> = prev_schema
         .columns
         .iter()
-        .map(|c| (c.name.as_str(), c.data_type.as_deref()))
+        .map(|c| (c.name.as_str(), c.data_type.as_str()))
         .collect();
 
-    let curr_cols: HashMap<&str, Option<&str>> = curr_schema
+    let curr_cols: HashMap<&str, &str> = curr_schema
         .columns
         .iter()
-        .map(|c| (c.name.as_str(), c.data_type.as_deref()))
+        .map(|c| (c.name.as_str(), c.data_type.as_str()))
         .collect();
 
     // Check for removed columns
@@ -294,19 +294,17 @@ fn compare_schemas(
     for (col_name, prev_type) in &prev_cols {
         if let Some(curr_type) = curr_cols.get(col_name) {
             if prev_type != curr_type {
-                if let (Some(old), Some(new)) = (prev_type, curr_type) {
-                    report.add_change(
-                        BreakingChange::new(
-                            model_name,
-                            BreakingChangeType::TypeChanged {
-                                column: col_name.to_string(),
-                                old_type: old.to_string(),
-                                new_type: new.to_string(),
-                            },
-                        )
-                        .with_downstream(downstream.to_vec()),
-                    );
-                }
+                report.add_change(
+                    BreakingChange::new(
+                        model_name,
+                        BreakingChangeType::TypeChanged {
+                            column: col_name.to_string(),
+                            old_type: prev_type.to_string(),
+                            new_type: curr_type.to_string(),
+                        },
+                    )
+                    .with_downstream(downstream.to_vec()),
+                );
             }
         }
     }
@@ -442,7 +440,7 @@ mod tests {
                 columns: vec![
                     SchemaColumnDef {
                         name: "id".to_string(),
-                        data_type: Some("INTEGER".to_string()),
+                        data_type: "INTEGER".to_string(),
                         description: None,
                         primary_key: false,
                         constraints: Vec::new(),
@@ -452,7 +450,7 @@ mod tests {
                     },
                     SchemaColumnDef {
                         name: "removed_col".to_string(),
-                        data_type: Some("VARCHAR".to_string()),
+                        data_type: "VARCHAR".to_string(),
                         description: None,
                         primary_key: false,
                         constraints: Vec::new(),
@@ -481,7 +479,7 @@ mod tests {
                 tags: Vec::new(),
                 columns: vec![SchemaColumnDef {
                     name: "id".to_string(),
-                    data_type: Some("INTEGER".to_string()),
+                    data_type: "INTEGER".to_string(),
                     description: None,
                     primary_key: false,
                     constraints: Vec::new(),
@@ -527,7 +525,7 @@ mod tests {
                 tags: Vec::new(),
                 columns: vec![SchemaColumnDef {
                     name: "amount".to_string(),
-                    data_type: Some("INTEGER".to_string()),
+                    data_type: "INTEGER".to_string(),
                     description: None,
                     primary_key: false,
                     constraints: Vec::new(),
@@ -555,7 +553,7 @@ mod tests {
                 tags: Vec::new(),
                 columns: vec![SchemaColumnDef {
                     name: "amount".to_string(),
-                    data_type: Some("DECIMAL(10,2)".to_string()),
+                    data_type: "DECIMAL(10,2)".to_string(),
                     description: None,
                     primary_key: false,
                     constraints: Vec::new(),

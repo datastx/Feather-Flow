@@ -87,7 +87,7 @@ pub struct SourceColumn {
 
     /// Data type
     #[serde(rename = "type")]
-    pub data_type: Option<String>,
+    pub data_type: String,
 
     /// Column description
     #[serde(default)]

@@ -1,14 +1,12 @@
 //! Shared test utilities for ff-analysis
 
 use crate::context::AnalysisContext;
-use crate::ir::schema::RelSchema;
 use crate::ir::types::{Nullability, SqlType, TypedColumn};
 use ff_core::dag::ModelDag;
-use ff_core::ModelName;
 use ff_core::Project;
 use ff_sql::ProjectLineage;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::PathBuf;
 
 /// Create a typed column for testing
 pub(crate) fn make_col(name: &str, ty: SqlType, null: Nullability) -> TypedColumn {
@@ -21,36 +19,33 @@ pub(crate) fn make_col(name: &str, ty: SqlType, null: Nullability) -> TypedColum
     }
 }
 
-/// Create a typed column with a source table for testing qualified lookups
-pub(crate) fn make_col_sourced(
-    name: &str,
-    source: &str,
-    ty: SqlType,
-    null: Nullability,
-) -> TypedColumn {
-    TypedColumn {
-        name: name.to_string(),
-        source_table: Some(source.to_string()),
-        sql_type: ty,
-        nullability: null,
-        provenance: vec![],
+/// Shorthand for `SqlType::Integer { bits: IntBitWidth::I32 }`
+pub(crate) fn int32() -> SqlType {
+    SqlType::Integer {
+        bits: crate::ir::types::IntBitWidth::I32,
     }
 }
 
-/// Create a minimal `AnalysisContext` for testing (empty YAML schemas and lineage)
-pub(crate) fn make_ctx() -> AnalysisContext {
-    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/fixtures/sample_project");
-    let project = Project::load(&fixtures).unwrap();
-    let dag = ModelDag::build(&HashMap::new()).unwrap();
-    AnalysisContext::new(project, dag, HashMap::new(), ProjectLineage::new())
+/// Shorthand for `SqlType::String { max_length: None }`
+pub(crate) fn varchar() -> SqlType {
+    SqlType::String { max_length: None }
 }
 
-/// Create an `AnalysisContext` with YAML-declared schemas for nullability testing
-pub(crate) fn make_ctx_with_yaml(yaml_schemas: HashMap<ModelName, RelSchema>) -> AnalysisContext {
-    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/fixtures/sample_project");
-    let project = Project::load(&fixtures).unwrap();
+/// Create a minimal in-memory `AnalysisContext` for testing.
+///
+/// Uses a synthetic `Project` to avoid filesystem dependencies.
+pub(crate) fn make_ctx() -> AnalysisContext {
+    let config: ff_core::config::Config = serde_yaml::from_str("name: test_project").unwrap();
+    let project = Project {
+        root: PathBuf::from("/tmp/test"),
+        config,
+        models: HashMap::new(),
+        tests: vec![],
+        singular_tests: vec![],
+        sources: vec![],
+        exposures: vec![],
+        metrics: vec![],
+    };
     let dag = ModelDag::build(&HashMap::new()).unwrap();
-    AnalysisContext::new(project, dag, yaml_schemas, ProjectLineage::new())
+    AnalysisContext::new(project, dag, HashMap::new(), ProjectLineage::new())
 }

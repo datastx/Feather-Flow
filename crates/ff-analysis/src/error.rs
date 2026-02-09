@@ -36,6 +36,10 @@ pub enum AnalysisError {
     /// AE007: SQL crate error propagation
     #[error("[AE007] SQL error: {0}")]
     Sql(#[from] ff_sql::SqlError),
+
+    /// AE008: DataFusion planning error
+    #[error("[AE008] Planning error: {0}")]
+    PlanningError(String),
 }
 
 /// Result type alias for AnalysisError

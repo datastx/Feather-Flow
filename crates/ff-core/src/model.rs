@@ -541,8 +541,8 @@ pub struct SchemaColumnDef {
     pub name: String,
 
     /// SQL data type (e.g., VARCHAR, INT, TIMESTAMP, DECIMAL(10,2))
-    #[serde(rename = "type", alias = "data_type", default)]
-    pub data_type: Option<String>,
+    #[serde(rename = "type", alias = "data_type")]
+    pub data_type: String,
 
     /// Column description
     #[serde(default)]
@@ -941,10 +941,12 @@ models:
   - name: stg_orders
     columns:
       - name: order_id
+        type: INTEGER
         tests:
           - unique
           - not_null
       - name: customer_id
+        type: INTEGER
         tests:
           - not_null
 "#;
@@ -962,6 +964,7 @@ models:
   - name: stg_orders
     columns:
       - name: order_id
+        type: INTEGER
         tests:
           - unique
           - not_null
@@ -986,11 +989,13 @@ tags:
   - orders
 columns:
   - name: order_id
+    type: INTEGER
     description: "Unique identifier for the order"
     tests:
       - unique
       - not_null
   - name: customer_id
+    type: INTEGER
     tests:
       - not_null
 "#;
@@ -1070,10 +1075,12 @@ meta:
 version: 1
 columns:
   - name: order_id
+    type: INTEGER
     tests:
       - unique
       - not_null
   - name: customer_id
+    type: INTEGER
     tests:
       - not_null
 "#;
@@ -1098,6 +1105,7 @@ columns:
 version: 1
 columns:
   - name: amount
+    type: DECIMAL(10,2)
     tests:
       - positive
 "#;
@@ -1114,6 +1122,7 @@ columns:
 version: 1
 columns:
   - name: quantity
+    type: INTEGER
     tests:
       - non_negative
 "#;
@@ -1130,6 +1139,7 @@ columns:
 version: 1
 columns:
   - name: status
+    type: VARCHAR
     tests:
       - accepted_values:
           values: [pending, completed, cancelled]
@@ -1154,6 +1164,7 @@ columns:
 version: 1
 columns:
   - name: price
+    type: DECIMAL(10,2)
     tests:
       - min_value:
           value: 0.0
@@ -1176,6 +1187,7 @@ columns:
 version: 1
 columns:
   - name: discount
+    type: DECIMAL(10,2)
     tests:
       - max_value:
           value: 100.0
@@ -1198,6 +1210,7 @@ columns:
 version: 1
 columns:
   - name: email
+    type: VARCHAR
     tests:
       - regex:
           pattern: "^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+$"
@@ -1220,15 +1233,18 @@ columns:
 version: 1
 columns:
   - name: order_id
+    type: INTEGER
     tests:
       - unique
       - not_null
   - name: amount
+    type: DECIMAL(10,2)
     tests:
       - positive
       - min_value:
           value: 1.0
   - name: status
+    type: VARCHAR
     tests:
       - accepted_values:
           values: [pending, completed]
@@ -1266,7 +1282,7 @@ columns:
 
         let user_col = &schema.columns[0];
         assert_eq!(user_col.name, "user_id");
-        assert_eq!(user_col.data_type, Some("BIGINT".to_string()));
+        assert_eq!(user_col.data_type, "BIGINT");
         assert_eq!(
             user_col.description,
             Some("Unique identifier for the user".to_string())
@@ -1293,6 +1309,7 @@ config:
   schema: staging
 columns:
   - name: id
+    type: INTEGER
     tests:
       - unique
 "#;
@@ -1513,6 +1530,7 @@ columns:
 version: 1
 columns:
   - name: customer_id
+    type: INTEGER
     tests:
       - relationship:
           to: customers
@@ -1537,6 +1555,7 @@ columns:
 version: 1
 columns:
   - name: user_id
+    type: INTEGER
     tests:
       - relationship:
           to: users
@@ -1570,6 +1589,7 @@ columns:
 version: 1
 columns:
   - name: order_id
+    type: INTEGER
     tests:
       - relationships:
           to: orders
@@ -1620,7 +1640,7 @@ columns:
 
         let order_id_col = &schema.columns[0];
         assert_eq!(order_id_col.name, "order_id");
-        assert_eq!(order_id_col.data_type, Some("INTEGER".to_string()));
+        assert_eq!(order_id_col.data_type, "INTEGER");
         assert_eq!(order_id_col.constraints.len(), 2);
         assert!(order_id_col
             .constraints
@@ -1647,6 +1667,7 @@ contract:
   enforced: false
 columns:
   - name: id
+    type: INTEGER
 "#;
         let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
 
@@ -1662,6 +1683,7 @@ columns:
 version: 1
 columns:
   - name: id
+    type: INTEGER
 "#;
         let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
 
@@ -1692,7 +1714,7 @@ columns:
         // Test get_column
         let order_id = schema.get_column("order_id");
         assert!(order_id.is_some());
-        assert_eq!(order_id.unwrap().data_type, Some("INTEGER".to_string()));
+        assert_eq!(order_id.unwrap().data_type, "INTEGER");
 
         // Case-insensitive lookup
         let order_id_upper = schema.get_column("ORDER_ID");
@@ -1715,6 +1737,7 @@ columns:
 version: 1
 columns:
   - name: email
+    type: VARCHAR
     constraints:
       - unique
 "#;
@@ -1739,6 +1762,7 @@ freshness:
     period: hour
 columns:
   - name: id
+    type: INTEGER
 "#;
         let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
 
@@ -1768,6 +1792,7 @@ freshness:
     period: day
 columns:
   - name: id
+    type: INTEGER
 "#;
         let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
 
@@ -1817,6 +1842,7 @@ columns: []
 version: 1
 columns:
   - name: id
+    type: INTEGER
 "#;
         let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
 
@@ -1929,6 +1955,7 @@ deprecated: true
 deprecation_message: "Use fct_orders_v2 instead"
 columns:
   - name: id
+    type: INTEGER
 "#;
         let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
 

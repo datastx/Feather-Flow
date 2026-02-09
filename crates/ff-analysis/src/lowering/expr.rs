@@ -26,7 +26,7 @@ pub(crate) fn lower_expr(expr: &Expr, schema: &RelSchema) -> TypedExpr {
             }
         }
 
-        Expr::Value(val) => lower_value(val),
+        Expr::Value(val_with_span) => lower_value(&val_with_span.value),
 
         Expr::BinaryOp { left, op, right } => {
             let left_expr = lower_expr(left, schema);
@@ -78,9 +78,9 @@ pub(crate) fn lower_expr(expr: &Expr, schema: &RelSchema) -> TypedExpr {
         Expr::Case {
             operand,
             conditions,
-            results,
             else_result,
-        } => lower_case(operand, conditions, results, else_result, schema),
+            ..
+        } => lower_case(operand, conditions, else_result, schema),
 
         Expr::IsNull(inner) => TypedExpr::IsNull {
             expr: Box::new(lower_expr(inner, schema)),
@@ -217,16 +217,10 @@ pub(crate) fn lower_expr(expr: &Expr, schema: &RelSchema) -> TypedExpr {
             nullability: Nullability::Unknown,
         },
 
-        Expr::Wildcard => TypedExpr::Wildcard { table: None },
+        Expr::Wildcard(_) => TypedExpr::Wildcard { table: None },
 
-        Expr::QualifiedWildcard(name) => TypedExpr::Wildcard {
-            table: Some(
-                name.0
-                    .iter()
-                    .map(|i| i.value.clone())
-                    .collect::<Vec<_>>()
-                    .join("."),
-            ),
+        Expr::QualifiedWildcard(name, _) => TypedExpr::Wildcard {
+            table: Some(name.to_string()),
         },
 
         // Catch-all for anything we don't explicitly handle
@@ -334,21 +328,21 @@ fn extract_function_args(args: &ast::FunctionArguments, schema: &RelSchema) -> V
             .args
             .iter()
             .map(|arg| match arg {
-                FunctionArg::Unnamed(arg_expr) | FunctionArg::Named { arg: arg_expr, .. } => {
-                    match arg_expr {
-                        FunctionArgExpr::Expr(e) => lower_expr(e, schema),
-                        FunctionArgExpr::Wildcard => TypedExpr::Wildcard { table: None },
-                        FunctionArgExpr::QualifiedWildcard(name) => TypedExpr::Wildcard {
-                            table: Some(
-                                name.0
-                                    .iter()
-                                    .map(|i| i.value.clone())
-                                    .collect::<Vec<_>>()
-                                    .join("."),
-                            ),
-                        },
-                    }
-                }
+                FunctionArg::Unnamed(arg_expr)
+                | FunctionArg::Named { arg: arg_expr, .. }
+                | FunctionArg::ExprNamed { arg: arg_expr, .. } => match arg_expr {
+                    FunctionArgExpr::Expr(e) => lower_expr(e, schema),
+                    FunctionArgExpr::Wildcard => TypedExpr::Wildcard { table: None },
+                    FunctionArgExpr::QualifiedWildcard(name) => TypedExpr::Wildcard {
+                        table: Some(
+                            name.0
+                                .iter()
+                                .map(|part| part.to_string())
+                                .collect::<Vec<_>>()
+                                .join("."),
+                        ),
+                    },
+                },
             })
             .collect(),
     }
@@ -517,14 +511,19 @@ fn promote_numeric(left: &SqlType, right: &SqlType) -> SqlType {
 /// Lower a CASE expression
 fn lower_case(
     operand: &Option<Box<Expr>>,
-    conditions: &[Expr],
-    results: &[Expr],
+    conditions: &[sqlparser::ast::CaseWhen],
     else_result: &Option<Box<Expr>>,
     schema: &RelSchema,
 ) -> TypedExpr {
     let operand_expr = operand.as_ref().map(|e| Box::new(lower_expr(e, schema)));
-    let condition_exprs: Vec<_> = conditions.iter().map(|e| lower_expr(e, schema)).collect();
-    let result_exprs: Vec<_> = results.iter().map(|e| lower_expr(e, schema)).collect();
+    let condition_exprs: Vec<_> = conditions
+        .iter()
+        .map(|cw| lower_expr(&cw.condition, schema))
+        .collect();
+    let result_exprs: Vec<_> = conditions
+        .iter()
+        .map(|cw| lower_expr(&cw.result, schema))
+        .collect();
     let else_expr = else_result
         .as_ref()
         .map(|e| Box::new(lower_expr(e, schema)));
@@ -573,7 +572,7 @@ pub fn lower_data_type(dt: &DataType) -> SqlType {
         DataType::Float(_) | DataType::Real => SqlType::Float {
             bits: FloatBitWidth::F32,
         },
-        DataType::Double | DataType::DoublePrecision => SqlType::Float {
+        DataType::Double(..) | DataType::DoublePrecision => SqlType::Float {
             bits: FloatBitWidth::F64,
         },
         DataType::Decimal(info) | DataType::Numeric(info) => {
@@ -596,7 +595,7 @@ pub fn lower_data_type(dt: &DataType) -> SqlType {
         DataType::Date => SqlType::Date,
         DataType::Time(..) => SqlType::Time,
         DataType::Timestamp(..) | DataType::Datetime(..) => SqlType::Timestamp,
-        DataType::Interval => SqlType::Interval,
+        DataType::Interval { .. } => SqlType::Interval,
         DataType::Blob(_) | DataType::Binary(_) | DataType::Varbinary(_) | DataType::Bytea => {
             SqlType::Binary
         }

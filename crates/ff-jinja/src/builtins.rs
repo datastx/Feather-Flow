@@ -566,6 +566,24 @@ pub(crate) fn make_not_null_fn() -> impl Fn(&str) -> String + Send + Sync + Clon
     move |col: &str| not_null(col)
 }
 
+/// Wrapper for hash_columns that accepts a Value array
+pub(crate) fn make_hash_columns_fn(
+) -> impl Fn(Value) -> Result<String, Error> + Send + Sync + Clone + 'static {
+    move |columns: Value| {
+        let cols: Vec<String> = columns
+            .try_iter()
+            .map_err(|_| {
+                Error::new(
+                    minijinja::ErrorKind::InvalidOperation,
+                    "hash_columns requires an array of column names",
+                )
+            })?
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
+        Ok(hash_columns(&cols))
+    }
+}
+
 /// Wrapper for surrogate_key that accepts a Value array
 pub(crate) fn make_surrogate_key_fn(
 ) -> impl Fn(Value) -> Result<String, Error> + Send + Sync + Clone + 'static {

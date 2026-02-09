@@ -1,6 +1,7 @@
 //! CLI argument definitions using clap derive API
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
 
 /// Featherflow - A dbt-like CLI tool for SQL templating and execution
 #[derive(Parser, Debug)]
@@ -25,7 +26,7 @@ pub struct GlobalArgs {
 
     /// Path to project directory
     #[arg(short = 'p', long, global = true, default_value = ".")]
-    pub project_dir: String,
+    pub project_dir: PathBuf,
 
     /// Override config file path
     #[arg(short, long, global = true)]
@@ -150,6 +151,14 @@ pub struct CompileArgs {
     #[arg(long)]
     pub parse_only: bool,
 
+    /// Skip DataFusion static analysis
+    #[arg(long)]
+    pub skip_static_analysis: bool,
+
+    /// Print the DataFusion LogicalPlan for a model
+    #[arg(long)]
+    pub explain: Option<String>,
+
     /// Output format (text or json for CI integration)
     #[arg(short, long, value_enum, default_value = "text")]
     pub output: OutputFormat,
@@ -217,6 +226,10 @@ pub struct RunArgs {
     /// Smart build: skip models whose SQL, schema, and inputs haven't changed
     #[arg(long)]
     pub smart: bool,
+
+    /// Skip DataFusion static analysis
+    #[arg(long)]
+    pub skip_static_analysis: bool,
 }
 
 /// Arguments for the ls command

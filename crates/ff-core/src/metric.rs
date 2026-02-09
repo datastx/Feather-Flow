@@ -4,6 +4,7 @@
 //! on top of models, enabling consistent calculations across consumers.
 
 use crate::error::{CoreError, CoreResult};
+use crate::sql_utils::{quote_ident, quote_qualified};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -167,23 +168,26 @@ impl Metric {
     /// dimensions, and filters.
     pub fn generate_sql(&self) -> String {
         let mut sql = String::from("SELECT\n");
+        let quoted_alias = quote_ident(&self.name);
 
         // Add dimensions first (for GROUP BY)
         if !self.dimensions.is_empty() {
             for dim in &self.dimensions {
-                sql.push_str(&format!("  {},\n", dim));
+                sql.push_str(&format!("  {},\n", quote_ident(dim)));
             }
         }
 
         // Add the aggregation
+        // Note: `self.expression` is a user-provided SQL expression (e.g. "amount",
+        // "price * quantity") — it is NOT quoted because it may contain operators.
         let agg_sql = match self.calculation {
             MetricCalculation::CountDistinct => {
-                format!("  COUNT(DISTINCT {}) AS {}", self.expression, self.name)
+                format!("  COUNT(DISTINCT {}) AS {}", self.expression, quoted_alias)
             }
             _ => {
                 format!(
                     "  {}({}) AS {}",
-                    self.calculation, self.expression, self.name
+                    self.calculation, self.expression, quoted_alias
                 )
             }
         };
@@ -191,9 +195,9 @@ impl Metric {
         sql.push('\n');
 
         // FROM clause
-        sql.push_str(&format!("FROM {}\n", self.model));
+        sql.push_str(&format!("FROM {}\n", quote_qualified(&self.model)));
 
-        // WHERE clause (filters)
+        // WHERE clause (filters are user-provided SQL conditions, not quoted)
         if !self.filters.is_empty() {
             sql.push_str("WHERE ");
             sql.push_str(&self.filters.join("\n  AND "));
@@ -202,8 +206,9 @@ impl Metric {
 
         // GROUP BY clause
         if !self.dimensions.is_empty() {
+            let quoted_dims: Vec<String> = self.dimensions.iter().map(|d| quote_ident(d)).collect();
             sql.push_str("GROUP BY ");
-            sql.push_str(&self.dimensions.join(", "));
+            sql.push_str(&quoted_dims.join(", "));
             sql.push('\n');
         }
 
@@ -359,8 +364,8 @@ expression: order_amount
         let metric = Metric::from_yaml(yaml, Path::new("test.yml")).unwrap();
         let sql = metric.generate_sql();
 
-        assert!(sql.contains("SUM(order_amount) AS total_revenue"));
-        assert!(sql.contains("FROM fct_orders"));
+        assert!(sql.contains(r#"SUM(order_amount) AS "total_revenue""#));
+        assert!(sql.contains(r#"FROM "fct_orders""#));
         assert!(!sql.contains("WHERE"));
         assert!(!sql.contains("GROUP BY"));
     }
@@ -380,10 +385,10 @@ dimensions:
         let metric = Metric::from_yaml(yaml, Path::new("test.yml")).unwrap();
         let sql = metric.generate_sql();
 
-        assert!(sql.contains("customer_segment,"));
-        assert!(sql.contains("product_category,"));
-        assert!(sql.contains("SUM(order_amount) AS total_revenue"));
-        assert!(sql.contains("GROUP BY customer_segment, product_category"));
+        assert!(sql.contains(r#""customer_segment","#));
+        assert!(sql.contains(r#""product_category","#));
+        assert!(sql.contains(r#"SUM(order_amount) AS "total_revenue""#));
+        assert!(sql.contains(r#"GROUP BY "customer_segment", "product_category""#));
     }
 
     #[test]
@@ -417,7 +422,7 @@ expression: customer_id
         let metric = Metric::from_yaml(yaml, Path::new("test.yml")).unwrap();
         let sql = metric.generate_sql();
 
-        assert!(sql.contains("COUNT(DISTINCT customer_id) AS unique_customers"));
+        assert!(sql.contains(r#"COUNT(DISTINCT customer_id) AS "unique_customers""#));
     }
 
     #[test]
@@ -485,10 +490,8 @@ expression: order_amount
 
     #[test]
     fn test_discover_metrics() {
-        // Create a temp directory with metric files
-        let temp_dir = std::env::temp_dir().join("ff_test_metrics");
-        let _ = std::fs::remove_dir_all(&temp_dir);
-        std::fs::create_dir_all(&temp_dir).unwrap();
+        let temp = tempfile::TempDir::new().unwrap();
+        let temp_dir = temp.path().to_path_buf();
 
         // Create a valid metric file
         std::fs::write(
@@ -528,8 +531,5 @@ name: raw_data
 
         let metrics = discover_metrics(std::slice::from_ref(&temp_dir));
         assert_eq!(metrics.len(), 2);
-
-        // Clean up
-        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

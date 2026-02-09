@@ -2,6 +2,8 @@
 
 pub(crate) mod join_keys;
 pub(crate) mod nullability;
+pub mod plan_cross_model;
+pub mod plan_pass;
 pub(crate) mod type_inference;
 pub(crate) mod unused_columns;
 
@@ -14,7 +16,7 @@ use std::collections::HashMap;
 ///
 /// Each variant corresponds to a specific diagnostic rule (e.g. A001 = unknown type).
 /// Using an enum instead of a bare `String` prevents typos and enables exhaustive matching.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DiagnosticCode {
     /// A001: Unknown type for column
     A001,
@@ -42,57 +44,15 @@ pub enum DiagnosticCode {
     A032,
     /// A033: Non-equi join
     A033,
+    /// A040: Cross-model schema mismatch (extra/missing/type)
+    A040,
+    /// A041: Cross-model nullability mismatch
+    A041,
 }
 
 impl std::fmt::Display for DiagnosticCode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            DiagnosticCode::A001 => "A001",
-            DiagnosticCode::A002 => "A002",
-            DiagnosticCode::A003 => "A003",
-            DiagnosticCode::A004 => "A004",
-            DiagnosticCode::A005 => "A005",
-            DiagnosticCode::A010 => "A010",
-            DiagnosticCode::A011 => "A011",
-            DiagnosticCode::A012 => "A012",
-            DiagnosticCode::A020 => "A020",
-            DiagnosticCode::A021 => "A021",
-            DiagnosticCode::A030 => "A030",
-            DiagnosticCode::A032 => "A032",
-            DiagnosticCode::A033 => "A033",
-        };
-        write!(f, "{}", s)
-    }
-}
-
-impl Serialize for DiagnosticCode {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.to_string())
-    }
-}
-
-impl<'de> Deserialize<'de> for DiagnosticCode {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let s = String::deserialize(deserializer)?;
-        match s.as_str() {
-            "A001" => Ok(DiagnosticCode::A001),
-            "A002" => Ok(DiagnosticCode::A002),
-            "A003" => Ok(DiagnosticCode::A003),
-            "A004" => Ok(DiagnosticCode::A004),
-            "A005" => Ok(DiagnosticCode::A005),
-            "A010" => Ok(DiagnosticCode::A010),
-            "A011" => Ok(DiagnosticCode::A011),
-            "A012" => Ok(DiagnosticCode::A012),
-            "A020" => Ok(DiagnosticCode::A020),
-            "A021" => Ok(DiagnosticCode::A021),
-            "A030" => Ok(DiagnosticCode::A030),
-            "A032" => Ok(DiagnosticCode::A032),
-            "A033" => Ok(DiagnosticCode::A033),
-            other => Err(serde::de::Error::custom(format!(
-                "unknown diagnostic code: {}",
-                other
-            ))),
-        }
+        write!(f, "{:?}", self)
     }
 }
 
@@ -137,7 +97,12 @@ pub struct Diagnostic {
     pub pass_name: String,
 }
 
-/// Per-model analysis pass trait
+/// Per-model analysis pass trait.
+///
+/// The `ctx` parameter provides project-wide metadata (YAML schemas, DAG
+/// structure, lineage) that some passes need — for example, nullability
+/// checks compare against YAML-declared constraints. Passes that don't
+/// need it may ignore it.
 pub trait AnalysisPass: Send + Sync {
     /// Pass name (used for filtering and display)
     fn name(&self) -> &'static str;
@@ -161,7 +126,11 @@ pub trait DagPass: Send + Sync {
     ) -> Vec<Diagnostic>;
 }
 
-/// Manages and runs analysis passes
+/// Manages and runs analysis passes over the custom `RelOp` IR.
+///
+/// This is the original pass manager. Once all passes are migrated to
+/// [`plan_pass::PlanPassManager`] (which operates on DataFusion `LogicalPlan`s),
+/// this struct and the `RelOp`-based IR can be removed.
 pub struct PassManager {
     model_passes: Vec<Box<dyn AnalysisPass>>,
     dag_passes: Vec<Box<dyn DagPass>>,

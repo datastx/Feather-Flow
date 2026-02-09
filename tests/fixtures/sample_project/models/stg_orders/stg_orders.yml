@@ -8,22 +8,27 @@ tags:
 
 columns:
   - name: order_id
+    type: INTEGER
     description: "Unique identifier for the order"
     classification: internal
     tests:
       - unique
       - not_null
   - name: customer_id
+    type: INTEGER
     description: "Reference to the customer"
     classification: pii
     tests:
       - not_null
   - name: order_date
+    type: DATE
     description: "Date the order was placed"
     classification: internal
   - name: amount
+    type: DECIMAL(10,2)
     description: "Order amount in dollars"
     classification: sensitive
   - name: status
+    type: VARCHAR
     description: "Order status"
     classification: internal

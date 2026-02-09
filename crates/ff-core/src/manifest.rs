@@ -117,8 +117,7 @@ pub struct ManifestSourceColumn {
     pub name: String,
 
     /// Column data type
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data_type: Option<String>,
+    pub data_type: String,
 
     /// Column description
     #[serde(skip_serializing_if = "Option::is_none")]

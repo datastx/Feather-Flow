@@ -58,7 +58,7 @@ impl Project {
         // Emit deprecation warning if external_tables is used
         if !config.external_tables.is_empty() {
             eprintln!(
-                "Warning: 'external_tables' is deprecated. Use source_paths and source files (kind: sources) instead."
+                "[warn] 'external_tables' is deprecated. Use source_paths and source files (kind: sources) instead."
             );
         }
 
@@ -263,7 +263,7 @@ impl Project {
                     Ok(test) => tests.push(test),
                     Err(e) => {
                         // Log warning but continue - don't fail on a single bad test file
-                        eprintln!("Warning: Failed to load test file: {}", e);
+                        eprintln!("[warn] Failed to load test file: {}", e);
                     }
                 }
             }
@@ -503,6 +503,7 @@ version: 1
 description: "Staged orders"
 columns:
   - name: order_id
+    type: INTEGER
     tests:
       - unique
 "#,
@@ -559,7 +560,7 @@ model_paths: ["models_a", "models_b"]
         .unwrap();
         std::fs::write(
             dir.path().join("models_a/orders/orders.yml"),
-            "version: 1\ncolumns:\n  - name: id\n",
+            "version: 1\ncolumns:\n  - name: id\n    type: INTEGER\n",
         )
         .unwrap();
         std::fs::write(
@@ -569,7 +570,7 @@ model_paths: ["models_a", "models_b"]
         .unwrap();
         std::fs::write(
             dir.path().join("models_b/orders/orders.yml"),
-            "version: 1\ncolumns:\n  - name: id\n",
+            "version: 1\ncolumns:\n  - name: id\n    type: INTEGER\n",
         )
         .unwrap();
 
@@ -608,7 +609,7 @@ exposure_paths: ["exposures"]
         .unwrap();
         std::fs::write(
             dir.path().join("models/orders/orders.yml"),
-            "version: 1\ncolumns:\n  - name: id\n",
+            "version: 1\ncolumns:\n  - name: id\n    type: INTEGER\n",
         )
         .unwrap();
 
@@ -690,7 +691,7 @@ model_paths: ["models"]
         .unwrap();
         std::fs::write(
             dir.path().join("models/orders/orders.yml"),
-            "version: 1\ncolumns:\n  - name: id\n",
+            "version: 1\ncolumns:\n  - name: id\n    type: INTEGER\n",
         )
         .unwrap();
 
@@ -724,7 +725,7 @@ model_paths: ["models"]
         .unwrap();
         std::fs::write(
             dir.path().join("models/fct_orders/fct_orders.yml"),
-            "version: 1\ncolumns:\n  - name: id\n",
+            "version: 1\ncolumns:\n  - name: id\n    type: INTEGER\n",
         )
         .unwrap();
         std::fs::create_dir_all(dir.path().join("models/fct_orders_v2")).unwrap();
@@ -735,7 +736,7 @@ model_paths: ["models"]
         .unwrap();
         std::fs::write(
             dir.path().join("models/fct_orders_v2/fct_orders_v2.yml"),
-            "version: 1\ncolumns:\n  - name: id\n",
+            "version: 1\ncolumns:\n  - name: id\n    type: INTEGER\n",
         )
         .unwrap();
         std::fs::create_dir_all(dir.path().join("models/fct_orders_v3")).unwrap();
@@ -746,7 +747,7 @@ model_paths: ["models"]
         .unwrap();
         std::fs::write(
             dir.path().join("models/fct_orders_v3/fct_orders_v3.yml"),
-            "version: 1\ncolumns:\n  - name: id\n",
+            "version: 1\ncolumns:\n  - name: id\n    type: INTEGER\n",
         )
         .unwrap();
 
@@ -791,7 +792,7 @@ model_paths: ["models"]
         .unwrap();
         std::fs::write(
             dir.path().join("models/fct_orders_v1/fct_orders_v1.yml"),
-            "version: 1\ncolumns:\n  - name: id\n",
+            "version: 1\ncolumns:\n  - name: id\n    type: INTEGER\n",
         )
         .unwrap();
         std::fs::create_dir_all(dir.path().join("models/fct_orders_v2")).unwrap();
@@ -802,7 +803,7 @@ model_paths: ["models"]
         .unwrap();
         std::fs::write(
             dir.path().join("models/fct_orders_v2/fct_orders_v2.yml"),
-            "version: 1\ncolumns:\n  - name: id\n",
+            "version: 1\ncolumns:\n  - name: id\n    type: INTEGER\n",
         )
         .unwrap();
 
@@ -841,7 +842,7 @@ model_paths: ["models"]
         .unwrap();
         std::fs::write(
             dir.path().join("models/fct_orders_v1/fct_orders_v1.yml"),
-            "version: 1\ncolumns:\n  - name: id\n",
+            "version: 1\ncolumns:\n  - name: id\n    type: INTEGER\n",
         )
         .unwrap();
         std::fs::create_dir_all(dir.path().join("models/fct_orders_v2")).unwrap();
@@ -852,7 +853,7 @@ model_paths: ["models"]
         .unwrap();
         std::fs::write(
             dir.path().join("models/fct_orders_v2/fct_orders_v2.yml"),
-            "version: 1\ncolumns:\n  - name: id\n",
+            "version: 1\ncolumns:\n  - name: id\n    type: INTEGER\n",
         )
         .unwrap();
         std::fs::create_dir_all(dir.path().join("models/dim_products")).unwrap();
@@ -863,7 +864,7 @@ model_paths: ["models"]
         .unwrap();
         std::fs::write(
             dir.path().join("models/dim_products/dim_products.yml"),
-            "version: 1\ncolumns:\n  - name: id\n",
+            "version: 1\ncolumns:\n  - name: id\n    type: INTEGER\n",
         )
         .unwrap();
 
@@ -947,7 +948,7 @@ model_paths: ["models"]
         .unwrap();
         std::fs::write(
             dir.path().join("models/orders/orders.yml"),
-            "version: 1\ncolumns:\n  - name: id\n",
+            "version: 1\ncolumns:\n  - name: id\n    type: INTEGER\n",
         )
         .unwrap();
         // Add an extra .txt file
@@ -984,7 +985,7 @@ model_paths: ["models"]
         .unwrap();
         std::fs::write(
             dir.path().join("models/orders/orders.yml"),
-            "version: 1\ncolumns:\n  - name: id\n",
+            "version: 1\ncolumns:\n  - name: id\n    type: INTEGER\n",
         )
         .unwrap();
         // Add hidden files — should be ignored

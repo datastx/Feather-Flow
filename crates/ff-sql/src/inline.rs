@@ -8,6 +8,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::error::{SqlError, SqlResult};
+use sqlparser::ast::helpers::attached_token::AttachedToken;
 use sqlparser::ast::{Cte, Ident, Statement, TableAlias, With};
 use sqlparser::dialect::DuckDbDialect;
 use sqlparser::parser::Parser;
@@ -103,10 +104,12 @@ pub fn inline_ephemeral_ctes(
                 alias: TableAlias {
                     name: Ident::with_quote('"', dep),
                     columns: vec![],
+                    explicit: false,
                 },
                 query: ephemeral_query,
                 from: None,
                 materialized: None,
+                closing_paren_token: AttachedToken::empty(),
             });
         }
     }
@@ -139,6 +142,7 @@ pub fn inline_ephemeral_ctes(
         }
         None => {
             query.with = Some(With {
+                with_token: AttachedToken::empty(),
                 recursive: false,
                 cte_tables: new_ctes,
             });

@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 /// Main project configuration from featherflow.yml
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     /// Project name
     pub name: String,

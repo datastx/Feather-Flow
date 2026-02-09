@@ -49,18 +49,9 @@ mod tests {
     use crate::ir::relop::{JoinType, RelOp};
     use crate::ir::schema::RelSchema;
     use crate::ir::types::{FloatBitWidth, IntBitWidth, Nullability, SqlType, TypedColumn};
+    use crate::test_utils::make_col;
     use sqlparser::dialect::DuckDbDialect;
     use sqlparser::parser::Parser;
-
-    fn make_col(name: &str, ty: SqlType, null: Nullability) -> TypedColumn {
-        TypedColumn {
-            name: name.to_string(),
-            source_table: None,
-            sql_type: ty,
-            nullability: null,
-            provenance: vec![],
-        }
-    }
 
     fn parse_and_lower(sql: &str, catalog: &SchemaCatalog) -> RelOp {
         let dialect = DuckDbDialect {};

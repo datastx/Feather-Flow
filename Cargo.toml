@@ -25,7 +25,13 @@ serde_yaml = "0.9"
 minijinja = { version = "2.0", features = ["loader"] }
 
 # SQL parsing
-sqlparser = { version = "0.52", features = ["visitor"] }
+sqlparser = { version = "0.60", features = ["visitor"] }
+
+# DataFusion (static analysis)
+datafusion-common = "52"
+datafusion-expr = "52"
+datafusion-sql = "52"
+arrow = { version = "57", default-features = false }
 
 # Database
 duckdb = { version = "1.1", features = ["bundled"] }

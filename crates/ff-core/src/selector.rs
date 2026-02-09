@@ -61,8 +61,8 @@ impl Selector {
     pub fn parse(selector: &str) -> CoreResult<Self> {
         let selector = selector.trim();
 
-        if selector.starts_with("path:") {
-            let pattern = selector.strip_prefix("path:").unwrap().to_string();
+        if let Some(pattern) = selector.strip_prefix("path:") {
+            let pattern = pattern.to_string();
             if pattern.is_empty() {
                 return Err(CoreError::InvalidSelector {
                     selector: selector.to_string(),
@@ -74,8 +74,8 @@ impl Selector {
             });
         }
 
-        if selector.starts_with("tag:") {
-            let tag = selector.strip_prefix("tag:").unwrap().to_string();
+        if let Some(tag) = selector.strip_prefix("tag:") {
+            let tag = tag.to_string();
             if tag.is_empty() {
                 return Err(CoreError::InvalidSelector {
                     selector: selector.to_string(),
@@ -87,8 +87,8 @@ impl Selector {
             });
         }
 
-        if selector.starts_with("owner:") {
-            let owner = selector.strip_prefix("owner:").unwrap().to_string();
+        if let Some(owner) = selector.strip_prefix("owner:") {
+            let owner = owner.to_string();
             if owner.is_empty() {
                 return Err(CoreError::InvalidSelector {
                     selector: selector.to_string(),
@@ -100,8 +100,7 @@ impl Selector {
             });
         }
 
-        if selector.starts_with("state:") {
-            let state_str = selector.strip_prefix("state:").unwrap();
+        if let Some(state_str) = selector.strip_prefix("state:") {
             let include_descendants = state_str.ends_with('+');
             let state_name = state_str.trim_end_matches('+');
 

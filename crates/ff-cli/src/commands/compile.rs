@@ -17,7 +17,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::cli::{CompileArgs, GlobalArgs, OutputFormat};
-use crate::commands::common::{self, load_project, RunStatus};
+use crate::commands::common::{self, build_schema_catalog, load_project, RunStatus};
 
 /// Compile result for a single model
 #[derive(Debug, Clone, Serialize)]
@@ -45,7 +45,7 @@ struct CompileResults {
 use crate::commands::common::{filter_models, parse_hooks_from_config};
 
 /// Intermediate compilation result before ephemeral inlining
-struct CompiledModel {
+struct CompileOutput {
     name: String,
     sql: String,
     materialization: Materialization,
@@ -148,7 +148,7 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
     let default_materialization = project.config.materialization;
 
     // Phase 1: Compile all models (render Jinja, parse SQL, extract dependencies)
-    let mut compiled_models: Vec<CompiledModel> = Vec::new();
+    let mut compiled_models: Vec<CompileOutput> = Vec::new();
     let mut materializations: HashMap<String, Materialization> = HashMap::new();
 
     let compile_ctx = CompileContext {
@@ -188,9 +188,29 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
 
     // Validate DAG (always done even in parse-only mode)
     let dag = ModelDag::build(&dependencies).context("Failed to build dependency graph")?;
-    let _ = dag
+    let topo_order = dag
         .topological_order()
         .context("Circular dependency detected")?;
+
+    // Static analysis phase (DataFusion LogicalPlan)
+    if !args.skip_static_analysis {
+        let analysis_result = run_static_analysis(
+            &project,
+            &compiled_models,
+            &topo_order,
+            &known_models,
+            &external_tables,
+            args,
+            global,
+            json_mode,
+        );
+        if let Err(e) = analysis_result {
+            if !json_mode {
+                eprintln!("Static analysis error: {}", e);
+            }
+            // Non-fatal: continue with compilation
+        }
+    }
 
     // Phase 2: Inline ephemeral dependencies and write files
     // Build a map of ephemeral model SQL for inlining
@@ -398,7 +418,7 @@ fn compile_model_phase1(
     project: &mut Project,
     name: &str,
     ctx: &CompileContext<'_>,
-) -> Result<CompiledModel> {
+) -> Result<CompileOutput> {
     let model = project
         .get_model_mut(name)
         .context(format!("Model not found: {}", name))?;
@@ -492,7 +512,7 @@ fn compile_model_phase1(
         ff_core::query_comment::build_query_comment(&metadata)
     });
 
-    Ok(CompiledModel {
+    Ok(CompileOutput {
         name: name.to_string(),
         sql: rendered,
         materialization: mat,
@@ -558,4 +578,89 @@ fn compute_compiled_path(
 
     let filename = model_path.file_name().unwrap_or_default().to_string_lossy();
     output_dir.join(filename.to_string())
+}
+
+/// Run DataFusion-based static analysis on compiled models
+#[allow(clippy::too_many_arguments)]
+fn run_static_analysis(
+    project: &Project,
+    compiled_models: &[CompileOutput],
+    topo_order: &[String],
+    _known_models: &HashSet<String>,
+    external_tables: &HashSet<String>,
+    args: &CompileArgs,
+    global: &GlobalArgs,
+    json_mode: bool,
+) -> Result<()> {
+    use ff_analysis::propagate_schemas;
+
+    if global.verbose {
+        eprintln!("[verbose] Running DataFusion static analysis...");
+    }
+
+    // Build schema catalog from YAML definitions and external tables
+    let (schema_catalog, yaml_schemas) = build_schema_catalog(project, external_tables);
+
+    // Build SQL sources from compiled models
+    let sql_sources: HashMap<String, String> = compiled_models
+        .iter()
+        .map(|m| (m.name.clone(), m.sql.clone()))
+        .collect();
+
+    // Propagate schemas through the DAG
+    let result = propagate_schemas(topo_order, &sql_sources, &yaml_schemas, &schema_catalog);
+
+    // Handle --explain flag
+    if let Some(ref explain_model) = args.explain {
+        if let Some(plan_result) = result.model_plans.get(explain_model) {
+            println!("LogicalPlan for '{}':\n", explain_model);
+            println!("{}", plan_result.plan.display_indent_schema());
+        } else if let Some(err) = result.failures.get(explain_model) {
+            eprintln!("Cannot explain '{}': {}", explain_model, err);
+        } else {
+            eprintln!("Model '{}' not found in compilation results", explain_model);
+        }
+    }
+
+    // Report failures
+    for (model, err) in &result.failures {
+        if global.verbose {
+            eprintln!("[verbose] Static analysis failed for '{}': {}", model, err);
+        }
+    }
+
+    // Report schema mismatches
+    let mut has_errors = false;
+    for (model_name, plan_result) in &result.model_plans {
+        for mismatch in &plan_result.mismatches {
+            let is_error = matches!(mismatch, ff_analysis::SchemaMismatch::MissingFromSql { .. });
+            if is_error {
+                has_errors = true;
+            }
+            if !json_mode {
+                let severity = if is_error { "error" } else { "warning" };
+                eprintln!(
+                    "  [{severity}] {model_name}: {mismatch}",
+                    severity = severity,
+                    model_name = model_name,
+                    mismatch = mismatch
+                );
+            }
+        }
+    }
+
+    let plan_count = result.model_plans.len();
+    let failure_count = result.failures.len();
+    if !json_mode && (plan_count > 0 || failure_count > 0) {
+        eprintln!(
+            "Static analysis: {} models planned, {} failures",
+            plan_count, failure_count
+        );
+    }
+
+    if has_errors && global.verbose {
+        eprintln!("[verbose] Static analysis found schema errors");
+    }
+
+    Ok(())
 }

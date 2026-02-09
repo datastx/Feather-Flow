@@ -204,13 +204,69 @@ impl fmt::Display for FreshnessStatus {
     }
 }
 
-/// Load a project from the directory specified in global CLI arguments.
+/// Build a schema catalog from project model YAML definitions and external tables.
 ///
-/// Converts the `project_dir` string to a `Path` and delegates to
-/// `Project::load`, adding context on failure.
+/// Iterates all project models, converts YAML column definitions to `TypedColumn`s
+/// with parsed SQL types and nullability, and populates the schema catalog.
+/// External tables are added with empty schemas.
+///
+/// Returns `(schema_catalog, yaml_schemas)`.
+pub fn build_schema_catalog(
+    project: &Project,
+    external_tables: &HashSet<String>,
+) -> (
+    ff_analysis::SchemaCatalog,
+    HashMap<String, ff_analysis::RelSchema>,
+) {
+    use ff_analysis::{parse_sql_type, Nullability, RelSchema, TypedColumn};
+
+    let mut schema_catalog: ff_analysis::SchemaCatalog = HashMap::new();
+    let mut yaml_schemas: HashMap<String, RelSchema> = HashMap::new();
+
+    for (name, model) in &project.models {
+        if let Some(schema) = &model.schema {
+            let columns: Vec<TypedColumn> = schema
+                .columns
+                .iter()
+                .map(|col| {
+                    let sql_type = parse_sql_type(&col.data_type);
+                    let nullability = if col
+                        .constraints
+                        .iter()
+                        .any(|c| matches!(c, ff_core::ColumnConstraint::NotNull))
+                    {
+                        Nullability::NotNull
+                    } else {
+                        Nullability::Unknown
+                    };
+                    TypedColumn {
+                        name: col.name.clone(),
+                        source_table: None,
+                        sql_type,
+                        nullability,
+                        provenance: vec![],
+                    }
+                })
+                .collect();
+            let rel_schema = RelSchema::new(columns);
+            schema_catalog.insert(name.to_string(), rel_schema.clone());
+            yaml_schemas.insert(name.to_string(), rel_schema);
+        }
+    }
+
+    // Add external tables/sources to catalog
+    for ext in external_tables {
+        if !schema_catalog.contains_key(ext) {
+            schema_catalog.insert(ext.clone(), RelSchema::empty());
+        }
+    }
+
+    (schema_catalog, yaml_schemas)
+}
+
+/// Load a project from the directory specified in global CLI arguments.
 pub fn load_project(global: &GlobalArgs) -> Result<Project> {
-    let project_path = Path::new(&global.project_dir);
-    Project::load(project_path).context("Failed to load project")
+    Project::load(&global.project_dir).context("Failed to load project")
 }
 
 /// Generic wrapper for command results written to JSON.

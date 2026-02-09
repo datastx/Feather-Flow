@@ -51,6 +51,8 @@ pub enum SqlType {
     Boolean,
     /// Integer types: TINYINT(8), SMALLINT(16), INT(32), BIGINT(64)
     Integer { bits: IntBitWidth },
+    /// 128-bit integer (DuckDB HUGEINT)
+    HugeInt,
     /// Floating-point: FLOAT(32), DOUBLE(64)
     Float { bits: FloatBitWidth },
     /// Exact numeric with optional precision and scale
@@ -70,6 +72,19 @@ pub enum SqlType {
     Interval,
     /// BINARY / BLOB
     Binary,
+    /// JSON (DuckDB native JSON type)
+    Json,
+    /// UUID
+    Uuid,
+    /// Array/List type (DuckDB INTEGER[], VARCHAR[], etc.)
+    Array(Box<SqlType>),
+    /// Struct type (DuckDB STRUCT(name VARCHAR, age INT))
+    Struct(Vec<(String, SqlType)>),
+    /// Map type (DuckDB MAP(key_type, value_type))
+    Map {
+        key: Box<SqlType>,
+        value: Box<SqlType>,
+    },
     /// Type could not be determined; carries a reason
     Unknown(String),
 }
@@ -79,7 +94,10 @@ impl SqlType {
     pub fn is_numeric(&self) -> bool {
         matches!(
             self,
-            SqlType::Integer { .. } | SqlType::Float { .. } | SqlType::Decimal { .. }
+            SqlType::Integer { .. }
+                | SqlType::HugeInt
+                | SqlType::Float { .. }
+                | SqlType::Decimal { .. }
         )
     }
 
@@ -102,18 +120,13 @@ impl SqlType {
         if self.is_unknown() || other.is_unknown() {
             return true;
         }
+        // Numeric family: all numeric types are mutually compatible
+        if self.is_numeric() && other.is_numeric() {
+            return true;
+        }
         matches!(
             (self, other),
             (SqlType::Boolean, SqlType::Boolean)
-                | (SqlType::Integer { .. }, SqlType::Integer { .. })
-                | (SqlType::Float { .. }, SqlType::Float { .. })
-                | (SqlType::Integer { .. }, SqlType::Float { .. })
-                | (SqlType::Float { .. }, SqlType::Integer { .. })
-                | (SqlType::Decimal { .. }, SqlType::Decimal { .. })
-                | (SqlType::Decimal { .. }, SqlType::Integer { .. })
-                | (SqlType::Integer { .. }, SqlType::Decimal { .. })
-                | (SqlType::Decimal { .. }, SqlType::Float { .. })
-                | (SqlType::Float { .. }, SqlType::Decimal { .. })
                 | (SqlType::String { .. }, SqlType::String { .. })
                 | (SqlType::Date, SqlType::Date)
                 | (SqlType::Time, SqlType::Time)
@@ -121,6 +134,17 @@ impl SqlType {
                 | (SqlType::Date, SqlType::Timestamp)
                 | (SqlType::Timestamp, SqlType::Date)
                 | (SqlType::Binary, SqlType::Binary)
+                | (SqlType::Json, SqlType::Json)
+                | (SqlType::Uuid, SqlType::Uuid)
+                | (SqlType::Interval, SqlType::Interval)
+        ) || matches!((self, other),
+            (SqlType::Array(a), SqlType::Array(b)) if a.is_compatible_with(b)
+        ) || matches!((self, other),
+            (SqlType::Struct(a), SqlType::Struct(b))
+                if a.len() == b.len() && a.iter().zip(b.iter()).all(|((_, ta), (_, tb))| ta.is_compatible_with(tb))
+        ) || matches!((self, other),
+            (SqlType::Map { key: k1, value: v1 }, SqlType::Map { key: k2, value: v2 })
+                if k1.is_compatible_with(k2) && v1.is_compatible_with(v2)
         )
     }
 
@@ -140,6 +164,7 @@ impl SqlType {
             SqlType::Integer {
                 bits: IntBitWidth::I64,
             } => "BIGINT".into(),
+            SqlType::HugeInt => "HUGEINT".into(),
             SqlType::Float {
                 bits: FloatBitWidth::F32,
             } => "FLOAT".into(),
@@ -163,6 +188,19 @@ impl SqlType {
             SqlType::Timestamp => "TIMESTAMP".into(),
             SqlType::Interval => "INTERVAL".into(),
             SqlType::Binary => "BINARY".into(),
+            SqlType::Json => "JSON".into(),
+            SqlType::Uuid => "UUID".into(),
+            SqlType::Array(inner) => format!("{}[]", inner.display_name()),
+            SqlType::Struct(fields) => {
+                let field_strs: Vec<String> = fields
+                    .iter()
+                    .map(|(name, ty)| format!("{} {}", name, ty.display_name()))
+                    .collect();
+                format!("STRUCT({})", field_strs.join(", "))
+            }
+            SqlType::Map { key, value } => {
+                format!("MAP({}, {})", key.display_name(), value.display_name())
+            }
             SqlType::Unknown(reason) => format!("UNKNOWN({reason})"),
         }
     }
@@ -273,8 +311,7 @@ pub fn parse_sql_type(s: &str) -> SqlType {
         "BIGINT" | "INT8" | "LONG" => SqlType::Integer {
             bits: IntBitWidth::I64,
         },
-        // HUGEINT (128-bit) not representable in constrained IntBitWidth
-        "HUGEINT" | "INT16" => SqlType::Unknown("HUGEINT".to_string()),
+        "HUGEINT" | "INT16" | "INT128" => SqlType::HugeInt,
 
         "FLOAT" | "REAL" | "FLOAT4" => SqlType::Float {
             bits: FloatBitWidth::F32,
@@ -298,6 +335,9 @@ pub fn parse_sql_type(s: &str) -> SqlType {
         "INTERVAL" => SqlType::Interval,
         "BLOB" | "BINARY" | "BYTEA" | "VARBINARY" => SqlType::Binary,
 
+        "JSON" | "JSONB" => SqlType::Json,
+        "UUID" => SqlType::Uuid,
+
         _ => {
             // Try to parse parameterized types like VARCHAR(255), DECIMAL(10,2)
             if let Some(inner) = try_parse_parameterized(s) {
@@ -308,11 +348,41 @@ pub fn parse_sql_type(s: &str) -> SqlType {
     }
 }
 
-/// Try to parse parameterized type strings like `VARCHAR(255)`, `DECIMAL(10,2)`
+/// Try to parse parameterized type strings like `VARCHAR(255)`, `DECIMAL(10,2)`,
+/// `INTEGER[]`, `STRUCT(name VARCHAR, age INT)`, `MAP(VARCHAR, INTEGER)`
 fn try_parse_parameterized(s: &str) -> Option<SqlType> {
-    let upper = s.trim().to_uppercase();
+    let trimmed = s.trim();
+    let upper = trimmed.to_uppercase();
+
+    // Check for array syntax: TYPE[]
+    if upper.ends_with("[]") {
+        let inner_str = &trimmed[..trimmed.len() - 2];
+        let inner_type = parse_sql_type(inner_str);
+        return Some(SqlType::Array(Box::new(inner_type)));
+    }
+
+    // Check for STRUCT(...) syntax
+    if upper.starts_with("STRUCT(") && upper.ends_with(')') {
+        let inner = &trimmed[7..trimmed.len() - 1]; // between STRUCT( and )
+        return parse_struct_fields(inner);
+    }
+
+    // Check for MAP(...) syntax
+    if upper.starts_with("MAP(") && upper.ends_with(')') {
+        let inner = &trimmed[4..trimmed.len() - 1]; // between MAP( and )
+        let parts = split_top_level(inner, ',');
+        if parts.len() == 2 {
+            let key_type = parse_sql_type(parts[0].trim());
+            let value_type = parse_sql_type(parts[1].trim());
+            return Some(SqlType::Map {
+                key: Box::new(key_type),
+                value: Box::new(value_type),
+            });
+        }
+    }
+
     let open = upper.find('(')?;
-    let close = upper.find(')')?;
+    let close = upper.rfind(')')?;
     let base = upper[..open].trim();
     let params = &upper[open + 1..close];
 
@@ -344,6 +414,45 @@ fn try_parse_parameterized(s: &str) -> Option<SqlType> {
         }
         _ => None,
     }
+}
+
+/// Parse STRUCT fields like "name VARCHAR, age INT"
+fn parse_struct_fields(s: &str) -> Option<SqlType> {
+    let parts = split_top_level(s, ',');
+    let mut fields = Vec::new();
+    for part in parts {
+        let part = part.trim();
+        // Split on first whitespace to get "name TYPE"
+        let space_pos = part.find(|c: char| c.is_ascii_whitespace())?;
+        let name = part[..space_pos].trim().to_string();
+        let type_str = part[space_pos..].trim();
+        let sql_type = parse_sql_type(type_str);
+        fields.push((name, sql_type));
+    }
+    if fields.is_empty() {
+        return None;
+    }
+    Some(SqlType::Struct(fields))
+}
+
+/// Split a string on a delimiter, but only at the top level (not inside parentheses)
+fn split_top_level(s: &str, delimiter: char) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0;
+    let mut start = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            c if c == delimiter && depth == 0 => {
+                parts.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&s[start..]);
+    parts
 }
 
 #[cfg(test)]
@@ -411,14 +520,13 @@ mod tests {
 
     #[test]
     fn test_parse_unknown_type() {
-        let result = parse_sql_type("JSONB");
+        let result = parse_sql_type("SOMECUSTOMTYPE");
         assert!(matches!(result, SqlType::Unknown(_)));
     }
 
     #[test]
-    fn test_parse_hugeint_is_unknown() {
-        let result = parse_sql_type("HUGEINT");
-        assert!(matches!(result, SqlType::Unknown(_)));
+    fn test_parse_hugeint() {
+        assert_eq!(parse_sql_type("HUGEINT"), SqlType::HugeInt);
     }
 
     #[test]
@@ -490,5 +598,95 @@ mod tests {
     #[test]
     fn test_float_bit_width_ordering() {
         assert!(FloatBitWidth::F32 < FloatBitWidth::F64);
+    }
+
+    #[test]
+    fn test_parse_json_uuid() {
+        assert_eq!(parse_sql_type("JSON"), SqlType::Json);
+        assert_eq!(parse_sql_type("JSONB"), SqlType::Json);
+        assert_eq!(parse_sql_type("UUID"), SqlType::Uuid);
+    }
+
+    #[test]
+    fn test_parse_array_type() {
+        assert_eq!(
+            parse_sql_type("INTEGER[]"),
+            SqlType::Array(Box::new(SqlType::Integer {
+                bits: IntBitWidth::I32
+            }))
+        );
+        assert_eq!(
+            parse_sql_type("VARCHAR[]"),
+            SqlType::Array(Box::new(SqlType::String { max_length: None }))
+        );
+    }
+
+    #[test]
+    fn test_parse_struct_type() {
+        let result = parse_sql_type("STRUCT(name VARCHAR, age INT)");
+        match result {
+            SqlType::Struct(fields) => {
+                assert_eq!(fields.len(), 2);
+                assert_eq!(fields[0].0, "name");
+                assert_eq!(fields[0].1, SqlType::String { max_length: None });
+                assert_eq!(fields[1].0, "age");
+                assert_eq!(
+                    fields[1].1,
+                    SqlType::Integer {
+                        bits: IntBitWidth::I32
+                    }
+                );
+            }
+            other => panic!("Expected Struct, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_map_type() {
+        let result = parse_sql_type("MAP(VARCHAR, INTEGER)");
+        match result {
+            SqlType::Map { key, value } => {
+                assert_eq!(*key, SqlType::String { max_length: None });
+                assert_eq!(
+                    *value,
+                    SqlType::Integer {
+                        bits: IntBitWidth::I32
+                    }
+                );
+            }
+            other => panic!("Expected Map, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_new_type_display() {
+        assert_eq!(SqlType::HugeInt.display_name(), "HUGEINT");
+        assert_eq!(SqlType::Json.display_name(), "JSON");
+        assert_eq!(SqlType::Uuid.display_name(), "UUID");
+        assert_eq!(
+            SqlType::Array(Box::new(SqlType::Integer {
+                bits: IntBitWidth::I32
+            }))
+            .display_name(),
+            "INTEGER[]"
+        );
+        assert_eq!(
+            SqlType::Map {
+                key: Box::new(SqlType::String { max_length: None }),
+                value: Box::new(SqlType::Integer {
+                    bits: IntBitWidth::I32
+                }),
+            }
+            .display_name(),
+            "MAP(VARCHAR, INTEGER)"
+        );
+    }
+
+    #[test]
+    fn test_hugeint_is_numeric() {
+        assert!(SqlType::HugeInt.is_numeric());
+        assert!(SqlType::HugeInt.is_compatible_with(&SqlType::Integer {
+            bits: IntBitWidth::I64
+        }));
     }
 }

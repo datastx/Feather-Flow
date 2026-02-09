@@ -144,11 +144,12 @@ impl Seed {
     }
 
     /// Get column type overrides
-    pub fn column_types(&self) -> HashMap<String, String> {
+    pub fn column_types(&self) -> &HashMap<String, String> {
+        static EMPTY: std::sync::OnceLock<HashMap<String, String>> = std::sync::OnceLock::new();
         self.config
             .as_ref()
-            .map(|c| c.column_types.clone())
-            .unwrap_or_default()
+            .map(|c| &c.column_types)
+            .unwrap_or_else(|| EMPTY.get_or_init(HashMap::new))
     }
 
     /// Check if columns should be quoted
@@ -203,7 +204,7 @@ fn discover_seeds_recursive(dir: &Path, seeds: &mut Vec<Seed>) {
             match Seed::from_file(path) {
                 Ok(seed) => seeds.push(seed),
                 Err(e) => {
-                    eprintln!("Warning: Failed to load seed file: {}", e);
+                    eprintln!("[warn] Failed to load seed file: {}", e);
                 }
             }
         }
