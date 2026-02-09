@@ -249,26 +249,9 @@ pub(crate) fn build_model_doc(model: &Model) -> ModelDoc {
         }
     }
 
-    // Get materialization and schema from model config, falling back to schema file config
-    let materialized = model
-        .config
-        .materialized
-        .map(|m| m.to_string())
-        .or_else(|| {
-            model
-                .schema
-                .as_ref()
-                .and_then(|s| s.config.as_ref())
-                .and_then(|c| c.materialized)
-                .map(|m| m.to_string())
-        });
-    let schema = model.config.schema.clone().or_else(|| {
-        model
-            .schema
-            .as_ref()
-            .and_then(|s| s.config.as_ref())
-            .and_then(|c| c.schema.clone())
-    });
+    // Get materialization and schema from SQL config()
+    let materialized = model.config.materialized.map(|m| m.to_string());
+    let schema = model.config.schema.clone();
 
     // Get dependencies
     let depends_on: Vec<String> = model.depends_on.iter().map(|m| m.to_string()).collect();

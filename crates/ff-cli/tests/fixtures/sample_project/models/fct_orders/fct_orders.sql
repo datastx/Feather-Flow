@@ -1,4 +1,4 @@
-{{ config(materialized='table') }}
+{{ config(materialized='table', wap='true') }}
 
 SELECT
     o.order_id,

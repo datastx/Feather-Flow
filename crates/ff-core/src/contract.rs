@@ -253,11 +253,11 @@ mod tests {
     fn make_schema(columns: Vec<(&str, &str)>, enforced: bool) -> ModelSchema {
         ModelSchema {
             version: 1,
+            name: None,
             description: None,
             owner: None,
             meta: std::collections::HashMap::new(),
             tags: vec![],
-            config: None,
             contract: Some(SchemaContract { enforced }),
             freshness: None,
             columns: columns

@@ -6,10 +6,6 @@ tags:
   - staging
   - orders
 
-config:
-  materialized: view
-  schema: staging
-
 columns:
   - name: order_id
     type: INTEGER
