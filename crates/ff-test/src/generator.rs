@@ -60,10 +60,7 @@ pub fn generate_accepted_values_test(
             .map(|v| format!("'{}'", escape_sql_string(v)))
             .collect()
     } else {
-        values
-            .iter()
-            .map(|v| escape_sql_string(v))
-            .collect()
+        values.iter().map(|v| escape_sql_string(v)).collect()
     };
     let values_list = formatted_values.join(", ");
     let qt = quote_qualified(table);

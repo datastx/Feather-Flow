@@ -299,7 +299,11 @@ impl Selector {
     ///
     /// Checks both `model.config.tags` (from SQL config()) and
     /// `model.schema.tags` (from the model's YAML schema file).
-    fn select_by_tag(&self, tag: &str, models: &HashMap<ModelName, Model>) -> CoreResult<Vec<String>> {
+    fn select_by_tag(
+        &self,
+        tag: &str,
+        models: &HashMap<ModelName, Model>,
+    ) -> CoreResult<Vec<String>> {
         let mut selected = Vec::new();
         let tag_str = tag.to_string();
 

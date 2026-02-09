@@ -811,8 +811,7 @@ impl Model {
 
     /// Get all dependencies (both model and external)
     pub fn all_dependencies(&self) -> HashSet<String> {
-        let mut deps: HashSet<String> =
-            self.depends_on.iter().map(|m| m.to_string()).collect();
+        let mut deps: HashSet<String> = self.depends_on.iter().map(|m| m.to_string()).collect();
         deps.extend(self.external_deps.iter().map(|t| t.to_string()));
         deps
     }

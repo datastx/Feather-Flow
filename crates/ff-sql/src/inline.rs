@@ -78,7 +78,10 @@ pub fn inline_ephemeral_ctes(
                     Some(other) => {
                         return Err(SqlError::InlineError {
                             model_name: dep.clone(),
-                            reason: format!("expected a SELECT query, got {}", statement_kind(&other)),
+                            reason: format!(
+                                "expected a SELECT query, got {}",
+                                statement_kind(&other)
+                            ),
                         });
                     }
                     None => {
@@ -114,12 +117,11 @@ pub fn inline_ephemeral_ctes(
 
     // ---- Parse the target SQL ----
     let trimmed_sql = sql.trim().trim_end_matches(';').trim();
-    let mut stmts = Parser::parse_sql(&dialect, trimmed_sql).map_err(|e| {
-        SqlError::InlineError {
+    let mut stmts =
+        Parser::parse_sql(&dialect, trimmed_sql).map_err(|e| SqlError::InlineError {
             model_name: String::new(),
             reason: format!("failed to parse target SQL: {e}"),
-        }
-    })?;
+        })?;
 
     let Some(Statement::Query(ref mut query)) = stmts.first_mut() else {
         return Err(SqlError::InlineError {

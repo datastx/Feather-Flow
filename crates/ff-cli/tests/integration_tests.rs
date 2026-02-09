@@ -1929,7 +1929,8 @@ fn test_analysis_pass_manager_sample_project() {
     let parser = SqlParser::duckdb();
     let jinja = JinjaEnvironment::new(&project.config.vars);
 
-    let known_models: std::collections::HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
+    let known_models: std::collections::HashSet<String> =
+        project.models.keys().map(|k| k.to_string()).collect();
 
     let mut catalog: SchemaCatalog = HashMap::new();
     let mut yaml_schemas: HashMap<String, RelSchema> = HashMap::new();
@@ -2045,7 +2046,8 @@ fn test_analysis_pass_filter() {
     let mut catalog: SchemaCatalog = HashMap::new();
     let mut model_irs: HashMap<String, RelOp> = HashMap::new();
 
-    let known_models: std::collections::HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
+    let known_models: std::collections::HashSet<String> =
+        project.models.keys().map(|k| k.to_string()).collect();
 
     let dep_map: HashMap<String, Vec<String>> = project
         .models

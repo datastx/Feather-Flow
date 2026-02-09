@@ -119,11 +119,9 @@ impl DuckDbBackend {
     /// Query count synchronously
     fn query_count_sync(&self, sql: &str) -> DbResult<usize> {
         let conn = self.lock_conn()?;
-        let count: i64 = conn
-            .query_row(&format!("SELECT COUNT(*) FROM ({})", sql), [], |row| {
-                row.get(0)
-            })
-            ?;
+        let count: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM ({})", sql), [], |row| {
+            row.get(0)
+        })?;
         Ok(usize::try_from(count).unwrap_or(0))
     }
 
@@ -135,9 +133,7 @@ impl DuckDbBackend {
 
         let sql = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = ? AND table_name = ?";
 
-        let count: i64 = conn
-            .query_row(sql, duckdb::params![schema, table], |row| row.get(0))
-            ?;
+        let count: i64 = conn.query_row(sql, duckdb::params![schema, table], |row| row.get(0))?;
 
         Ok(count > 0)
     }
@@ -278,9 +274,7 @@ impl DatabaseSchema for DuckDbBackend {
 
         let mut stmt = conn.prepare(sql)?;
         let mut columns: Vec<(String, String)> = Vec::new();
-        let mut rows = stmt
-            .query(duckdb::params![schema, table_name])
-            ?;
+        let mut rows = stmt.query(duckdb::params![schema, table_name])?;
 
         while let Some(row) = rows.next()? {
             let column_name: String = row.get(0)?;

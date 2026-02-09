@@ -65,8 +65,7 @@ pub async fn execute(args: &DiffArgs, global: &GlobalArgs) -> Result<()> {
     }
 
     // Connect to current database
-    let current_db =
-        common::create_database_connection(&project.config, global.target.as_deref())?;
+    let current_db = common::create_database_connection(&project.config, global.target.as_deref())?;
 
     // Connect to comparison database
     let compare_db: Arc<dyn Database> = Arc::new(

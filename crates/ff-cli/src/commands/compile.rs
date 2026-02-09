@@ -416,7 +416,10 @@ fn compile_model_phase1(
     }
 
     model.compiled_sql = Some(rendered.clone());
-    model.depends_on = model_deps.iter().map(|s| ff_core::ModelName::new(s.clone())).collect();
+    model.depends_on = model_deps
+        .iter()
+        .map(|s| ff_core::ModelName::new(s.clone()))
+        .collect();
     model.external_deps = ext_deps
         .iter()
         .map(|s| ff_core::TableName::new(s.clone()))

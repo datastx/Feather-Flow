@@ -1,10 +1,10 @@
 //! DAG building and topological sorting
 
 use crate::error::{CoreError, CoreResult};
+use crate::model_name::ModelName;
 use petgraph::algo::toposort;
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
-use crate::model_name::ModelName;
 use std::collections::HashMap;
 
 /// A directed acyclic graph of model dependencies

@@ -103,15 +103,23 @@ pub fn lower_expr(expr: &Expr, schema: &RelSchema) -> TypedExpr {
             let inner_expr = lower_expr(inner, schema);
             let low_expr = lower_expr(low, schema);
             let high_expr = lower_expr(high, schema);
-            let combined_nullability = inner_expr.nullability().combine(
-                low_expr.nullability().combine(high_expr.nullability()),
-            );
+            let combined_nullability = inner_expr
+                .nullability()
+                .combine(low_expr.nullability().combine(high_expr.nullability()));
             // BETWEEN: expr >= low AND expr <= high
             // NOT BETWEEN: expr < low OR expr > high
             let (low_op, high_op, combine_op) = if *negated {
-                (&BinaryOperator::Lt, &BinaryOperator::Gt, &BinaryOperator::Or)
+                (
+                    &BinaryOperator::Lt,
+                    &BinaryOperator::Gt,
+                    &BinaryOperator::Or,
+                )
             } else {
-                (&BinaryOperator::GtEq, &BinaryOperator::LtEq, &BinaryOperator::And)
+                (
+                    &BinaryOperator::GtEq,
+                    &BinaryOperator::LtEq,
+                    &BinaryOperator::And,
+                )
             };
             let left_cmp = TypedExpr::BinaryOp {
                 left: Box::new(inner_expr.clone()),
