@@ -374,19 +374,14 @@ fn run_pre_execution_analysis(
         &schema_catalog,
     );
 
-    // Check for blocking errors (MissingFromSql = column in YAML but not in SQL output)
+    // Check for schema errors (all mismatches are errors that block execution)
     let mut has_errors = false;
     for (model_name, plan_result) in &result.model_plans {
         for mismatch in &plan_result.mismatches {
-            let is_error = matches!(mismatch, ff_analysis::SchemaMismatch::MissingFromSql { .. });
-            if is_error {
-                has_errors = true;
-            }
+            has_errors = true;
             if !json_mode {
-                let severity = if is_error { "error" } else { "warning" };
                 eprintln!(
-                    "  [{severity}] {model_name}: {mismatch}",
-                    severity = severity,
+                    "  [error] {model_name}: {mismatch}",
                     model_name = model_name,
                     mismatch = mismatch
                 );

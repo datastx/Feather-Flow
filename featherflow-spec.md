@@ -796,8 +796,7 @@ For each model, documentation includes:
 | CTE not allowed (S005) | Error | CTEs prohibited — each transform must be its own model |
 | Derived table not allowed (S006) | Error | FROM-clause subqueries prohibited |
 | SELECT * not allowed (S009) | Error | SELECT * prohibited — explicitly list all columns |
-| Static analysis: missing column (SA01) | Error | Column in YAML not produced by SQL |
-| Static analysis: mismatch (SA02) | Warning | Extra column, type mismatch, or nullability mismatch vs YAML |
+| Static analysis: schema mismatch (SA01) | Error | Column missing/extra, type mismatch, or nullability mismatch vs YAML |
 | Orphaned schema files | Warning | Schema without corresponding model |
 | Undeclared external tables | Warning | References to unknown tables |
 | Unused macros | Warning | Macros defined but never used |
@@ -814,7 +813,7 @@ For each model, documentation includes:
 - [x] Warns on orphaned schema files
 - [x] Warns on undeclared external tables
 - [x] Runs DataFusion static analysis (schema propagation and cross-checking)
-- [x] Reports schema mismatches as SA01 errors / SA02 warnings
+- [x] Reports all schema mismatches as SA01 errors
 - [x] `--strict` mode fails on warnings
 - [x] `--contracts` validates schema contracts
 - [x] `--governance` checks data classification completeness
@@ -1854,8 +1853,7 @@ Target-level `wap_schema` > project-level `wap_schema`
 | S005 | CteNotAllowed | CTEs prohibited — each transform must be its own model |
 | S006 | DerivedTableNotAllowed | FROM-clause subqueries prohibited |
 | S009 | SelectStarNotAllowed | SELECT * prohibited — explicitly list all columns |
-| SA01 | StaticAnalysisError | Column in YAML not produced by SQL (from schema propagation) |
-| SA02 | StaticAnalysisWarning | Extra column, type mismatch, or nullability mismatch vs YAML |
+| SA01 | StaticAnalysisError | Schema mismatch: column missing/extra, type mismatch, or nullability mismatch vs YAML |
 | A001-A005 | AnalysisTypeInference | Type inference diagnostics (see Static Analysis Engine) |
 | A010-A012 | AnalysisNullability | Nullability propagation diagnostics |
 | A020-A021 | AnalysisUnusedColumns | Unused column diagnostics |

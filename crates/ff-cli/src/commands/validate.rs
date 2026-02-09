@@ -594,15 +594,10 @@ fn validate_static_analysis(
         }
     }
 
-    // Report schema mismatches
+    // Report schema mismatches (all mismatches are errors)
     for (model_name, plan_result) in &result.model_plans {
         for mismatch in &plan_result.mismatches {
-            let is_error = matches!(mismatch, ff_analysis::SchemaMismatch::MissingFromSql { .. });
-            if is_error {
-                ctx.error("SA01", format!("{}: {}", model_name, mismatch), None);
-            } else {
-                ctx.warning("SA02", format!("{}: {}", model_name, mismatch), None);
-            }
+            ctx.error("SA01", format!("{}: {}", model_name, mismatch), None);
             issue_count += 1;
         }
     }
