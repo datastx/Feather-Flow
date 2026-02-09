@@ -629,19 +629,14 @@ fn run_static_analysis(
         }
     }
 
-    // Report schema mismatches
+    // Report schema mismatches (all mismatches are errors)
     let mut has_errors = false;
     for (model_name, plan_result) in &result.model_plans {
         for mismatch in &plan_result.mismatches {
-            let is_error = matches!(mismatch, ff_analysis::SchemaMismatch::MissingFromSql { .. });
-            if is_error {
-                has_errors = true;
-            }
+            has_errors = true;
             if !json_mode {
-                let severity = if is_error { "error" } else { "warning" };
                 eprintln!(
-                    "  [{severity}] {model_name}: {mismatch}",
-                    severity = severity,
+                    "  [error] {model_name}: {mismatch}",
                     model_name = model_name,
                     mismatch = mismatch
                 );

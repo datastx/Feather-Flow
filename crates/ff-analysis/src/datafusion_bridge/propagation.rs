@@ -625,4 +625,89 @@ mod tests {
         // Should not panic, should produce empty results
         assert!(result.model_plans.is_empty());
     }
+
+    #[test]
+    fn test_aggregate_type_preservation() {
+        // SUM on DECIMAL and MAX on DATE should preserve the input types
+        let mut initial_catalog: SchemaCatalog = HashMap::new();
+        initial_catalog.insert(
+            "source".to_string(),
+            RelSchema::new(vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("amount", decimal(10, 2), Nullability::Nullable),
+                make_col("created_at", date(), Nullability::Nullable),
+            ]),
+        );
+
+        let topo_order = vec!["agg_model".to_string()];
+        let mut sql_sources = HashMap::new();
+        sql_sources.insert(
+            "agg_model".to_string(),
+            "SELECT id, SUM(amount) AS total, MAX(created_at) AS latest FROM source GROUP BY id"
+                .to_string(),
+        );
+
+        let result =
+            propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
+
+        assert!(result.failures.is_empty(), "Planning should succeed");
+        let schema = &result.model_plans["agg_model"].inferred_schema;
+        assert_eq!(schema.columns.len(), 3);
+
+        // SUM(amount) should be numeric (DECIMAL), not VARCHAR
+        let total_col = schema
+            .find_column("total")
+            .expect("total column should exist");
+        assert!(
+            total_col.sql_type.is_numeric(),
+            "SUM(DECIMAL) should infer a numeric type, got: {}",
+            total_col.sql_type.display_name()
+        );
+
+        // MAX(created_at) should be DATE, not VARCHAR
+        let latest_col = schema
+            .find_column("latest")
+            .expect("latest column should exist");
+        assert_eq!(
+            latest_col.sql_type,
+            date(),
+            "MAX(DATE) should infer DATE, got: {}",
+            latest_col.sql_type.display_name()
+        );
+    }
+
+    #[test]
+    fn test_coalesce_type_preservation() {
+        // COALESCE on DECIMAL should preserve the DECIMAL type
+        let mut initial_catalog: SchemaCatalog = HashMap::new();
+        initial_catalog.insert(
+            "source".to_string(),
+            RelSchema::new(vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("amount", decimal(10, 2), Nullability::Nullable),
+            ]),
+        );
+
+        let topo_order = vec!["coalesce_model".to_string()];
+        let mut sql_sources = HashMap::new();
+        sql_sources.insert(
+            "coalesce_model".to_string(),
+            "SELECT id, COALESCE(amount, 0) AS val FROM source".to_string(),
+        );
+
+        let result =
+            propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
+
+        assert!(result.failures.is_empty(), "Planning should succeed");
+        let schema = &result.model_plans["coalesce_model"].inferred_schema;
+        assert_eq!(schema.columns.len(), 2);
+
+        // COALESCE(amount, 0) should be numeric, not VARCHAR
+        let val_col = schema.find_column("val").expect("val column should exist");
+        assert!(
+            val_col.sql_type.is_numeric(),
+            "COALESCE(DECIMAL, 0) should infer a numeric type, got: {}",
+            val_col.sql_type.display_name()
+        );
+    }
 }

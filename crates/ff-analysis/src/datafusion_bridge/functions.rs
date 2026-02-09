@@ -113,18 +113,10 @@ pub fn duckdb_scalar_udfs() -> Vec<Arc<ScalarUDF>> {
             vec![DataType::Utf8, DataType::Utf8],
             DataType::Utf8,
         ),
-        // Type conversion
-        make_variadic_scalar("coalesce", DataType::Utf8),
-        make_scalar(
-            "ifnull",
-            vec![DataType::Utf8, DataType::Utf8],
-            DataType::Utf8,
-        ),
-        make_scalar(
-            "nullif",
-            vec![DataType::Utf8, DataType::Utf8],
-            DataType::Utf8,
-        ),
+        // Type conversion (type-preserving: returns first non-Null arg type)
+        make_type_preserving_variadic_scalar("coalesce"),
+        make_type_preserving_variadic_scalar("ifnull"),
+        make_type_preserving_variadic_scalar("nullif"),
         // Struct functions
         make_variadic_scalar("struct_pack", DataType::Utf8),
         make_scalar(
@@ -173,11 +165,11 @@ pub fn duckdb_scalar_udfs() -> Vec<Arc<ScalarUDF>> {
 /// planning-only context does not provide by default, plus DuckDB-specific ones.
 pub fn duckdb_aggregate_udfs() -> Vec<Arc<AggregateUDF>> {
     vec![
-        // Standard SQL aggregates
-        make_aggregate("sum", DataType::Float64, DataType::Float64),
-        make_aggregate("avg", DataType::Float64, DataType::Float64),
-        make_aggregate("min", DataType::Utf8, DataType::Utf8),
-        make_aggregate("max", DataType::Utf8, DataType::Utf8),
+        // Standard SQL aggregates (type-preserving: return type matches input type)
+        make_type_preserving_aggregate("sum"),
+        make_type_preserving_aggregate("avg"),
+        make_type_preserving_aggregate("min"),
+        make_type_preserving_aggregate("max"),
         make_aggregate("count", DataType::Utf8, DataType::Int64),
         // DuckDB-specific aggregates
         make_aggregate("string_agg", DataType::Utf8, DataType::Utf8),
@@ -212,6 +204,22 @@ fn make_variadic_scalar(name: &str, ret: DataType) -> Arc<ScalarUDF> {
         name: name.to_string(),
         signature: Signature::variadic_any(Volatility::Immutable),
         return_type: ret,
+    }))
+}
+
+/// Create a type-preserving variadic scalar UDF (returns first non-Null arg type)
+fn make_type_preserving_variadic_scalar(name: &str) -> Arc<ScalarUDF> {
+    Arc::new(ScalarUDF::from(TypePreservingScalarUDF {
+        name: name.to_string(),
+        signature: Signature::variadic_any(Volatility::Immutable),
+    }))
+}
+
+/// Create a type-preserving aggregate UDF (return type matches input type)
+fn make_type_preserving_aggregate(name: &str) -> Arc<AggregateUDF> {
+    Arc::new(AggregateUDF::from(TypePreservingAggregateUDF {
+        name: name.to_string(),
+        signature: Signature::variadic_any(Volatility::Immutable),
     }))
 }
 
@@ -281,6 +289,79 @@ impl datafusion_expr::AggregateUDFImpl for StubAggregateUDF {
 
     fn return_type(&self, _args: &[DataType]) -> DFResult<DataType> {
         Ok(self.return_type.clone())
+    }
+
+    fn accumulator(&self, _args: AccumulatorArgs) -> DFResult<Box<dyn Accumulator>> {
+        unreachable!("Stub aggregate should not be executed")
+    }
+}
+
+// --- Type-preserving stubs ---
+
+/// A scalar UDF that returns the type of its first non-Null argument.
+///
+/// Used for COALESCE, IFNULL, NULLIF where the output type should match the input.
+#[derive(Debug, Hash, PartialEq, Eq)]
+struct TypePreservingScalarUDF {
+    name: String,
+    signature: Signature,
+}
+
+impl ScalarUDFImpl for TypePreservingScalarUDF {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn signature(&self) -> &Signature {
+        &self.signature
+    }
+
+    fn return_type(&self, args: &[DataType]) -> DFResult<DataType> {
+        // Return the first non-Null argument type, falling back to Utf8
+        Ok(args
+            .iter()
+            .find(|t| !matches!(t, DataType::Null))
+            .cloned()
+            .unwrap_or(DataType::Utf8))
+    }
+
+    fn invoke_with_args(
+        &self,
+        _args: datafusion_expr::ScalarFunctionArgs,
+    ) -> DFResult<ColumnarValue> {
+        unreachable!("Stub UDF should not be executed")
+    }
+}
+
+/// An aggregate UDF that returns the same type as its input.
+///
+/// Used for SUM, AVG, MIN, MAX where the output type should match the input.
+#[derive(Debug, Hash, PartialEq, Eq)]
+struct TypePreservingAggregateUDF {
+    name: String,
+    signature: Signature,
+}
+
+impl datafusion_expr::AggregateUDFImpl for TypePreservingAggregateUDF {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn signature(&self) -> &Signature {
+        &self.signature
+    }
+
+    fn return_type(&self, args: &[DataType]) -> DFResult<DataType> {
+        // Return the first argument's type, falling back to Utf8
+        Ok(args.first().cloned().unwrap_or(DataType::Utf8))
     }
 
     fn accumulator(&self, _args: AccumulatorArgs) -> DFResult<Box<dyn Accumulator>> {
