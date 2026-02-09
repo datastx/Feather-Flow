@@ -421,7 +421,7 @@ fn test_propagation_with_cast_shorthand() {
         "SELECT id, amount::INTEGER AS int_amount FROM source".to_string(),
     );
 
-    let result = propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial);
+    let result = propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial, &[]);
     assert!(
         result.failures.is_empty(),
         "Cast shorthand should plan: {:?}",
@@ -448,7 +448,7 @@ fn test_propagation_with_duckdb_function() {
         "SELECT id, date_trunc('month', ts) AS month FROM events".to_string(),
     );
 
-    let result = propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial);
+    let result = propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial, &[]);
     assert!(
         result.failures.is_empty(),
         "date_trunc should plan: {:?}",

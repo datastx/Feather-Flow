@@ -214,6 +214,22 @@ pub trait DatabaseSnapshot: Send + Sync {
     ) -> DbResult<usize>;
 }
 
+/// User-defined function management operations.
+#[async_trait]
+pub trait DatabaseFunction: Send + Sync {
+    /// Deploy a function by executing its CREATE MACRO SQL
+    async fn deploy_function(&self, create_sql: &str) -> DbResult<()>;
+
+    /// Drop a function by executing its DROP MACRO SQL
+    async fn drop_function(&self, drop_sql: &str) -> DbResult<()>;
+
+    /// Check if a user-defined function (macro) exists
+    async fn function_exists(&self, name: &str) -> DbResult<bool>;
+
+    /// List all user-defined macro names
+    async fn list_user_functions(&self) -> DbResult<Vec<String>>;
+}
+
 /// Combined database trait providing all capabilities.
 ///
 /// This is the main trait used by CLI commands via `Arc<dyn Database>`.
@@ -231,13 +247,23 @@ pub trait DatabaseSnapshot: Send + Sync {
 ///
 /// - [`DuckDbBackend`](crate::DuckDbBackend) - Primary implementation using DuckDB
 pub trait Database:
-    DatabaseCore + DatabaseSchema + DatabaseCsv + DatabaseIncremental + DatabaseSnapshot
+    DatabaseCore
+    + DatabaseSchema
+    + DatabaseCsv
+    + DatabaseIncremental
+    + DatabaseSnapshot
+    + DatabaseFunction
 {
 }
 
 /// Blanket implementation: any type that implements all sub-traits also implements Database.
 impl<T> Database for T where
-    T: DatabaseCore + DatabaseSchema + DatabaseCsv + DatabaseIncremental + DatabaseSnapshot
+    T: DatabaseCore
+        + DatabaseSchema
+        + DatabaseCsv
+        + DatabaseIncremental
+        + DatabaseSnapshot
+        + DatabaseFunction
 {
 }
 

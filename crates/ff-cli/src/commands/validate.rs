@@ -578,11 +578,13 @@ fn validate_static_analysis(
     }
 
     // Run schema propagation
+    let user_fn_stubs = super::common::build_user_function_stubs(project);
     let result = propagate_schemas(
         &filtered_order,
         &sql_sources,
         &yaml_schemas,
         &schema_catalog,
+        &user_fn_stubs,
     );
 
     let mut issue_count = 0;

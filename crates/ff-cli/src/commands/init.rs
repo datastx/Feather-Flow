@@ -29,6 +29,7 @@ pub async fn execute(args: &InitArgs) -> Result<()> {
         "macros",
         "tests",
         "snapshots",
+        "functions",
     ];
     for dir in &dirs {
         let path = project_dir.join(dir);
@@ -47,6 +48,7 @@ source_paths: ["sources"]
 macro_paths: ["macros"]
 test_paths: ["tests"]
 snapshot_paths: ["snapshots"]
+function_paths: ["functions"]
 target_path: "target"
 
 materialization: view
@@ -106,6 +108,32 @@ columns:
     )
     .context("Failed to write example model YAML")?;
 
+    // Generate example function
+    let example_fn_yml = r#"kind: functions
+version: 1
+name: safe_divide
+description: "Division that returns NULL on zero denominator"
+function_type: scalar
+args:
+  - name: numerator
+    data_type: DOUBLE
+  - name: denominator
+    data_type: DOUBLE
+returns:
+  data_type: DOUBLE
+"#;
+    let example_fn_sql = "CASE WHEN denominator = 0 THEN NULL ELSE numerator / denominator END\n";
+    fs::write(
+        project_dir.join("functions/safe_divide.yml"),
+        example_fn_yml,
+    )
+    .context("Failed to write example function YAML")?;
+    fs::write(
+        project_dir.join("functions/safe_divide.sql"),
+        example_fn_sql,
+    )
+    .context("Failed to write example function SQL")?;
+
     // Generate .gitignore
     let gitignore = "target/\n*.duckdb\n*.duckdb.wal\n";
     fs::write(project_dir.join(".gitignore"), gitignore).context("Failed to write .gitignore")?;
@@ -118,6 +146,8 @@ columns:
     println!("  Created macros/");
     println!("  Created tests/");
     println!("  Created snapshots/");
+    println!("  Created functions/safe_divide.yml");
+    println!("  Created functions/safe_divide.sql");
     println!("  Created .gitignore");
     println!();
     println!("Project '{}' initialized successfully!", args.name);

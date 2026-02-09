@@ -1,0 +1,14 @@
+kind: functions
+version: 1
+name: safe_divide
+description: "Division that returns NULL instead of error on zero denominator"
+function_type: scalar
+args:
+  - name: numerator
+    data_type: DOUBLE
+    description: "The numerator"
+  - name: denominator
+    data_type: DOUBLE
+    description: "The denominator"
+returns:
+  data_type: DOUBLE

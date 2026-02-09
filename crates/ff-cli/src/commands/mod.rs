@@ -7,6 +7,7 @@ pub(crate) mod compile;
 pub(crate) mod diff;
 pub(crate) mod docs;
 pub(crate) mod freshness;
+pub(crate) mod function;
 pub(crate) mod init;
 pub(crate) mod lineage;
 pub(crate) mod ls;

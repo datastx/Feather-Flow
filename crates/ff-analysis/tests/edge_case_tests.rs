@@ -263,7 +263,7 @@ fn test_case_sensitive_column_matching_in_propagation() {
         "SELECT id, name FROM source".to_string(),
     );
 
-    let result = propagate_schemas(&topo, &sql, &HashMap::new(), &initial);
+    let result = propagate_schemas(&topo, &sql, &HashMap::new(), &initial, &[]);
     assert!(
         result.failures.is_empty(),
         "Lowercase columns should propagate: {:?}",
@@ -292,7 +292,7 @@ fn test_null_propagation_through_union() {
         "SELECT val FROM nullable_src UNION ALL SELECT val FROM not_null_src".to_string(),
     );
 
-    let result = propagate_schemas(&topo, &sql, &HashMap::new(), &initial);
+    let result = propagate_schemas(&topo, &sql, &HashMap::new(), &initial, &[]);
     assert!(
         result.failures.is_empty(),
         "UNION should plan: {:?}",
@@ -316,7 +316,7 @@ fn test_empty_yaml_columns_no_crash() {
     let mut yaml = HashMap::new();
     yaml.insert("model".to_string(), RelSchema::new(vec![]));
 
-    let result = propagate_schemas(&topo, &sql, &yaml, &initial);
+    let result = propagate_schemas(&topo, &sql, &yaml, &initial, &[]);
     // Should not crash — mismatches are expected (missing columns)
     assert!(
         result.failures.is_empty(),
@@ -363,7 +363,7 @@ fn test_50_model_project_completes() {
     }
 
     let start = std::time::Instant::now();
-    let result = propagate_schemas(&topo, &sql, &HashMap::new(), &initial);
+    let result = propagate_schemas(&topo, &sql, &HashMap::new(), &initial, &[]);
     let elapsed = start.elapsed();
 
     assert!(
@@ -400,7 +400,7 @@ fn test_model_with_100_columns() {
     sql.insert("model".to_string(), sql_str);
 
     let start = std::time::Instant::now();
-    let result = propagate_schemas(&topo, &sql, &HashMap::new(), &initial);
+    let result = propagate_schemas(&topo, &sql, &HashMap::new(), &initial, &[]);
     let elapsed = start.elapsed();
 
     assert!(

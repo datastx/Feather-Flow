@@ -608,7 +608,14 @@ fn run_static_analysis(
         .collect();
 
     // Propagate schemas through the DAG
-    let result = propagate_schemas(topo_order, &sql_sources, &yaml_schemas, &schema_catalog);
+    let user_fn_stubs = super::common::build_user_function_stubs(project);
+    let result = propagate_schemas(
+        topo_order,
+        &sql_sources,
+        &yaml_schemas,
+        &schema_catalog,
+        &user_fn_stubs,
+    );
 
     // Handle --explain flag
     if let Some(ref explain_model) = args.explain {

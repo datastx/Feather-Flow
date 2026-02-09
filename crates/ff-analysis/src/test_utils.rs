@@ -408,6 +408,8 @@ pub(crate) fn make_ctx_with_schemas(yaml_schemas: HashMap<String, RelSchema>) ->
         sources: vec![],
         exposures: vec![],
         metrics: vec![],
+        functions: vec![],
+        functions_by_name: HashMap::new(),
     };
     let dag = ModelDag::build(&HashMap::new()).unwrap();
     AnalysisContext::new(project, dag, yaml_schemas, ProjectLineage::new())
@@ -425,6 +427,8 @@ pub(crate) fn make_ctx_with_dag(dep_map: &HashMap<String, Vec<String>>) -> Analy
         sources: vec![],
         exposures: vec![],
         metrics: vec![],
+        functions: vec![],
+        functions_by_name: HashMap::new(),
     };
     let dag = ModelDag::build(dep_map).unwrap();
     AnalysisContext::new(project, dag, HashMap::new(), ProjectLineage::new())

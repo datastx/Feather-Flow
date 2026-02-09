@@ -11,6 +11,8 @@ pub mod contract;
 pub mod dag;
 pub mod error;
 pub mod exposure;
+pub mod function;
+pub mod function_name;
 pub mod manifest;
 pub mod metric;
 pub mod model;
@@ -34,6 +36,11 @@ pub use config::{Config, DbType};
 pub use contract::{validate_contract, ContractValidationResult, ContractViolation, ViolationType};
 pub use error::CoreError;
 pub use exposure::{discover_exposures, Exposure, ExposureMaturity, ExposureOwner, ExposureType};
+pub use function::{
+    build_function_lookup, discover_functions, FunctionArg, FunctionConfig, FunctionDef,
+    FunctionReturn, FunctionReturnColumn, FunctionSignature, FunctionType,
+};
+pub use function_name::FunctionName;
 pub use manifest::Manifest;
 pub use metric::{discover_metrics, Metric, MetricCalculation};
 pub use model::{

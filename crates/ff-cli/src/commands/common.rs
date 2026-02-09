@@ -269,6 +269,42 @@ pub fn load_project(global: &GlobalArgs) -> Result<Project> {
     Project::load(&global.project_dir).context("Failed to load project")
 }
 
+/// Build user function stubs for static analysis from project functions.
+///
+/// Converts each scalar `FunctionDef` into a `UserFunctionStub` that can
+/// be registered in the DataFusion `FeatherFlowProvider`. Table functions
+/// are skipped (they require output schema registration in the `SchemaCatalog`).
+pub fn build_user_function_stubs(project: &Project) -> Vec<ff_analysis::UserFunctionStub> {
+    use ff_core::function::FunctionReturn;
+
+    let mut stubs = Vec::new();
+    let mut skipped_table_fns = 0u32;
+
+    for f in &project.functions {
+        match &f.returns {
+            FunctionReturn::Scalar { data_type } => {
+                let sig = f.signature();
+                if let Some(stub) =
+                    ff_analysis::UserFunctionStub::new(sig.name, sig.arg_types, data_type.clone())
+                {
+                    stubs.push(stub);
+                }
+            }
+            FunctionReturn::Table { .. } => {
+                skipped_table_fns += 1;
+            }
+        }
+    }
+
+    if skipped_table_fns > 0 {
+        eprintln!(
+            "Note: {skipped_table_fns} table function(s) excluded from static analysis (not yet supported)"
+        );
+    }
+
+    stubs
+}
+
 /// Generic wrapper for command results written to JSON.
 ///
 /// Many commands (run, snapshot, etc.) produce a JSON file with the same

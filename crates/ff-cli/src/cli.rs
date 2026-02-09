@@ -93,6 +93,9 @@ pub enum Commands {
 
     /// Analyze SQL models for potential issues
     Analyze(AnalyzeArgs),
+
+    /// Manage user-defined functions (DuckDB macros)
+    Function(FunctionArgs),
 }
 
 /// Arguments for the parse command
@@ -271,6 +274,8 @@ pub enum ResourceType {
     Seed,
     /// Tests only
     Test,
+    /// Functions only
+    Function,
 }
 
 /// List output formats
@@ -634,6 +639,72 @@ pub enum AnalyzeOutput {
     Table,
     /// JSON output
     Json,
+}
+
+/// Arguments for the function command
+#[derive(Args, Debug)]
+pub struct FunctionArgs {
+    /// Function subcommand
+    #[command(subcommand)]
+    pub command: FunctionCommands,
+}
+
+/// Function subcommands
+#[derive(Subcommand, Debug)]
+pub enum FunctionCommands {
+    /// List all user-defined functions in the project
+    List(FunctionListArgs),
+
+    /// Deploy functions to the database
+    Deploy(FunctionDeployArgs),
+
+    /// Show details about a function
+    Show(FunctionShowArgs),
+
+    /// Validate function definitions
+    Validate(FunctionValidateArgs),
+
+    /// Drop deployed functions from the database
+    Drop(FunctionDropArgs),
+}
+
+/// Arguments for the function list subcommand
+#[derive(Args, Debug)]
+pub struct FunctionListArgs {
+    /// Output format (text or json)
+    #[arg(short, long, value_enum, default_value = "text")]
+    pub output: OutputFormat,
+}
+
+/// Arguments for the function deploy subcommand
+#[derive(Args, Debug)]
+pub struct FunctionDeployArgs {
+    /// Function names to deploy (comma-separated, default: all)
+    #[arg(short, long)]
+    pub functions: Option<String>,
+}
+
+/// Arguments for the function show subcommand
+#[derive(Args, Debug)]
+pub struct FunctionShowArgs {
+    /// Name of the function to show
+    pub name: String,
+
+    /// Show generated CREATE MACRO SQL instead of YAML definition
+    #[arg(long)]
+    pub sql: bool,
+}
+
+/// Arguments for the function validate subcommand
+#[derive(Args, Debug)]
+pub struct FunctionValidateArgs {}
+
+/// Arguments for the function drop subcommand
+#[derive(Args, Debug)]
+pub struct FunctionDropArgs {
+    /// Function names to drop (comma-separated, default: all)
+    #[arg(short, long)]
+    pub functions: Option<String>,
 }
 
 /// Minimum severity filter for analyze output

@@ -5,6 +5,7 @@ model_paths: ["models"]
 seed_paths: ["seeds"]
 source_paths: ["sources"]
 macro_paths: ["macros"]
+function_paths: ["functions"]
 target_path: "target"
 
 materialization: view
