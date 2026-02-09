@@ -48,6 +48,10 @@ pub struct Config {
     #[serde(default = "default_metric_paths")]
     pub metric_paths: Vec<String>,
 
+    /// Directories containing user-defined function definitions
+    #[serde(default = "default_function_paths")]
+    pub function_paths: Vec<String>,
+
     /// Output directory for compiled SQL and manifest
     #[serde(default = "default_target_path")]
     pub target_path: String,
@@ -255,6 +259,10 @@ fn default_metric_paths() -> Vec<String> {
     vec!["metrics".to_string()]
 }
 
+fn default_function_paths() -> Vec<String> {
+    vec!["functions".to_string()]
+}
+
 fn default_target_path() -> String {
     "target".to_string()
 }
@@ -377,6 +385,11 @@ impl Config {
     /// Get absolute metric paths relative to a project root
     pub fn metric_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
         self.metric_paths.iter().map(|p| root.join(p)).collect()
+    }
+
+    /// Get absolute function paths relative to a project root
+    pub fn function_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
+        self.function_paths.iter().map(|p| root.join(p)).collect()
     }
 
     /// Get absolute target path relative to a project root

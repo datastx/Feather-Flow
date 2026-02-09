@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use datafusion_expr::LogicalPlan;
 
 use crate::datafusion_bridge::planner::sql_to_plan;
-use crate::datafusion_bridge::provider::FeatherFlowProvider;
+use crate::datafusion_bridge::provider::{FeatherFlowProvider, UserFunctionStub};
 use crate::datafusion_bridge::types::arrow_to_sql_type;
 use crate::ir::schema::RelSchema;
 use crate::ir::types::{Nullability, TypedColumn};
@@ -105,6 +105,7 @@ pub fn propagate_schemas(
     sql_sources: &HashMap<String, String>,
     yaml_schemas: &HashMap<String, RelSchema>,
     initial_catalog: &SchemaCatalog,
+    user_functions: &[UserFunctionStub],
 ) -> PropagationResult {
     let mut catalog = initial_catalog.clone();
     let mut model_plans: HashMap<String, ModelPlanResult> = HashMap::new();
@@ -119,7 +120,7 @@ pub fn propagate_schemas(
             }
         };
 
-        let provider = FeatherFlowProvider::new(&catalog);
+        let provider = FeatherFlowProvider::with_user_functions(&catalog, user_functions);
         match sql_to_plan(sql, &provider) {
             Ok(plan) => {
                 let inferred_schema = extract_schema_from_plan(&plan);
@@ -254,8 +255,13 @@ mod tests {
             "SELECT id, name FROM source_a".to_string(),
         );
 
-        let result =
-            propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &HashMap::new(),
+            &initial_catalog,
+            &[],
+        );
 
         assert!(result.failures.is_empty());
         assert!(result.model_plans.contains_key("stg_a"));
@@ -294,8 +300,13 @@ mod tests {
             "SELECT id, status FROM stg_orders".to_string(),
         );
 
-        let result =
-            propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &HashMap::new(),
+            &initial_catalog,
+            &[],
+        );
 
         assert!(result.failures.is_empty());
         assert!(result.model_plans.contains_key("stg_orders"));
@@ -340,8 +351,13 @@ mod tests {
                 .to_string(),
         );
 
-        let result =
-            propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &HashMap::new(),
+            &initial_catalog,
+            &[],
+        );
 
         assert!(result.failures.is_empty());
         let model_d = &result.model_plans["model_d"];
@@ -376,7 +392,13 @@ mod tests {
             ]),
         );
 
-        let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &yaml_schemas,
+            &initial_catalog,
+            &[],
+        );
 
         let model_result = &result.model_plans["test_model"];
         assert!(!model_result.mismatches.is_empty());
@@ -407,8 +429,13 @@ mod tests {
             "SELECT * FROM nonexistent_table".to_string(),
         );
 
-        let result =
-            propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &HashMap::new(),
+            &initial_catalog,
+            &[],
+        );
 
         assert!(result.failures.contains_key("bad_model"));
         assert!(result.model_plans.is_empty());
@@ -440,8 +467,13 @@ mod tests {
             "SELECT id, amount FROM source".to_string(),
         );
 
-        let result =
-            propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &HashMap::new(),
+            &initial_catalog,
+            &[],
+        );
 
         assert!(result.failures.is_empty());
         assert_eq!(
@@ -481,8 +513,13 @@ mod tests {
                 .to_string(),
         );
 
-        let result =
-            propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &HashMap::new(),
+            &initial_catalog,
+            &[],
+        );
 
         assert!(result.failures.is_empty());
         let schema = &result.model_plans["final_model"].inferred_schema;
@@ -511,8 +548,13 @@ mod tests {
             "SELECT a, c FROM wide_source".to_string(),
         );
 
-        let result =
-            propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &HashMap::new(),
+            &initial_catalog,
+            &[],
+        );
 
         assert!(result.failures.is_empty());
         let schema = &result.model_plans["narrow_model"].inferred_schema;
@@ -536,8 +578,13 @@ mod tests {
             "SELECT old_name AS new_name FROM source".to_string(),
         );
 
-        let result =
-            propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &HashMap::new(),
+            &initial_catalog,
+            &[],
+        );
 
         assert!(result.failures.is_empty());
         let schema = &result.model_plans["renamed"].inferred_schema;
@@ -567,8 +614,13 @@ mod tests {
             );
         }
 
-        let result =
-            propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &HashMap::new(),
+            &initial_catalog,
+            &[],
+        );
 
         assert!(result.failures.is_empty());
         for i in 1..=5 {
@@ -602,8 +654,13 @@ mod tests {
             "SELECT id FROM source".to_string(),
         );
 
-        let result =
-            propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &HashMap::new(),
+            &initial_catalog,
+            &[],
+        );
 
         assert!(result.failures.contains_key("bad_model"));
         assert!(
@@ -619,8 +676,13 @@ mod tests {
         let topo_order = vec!["missing".to_string()];
         let sql_sources = HashMap::new(); // empty — no SQL for "missing"
 
-        let result =
-            propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &HashMap::new(),
+            &initial_catalog,
+            &[],
+        );
 
         // Should not panic, should produce empty results
         assert!(result.model_plans.is_empty());
@@ -647,8 +709,13 @@ mod tests {
                 .to_string(),
         );
 
-        let result =
-            propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &HashMap::new(),
+            &initial_catalog,
+            &[],
+        );
 
         assert!(result.failures.is_empty(), "Planning should succeed");
         let schema = &result.model_plans["agg_model"].inferred_schema;
@@ -695,8 +762,13 @@ mod tests {
             "SELECT id, COALESCE(amount, 0) AS val FROM source".to_string(),
         );
 
-        let result =
-            propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &HashMap::new(),
+            &initial_catalog,
+            &[],
+        );
 
         assert!(result.failures.is_empty(), "Planning should succeed");
         let schema = &result.model_plans["coalesce_model"].inferred_schema;

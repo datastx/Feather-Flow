@@ -1,0 +1,13 @@
+name: sa_fn_fail_duplicate_name
+version: "1.0.0"
+
+model_paths: ["models"]
+function_paths: ["functions_a", "functions_b"]
+target_path: "target"
+
+materialization: view
+dialect: duckdb
+
+database:
+  type: duckdb
+  path: "target/dev.duckdb"

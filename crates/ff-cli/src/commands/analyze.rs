@@ -161,7 +161,14 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
             }
         }
 
-        let propagation = propagate_schemas(&order, &sql_sources, &ctx.yaml_schemas, &plan_catalog);
+        let user_fn_stubs = super::common::build_user_function_stubs(&ctx.project);
+        let propagation = propagate_schemas(
+            &order,
+            &sql_sources,
+            &ctx.yaml_schemas,
+            &plan_catalog,
+            &user_fn_stubs,
+        );
         let plan_pass_manager = PlanPassManager::with_defaults();
         let plan_diagnostics = plan_pass_manager.run(
             &order,

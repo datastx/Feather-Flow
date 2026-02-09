@@ -92,6 +92,19 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
+    // Add functions to the list
+    for func in &project.functions {
+        model_info.push(ModelInfo {
+            name: func.name.to_string(),
+            resource_type: format!("function ({})", func.function_type),
+            path: Some(func.sql_path.display().to_string()),
+            materialized: None,
+            schema: None,
+            model_deps: Vec::new(),
+            external_deps: Vec::new(),
+        });
+    }
+
     // Build DAG for selector support
     let dag = ModelDag::build(&dependencies).context("Failed to build dependency graph")?;
 
@@ -130,15 +143,15 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
 
     // Apply resource type filter if provided
     let filtered_info: Vec<&ModelInfo> = if let Some(resource_type) = &args.resource_type {
-        let type_str = match resource_type {
-            ResourceType::Model => "model",
-            ResourceType::Source => "source",
-            ResourceType::Seed => "seed",
-            ResourceType::Test => "test",
-        };
         filtered_info
             .into_iter()
-            .filter(|m| m.resource_type == type_str)
+            .filter(|m| match resource_type {
+                ResourceType::Model => m.resource_type == "model",
+                ResourceType::Source => m.resource_type == "source",
+                ResourceType::Seed => m.resource_type == "seed",
+                ResourceType::Test => m.resource_type == "test",
+                ResourceType::Function => m.resource_type.starts_with("function"),
+            })
             .collect()
     } else {
         filtered_info
@@ -222,7 +235,7 @@ fn find_affected_exposures<'a>(
 struct ModelInfo {
     name: String,
     #[serde(rename = "type")]
-    resource_type: String, // "model" or "source"
+    resource_type: String, // "model", "source", or "function (scalar|table)"
     #[serde(skip_serializing_if = "Option::is_none")]
     path: Option<String>,
     materialized: Option<Materialization>,
@@ -272,19 +285,26 @@ fn print_table(models: &[&ModelInfo], exposures: &[&Exposure], show_exposures: b
 
     common::print_table(&headers, &rows);
 
-    // Count models and sources
+    // Count resources by type
     let model_count = models.iter().filter(|m| m.resource_type == "model").count();
     let source_count = models
         .iter()
         .filter(|m| m.resource_type == "source")
         .count();
+    let function_count = models
+        .iter()
+        .filter(|m| m.resource_type.starts_with("function"))
+        .count();
 
     println!();
+    let mut parts = vec![format!("{} models", model_count)];
     if source_count > 0 {
-        println!("{} models, {} sources", model_count, source_count);
-    } else {
-        println!("{} models found", model_count);
+        parts.push(format!("{} sources", source_count));
     }
+    if function_count > 0 {
+        parts.push(format!("{} functions", function_count));
+    }
+    println!("{}", parts.join(", "));
 
     // Print affected exposures section if requested
     if show_exposures && !exposures.is_empty() {

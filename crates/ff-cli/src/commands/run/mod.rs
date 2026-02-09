@@ -375,11 +375,13 @@ fn run_pre_execution_analysis(
     }
 
     // Run schema propagation
+    let user_fn_stubs = crate::commands::common::build_user_function_stubs(project);
     let result = propagate_schemas(
         &filtered_order,
         &sql_sources,
         &yaml_schemas,
         &schema_catalog,
+        &user_fn_stubs,
     );
 
     // Check for schema errors (all mismatches are errors that block execution)

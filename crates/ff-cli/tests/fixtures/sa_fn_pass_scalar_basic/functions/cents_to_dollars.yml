@@ -1,0 +1,10 @@
+kind: functions
+version: 1
+name: cents_to_dollars
+description: "Convert cents to dollars"
+function_type: scalar
+args:
+  - name: amount
+    data_type: BIGINT
+returns:
+  data_type: DECIMAL(10,2)

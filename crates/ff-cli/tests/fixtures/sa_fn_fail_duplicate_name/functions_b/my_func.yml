@@ -1,0 +1,9 @@
+kind: functions
+version: 1
+name: my_func
+function_type: scalar
+args:
+  - name: x
+    data_type: INTEGER
+returns:
+  data_type: INTEGER

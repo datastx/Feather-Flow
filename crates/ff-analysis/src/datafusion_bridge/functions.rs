@@ -232,6 +232,24 @@ fn make_aggregate(name: &str, input: DataType, ret: DataType) -> Arc<AggregateUD
     }))
 }
 
+/// Create a scalar UDF stub from user-defined function metadata.
+///
+/// Converts SQL type strings to Arrow types and registers a stub with the given
+/// name and signature. This allows DataFusion to plan queries that call user-defined
+/// functions without actually executing them.
+pub fn make_user_scalar_udf(name: &str, arg_types: &[String], return_type: &str) -> Arc<ScalarUDF> {
+    use crate::datafusion_bridge::types::sql_type_to_arrow;
+    use crate::ir::types::parse_sql_type;
+
+    let arrow_args: Vec<DataType> = arg_types
+        .iter()
+        .map(|t| sql_type_to_arrow(&parse_sql_type(t)))
+        .collect();
+    let arrow_ret = sql_type_to_arrow(&parse_sql_type(return_type));
+
+    make_scalar(name, arrow_args, arrow_ret)
+}
+
 // --- Stub implementations ---
 
 #[derive(Debug, Hash, PartialEq, Eq)]

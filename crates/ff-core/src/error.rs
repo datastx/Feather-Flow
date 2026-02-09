@@ -111,6 +111,50 @@ pub enum CoreError {
     /// JSON serialization/deserialization error
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+
+    // Function error types (FN001-FN012)
+    /// FN001: Function YAML without matching SQL file
+    #[error("[FN001] Function '{name}': missing .sql file ({yaml_path})")]
+    FunctionMissingSqlFile { name: String, yaml_path: String },
+
+    /// FN002: Function SQL file is empty
+    #[error("[FN002] Function '{name}': .sql file is empty ({sql_path})")]
+    FunctionEmptySqlFile { name: String, sql_path: String },
+
+    /// FN003: Duplicate function name across directories
+    #[error("[FN003] Function '{name}': duplicate definition in {path1} and {path2}")]
+    FunctionDuplicateName {
+        name: String,
+        path1: String,
+        path2: String,
+    },
+
+    // FN004: Reserved for FunctionShadowsBuiltin
+    /// FN005: Non-default argument after default argument
+    #[error("[FN005] Function '{name}': non-default argument '{arg}' follows a default argument")]
+    FunctionArgOrderError { name: String, arg: String },
+
+    /// FN006: Table function with empty return columns
+    #[error("[FN006] Function '{name}': table function must define at least one return column")]
+    FunctionTableMissingColumns { name: String },
+
+    /// FN007: Invalid function name (not a valid SQL identifier)
+    #[error("[FN007] Function '{name}': invalid name in {path}, must be a valid SQL identifier")]
+    FunctionInvalidName { name: String, path: String },
+
+    /// FN008: Function argument validation error
+    #[error("[FN008] Function '{name}': {details}")]
+    FunctionArgError { name: String, details: String },
+
+    /// FN009: Function YAML parse error
+    #[error("[FN009] Function parse error in {path}: {details}")]
+    FunctionParseError { path: String, details: String },
+
+    // FN010: Reserved for FunctionUnknownTable
+    // FN011: Reserved for FunctionUnknownFunction
+    /// FN012: Function deployment error
+    #[error("[FN012] Function '{name}': deployment failed: {details}")]
+    FunctionDeployError { name: String, details: String },
 }
 
 /// Result type alias for CoreError

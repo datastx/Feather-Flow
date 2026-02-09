@@ -2,8 +2,8 @@
 
 use crate::error::{DbError, DbResult};
 use crate::traits::{
-    CsvLoadOptions, DatabaseCore, DatabaseCsv, DatabaseIncremental, DatabaseSchema,
-    DatabaseSnapshot, SnapshotResult,
+    CsvLoadOptions, DatabaseCore, DatabaseCsv, DatabaseFunction, DatabaseIncremental,
+    DatabaseSchema, DatabaseSnapshot, SnapshotResult,
 };
 use async_trait::async_trait;
 
@@ -233,6 +233,37 @@ impl DatabaseSnapshot for SnowflakeBackend {
         Err(DbError::NotImplemented {
             backend: "snowflake".to_string(),
             feature: "snapshot_invalidate_deleted".to_string(),
+        })
+    }
+}
+
+#[async_trait]
+impl DatabaseFunction for SnowflakeBackend {
+    async fn deploy_function(&self, _create_sql: &str) -> DbResult<()> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "deploy_function".to_string(),
+        })
+    }
+
+    async fn drop_function(&self, _drop_sql: &str) -> DbResult<()> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "drop_function".to_string(),
+        })
+    }
+
+    async fn function_exists(&self, _name: &str) -> DbResult<bool> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "function_exists".to_string(),
+        })
+    }
+
+    async fn list_user_functions(&self) -> DbResult<Vec<String>> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "list_user_functions".to_string(),
         })
     }
 }

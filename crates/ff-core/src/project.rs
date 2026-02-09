@@ -3,6 +3,8 @@
 use crate::config::Config;
 use crate::error::{CoreError, CoreResult};
 use crate::exposure::{discover_exposures, Exposure};
+use crate::function::{discover_functions, FunctionDef};
+use crate::function_name::FunctionName;
 use crate::metric::{discover_metrics, Metric};
 use crate::model::{Model, SchemaTest, SingularTest};
 use crate::model_name::ModelName;
@@ -36,6 +38,12 @@ pub struct Project {
 
     /// Metric definitions
     pub metrics: Vec<Metric>,
+
+    /// User-defined function definitions
+    pub functions: Vec<FunctionDef>,
+
+    /// Function lookup by name (O(1) access, index into `functions` vec)
+    pub functions_by_name: HashMap<FunctionName, usize>,
 }
 
 impl Project {
@@ -66,7 +74,7 @@ impl Project {
 
         // Discover source definitions
         let source_paths = config.source_paths_absolute(&root);
-        let sources = discover_sources(&source_paths).unwrap_or_default();
+        let sources = discover_sources(&source_paths)?;
 
         // Collect tests from 1:1 schema files loaded with each model
         let mut tests = Vec::new();
@@ -85,6 +93,15 @@ impl Project {
         let metric_paths = config.metric_paths_absolute(&root);
         let metrics = discover_metrics(&metric_paths);
 
+        // Discover user-defined function definitions
+        let function_paths = config.function_paths_absolute(&root);
+        let functions = discover_functions(&function_paths)?;
+        let functions_by_name: HashMap<FunctionName, usize> = functions
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (f.name.clone(), i))
+            .collect();
+
         Ok(Self {
             root,
             config,
@@ -94,6 +111,8 @@ impl Project {
             sources,
             exposures,
             metrics,
+            functions,
+            functions_by_name,
         })
     }
 
@@ -462,6 +481,19 @@ impl Project {
             .iter()
             .filter(|m| m.model == model_name)
             .collect()
+    }
+
+    /// Get all function names
+    pub fn function_names(&self) -> Vec<&str> {
+        self.functions.iter().map(|f| f.name.as_str()).collect()
+    }
+
+    /// Get a function by name (O(1) lookup)
+    pub fn get_function(&self, name: &str) -> Option<&FunctionDef> {
+        let fn_name = FunctionName::new(name);
+        self.functions_by_name
+            .get(&fn_name)
+            .map(|&idx| &self.functions[idx])
     }
 }
 

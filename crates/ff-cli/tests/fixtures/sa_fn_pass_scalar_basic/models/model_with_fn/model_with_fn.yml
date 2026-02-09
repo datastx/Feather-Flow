@@ -1,0 +1,8 @@
+version: 1
+description: "Model using a user-defined function"
+
+columns:
+  - name: id
+    type: INTEGER
+  - name: amount_dollars
+    type: DECIMAL(10,2)

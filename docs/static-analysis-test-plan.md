@@ -25,6 +25,7 @@ diagnostics expected) and **should-fail** (specific diagnostics must fire).
 14. [Error Handling & Edge Cases](#14-error-handling--edge-cases)
 15. [CLI Integration](#15-cli-integration)
 16. [Regression Guard Rails](#16-regression-guard-rails)
+17. [User-Defined Functions (FN001-FN012)](#17-user-defined-functions-fn001-fn012)
 
 ---
 
@@ -841,6 +842,490 @@ Test that `is_compatible_with` returns correct results for all pairings:
 
 ---
 
+## 17. User-Defined Functions (FN001-FN012)
+
+User-defined functions are SQL macros defined via `.yml` + `.sql` file pairs in
+`function_paths` directories. They deploy to DuckDB as `CREATE OR REPLACE MACRO`
+statements and are registered as stub UDFs in the DataFusion static analysis engine.
+
+### Fixture Architecture for Functions
+
+Function test fixtures extend the standard project layout:
+
+```
+tests/fixtures/sa_fn_<scenario>/
+  featherflow.yml
+  sources/
+    raw_sources.yml
+  functions/
+    <function_name>.sql        # function body (expression or SELECT)
+    <function_name>.yml        # function metadata (args, return type, kind)
+  models/
+    <model_name>/
+      <model_name>.sql
+      <model_name>.yml
+```
+
+Fixture categories:
+- `sa_fn_pass_*` — function projects that should produce zero errors
+- `sa_fn_fail_*` — function projects that must produce specific diagnostics
+
+---
+
+### 17.1 Function Discovery & Loading
+
+#### FN001 — Function YAML Has No Matching SQL File
+
+**Should-fail: orphan YAML emits FN001 (Error)**
+
+| # | Test Case | Setup | Expected |
+|---|-----------|-------|----------|
+| 17.1.1 | YAML with no SQL file | `functions/orphan.yml` exists, no `orphan.sql` | FN001 error |
+| 17.1.2 | YAML + SQL name mismatch | `functions/foo.yml` + `functions/bar.sql` | FN001 on foo (no matching SQL) |
+| 17.1.3 | YAML in subdirectory, SQL missing | `functions/scalar/my_func.yml`, no `my_func.sql` in same dir | FN001 |
+
+#### FN002 — Orphan SQL File in Function Directory
+
+**Should-fail: SQL with no YAML emits FN002 (Warning)**
+
+| # | Test Case | Setup | Expected |
+|---|-----------|-------|----------|
+| 17.1.4 | SQL with no YAML | `functions/stray.sql` exists, no `stray.yml` | FN002 warning |
+| 17.1.5 | SQL in subdirectory, YAML missing | `functions/scalar/helper.sql`, no `helper.yml` | FN002 warning |
+
+#### FN003 — Duplicate Function Name
+
+**Should-fail: same function name defined twice emits FN003 (Error)**
+
+| # | Test Case | Setup | Expected |
+|---|-----------|-------|----------|
+| 17.1.6 | Same name in same directory | Two YAML files both defining `safe_divide` | FN003 |
+| 17.1.7 | Same name in different subdirs | `functions/scalar/my_func.yml` and `functions/util/my_func.yml` both define `my_func` | FN003 |
+
+#### FN007 — Invalid Function Name
+
+**Should-fail: non-identifier name emits FN007 (Error)**
+
+| # | Test Case | Setup | Expected |
+|---|-----------|-------|----------|
+| 17.1.8 | Name with spaces | YAML `name: "my func"` | FN007 |
+| 17.1.9 | Name starts with digit | YAML `name: "1func"` | FN007 |
+| 17.1.10 | Name with special chars | YAML `name: "func@#"` | FN007 |
+| 17.1.11 | Reserved SQL keyword | YAML `name: "select"` | FN007 |
+
+**Should-pass: valid function discovery**
+
+| # | Test Case | Setup | Expected |
+|---|-----------|-------|----------|
+| 17.1.12 | Scalar function pair | `safe_divide.sql` + `safe_divide.yml` in same dir | Discovered successfully |
+| 17.1.13 | Table function pair | `recent_orders.sql` + `recent_orders.yml` | Discovered successfully |
+| 17.1.14 | Functions in nested subdirs | `functions/scalar/`, `functions/table/` with valid pairs | All discovered |
+| 17.1.15 | Empty function directory | `functions/` exists but is empty | No error, zero functions |
+| 17.1.16 | Function directory doesn't exist | `function_paths: ["functions"]` but no dir | No error, zero functions |
+| 17.1.17 | Underscore in name | YAML `name: "safe_divide"` | Valid |
+| 17.1.18 | Uppercase name | YAML `name: "SafeDivide"` | Valid (case-preserved) |
+
+---
+
+### 17.2 YAML Schema Validation
+
+#### FN005 — Non-Default Argument Follows Default Argument
+
+**Should-fail: argument ordering violation emits FN005 (Error)**
+
+| # | Test Case | Setup | Expected |
+|---|-----------|-------|----------|
+| 17.2.1 | Default before required | `arguments: [{name: a, default: "0"}, {name: b}]` | FN005 |
+| 17.2.2 | Mixed ordering | `[{name: a}, {name: b, default: "1"}, {name: c}]` | FN005 on `c` |
+
+#### FN006 — Table Function Missing Return Columns
+
+**Should-fail: table function with no return columns emits FN006 (Error)**
+
+| # | Test Case | Setup | Expected |
+|---|-----------|-------|----------|
+| 17.2.3 | Empty columns list | `function_type: table`, `returns: { columns: [] }` | FN006 |
+| 17.2.4 | Missing returns entirely | `function_type: table`, no `returns` key | FN006 |
+
+**Should-pass: valid YAML schemas**
+
+| # | Test Case | Setup | Expected |
+|---|-----------|-------|----------|
+| 17.2.5 | Scalar, no defaults | `arguments: [{name: x, data_type: INTEGER}]`, `returns: {data_type: INTEGER}` | Valid |
+| 17.2.6 | Scalar, all defaults | `arguments: [{name: x, data_type: INTEGER, default: "0"}]` | Valid |
+| 17.2.7 | Scalar, mixed (required first) | `[{name: a}, {name: b, default: "1"}]` | Valid |
+| 17.2.8 | Table with columns | `function_type: table`, `returns: { columns: [{name: id, data_type: INTEGER}] }` | Valid |
+| 17.2.9 | No arguments (zero-arg function) | `arguments: []` | Valid |
+| 17.2.10 | Deterministic config | `config: { deterministic: true }` | Valid |
+| 17.2.11 | Schema override | `config: { schema: custom_schema }` | Valid |
+| 17.2.12 | All DuckDB argument types | Args with BIGINT, DECIMAL(10,2), VARCHAR, BOOLEAN, TIMESTAMP, DATE | Valid |
+
+---
+
+### 17.3 SQL Generation
+
+#### CREATE MACRO Generation
+
+**Should-pass: generated SQL is valid DuckDB**
+
+| # | Test Case | Input | Expected SQL |
+|---|-----------|-------|-------------|
+| 17.3.1 | Scalar, no defaults | `safe_divide(a, b)` → `CASE WHEN b = 0 THEN NULL ELSE a / b END` | `CREATE OR REPLACE MACRO safe_divide(a, b) AS CASE WHEN b = 0 THEN NULL ELSE a / b END` |
+| 17.3.2 | Scalar, with default | `cents_to_dollars(amount, precision := 2)` | `CREATE OR REPLACE MACRO cents_to_dollars(amount, precision := 2) AS ROUND(amount::DECIMAL / 100, precision)` |
+| 17.3.3 | Scalar, schema-qualified | Schema: `analytics` | `CREATE OR REPLACE MACRO analytics.safe_divide(a, b) AS ...` |
+| 17.3.4 | Table function | `recent_orders(days_back := 30)` → SELECT statement | `CREATE OR REPLACE MACRO recent_orders(days_back := 30) AS TABLE SELECT ...` |
+| 17.3.5 | Table function, schema-qualified | Schema: `analytics` | `CREATE OR REPLACE MACRO analytics.recent_orders(...) AS TABLE SELECT ...` |
+| 17.3.6 | Zero-argument scalar | `current_env()` → `'{{ var("environment") }}'` | `CREATE OR REPLACE MACRO current_env() AS 'dev'` (after Jinja rendering) |
+| 17.3.7 | Multiple defaults | `func(a, b := 1, c := 2)` | `CREATE OR REPLACE MACRO func(a, b := 1, c := 2) AS ...` |
+
+#### DROP MACRO Generation
+
+| # | Test Case | Expected SQL |
+|---|-----------|-------------|
+| 17.3.8 | Drop scalar macro | `DROP MACRO IF EXISTS safe_divide` |
+| 17.3.9 | Drop table macro | `DROP MACRO TABLE IF EXISTS recent_orders` |
+| 17.3.10 | Drop schema-qualified | `DROP MACRO IF EXISTS analytics.safe_divide` |
+
+#### Jinja Rendering in Function Bodies
+
+| # | Test Case | SQL Body | Vars | Expected Rendered |
+|---|-----------|----------|------|------------------|
+| 17.3.11 | Variable substitution | `'{{ var("env") }}' \|\| '_' \|\| name` | `env: dev` | `'dev' \|\| '_' \|\| name` |
+| 17.3.12 | No Jinja (plain SQL) | `a + b` | n/a | `a + b` (unchanged) |
+| 17.3.13 | Missing variable | `'{{ var("missing") }}'` | not defined | Jinja error |
+
+---
+
+### 17.4 Function Dependency Analysis
+
+#### FN008 — Circular Dependency Between Functions
+
+**Should-fail: circular function deps emit FN008 (Error)**
+
+| # | Test Case | Setup | Expected |
+|---|-----------|-------|----------|
+| 17.4.1 | Direct cycle (A → B → A) | `func_a` body calls `func_b`, `func_b` body calls `func_a` | FN008 |
+| 17.4.2 | Indirect cycle (A → B → C → A) | Three functions forming a cycle | FN008 |
+
+#### FN009 — Function Body References a Model
+
+**Should-fail: function depending on a model emits FN009 (Error)**
+
+| # | Test Case | Setup | Expected |
+|---|-----------|-------|----------|
+| 17.4.3 | Table func reads from model | `recent_orders` body: `SELECT * FROM stg_orders` where `stg_orders` is a model | FN009 |
+| 17.4.4 | Scalar func subquery reads model | Body: `(SELECT MAX(id) FROM dim_customers)` | FN009 |
+
+#### FN010 — Function Body References Unknown Table
+
+**Should-fail: function body references non-existent table emits FN010 (Error)**
+
+| # | Test Case | Setup | Expected |
+|---|-----------|-------|----------|
+| 17.4.5 | Table func reads unknown table | Body: `SELECT * FROM nonexistent_table` | FN010 |
+| 17.4.6 | Scalar subquery reads unknown | Body: `(SELECT MAX(id) FROM ghost_table)` | FN010 |
+
+#### FN011 — Function Body References Unknown Function
+
+**Should-fail: function calls undefined UDF emits FN011 (Error)**
+
+| # | Test Case | Setup | Expected |
+|---|-----------|-------|----------|
+| 17.4.7 | Calls undefined user function | `func_a` body calls `nonexistent_func(x)` | FN011 |
+
+**Should-pass: valid function dependencies**
+
+| # | Test Case | Setup | Expected |
+|---|-----------|-------|----------|
+| 17.4.8 | Function calls another function | `margin_pct` calls `safe_divide` (both defined) | Valid, topologically ordered |
+| 17.4.9 | Function reads from source table | Table func reads `raw_orders` (defined in sources) | Valid |
+| 17.4.10 | Function reads from seed | Table func reads `seed_categories` (a seed) | Valid |
+| 17.4.11 | Function reads from external table | Table func reads `ext_table` (in `external_tables`) | Valid |
+| 17.4.12 | Function calls built-in DuckDB func | Body uses `COALESCE(a, 0)` | Valid |
+| 17.4.13 | Three-level function chain | `a → b → c` (no cycles) | Valid, deploys c → b → a |
+| 17.4.14 | No table deps (pure computation) | `safe_divide(a, b)` → `CASE WHEN b=0 THEN NULL ELSE a/b END` | Valid, no table deps |
+
+---
+
+### 17.5 Static Analysis Integration
+
+#### Scalar Function Stub Registration
+
+**Should-pass: models using scalar UDFs plan successfully**
+
+| # | Test Case | Function YAML | Model SQL | Expected |
+|---|-----------|---------------|-----------|----------|
+| 17.5.1 | Single-arg scalar | `double(x INTEGER) → INTEGER` | `SELECT double(amount) FROM orders` | Plans, return type INTEGER |
+| 17.5.2 | Multi-arg scalar | `safe_divide(a DECIMAL, b DECIMAL) → DECIMAL` | `SELECT safe_divide(revenue, cost) FROM orders` | Plans, return type DECIMAL |
+| 17.5.3 | Scalar with default | `fmt(val VARCHAR, prefix VARCHAR := 'pre') → VARCHAR` | `SELECT fmt(name) FROM users` | Plans (default arg used) |
+| 17.5.4 | Return type propagates | `cents_to_dollars(amount BIGINT) → DECIMAL(18,2)` | `SELECT cents_to_dollars(amount_cents) AS dollars FROM t` | `dollars` column typed as DECIMAL(18,2) |
+| 17.5.5 | Nested user function calls | `margin(rev, cost)` uses `safe_divide` internally | `SELECT margin(revenue, cost) FROM t` | Plans, resolves outer function return type |
+| 17.5.6 | User func in WHERE clause | `is_active(status VARCHAR) → BOOLEAN` | `SELECT id FROM t WHERE is_active(status)` | Plans |
+| 17.5.7 | User func in CASE | Same func | `SELECT CASE WHEN is_active(s) THEN 'Y' ELSE 'N' END FROM t` | Plans |
+| 17.5.8 | User func mixed with builtins | | `SELECT COALESCE(cents_to_dollars(amount), 0) FROM t` | Plans |
+| 17.5.9 | Multiple user funcs in one query | Two different UDFs | `SELECT safe_divide(a, b), cents_to_dollars(c) FROM t` | Plans |
+
+**Should-fail: models using undefined functions**
+
+| # | Test Case | Model SQL | Expected |
+|---|-----------|-----------|----------|
+| 17.5.10 | Unknown scalar function | `SELECT unknown_func(amount) FROM t` | AE008 PlanningError (function not found) |
+| 17.5.11 | Wrong argument count | `safe_divide(a, b, c)` (defined as 2-arg) | AE008 PlanningError (signature mismatch) |
+
+#### Table Function Stub Registration
+
+**Should-pass: models querying table functions plan successfully**
+
+| # | Test Case | Function YAML | Model SQL | Expected |
+|---|-----------|---------------|-----------|----------|
+| 17.5.12 | Table func in FROM | `recent_orders(days INT) → {order_id INT, amount DECIMAL}` | `SELECT order_id, amount FROM recent_orders(7)` | Plans, schema from YAML returns.columns |
+| 17.5.13 | Table func with SELECT * | Same function | `SELECT * FROM recent_orders(30)` | Plans, expands to all return columns |
+| 17.5.14 | Table func joined with table | Same function | `SELECT r.order_id, c.name FROM recent_orders(7) r JOIN customers c ON ...` | Plans |
+| 17.5.15 | Table func with default arg | `recent_orders(days INT := 30)` | `SELECT * FROM recent_orders()` | Plans (default applied) |
+| 17.5.16 | Table func column types propagate | Return columns have specific types | Downstream model selects from table func | Column types match YAML definition |
+
+#### Schema Mismatch Detection with Functions
+
+| # | Test Case | Setup | Expected |
+|---|-----------|-------|----------|
+| 17.5.17 | Model YAML vs function return type | Model calls `cents_to_dollars(x)` returning DECIMAL, YAML says VARCHAR | SA02 TypeMismatch |
+| 17.5.18 | Model YAML matches function return | YAML and function agree on type | No SA02 |
+
+#### FN004 — Function Name Shadows Built-in
+
+**Should-pass with warning**
+
+| # | Test Case | Setup | Expected |
+|---|-----------|-------|----------|
+| 17.5.19 | User func named `coalesce` | YAML: `name: coalesce` | FN004 warning (shadows built-in) |
+| 17.5.20 | User func named `date_trunc` | YAML: `name: date_trunc` | FN004 warning |
+| 17.5.21 | User func with unique name | YAML: `name: my_custom_func` | No FN004 |
+
+---
+
+### 17.6 Deployment to DuckDB
+
+#### FN012 — Function Deployment Failed
+
+**Should-fail: deployment errors emit FN012 (Error)**
+
+| # | Test Case | Setup | Expected |
+|---|-----------|-------|----------|
+| 17.6.1 | Syntax error in function body | SQL body: `CASE WHEN b = 0 TEHN NULL` (typo) | FN012 with DuckDB error details |
+| 17.6.2 | Invalid type in body | SQL body references non-existent type | FN012 |
+
+**Should-pass: successful deployment and execution**
+
+| # | Test Case | Setup | Expected |
+|---|-----------|-------|----------|
+| 17.6.3 | Deploy scalar, use in model | Deploy `safe_divide`, run model that calls it | Model executes successfully, correct results |
+| 17.6.4 | Deploy table func, use in model | Deploy `recent_orders`, run model that queries it | Model executes successfully |
+| 17.6.5 | Idempotent deploy (CREATE OR REPLACE) | Deploy same function twice | No error, second deploy overwrites |
+| 17.6.6 | Deploy with schema | `config.schema: analytics` | Macro created in `analytics` schema |
+| 17.6.7 | Deploy chain (A depends on B) | `margin_pct` depends on `safe_divide` | `safe_divide` deployed first, then `margin_pct` |
+| 17.6.8 | Drop and redeploy | Drop function, then deploy | Function recreated successfully |
+| 17.6.9 | Function with Jinja-rendered body | Body uses `{{ var("env") }}` | Rendered body deployed, no Jinja in macro |
+
+---
+
+### 17.7 CLI Integration (`ff function`)
+
+#### `ff function --list`
+
+| # | Test Case | Expected |
+|---|-----------|----------|
+| 17.7.1 | List with functions defined | Shows all function names, types, argument counts |
+| 17.7.2 | List with no functions | Shows "No functions defined" message |
+| 17.7.3 | List with functions in subdirs | Shows all functions regardless of directory nesting |
+
+#### `ff function --validate`
+
+| # | Test Case | Expected |
+|---|-----------|----------|
+| 17.7.4 | Valid functions | Exit 0, "All functions valid" |
+| 17.7.5 | FN001 error | Exit non-zero, error details shown |
+| 17.7.6 | FN005 error | Exit non-zero, argument ordering error shown |
+| 17.7.7 | Multiple errors | All errors reported (not just first) |
+
+#### `ff function --deploy`
+
+| # | Test Case | Expected |
+|---|-----------|----------|
+| 17.7.8 | Deploy all functions | All macros created in DuckDB, exit 0 |
+| 17.7.9 | Deploy specific function | `--select safe_divide` deploys only that function + deps |
+| 17.7.10 | Deploy with deployment error | FN012 reported, exit non-zero |
+
+#### `ff function --show`
+
+| # | Test Case | Expected |
+|---|-----------|----------|
+| 17.7.11 | Show scalar function | Prints `CREATE OR REPLACE MACRO ...` SQL |
+| 17.7.12 | Show table function | Prints `CREATE OR REPLACE MACRO ... AS TABLE ...` SQL |
+| 17.7.13 | Show non-existent function | Error: "Function 'x' not found" |
+
+#### `ff function --drop-all`
+
+| # | Test Case | Expected |
+|---|-----------|----------|
+| 17.7.14 | Drop all with functions deployed | All user macros dropped from DuckDB |
+| 17.7.15 | Drop all with nothing deployed | No error, "No functions to drop" |
+
+---
+
+### 17.8 Integration with Existing Commands
+
+#### `ff run` with Functions
+
+| # | Test Case | Expected |
+|---|-----------|----------|
+| 17.8.1 | Run deploys functions first | Functions deployed before any model executes |
+| 17.8.2 | Run with `--skip-functions` | Functions not deployed, models may fail if they depend on UDFs |
+| 17.8.3 | Run order: hooks → functions → seeds → models | Verify execution order in output |
+| 17.8.4 | Function deployment failure blocks run | FN012 stops execution before models |
+| 17.8.5 | Run with function that depends on seed | Seed loads first, then function deploys |
+
+#### `ff compile` with Functions
+
+| # | Test Case | Expected |
+|---|-----------|----------|
+| 17.8.6 | Compile registers function stubs | Static analysis resolves UDF calls in models |
+| 17.8.7 | Compile with undefined function in model | AE008 error for unknown function call |
+| 17.8.8 | Compile with `--skip-static-analysis` | No stub registration, no UDF validation |
+
+#### `ff validate` with Functions
+
+| # | Test Case | Expected |
+|---|-----------|----------|
+| 17.8.9 | Validate checks function definitions | FN001-FN011 errors reported |
+| 17.8.10 | Validate checks model usage of functions | Models calling UDFs validated against stubs |
+| 17.8.11 | Validate clean project with functions | Exit 0, no errors |
+
+#### `ff ls` with Functions
+
+| # | Test Case | Expected |
+|---|-----------|----------|
+| 17.8.12 | `ff ls --resource-type function` | Lists only functions |
+| 17.8.13 | `ff ls` (all resources) | Functions included alongside models and sources |
+
+---
+
+### 17.9 End-to-End Fixture Projects
+
+| # | Fixture Name | Contents | What It Tests |
+|---|-------------|----------|---------------|
+| 17.9.1 | `sa_fn_pass_scalar_basic` | 1 source, 1 scalar function (`safe_divide`), 2 models (stg uses function) | Basic scalar UDF discovery → stub registration → static analysis → deployment → execution |
+| 17.9.2 | `sa_fn_pass_table_basic` | 1 source, 1 table function (`recent_orders` reads source), 1 model (queries table func) | Table UDF end-to-end: discovery → schema registration → model planning |
+| 17.9.3 | `sa_fn_pass_multi_function` | 1 source, 3 scalar functions (`safe_divide`, `cents_to_dollars`, `margin_pct` which calls `safe_divide`), 3 models using them | Function-to-function deps, topological deploy order, multiple stubs |
+| 17.9.4 | `sa_fn_pass_jinja_body` | 1 function using `{{ var("env") }}` in body, 1 model | Jinja rendering in function bodies |
+| 17.9.5 | `sa_fn_pass_with_defaults` | 1 function with default args, models calling with/without defaults | Default argument handling in stubs and deployment |
+| 17.9.6 | `sa_fn_pass_schema_qualified` | 1 function with `config.schema`, 1 model | Schema-qualified macro creation |
+| 17.9.7 | `sa_fn_pass_all_arg_types` | 1 function with args of every DuckDB type (INT, BIGINT, DECIMAL, VARCHAR, BOOLEAN, DATE, TIMESTAMP) | Type mapping from YAML → DataFusion stubs → DuckDB |
+| 17.9.8 | `sa_fn_fail_orphan_yaml` | YAML with no matching SQL | FN001 |
+| 17.9.9 | `sa_fn_fail_duplicate_name` | Two functions with same name in different dirs | FN003 |
+| 17.9.10 | `sa_fn_fail_bad_arg_order` | Default arg before required arg | FN005 |
+| 17.9.11 | `sa_fn_fail_table_no_columns` | Table function with empty returns | FN006 |
+| 17.9.12 | `sa_fn_fail_circular_deps` | Two functions calling each other | FN008 |
+| 17.9.13 | `sa_fn_fail_depends_on_model` | Table function body reads from a model | FN009 |
+| 17.9.14 | `sa_fn_fail_unknown_table` | Function body reads from non-existent table | FN010 |
+| 17.9.15 | `sa_fn_fail_model_calls_undefined` | Model calls a function that doesn't exist | AE008 during static analysis |
+| 17.9.16 | `sa_fn_fail_deploy_syntax_error` | Function with syntax error in SQL body | FN012 during deployment |
+| 17.9.17 | `sa_fn_pass_mixed_project` | Full project: sources, seeds, 3 functions (scalar + table), 5 models — a realistic e-commerce setup with `safe_divide`, `cents_to_dollars`, `recent_high_value_orders` | Comprehensive integration: discovery, deps, stubs, propagation, deployment, execution |
+
+---
+
+### 17.10 Detailed Fixture: `sa_fn_pass_mixed_project`
+
+This is the most comprehensive function test fixture, representing a realistic
+project that exercises all function-related code paths.
+
+```
+sa_fn_pass_mixed_project/
+  featherflow.yml
+  sources/
+    raw_ecommerce.yml
+  seeds/
+    product_categories.csv
+  functions/
+    scalar/
+      safe_divide.sql
+      safe_divide.yml
+      cents_to_dollars.sql
+      cents_to_dollars.yml
+    table/
+      recent_high_value_orders.sql
+      recent_high_value_orders.yml
+  models/
+    stg_orders/
+      stg_orders.sql           # SELECT with cents_to_dollars(amount_cents) AS amount
+      stg_orders.yml
+    stg_customers/
+      stg_customers.sql
+      stg_customers.yml
+    int_order_margins/
+      int_order_margins.sql    # Uses safe_divide(revenue, cost) AS margin
+      int_order_margins.yml
+    fct_recent_orders/
+      fct_recent_orders.sql    # SELECT * FROM recent_high_value_orders(30)
+      fct_recent_orders.yml
+    fct_customer_summary/
+      fct_customer_summary.sql # Joins stg_customers with int_order_margins
+      fct_customer_summary.yml
+```
+
+**featherflow.yml:**
+```yaml
+name: fn_mixed_project
+version: "1.0.0"
+model_paths: ["models"]
+source_paths: ["sources"]
+seed_paths: ["seeds"]
+function_paths: ["functions"]
+target_path: "target"
+materialization: view
+schema: analytics
+database:
+  type: duckdb
+  path: "target/dev.duckdb"
+vars:
+  environment: dev
+  min_order_amount: "100"
+```
+
+**Key validations this fixture covers:**
+- Discovery across nested subdirectories (`scalar/`, `table/`)
+- Scalar function type propagation (`cents_to_dollars` returns DECIMAL → model YAML matches)
+- Table function schema resolution (`recent_high_value_orders` return columns visible to `fct_recent_orders`)
+- Function-to-source dependency (`recent_high_value_orders` reads `raw_orders`)
+- No function-to-model dependency (all functions only read sources/seeds)
+- Deployment ordering (scalar functions first since they have no table deps)
+- `ff validate` — zero errors
+- `ff compile` — static analysis passes
+- `ff run` — functions deploy, models execute, correct results
+
+---
+
+### 17.11 Corner Case Tests
+
+| # | Test Case | Setup | Expected |
+|---|-----------|-------|----------|
+| 17.11.1 | Function with no arguments | `get_env() → VARCHAR`, body: `'dev'` | Valid, deploys as `CREATE OR REPLACE MACRO get_env() AS 'dev'` |
+| 17.11.2 | Function body is single literal | `always_one() → INTEGER`, body: `1` | Valid |
+| 17.11.3 | Function with very long body | 50+ line CASE expression | Valid, no truncation |
+| 17.11.4 | Function with Unicode in body | Body contains `'日本語'` | Valid |
+| 17.11.5 | Function with single-quoted strings | Body: `'it''s valid'` | Valid, escaping preserved |
+| 17.11.6 | Function with DuckDB cast shorthand | Body: `amount::DECIMAL` | Valid |
+| 17.11.7 | Table function with zero rows possible | Body: `SELECT ... WHERE 1=0` | Valid, schema still inferred from YAML |
+| 17.11.8 | Function called in GROUP BY | `SELECT category, SUM(cents_to_dollars(amount)) FROM t GROUP BY category` | Plans |
+| 17.11.9 | Function called in ORDER BY | `SELECT * FROM t ORDER BY cents_to_dollars(amount)` | Plans |
+| 17.11.10 | Function called in HAVING | `SELECT cat, SUM(x) FROM t GROUP BY cat HAVING safe_divide(SUM(x), COUNT(*)) > 100` | Plans |
+| 17.11.11 | Function result used as join key | `JOIN ON a.id = cents_to_dollars(b.amount_cents)` | Plans (unusual but valid) |
+| 17.11.12 | `--skip-static-analysis` skips stub registration | Functions defined but SA skipped | No planning errors, functions still deploy on `ff run` |
+| 17.11.13 | Function and model with same name | Function `stg_orders` and model `stg_orders` | No conflict (different resource types) |
+| 17.11.14 | Stale function detection | Function YAML removed between runs | Warning: "Function 'x' previously deployed but no longer defined" |
+| 17.11.15 | Function return type changes | Change `safe_divide` return from DECIMAL to FLOAT between runs | `CREATE OR REPLACE` updates it; SA re-checks downstream models |
+
+---
+
 ## Summary Statistics
 
 | Category | Should-Pass | Should-Fail | Total |
@@ -860,4 +1345,14 @@ Test that `is_compatible_with` returns correct results for all pairings:
 | Error Handling & Edge Cases | 16 | 7 | 23 |
 | CLI Integration | 17 | 0 | 17 |
 | Regression Guard Rails | 9 | 0 | 9 |
-| **Total** | **~276** | **~81** | **~357** |
+| **UDF Discovery & Loading** | **7** | **10** | **17** |
+| **UDF YAML Validation** | **8** | **4** | **12** |
+| **UDF SQL Generation** | **10** | **3** | **13** |
+| **UDF Dependency Analysis** | **7** | **7** | **14** |
+| **UDF Static Analysis Integration** | **11** | **2** | **13** |
+| **UDF Deployment** | **7** | **2** | **9** |
+| **UDF CLI (`ff function`)** | **15** | **0** | **15** |
+| **UDF Integration w/ Commands** | **13** | **0** | **13** |
+| **UDF Fixture Projects** | **7** | **10** | **17** |
+| **UDF Corner Cases** | **15** | **0** | **15** |
+| **Total** | **~390** | **~119** | **~509** |

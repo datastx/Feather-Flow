@@ -146,7 +146,13 @@ mod tests {
             RelSchema::new(vec![make_col("id", int32(), Nullability::NotNull)]),
         );
 
-        let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &yaml_schemas,
+            &initial_catalog,
+            &[],
+        );
         let ctx = make_ctx();
         let pass = CrossModelConsistency;
         let diagnostics = pass.run_project(&result.model_plans, &ctx);
@@ -184,7 +190,13 @@ mod tests {
             ]),
         );
 
-        let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &yaml_schemas,
+            &initial_catalog,
+            &[],
+        );
         let ctx = make_ctx();
         let pass = CrossModelConsistency;
         let diagnostics = pass.run_project(&result.model_plans, &ctx);
@@ -224,7 +236,13 @@ mod tests {
             ]),
         );
 
-        let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &yaml_schemas,
+            &initial_catalog,
+            &[],
+        );
         let ctx = make_ctx();
         let pass = CrossModelConsistency;
         let diagnostics = pass.run_project(&result.model_plans, &ctx);
@@ -267,7 +285,13 @@ mod tests {
             ]),
         );
 
-        let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &yaml_schemas,
+            &initial_catalog,
+            &[],
+        );
         let ctx = make_ctx();
         let diagnostics = CrossModelConsistency.run_project(&result.model_plans, &ctx);
 
@@ -306,7 +330,13 @@ mod tests {
             RelSchema::new(vec![make_col("id", int32(), Nullability::NotNull)]),
         );
 
-        let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &yaml_schemas,
+            &initial_catalog,
+            &[],
+        );
         let ctx = make_ctx();
         let diagnostics = CrossModelConsistency.run_project(&result.model_plans, &ctx);
 
@@ -351,7 +381,13 @@ mod tests {
             ]),
         );
 
-        let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &yaml_schemas,
+            &initial_catalog,
+            &[],
+        );
         let ctx = make_ctx();
         let diagnostics = CrossModelConsistency.run_project(&result.model_plans, &ctx);
 
@@ -398,7 +434,13 @@ mod tests {
             ]),
         );
 
-        let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &yaml_schemas,
+            &initial_catalog,
+            &[],
+        );
         let ctx = make_ctx();
         let diagnostics = CrossModelConsistency.run_project(&result.model_plans, &ctx);
 
@@ -444,7 +486,13 @@ mod tests {
             ]),
         );
 
-        let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &yaml_schemas,
+            &initial_catalog,
+            &[],
+        );
         let ctx = make_ctx();
         let diagnostics = CrossModelConsistency.run_project(&result.model_plans, &ctx);
 
@@ -488,7 +536,13 @@ mod tests {
             ]),
         );
 
-        let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &yaml_schemas,
+            &initial_catalog,
+            &[],
+        );
         let ctx = make_ctx();
         let diagnostics = CrossModelConsistency.run_project(&result.model_plans, &ctx);
 
@@ -522,7 +576,13 @@ mod tests {
             ]),
         );
 
-        let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &initial_catalog);
+        let result = propagate_schemas(
+            &topo_order,
+            &sql_sources,
+            &yaml_schemas,
+            &initial_catalog,
+            &[],
+        );
         let ctx = make_ctx();
         let diagnostics = CrossModelConsistency.run_project(&result.model_plans, &ctx);
 

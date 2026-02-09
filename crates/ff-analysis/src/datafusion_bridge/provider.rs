@@ -20,6 +20,53 @@ use crate::ir::schema::RelSchema;
 use crate::ir::types::Nullability;
 use crate::lowering::SchemaCatalog;
 
+/// Metadata for a user-defined function stub to register in the DataFusion context.
+///
+/// Function names are case-insensitive — internally normalized to uppercase for lookup.
+/// Only scalar functions are supported; table functions require `SchemaCatalog` registration.
+#[derive(Debug, Clone)]
+pub struct UserFunctionStub {
+    name: String,
+    arg_types: Vec<String>,
+    return_type: String,
+}
+
+impl UserFunctionStub {
+    /// Create a new user function stub.
+    ///
+    /// Returns `None` if the name is empty.
+    pub fn new(
+        name: impl Into<String>,
+        arg_types: Vec<String>,
+        return_type: impl Into<String>,
+    ) -> Option<Self> {
+        let name = name.into();
+        if name.is_empty() {
+            return None;
+        }
+        Some(Self {
+            name,
+            arg_types,
+            return_type: return_type.into(),
+        })
+    }
+
+    /// Function name
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Argument SQL type strings
+    pub fn arg_types(&self) -> &[String] {
+        &self.arg_types
+    }
+
+    /// Return SQL type string
+    pub fn return_type(&self) -> &str {
+        &self.return_type
+    }
+}
+
 /// A ContextProvider backed by a Feather-Flow SchemaCatalog.
 ///
 /// Maps model/source names to Arrow schemas so DataFusion's `SqlToRel`
@@ -35,7 +82,15 @@ pub struct FeatherFlowProvider<'a> {
 impl<'a> FeatherFlowProvider<'a> {
     /// Create a new provider from a schema catalog reference
     pub fn new(catalog: &'a SchemaCatalog) -> Self {
-        let scalar_functions: HashMap<String, Arc<ScalarUDF>> = functions::duckdb_scalar_udfs()
+        Self::with_user_functions(catalog, &[])
+    }
+
+    /// Create a new provider with additional user-defined function stubs
+    pub fn with_user_functions(
+        catalog: &'a SchemaCatalog,
+        user_functions: &[UserFunctionStub],
+    ) -> Self {
+        let mut scalar_functions: HashMap<String, Arc<ScalarUDF>> = functions::duckdb_scalar_udfs()
             .into_iter()
             .map(|f| (f.name().to_uppercase(), f))
             .collect();
@@ -44,6 +99,13 @@ impl<'a> FeatherFlowProvider<'a> {
                 .into_iter()
                 .map(|f| (f.name().to_uppercase(), f))
                 .collect();
+
+        // Register user-defined function stubs (validated at construction via UserFunctionStub::new)
+        for uf in user_functions {
+            let udf = functions::make_user_scalar_udf(uf.name(), uf.arg_types(), uf.return_type());
+            scalar_functions.insert(uf.name().to_uppercase(), udf);
+        }
+
         Self {
             catalog,
             config: ConfigOptions::default(),

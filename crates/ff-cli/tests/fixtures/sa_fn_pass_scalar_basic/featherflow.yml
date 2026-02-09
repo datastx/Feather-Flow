@@ -1,0 +1,17 @@
+name: sa_fn_pass_scalar_basic
+version: "1.0.0"
+
+model_paths: ["models"]
+source_paths: ["sources"]
+function_paths: ["functions"]
+target_path: "target"
+
+materialization: view
+dialect: duckdb
+
+database:
+  type: duckdb
+  path: "target/dev.duckdb"
+
+external_tables:
+  - raw_orders
