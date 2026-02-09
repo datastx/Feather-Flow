@@ -175,7 +175,7 @@ mod tests {
     use crate::ir::relop::{JoinType, RelOp};
     use crate::ir::schema::RelSchema;
     use crate::ir::types::{IntBitWidth, Nullability, SqlType};
-    use crate::test_utils::{make_col, make_ctx};
+    use crate::test_utils::*;
 
     #[test]
     fn test_a030_join_key_type_mismatch() {
@@ -410,5 +410,455 @@ mod tests {
             !diags.iter().any(|d| d.code == DiagnosticCode::A030),
             "Compatible join key types (INT32 = INT64) should not produce A030"
         );
+    }
+
+    // ── A030: Additional join key type mismatch tests ────────────────────
+
+    #[test]
+    fn test_a030_boolean_vs_integer() {
+        let left = make_scan_alias(
+            "a",
+            "a",
+            vec![make_col("flag", boolean(), Nullability::NotNull)],
+        );
+        let right = make_scan_alias(
+            "b",
+            "b",
+            vec![make_col("count", int32(), Nullability::NotNull)],
+        );
+        let ir = make_join(
+            left,
+            right,
+            JoinType::Inner,
+            Some(bin_op(
+                col_ref(Some("a"), "flag", boolean(), Nullability::NotNull),
+                BinOp::Eq,
+                col_ref(Some("b"), "count", int32(), Nullability::NotNull),
+            )),
+        );
+        let diags = JoinKeyAnalysis.run_model("m", &ir, &make_ctx());
+        assert_has_diagnostic(&diags, DiagnosticCode::A030);
+    }
+
+    #[test]
+    fn test_a030_date_vs_varchar() {
+        let left = make_scan_alias("a", "a", vec![make_col("dt", date(), Nullability::NotNull)]);
+        let right = make_scan_alias(
+            "b",
+            "b",
+            vec![make_col("dt_str", varchar(), Nullability::NotNull)],
+        );
+        let ir = make_join(
+            left,
+            right,
+            JoinType::Inner,
+            Some(bin_op(
+                col_ref(Some("a"), "dt", date(), Nullability::NotNull),
+                BinOp::Eq,
+                col_ref(Some("b"), "dt_str", varchar(), Nullability::NotNull),
+            )),
+        );
+        let diags = JoinKeyAnalysis.run_model("m", &ir, &make_ctx());
+        assert_has_diagnostic(&diags, DiagnosticCode::A030);
+    }
+
+    #[test]
+    fn test_a030_uuid_vs_integer() {
+        let left = make_scan_alias(
+            "a",
+            "a",
+            vec![make_col("uuid_id", uuid(), Nullability::NotNull)],
+        );
+        let right = make_scan_alias(
+            "b",
+            "b",
+            vec![make_col("int_id", int32(), Nullability::NotNull)],
+        );
+        let ir = make_join(
+            left,
+            right,
+            JoinType::Inner,
+            Some(bin_op(
+                col_ref(Some("a"), "uuid_id", uuid(), Nullability::NotNull),
+                BinOp::Eq,
+                col_ref(Some("b"), "int_id", int32(), Nullability::NotNull),
+            )),
+        );
+        let diags = JoinKeyAnalysis.run_model("m", &ir, &make_ctx());
+        assert_has_diagnostic(&diags, DiagnosticCode::A030);
+    }
+
+    #[test]
+    fn test_a030_compound_join_one_mismatch() {
+        let left = make_scan_alias(
+            "a",
+            "a",
+            vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("name", varchar(), Nullability::NotNull),
+            ],
+        );
+        let right = make_scan_alias(
+            "b",
+            "b",
+            vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("count", int32(), Nullability::NotNull),
+            ],
+        );
+        // a.id = b.id AND a.name = b.count (name is VARCHAR, count is INT → mismatch)
+        let ir = make_join(
+            left,
+            right,
+            JoinType::Inner,
+            Some(bin_op(
+                bin_op(
+                    col_ref(Some("a"), "id", int32(), Nullability::NotNull),
+                    BinOp::Eq,
+                    col_ref(Some("b"), "id", int32(), Nullability::NotNull),
+                ),
+                BinOp::And,
+                bin_op(
+                    col_ref(Some("a"), "name", varchar(), Nullability::NotNull),
+                    BinOp::Eq,
+                    col_ref(Some("b"), "count", int32(), Nullability::NotNull),
+                ),
+            )),
+        );
+        let diags = JoinKeyAnalysis.run_model("m", &ir, &make_ctx());
+        assert_has_diagnostic(&diags, DiagnosticCode::A030);
+        // Should only be 1 mismatch (the name=count pair)
+        assert_eq!(count_diagnostics(&diags, DiagnosticCode::A030), 1);
+    }
+
+    #[test]
+    fn test_a030_float_vs_decimal_compatible() {
+        let left = make_scan_alias(
+            "a",
+            "a",
+            vec![make_col("val", float64(), Nullability::NotNull)],
+        );
+        let right = make_scan_alias(
+            "b",
+            "b",
+            vec![make_col("val", decimal(10, 2), Nullability::NotNull)],
+        );
+        let ir = make_join(
+            left,
+            right,
+            JoinType::Inner,
+            Some(bin_op(
+                col_ref(Some("a"), "val", float64(), Nullability::NotNull),
+                BinOp::Eq,
+                col_ref(Some("b"), "val", decimal(10, 2), Nullability::NotNull),
+            )),
+        );
+        let diags = JoinKeyAnalysis.run_model("m", &ir, &make_ctx());
+        assert_no_diagnostic(&diags, DiagnosticCode::A030);
+    }
+
+    #[test]
+    fn test_a030_varchar_vs_varchar_compatible() {
+        let left = make_scan_alias(
+            "a",
+            "a",
+            vec![make_col("code", varchar(), Nullability::NotNull)],
+        );
+        let right = make_scan_alias(
+            "b",
+            "b",
+            vec![make_col("code", varchar(), Nullability::NotNull)],
+        );
+        let ir = make_join(
+            left,
+            right,
+            JoinType::Inner,
+            Some(bin_op(
+                col_ref(Some("a"), "code", varchar(), Nullability::NotNull),
+                BinOp::Eq,
+                col_ref(Some("b"), "code", varchar(), Nullability::NotNull),
+            )),
+        );
+        let diags = JoinKeyAnalysis.run_model("m", &ir, &make_ctx());
+        assert_no_diagnostic(&diags, DiagnosticCode::A030);
+    }
+
+    #[test]
+    fn test_a030_unknown_type_compatible() {
+        let left = make_scan_alias(
+            "a",
+            "a",
+            vec![make_col("val", unknown("no type"), Nullability::NotNull)],
+        );
+        let right = make_scan_alias(
+            "b",
+            "b",
+            vec![make_col("val", int32(), Nullability::NotNull)],
+        );
+        let ir = make_join(
+            left,
+            right,
+            JoinType::Inner,
+            Some(bin_op(
+                col_ref(Some("a"), "val", unknown("no type"), Nullability::NotNull),
+                BinOp::Eq,
+                col_ref(Some("b"), "val", int32(), Nullability::NotNull),
+            )),
+        );
+        let diags = JoinKeyAnalysis.run_model("m", &ir, &make_ctx());
+        assert_no_diagnostic(&diags, DiagnosticCode::A030);
+    }
+
+    // ── A032: Additional cross join tests ────────────────────────────────
+
+    #[test]
+    fn test_a032_inner_join_without_on() {
+        let left = make_scan("a", vec![make_col("x", int32(), Nullability::NotNull)]);
+        let right = make_scan("b", vec![make_col("y", int32(), Nullability::NotNull)]);
+        let ir = make_join(left, right, JoinType::Inner, None);
+        let diags = JoinKeyAnalysis.run_model("m", &ir, &make_ctx());
+        assert_has_diagnostic(&diags, DiagnosticCode::A032);
+    }
+
+    #[test]
+    fn test_a032_left_join_without_on() {
+        let left = make_scan("a", vec![make_col("x", int32(), Nullability::NotNull)]);
+        let right = make_scan("b", vec![make_col("y", int32(), Nullability::NotNull)]);
+        let ir = make_join(left, right, JoinType::LeftOuter, None);
+        let diags = JoinKeyAnalysis.run_model("m", &ir, &make_ctx());
+        assert_has_diagnostic(&diags, DiagnosticCode::A032);
+    }
+
+    #[test]
+    fn test_a032_inner_join_with_on_no_diagnostic() {
+        let left = make_scan_alias(
+            "a",
+            "a",
+            vec![make_col("id", int32(), Nullability::NotNull)],
+        );
+        let right = make_scan_alias(
+            "b",
+            "b",
+            vec![make_col("id", int32(), Nullability::NotNull)],
+        );
+        let ir = make_join(
+            left,
+            right,
+            JoinType::Inner,
+            Some(bin_op(
+                col_ref(Some("a"), "id", int32(), Nullability::NotNull),
+                BinOp::Eq,
+                col_ref(Some("b"), "id", int32(), Nullability::NotNull),
+            )),
+        );
+        let diags = JoinKeyAnalysis.run_model("m", &ir, &make_ctx());
+        assert_no_diagnostic(&diags, DiagnosticCode::A032);
+    }
+
+    // ── A033: Additional non-equi join tests ─────────────────────────────
+
+    #[test]
+    fn test_a033_less_than_join() {
+        let left = make_scan_alias(
+            "a",
+            "a",
+            vec![make_col("start_date", date(), Nullability::NotNull)],
+        );
+        let right = make_scan_alias(
+            "b",
+            "b",
+            vec![make_col("end_date", date(), Nullability::NotNull)],
+        );
+        let ir = make_join(
+            left,
+            right,
+            JoinType::Inner,
+            Some(bin_op(
+                col_ref(Some("a"), "start_date", date(), Nullability::NotNull),
+                BinOp::Lt,
+                col_ref(Some("b"), "end_date", date(), Nullability::NotNull),
+            )),
+        );
+        let diags = JoinKeyAnalysis.run_model("m", &ir, &make_ctx());
+        assert_has_diagnostic(&diags, DiagnosticCode::A033);
+    }
+
+    #[test]
+    fn test_a033_not_equals_join() {
+        let left = make_scan_alias(
+            "a",
+            "a",
+            vec![make_col("id", int32(), Nullability::NotNull)],
+        );
+        let right = make_scan_alias(
+            "b",
+            "b",
+            vec![make_col("id", int32(), Nullability::NotNull)],
+        );
+        let ir = make_join(
+            left,
+            right,
+            JoinType::Inner,
+            Some(bin_op(
+                col_ref(Some("a"), "id", int32(), Nullability::NotNull),
+                BinOp::NotEq,
+                col_ref(Some("b"), "id", int32(), Nullability::NotNull),
+            )),
+        );
+        let diags = JoinKeyAnalysis.run_model("m", &ir, &make_ctx());
+        assert_has_diagnostic(&diags, DiagnosticCode::A033);
+    }
+
+    #[test]
+    fn test_a033_gte_join() {
+        let left = make_scan_alias(
+            "a",
+            "a",
+            vec![make_col("rank", int32(), Nullability::NotNull)],
+        );
+        let right = make_scan_alias(
+            "b",
+            "b",
+            vec![make_col("min_rank", int32(), Nullability::NotNull)],
+        );
+        let ir = make_join(
+            left,
+            right,
+            JoinType::Inner,
+            Some(bin_op(
+                col_ref(Some("a"), "rank", int32(), Nullability::NotNull),
+                BinOp::GtEq,
+                col_ref(Some("b"), "min_rank", int32(), Nullability::NotNull),
+            )),
+        );
+        let diags = JoinKeyAnalysis.run_model("m", &ir, &make_ctx());
+        assert_has_diagnostic(&diags, DiagnosticCode::A033);
+    }
+
+    #[test]
+    fn test_a033_range_join_two_inequalities() {
+        let left = make_scan_alias(
+            "a",
+            "a",
+            vec![make_col("val", int32(), Nullability::NotNull)],
+        );
+        let right = make_scan_alias(
+            "b",
+            "b",
+            vec![
+                make_col("low", int32(), Nullability::NotNull),
+                make_col("high", int32(), Nullability::NotNull),
+            ],
+        );
+        // a.val >= b.low AND a.val <= b.high
+        let ir = make_join(
+            left,
+            right,
+            JoinType::Inner,
+            Some(bin_op(
+                bin_op(
+                    col_ref(Some("a"), "val", int32(), Nullability::NotNull),
+                    BinOp::GtEq,
+                    col_ref(Some("b"), "low", int32(), Nullability::NotNull),
+                ),
+                BinOp::And,
+                bin_op(
+                    col_ref(Some("a"), "val", int32(), Nullability::NotNull),
+                    BinOp::LtEq,
+                    col_ref(Some("b"), "high", int32(), Nullability::NotNull),
+                ),
+            )),
+        );
+        let diags = JoinKeyAnalysis.run_model("m", &ir, &make_ctx());
+        assert_eq!(
+            count_diagnostics(&diags, DiagnosticCode::A033),
+            2,
+            "Range join should produce 2 non-equi diagnostics"
+        );
+    }
+
+    #[test]
+    fn test_a033_mixed_equi_and_non_equi() {
+        let left = make_scan_alias(
+            "a",
+            "a",
+            vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("rank", int32(), Nullability::NotNull),
+            ],
+        );
+        let right = make_scan_alias(
+            "b",
+            "b",
+            vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("rank", int32(), Nullability::NotNull),
+            ],
+        );
+        // a.id = b.id AND a.rank > b.rank
+        let ir = make_join(
+            left,
+            right,
+            JoinType::Inner,
+            Some(bin_op(
+                bin_op(
+                    col_ref(Some("a"), "id", int32(), Nullability::NotNull),
+                    BinOp::Eq,
+                    col_ref(Some("b"), "id", int32(), Nullability::NotNull),
+                ),
+                BinOp::And,
+                bin_op(
+                    col_ref(Some("a"), "rank", int32(), Nullability::NotNull),
+                    BinOp::Gt,
+                    col_ref(Some("b"), "rank", int32(), Nullability::NotNull),
+                ),
+            )),
+        );
+        let diags = JoinKeyAnalysis.run_model("m", &ir, &make_ctx());
+        // Only the > condition should fire A033
+        assert_eq!(count_diagnostics(&diags, DiagnosticCode::A033), 1);
+        // The = condition should not fire A030 (same types)
+        assert_no_diagnostic(&diags, DiagnosticCode::A030);
+    }
+
+    #[test]
+    fn test_a033_compound_equi_join_no_diagnostic() {
+        let left = make_scan_alias(
+            "a",
+            "a",
+            vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("code", varchar(), Nullability::NotNull),
+            ],
+        );
+        let right = make_scan_alias(
+            "b",
+            "b",
+            vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("code", varchar(), Nullability::NotNull),
+            ],
+        );
+        // a.id = b.id AND a.code = b.code
+        let ir = make_join(
+            left,
+            right,
+            JoinType::Inner,
+            Some(bin_op(
+                bin_op(
+                    col_ref(Some("a"), "id", int32(), Nullability::NotNull),
+                    BinOp::Eq,
+                    col_ref(Some("b"), "id", int32(), Nullability::NotNull),
+                ),
+                BinOp::And,
+                bin_op(
+                    col_ref(Some("a"), "code", varchar(), Nullability::NotNull),
+                    BinOp::Eq,
+                    col_ref(Some("b"), "code", varchar(), Nullability::NotNull),
+                ),
+            )),
+        );
+        let diags = JoinKeyAnalysis.run_model("m", &ir, &make_ctx());
+        assert_no_diagnostic(&diags, DiagnosticCode::A033);
     }
 }

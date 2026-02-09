@@ -168,4 +168,63 @@ mod tests {
         let schema = plan.schema();
         assert_eq!(schema.fields().len(), 2);
     }
+
+    // ── Additional planner tests ────────────────────────────────────────
+
+    #[test]
+    fn test_aggregate_with_having() {
+        let plan = plan_sql(
+            "SELECT status, COUNT(*) AS cnt FROM orders GROUP BY status HAVING COUNT(*) > 1",
+        )
+        .unwrap();
+        let schema = plan.schema();
+        assert_eq!(schema.fields().len(), 2);
+    }
+
+    #[test]
+    fn test_subquery_in_where() {
+        let plan =
+            plan_sql("SELECT id FROM orders WHERE customer_id IN (SELECT id FROM customers)")
+                .unwrap();
+        let schema = plan.schema();
+        assert_eq!(schema.fields().len(), 1);
+    }
+
+    #[test]
+    fn test_left_join_plan() {
+        let plan = plan_sql(
+            "SELECT o.id, c.name FROM orders o LEFT JOIN customers c ON o.customer_id = c.id",
+        )
+        .unwrap();
+        let schema = plan.schema();
+        assert_eq!(schema.fields().len(), 2);
+        // Right side (name) should be nullable after LEFT JOIN
+        assert!(schema.fields()[1].is_nullable());
+    }
+
+    #[test]
+    fn test_order_by_limit() {
+        let plan = plan_sql("SELECT id, amount FROM orders ORDER BY amount DESC LIMIT 10").unwrap();
+        let schema = plan.schema();
+        assert_eq!(schema.fields().len(), 2);
+    }
+
+    #[test]
+    fn test_case_expression_plan() {
+        let plan = plan_sql(
+            "SELECT CASE WHEN status = 'shipped' THEN 1 ELSE 0 END AS is_shipped FROM orders",
+        )
+        .unwrap();
+        let schema = plan.schema();
+        assert_eq!(schema.fields().len(), 1);
+        assert_eq!(schema.fields()[0].name(), "is_shipped");
+    }
+
+    #[test]
+    fn test_empty_sql_error() {
+        let catalog = make_catalog();
+        let provider = FeatherFlowProvider::new(&catalog);
+        let result = sql_to_plan("", &provider);
+        assert!(result.is_err());
+    }
 }

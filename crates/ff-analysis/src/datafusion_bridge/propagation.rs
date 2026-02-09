@@ -233,7 +233,7 @@ fn compare_schemas(yaml: &RelSchema, inferred: &RelSchema) -> Vec<SchemaMismatch
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{int32, make_col, varchar};
+    use crate::test_utils::*;
 
     #[test]
     fn test_linear_chain_propagation() {
@@ -411,6 +411,218 @@ mod tests {
             propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
 
         assert!(result.failures.contains_key("bad_model"));
+        assert!(result.model_plans.is_empty());
+    }
+
+    // ── Additional propagation tests ────────────────────────────────────
+
+    #[test]
+    fn test_fan_out_propagation() {
+        // source → model_a, source → model_b (one source, two consumers)
+        let mut initial_catalog: SchemaCatalog = HashMap::new();
+        initial_catalog.insert(
+            "source".to_string(),
+            RelSchema::new(vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("name", varchar(), Nullability::Nullable),
+                make_col("amount", float64(), Nullability::Nullable),
+            ]),
+        );
+
+        let topo_order = vec!["model_a".to_string(), "model_b".to_string()];
+        let mut sql_sources = HashMap::new();
+        sql_sources.insert(
+            "model_a".to_string(),
+            "SELECT id, name FROM source".to_string(),
+        );
+        sql_sources.insert(
+            "model_b".to_string(),
+            "SELECT id, amount FROM source".to_string(),
+        );
+
+        let result =
+            propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
+
+        assert!(result.failures.is_empty());
+        assert_eq!(
+            result.model_plans["model_a"].inferred_schema.columns.len(),
+            2
+        );
+        assert_eq!(
+            result.model_plans["model_b"].inferred_schema.columns.len(),
+            2
+        );
+    }
+
+    #[test]
+    fn test_fan_in_propagation() {
+        // source_a → final, source_b → final (two sources, one consumer)
+        let mut initial_catalog: SchemaCatalog = HashMap::new();
+        initial_catalog.insert(
+            "source_a".to_string(),
+            RelSchema::new(vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("val_a", varchar(), Nullability::Nullable),
+            ]),
+        );
+        initial_catalog.insert(
+            "source_b".to_string(),
+            RelSchema::new(vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("val_b", varchar(), Nullability::Nullable),
+            ]),
+        );
+
+        let topo_order = vec!["final_model".to_string()];
+        let mut sql_sources = HashMap::new();
+        sql_sources.insert(
+            "final_model".to_string(),
+            "SELECT a.id, a.val_a, b.val_b FROM source_a a JOIN source_b b ON a.id = b.id"
+                .to_string(),
+        );
+
+        let result =
+            propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
+
+        assert!(result.failures.is_empty());
+        let schema = &result.model_plans["final_model"].inferred_schema;
+        assert_eq!(schema.columns.len(), 3);
+    }
+
+    #[test]
+    fn test_column_narrowing() {
+        // Source has 5 cols, downstream selects 2
+        let mut initial_catalog: SchemaCatalog = HashMap::new();
+        initial_catalog.insert(
+            "wide_source".to_string(),
+            RelSchema::new(vec![
+                make_col("a", int32(), Nullability::NotNull),
+                make_col("b", int32(), Nullability::NotNull),
+                make_col("c", int32(), Nullability::NotNull),
+                make_col("d", int32(), Nullability::NotNull),
+                make_col("e", int32(), Nullability::NotNull),
+            ]),
+        );
+
+        let topo_order = vec!["narrow_model".to_string()];
+        let mut sql_sources = HashMap::new();
+        sql_sources.insert(
+            "narrow_model".to_string(),
+            "SELECT a, c FROM wide_source".to_string(),
+        );
+
+        let result =
+            propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
+
+        assert!(result.failures.is_empty());
+        let schema = &result.model_plans["narrow_model"].inferred_schema;
+        assert_eq!(schema.columns.len(), 2);
+        assert_eq!(schema.columns[0].name, "a");
+        assert_eq!(schema.columns[1].name, "c");
+    }
+
+    #[test]
+    fn test_column_rename_via_alias() {
+        let mut initial_catalog: SchemaCatalog = HashMap::new();
+        initial_catalog.insert(
+            "source".to_string(),
+            RelSchema::new(vec![make_col("old_name", varchar(), Nullability::Nullable)]),
+        );
+
+        let topo_order = vec!["renamed".to_string()];
+        let mut sql_sources = HashMap::new();
+        sql_sources.insert(
+            "renamed".to_string(),
+            "SELECT old_name AS new_name FROM source".to_string(),
+        );
+
+        let result =
+            propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
+
+        assert!(result.failures.is_empty());
+        let schema = &result.model_plans["renamed"].inferred_schema;
+        assert_eq!(schema.columns.len(), 1);
+        assert_eq!(schema.columns[0].name, "new_name");
+    }
+
+    #[test]
+    fn test_deep_chain_propagation() {
+        // a → b → c → d → e (5 models in chain)
+        let mut initial_catalog: SchemaCatalog = HashMap::new();
+        initial_catalog.insert(
+            "raw".to_string(),
+            RelSchema::new(vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("val", varchar(), Nullability::Nullable),
+            ]),
+        );
+
+        let topo_order: Vec<String> = (1..=5).map(|i| format!("model_{}", i)).collect();
+        let mut sql_sources = HashMap::new();
+        sql_sources.insert("model_1".to_string(), "SELECT id, val FROM raw".to_string());
+        for i in 2..=5 {
+            sql_sources.insert(
+                format!("model_{}", i),
+                format!("SELECT id, val FROM model_{}", i - 1),
+            );
+        }
+
+        let result =
+            propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
+
+        assert!(result.failures.is_empty());
+        for i in 1..=5 {
+            let name = format!("model_{}", i);
+            assert!(
+                result.model_plans.contains_key(&name),
+                "Model {} should be planned",
+                name
+            );
+            assert_eq!(result.model_plans[&name].inferred_schema.columns.len(), 2);
+        }
+    }
+
+    #[test]
+    fn test_upstream_failure_isolation() {
+        // bad_model fails, but good_model (independent) should still succeed
+        let mut initial_catalog: SchemaCatalog = HashMap::new();
+        initial_catalog.insert(
+            "source".to_string(),
+            RelSchema::new(vec![make_col("id", int32(), Nullability::NotNull)]),
+        );
+
+        let topo_order = vec!["bad_model".to_string(), "good_model".to_string()];
+        let mut sql_sources = HashMap::new();
+        sql_sources.insert(
+            "bad_model".to_string(),
+            "SELECT * FROM nonexistent".to_string(),
+        );
+        sql_sources.insert(
+            "good_model".to_string(),
+            "SELECT id FROM source".to_string(),
+        );
+
+        let result =
+            propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
+
+        assert!(result.failures.contains_key("bad_model"));
+        assert!(
+            result.model_plans.contains_key("good_model"),
+            "Independent good_model should succeed despite bad_model failure"
+        );
+    }
+
+    #[test]
+    fn test_missing_sql_source_skipped() {
+        // Model in topo_order but no SQL — should be skipped cleanly
+        let initial_catalog: SchemaCatalog = HashMap::new();
+        let topo_order = vec!["missing".to_string()];
+        let sql_sources = HashMap::new(); // empty — no SQL for "missing"
+
+        let result =
+            propagate_schemas(&topo_order, &sql_sources, &HashMap::new(), &initial_catalog);
+
+        // Should not panic, should produce empty results
         assert!(result.model_plans.is_empty());
     }
 }
