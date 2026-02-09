@@ -115,21 +115,9 @@ impl Seed {
         let yaml_path = path.with_extension("yaml");
 
         let config = if yml_path.exists() {
-            match SeedConfig::load(&yml_path) {
-                Ok(c) => Some(c),
-                Err(e) => {
-                    eprintln!("[warn] Failed to parse {}: {}", yml_path.display(), e);
-                    None
-                }
-            }
+            Some(SeedConfig::load(&yml_path)?)
         } else if yaml_path.exists() {
-            match SeedConfig::load(&yaml_path) {
-                Ok(c) => Some(c),
-                Err(e) => {
-                    eprintln!("[warn] Failed to parse {}: {}", yaml_path.display(), e);
-                    None
-                }
-            }
+            Some(SeedConfig::load(&yaml_path)?)
         } else {
             None
         };

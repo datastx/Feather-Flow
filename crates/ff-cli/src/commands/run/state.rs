@@ -131,7 +131,13 @@ pub(crate) fn compute_schema_checksum(
         .get(name)
         .and_then(|c| c.model_schema.as_ref())
         .map(|schema| {
-            let yaml = serde_json::to_string(schema).unwrap_or_default();
+            let yaml = serde_json::to_string(schema).unwrap_or_else(|e| {
+                eprintln!(
+                    "[warn] Failed to serialize schema for model '{}': {}",
+                    name, e
+                );
+                String::new()
+            });
             compute_checksum(&yaml)
         })
 }

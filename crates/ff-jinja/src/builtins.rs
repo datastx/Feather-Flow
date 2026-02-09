@@ -320,8 +320,8 @@ pub fn get_macro_categories() -> Vec<String> {
 /// Returns SQL that generates a series of dates
 pub(crate) fn date_spine(start_date: &str, end_date: &str) -> String {
     // DuckDB-specific syntax for generating date series
-    let escaped_start = start_date.replace('\'', "''");
-    let escaped_end = end_date.replace('\'', "''");
+    let escaped_start = escape_sql_string(start_date);
+    let escaped_end = escape_sql_string(end_date);
     format!(
         "SELECT CAST(unnest AS DATE) AS date_day FROM unnest(generate_series(DATE '{}', DATE '{}', INTERVAL '1 day'))",
         escaped_start, escaped_end
@@ -389,11 +389,10 @@ pub(crate) fn clean_string(column: &str) -> String {
 ///
 /// Usage: `{{ split_part('column_name', '-', 1) }}`
 pub(crate) fn split_part(column: &str, delimiter: &str, part: i64) -> String {
-    let escaped_delim = delimiter.replace('\'', "''");
     format!(
         "SPLIT_PART({}, '{}', {})",
         quote_ident(column),
-        escaped_delim,
+        escape_sql_string(delimiter),
         part
     )
 }

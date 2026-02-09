@@ -1,12 +1,15 @@
 //! Shared utilities for CLI commands
 
+use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use ff_core::config::{IncrementalStrategy, Materialization, OnSchemaChange};
+use ff_core::config::{Config, IncrementalStrategy, Materialization, OnSchemaChange};
 use ff_core::source::build_source_lookup;
 use ff_core::Project;
+use ff_db::{Database, DuckDbBackend};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::sync::Arc;
 
 /// Error type representing a non-zero process exit code.
 ///
@@ -196,4 +199,22 @@ impl fmt::Display for FreshnessStatus {
             FreshnessStatus::RuntimeError => write!(f, "runtime_error"),
         }
     }
+}
+
+/// Create a database connection from a config and optional target override.
+///
+/// Resolves the target via `Config::resolve_target`, gets the database
+/// configuration with `Config::get_database_config`, and creates a
+/// `DuckDbBackend` wrapped in an `Arc<dyn Database>`.
+pub fn create_database_connection(
+    config: &Config,
+    target: Option<&str>,
+) -> Result<Arc<dyn Database>> {
+    let resolved_target = Config::resolve_target(target);
+    let db_config = config
+        .get_database_config(resolved_target.as_deref())
+        .context("Failed to get database configuration")?;
+    let db: Arc<dyn Database> =
+        Arc::new(DuckDbBackend::new(&db_config.path).context("Failed to connect to database")?);
+    Ok(db)
 }

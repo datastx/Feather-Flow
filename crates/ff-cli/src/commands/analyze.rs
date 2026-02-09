@@ -24,7 +24,7 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
     let macro_paths = project.config.macro_paths_absolute(&project.root);
     let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
 
-    let known_models: HashSet<String> = project.models.keys().cloned().collect();
+    let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
 
     // Build schema catalog from YAML definitions
     let mut schema_catalog: SchemaCatalog = HashMap::new();
@@ -60,8 +60,8 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
                 })
                 .collect();
             let rel_schema = RelSchema::new(columns);
-            schema_catalog.insert(name.clone(), rel_schema.clone());
-            yaml_schemas.insert(name.clone(), rel_schema);
+            schema_catalog.insert(name.to_string(), rel_schema.clone());
+            yaml_schemas.insert(name.to_string(), rel_schema);
         }
     }
 
@@ -84,10 +84,10 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
             let deps: Vec<String> = model
                 .depends_on
                 .iter()
-                .filter(|d| known_models.contains(*d))
-                .cloned()
+                .filter(|d| known_models.contains(d.as_str()))
+                .map(|d| d.to_string())
                 .collect();
-            (name.clone(), deps)
+            (name.to_string(), deps)
         })
         .collect();
 
@@ -127,7 +127,7 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
             }
         }
 
-        let model = match project.models.get(name) {
+        let model = match project.models.get(name.as_str()) {
             Some(m) => m,
             None => continue,
         };

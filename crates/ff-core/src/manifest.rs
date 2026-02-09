@@ -22,9 +22,6 @@ pub struct Manifest {
     /// All sources in the project
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub sources: HashMap<String, ManifestSource>,
-
-    /// Total number of models
-    pub model_count: usize,
 }
 
 /// A model entry in the manifest
@@ -140,14 +137,12 @@ impl Manifest {
             compiled_at: chrono_lite_now(),
             models: HashMap::new(),
             sources: HashMap::new(),
-            model_count: 0,
         }
     }
 
     /// Create a new manifest with pre-populated models (for testing)
     #[cfg(test)]
     pub fn new_with_models(project_name: &str, models: Vec<ManifestModel>) -> Self {
-        let model_count = models.len();
         let models_map: HashMap<String, ManifestModel> =
             models.into_iter().map(|m| (m.name.clone(), m)).collect();
         Self {
@@ -155,7 +150,6 @@ impl Manifest {
             compiled_at: chrono_lite_now(),
             models: models_map,
             sources: HashMap::new(),
-            model_count,
         }
     }
 
@@ -297,7 +291,7 @@ impl Manifest {
             materialized,
             schema: model.target_schema(default_schema),
             tags,
-            depends_on: model.depends_on.iter().cloned().collect(),
+            depends_on: model.depends_on.iter().map(|m| m.to_string()).collect(),
             external_deps: model.external_deps.iter().map(|t| t.to_string()).collect(),
             referenced_tables: model.all_dependencies().into_iter().collect(),
             unique_key,
@@ -309,7 +303,6 @@ impl Manifest {
         };
 
         self.models.insert(model.name.to_string(), manifest_model);
-        self.model_count = self.models.len();
     }
 
     /// Save the manifest to a file
@@ -327,8 +320,14 @@ impl Manifest {
 
     /// Load a manifest from a file
     pub fn load(path: &Path) -> crate::error::CoreResult<Self> {
-        let content = std::fs::read_to_string(path)?;
-        Ok(serde_json::from_str(&content)?)
+        let content =
+            std::fs::read_to_string(path).map_err(|e| crate::error::CoreError::IoWithPath {
+                path: path.display().to_string(),
+                source: e,
+            })?;
+        serde_json::from_str(&content).map_err(|e| crate::error::CoreError::ConfigParseError {
+            message: format!("Failed to parse manifest '{}': {}", path.display(), e),
+        })
     }
 
     /// Get a model by name
@@ -347,6 +346,11 @@ impl Manifest {
             .iter()
             .map(|(name, model)| (name.clone(), model.depends_on.clone()))
             .collect()
+    }
+
+    /// Total number of models in the manifest
+    pub fn model_count(&self) -> usize {
+        self.models.len()
     }
 }
 
@@ -371,7 +375,7 @@ mod tests {
             raw_sql: "SELECT 1".to_string(),
             compiled_sql: Some("SELECT 1".to_string()),
             config: Default::default(),
-            depends_on: HashSet::from_iter(vec!["other_model".to_string()]),
+            depends_on: HashSet::from_iter(vec![ModelName::new("other_model")]),
             external_deps: HashSet::new(),
             schema: None,
             base_name: None,
@@ -389,6 +393,6 @@ mod tests {
         let loaded: Manifest = serde_json::from_str(&json).unwrap();
 
         assert_eq!(loaded.project_name, "test_project");
-        assert_eq!(loaded.model_count, 1);
+        assert_eq!(loaded.model_count(), 1);
     }
 }

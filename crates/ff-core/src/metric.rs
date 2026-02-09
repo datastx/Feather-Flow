@@ -76,10 +76,20 @@ pub struct Metric {
     pub path: PathBuf,
 }
 
+/// Kind discriminator for metric files (must be "metric")
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MetricKind {
+    /// The only valid kind value
+    Metric,
+}
+
 /// Raw YAML structure for metric files
 #[derive(Debug, Deserialize)]
 struct MetricFile {
-    kind: String,
+    /// Validated by serde during deserialization to ensure `kind: metric`
+    #[allow(dead_code)]
+    kind: MetricKind,
     name: String,
     #[serde(default)]
     label: Option<String>,
@@ -107,17 +117,6 @@ impl Metric {
             serde_yaml::from_str(content).map_err(|e| CoreError::ConfigParseError {
                 message: format!("{}: {}", path.display(), e),
             })?;
-
-        // Validate kind
-        if raw.kind != "metric" {
-            return Err(CoreError::ConfigInvalid {
-                message: format!(
-                    "{}: Expected kind: metric, got: {}",
-                    path.display(),
-                    raw.kind
-                ),
-            });
-        }
 
         // Validate name
         if raw.name.is_empty() {

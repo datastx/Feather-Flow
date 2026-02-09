@@ -11,19 +11,6 @@ use ff_core::sql_utils::{escape_sql_string, quote_ident, quote_qualified};
 use std::path::Path;
 use std::sync::Mutex;
 
-/// Extension trait for converting `duckdb::Error` into `DbResult`.
-///
-/// Reduces boilerplate when propagating database errors through the crate.
-trait DuckDbResultExt<T> {
-    fn to_db_err(self) -> DbResult<T>;
-}
-
-impl<T> DuckDbResultExt<T> for Result<T, duckdb::Error> {
-    fn to_db_err(self) -> DbResult<T> {
-        self.map_err(|e| DbError::ExecutionError(e.to_string()))
-    }
-}
-
 /// DuckDB database backend
 pub struct DuckDbBackend {
     conn: Mutex<Connection>,
@@ -125,17 +112,16 @@ impl DuckDbBackend {
     /// Execute batch SQL synchronously
     fn execute_batch_sync(&self, sql: &str) -> DbResult<()> {
         let conn = self.lock_conn()?;
-        conn.execute_batch(sql).to_db_err()
+        conn.execute_batch(sql)?;
+        Ok(())
     }
 
     /// Query count synchronously
     fn query_count_sync(&self, sql: &str) -> DbResult<usize> {
         let conn = self.lock_conn()?;
-        let count: i64 = conn
-            .query_row(&format!("SELECT COUNT(*) FROM ({})", sql), [], |row| {
-                row.get(0)
-            })
-            .to_db_err()?;
+        let count: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM ({})", sql), [], |row| {
+            row.get(0)
+        })?;
         Ok(usize::try_from(count).unwrap_or(0))
     }
 
@@ -147,9 +133,7 @@ impl DuckDbBackend {
 
         let sql = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = ? AND table_name = ?";
 
-        let count: i64 = conn
-            .query_row(sql, duckdb::params![schema, table], |row| row.get(0))
-            .to_db_err()?;
+        let count: i64 = conn.query_row(sql, duckdb::params![schema, table], |row| row.get(0))?;
 
         Ok(count > 0)
     }
@@ -177,12 +161,12 @@ impl DatabaseCore for DuckDbBackend {
         let conn = self.lock_conn()?;
         let limited_sql = format!("SELECT * FROM ({}) AS subq LIMIT {}", sql, limit);
 
-        let mut stmt = conn.prepare(&limited_sql).to_db_err()?;
+        let mut stmt = conn.prepare(&limited_sql)?;
         let mut rows: Vec<String> = Vec::new();
-        let mut result_rows = stmt.query([]).to_db_err()?;
+        let mut result_rows = stmt.query([])?;
         let column_count = result_rows.as_ref().map_or(0, |r| r.column_count());
 
-        while let Some(row) = result_rows.next().to_db_err()? {
+        while let Some(row) = result_rows.next()? {
             let mut values: Vec<String> = Vec::new();
             for i in 0..column_count {
                 let str_val: String = row.get::<_, String>(i).unwrap_or_else(|_| {
@@ -205,28 +189,26 @@ impl DatabaseCore for DuckDbBackend {
     async fn query_one(&self, sql: &str) -> DbResult<Option<String>> {
         let conn = self.lock_conn()?;
 
-        let mut stmt = conn.prepare(sql).to_db_err()?;
-        let mut result_rows = stmt.query([]).to_db_err()?;
+        let mut stmt = conn.prepare(sql)?;
+        let mut result_rows = stmt.query([])?;
 
-        let Some(row) = result_rows.next().to_db_err()? else {
+        let Some(row) = result_rows.next()? else {
             return Ok(None);
         };
 
-        let value: String = row.get::<_, String>(0).unwrap_or_else(|_| {
-            row.get::<_, i64>(0)
-                .map(|n| n.to_string())
-                .unwrap_or_else(|_| {
-                    row.get::<_, f64>(0)
-                        .map(|n| n.to_string())
-                        .unwrap_or_else(|_| String::new())
-                })
-        });
-
-        if value.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(value))
+        // Try extracting as String first, then numeric types.
+        // DuckDB returns an error for NULL values, so we treat "all types fail"
+        // as a SQL NULL and return None.
+        if let Ok(s) = row.get::<_, String>(0) {
+            return Ok(Some(s));
         }
+        if let Ok(n) = row.get::<_, i64>(0) {
+            return Ok(Some(n.to_string()));
+        }
+        if let Ok(f) = row.get::<_, f64>(0) {
+            return Ok(Some(f.to_string()));
+        }
+        Ok(None)
     }
 
     fn db_type(&self) -> &'static str {
@@ -290,15 +272,13 @@ impl DatabaseSchema for DuckDbBackend {
         let sql = "SELECT column_name, data_type FROM information_schema.columns \
              WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position";
 
-        let mut stmt = conn.prepare(sql).to_db_err()?;
+        let mut stmt = conn.prepare(sql)?;
         let mut columns: Vec<(String, String)> = Vec::new();
-        let mut rows = stmt
-            .query(duckdb::params![schema, table_name])
-            .to_db_err()?;
+        let mut rows = stmt.query(duckdb::params![schema, table_name])?;
 
-        while let Some(row) = rows.next().to_db_err()? {
-            let column_name: String = row.get(0).to_db_err()?;
-            let column_type: String = row.get(1).to_db_err()?;
+        while let Some(row) = rows.next()? {
+            let column_name: String = row.get(0)?;
+            let column_type: String = row.get(1)?;
             columns.push((column_name, column_type));
         }
 
@@ -309,13 +289,13 @@ impl DatabaseSchema for DuckDbBackend {
         let conn = self.lock_conn()?;
         let describe_sql = format!("DESCRIBE SELECT * FROM ({}) AS subq", sql);
 
-        let mut stmt = conn.prepare(&describe_sql).to_db_err()?;
+        let mut stmt = conn.prepare(&describe_sql)?;
         let mut columns: Vec<(String, String)> = Vec::new();
-        let mut rows = stmt.query([]).to_db_err()?;
+        let mut rows = stmt.query([])?;
 
-        while let Some(row) = rows.next().to_db_err()? {
-            let column_name: String = row.get(0).to_db_err()?;
-            let column_type: String = row.get(1).to_db_err()?;
+        while let Some(row) = rows.next()? {
+            let column_name: String = row.get(0)?;
+            let column_type: String = row.get(1)?;
             columns.push((column_name, column_type));
         }
 
@@ -430,13 +410,13 @@ impl DatabaseCsv for DuckDbBackend {
             path.replace('\'', "''")
         );
 
-        let mut stmt = conn.prepare(&sql).to_db_err()?;
+        let mut stmt = conn.prepare(&sql)?;
         let mut schema: Vec<(String, String)> = Vec::new();
-        let mut rows = stmt.query([]).to_db_err()?;
+        let mut rows = stmt.query([])?;
 
-        while let Some(row) = rows.next().to_db_err()? {
-            let column_name: String = row.get(0).to_db_err()?;
-            let column_type: String = row.get(1).to_db_err()?;
+        while let Some(row) = rows.next()? {
+            let column_name: String = row.get(0)?;
+            let column_type: String = row.get(1)?;
             schema.push((column_name, column_type));
         }
 
@@ -608,10 +588,12 @@ impl DatabaseSnapshot for DuckDbBackend {
         );
 
         let prefixed_cols: Vec<String> = source_cols.iter().map(|c| format!("s.{}", c)).collect();
-        let first_key = unique_keys
-            .first()
-            .map(|k| quote_ident(k))
-            .unwrap_or_else(|| quote_ident("id"));
+        let Some(raw_first_key) = unique_keys.first() else {
+            return Err(DbError::ExecutionError(
+                "Snapshot requires at least one unique_key".to_string(),
+            ));
+        };
+        let first_key = quote_ident(raw_first_key);
 
         let new_records_sql = format!(
             "SELECT s.* FROM {} s \
@@ -756,10 +738,12 @@ impl DatabaseSnapshot for DuckDbBackend {
 
         let join_condition = build_join_condition(unique_keys, "snap", "s");
 
-        let first_key = unique_keys
-            .first()
-            .map(|k| quote_ident(k))
-            .unwrap_or_else(|| quote_ident("id"));
+        let Some(raw_first_key) = unique_keys.first() else {
+            return Err(DbError::ExecutionError(
+                "Snapshot requires at least one unique_key".to_string(),
+            ));
+        };
+        let first_key = quote_ident(raw_first_key);
 
         let deleted_records_sql = format!(
             "SELECT snap.* FROM {} snap \

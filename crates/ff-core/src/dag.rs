@@ -1,6 +1,7 @@
 //! DAG building and topological sorting
 
 use crate::error::{CoreError, CoreResult};
+use crate::model_name::ModelName;
 use petgraph::algo::toposort;
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
@@ -10,10 +11,10 @@ use std::collections::HashMap;
 #[derive(Debug)]
 pub struct ModelDag {
     /// The underlying graph
-    graph: DiGraph<String, ()>,
+    graph: DiGraph<ModelName, ()>,
 
     /// Map from model name to node index
-    node_map: HashMap<String, NodeIndex>,
+    node_map: HashMap<ModelName, NodeIndex>,
 }
 
 impl ModelDag {
@@ -30,8 +31,9 @@ impl ModelDag {
         if let Some(&idx) = self.node_map.get(name) {
             idx
         } else {
-            let idx = self.graph.add_node(name.to_string());
-            self.node_map.insert(name.to_string(), idx);
+            let model_name = ModelName::new(name);
+            let idx = self.graph.add_node(model_name.clone());
+            self.node_map.insert(model_name, idx);
             idx
         }
     }
@@ -84,14 +86,14 @@ impl ModelDag {
 
     /// Find a cycle path starting from a node for error reporting
     fn find_cycle_path(&self, start: NodeIndex) -> String {
-        let mut path = vec![self.graph[start].clone()];
+        let mut path: Vec<String> = vec![self.graph[start].to_string()];
         let mut current = start;
         let mut visited = std::collections::HashSet::new();
         visited.insert(current);
 
         while let Some(edge) = self.graph.edges(current).next() {
             let target = edge.target();
-            path.push(self.graph[target].clone());
+            path.push(self.graph[target].to_string());
 
             if target == start || visited.contains(&target) {
                 break;
@@ -109,7 +111,7 @@ impl ModelDag {
         match toposort(&self.graph, None) {
             Ok(indices) => Ok(indices
                 .into_iter()
-                .map(|idx| self.graph[idx].clone())
+                .map(|idx| self.graph[idx].to_string())
                 .collect()),
             Err(cycle) => {
                 let cycle_str = self.find_cycle_path(cycle.node_id());
@@ -131,7 +133,7 @@ impl ModelDag {
             // Get incoming edges (dependencies point to us)
             self.graph
                 .edges_directed(idx, petgraph::Direction::Incoming)
-                .map(|e| self.graph[e.source()].clone())
+                .map(|e| self.graph[e.source()].to_string())
                 .collect()
         } else {
             Vec::new()
@@ -144,7 +146,7 @@ impl ModelDag {
             // Get outgoing edges (we point to dependents)
             self.graph
                 .edges_directed(idx, petgraph::Direction::Outgoing)
-                .map(|e| self.graph[e.target()].clone())
+                .map(|e| self.graph[e.target()].to_string())
                 .collect()
         } else {
             Vec::new()
@@ -176,7 +178,7 @@ impl ModelDag {
             let source = edge.source();
             if !visited.contains(&source) {
                 visited.insert(source);
-                result.push(self.graph[source].clone());
+                result.push(self.graph[source].to_string());
                 self.collect_ancestors(source, result, visited);
             }
         }
@@ -207,7 +209,7 @@ impl ModelDag {
             let target = edge.target();
             if !visited.contains(&target) {
                 visited.insert(target);
-                result.push(self.graph[target].clone());
+                result.push(self.graph[target].to_string());
                 self.collect_descendants(target, result, visited);
             }
         }
@@ -258,7 +260,7 @@ impl ModelDag {
     }
 
     /// Get all model names in the DAG
-    pub fn models(&self) -> Vec<String> {
+    pub fn models(&self) -> Vec<ModelName> {
         self.node_map.keys().cloned().collect()
     }
 

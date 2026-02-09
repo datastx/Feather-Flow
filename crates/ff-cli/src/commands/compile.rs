@@ -94,7 +94,7 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
 
     let model_names = filter_models(&project, &args.models);
     let external_tables = common::build_external_tables_lookup(&project);
-    let known_models: HashSet<String> = project.models.keys().cloned().collect();
+    let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
 
     if !json_mode {
         if args.parse_only {
@@ -227,7 +227,7 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
                         compiled.name
                     );
                 }
-                inline_ephemeral_ctes(&compiled.sql, &ephemeral_deps, &order)
+                inline_ephemeral_ctes(&compiled.sql, &ephemeral_deps, &order)?
             } else {
                 compiled.sql.clone()
             }
@@ -416,7 +416,10 @@ fn compile_model_phase1(
     }
 
     model.compiled_sql = Some(rendered.clone());
-    model.depends_on = model_deps.iter().cloned().collect();
+    model.depends_on = model_deps
+        .iter()
+        .map(|s| ff_core::ModelName::new(s.clone()))
+        .collect();
     model.external_deps = ext_deps
         .iter()
         .map(|s| ff_core::TableName::new(s.clone()))

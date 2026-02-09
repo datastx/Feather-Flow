@@ -18,38 +18,139 @@ pub enum LiteralValue {
     String(String),
 }
 
-/// Binary operator (stored as string to avoid serde dependency on sqlparser)
+/// Binary operator enum with variants for common SQL operators
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BinOp(pub String);
+pub enum BinOp {
+    /// Equality (=)
+    Eq,
+    /// Inequality (<> or !=)
+    NotEq,
+    /// Less than (<)
+    Lt,
+    /// Less than or equal (<=)
+    LtEq,
+    /// Greater than (>)
+    Gt,
+    /// Greater than or equal (>=)
+    GtEq,
+    /// Logical AND
+    And,
+    /// Logical OR
+    Or,
+    /// Addition (+)
+    Plus,
+    /// Subtraction (-)
+    Minus,
+    /// Multiplication (*)
+    Multiply,
+    /// Division (/)
+    Divide,
+    /// Modulo (%)
+    Modulo,
+    /// String concatenation (||)
+    StringConcat,
+    /// Fallback for operators not explicitly listed
+    Other(String),
+}
 
 impl BinOp {
+    /// Convert from a sqlparser BinaryOperator
     pub fn from_sqlparser(op: &sqlparser::ast::BinaryOperator) -> Self {
-        Self(format!("{op}"))
+        use sqlparser::ast::BinaryOperator as BO;
+        match op {
+            BO::Eq => BinOp::Eq,
+            BO::NotEq => BinOp::NotEq,
+            BO::Lt => BinOp::Lt,
+            BO::LtEq => BinOp::LtEq,
+            BO::Gt => BinOp::Gt,
+            BO::GtEq => BinOp::GtEq,
+            BO::And => BinOp::And,
+            BO::Or => BinOp::Or,
+            BO::Plus => BinOp::Plus,
+            BO::Minus => BinOp::Minus,
+            BO::Multiply => BinOp::Multiply,
+            BO::Divide => BinOp::Divide,
+            BO::Modulo => BinOp::Modulo,
+            BO::StringConcat => BinOp::StringConcat,
+            other => BinOp::Other(format!("{other}")),
+        }
     }
 
     /// Check if this is an equality operator
     pub fn is_eq(&self) -> bool {
-        self.0 == "="
+        matches!(self, BinOp::Eq)
     }
 
     /// Check if this is a comparison operator
     pub fn is_comparison(&self) -> bool {
-        matches!(self.0.as_str(), "=" | "<>" | "!=" | "<" | "<=" | ">" | ">=")
+        matches!(
+            self,
+            BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::LtEq | BinOp::Gt | BinOp::GtEq
+        )
     }
 
     /// Check if this is a logical operator
     pub fn is_logical(&self) -> bool {
-        matches!(self.0.as_str(), "AND" | "OR" | "XOR")
+        matches!(self, BinOp::And | BinOp::Or)
     }
 }
 
-/// Unary operator (stored as string to avoid serde dependency on sqlparser)
+impl std::fmt::Display for BinOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BinOp::Eq => write!(f, "="),
+            BinOp::NotEq => write!(f, "<>"),
+            BinOp::Lt => write!(f, "<"),
+            BinOp::LtEq => write!(f, "<="),
+            BinOp::Gt => write!(f, ">"),
+            BinOp::GtEq => write!(f, ">="),
+            BinOp::And => write!(f, "AND"),
+            BinOp::Or => write!(f, "OR"),
+            BinOp::Plus => write!(f, "+"),
+            BinOp::Minus => write!(f, "-"),
+            BinOp::Multiply => write!(f, "*"),
+            BinOp::Divide => write!(f, "/"),
+            BinOp::Modulo => write!(f, "%"),
+            BinOp::StringConcat => write!(f, "||"),
+            BinOp::Other(s) => write!(f, "{s}"),
+        }
+    }
+}
+
+/// Unary operator enum with variants for common SQL unary operators
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UnOp(pub String);
+pub enum UnOp {
+    /// Logical NOT
+    Not,
+    /// Unary minus (negation)
+    Minus,
+    /// Unary plus
+    Plus,
+    /// Fallback for operators not explicitly listed
+    Other(String),
+}
 
 impl UnOp {
+    /// Convert from a sqlparser UnaryOperator
     pub fn from_sqlparser(op: &sqlparser::ast::UnaryOperator) -> Self {
-        Self(format!("{op}"))
+        use sqlparser::ast::UnaryOperator as UO;
+        match op {
+            UO::Not => UnOp::Not,
+            UO::Minus => UnOp::Minus,
+            UO::Plus => UnOp::Plus,
+            other => UnOp::Other(format!("{other}")),
+        }
+    }
+}
+
+impl std::fmt::Display for UnOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UnOp::Not => write!(f, "NOT"),
+            UnOp::Minus => write!(f, "-"),
+            UnOp::Plus => write!(f, "+"),
+            UnOp::Other(s) => write!(f, "{s}"),
+        }
     }
 }
 

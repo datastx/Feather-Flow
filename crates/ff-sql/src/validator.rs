@@ -57,9 +57,7 @@ pub fn validate_no_ctes(statements: &[Statement]) -> SqlResult<()> {
                     .iter()
                     .map(|c| c.alias.name.value.clone())
                     .collect();
-                return Err(SqlError::CteNotAllowed {
-                    cte_names: cte_names.join(", "),
-                });
+                return Err(SqlError::CteNotAllowed { cte_names });
             }
         }
     }
@@ -170,7 +168,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            matches!(err, SqlError::CteNotAllowed { ref cte_names } if cte_names == "staged"),
+            matches!(err, SqlError::CteNotAllowed { ref cte_names } if cte_names == &["staged"]),
             "Expected CteNotAllowed, got: {:?}",
             err
         );
@@ -184,7 +182,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            matches!(err, SqlError::CteNotAllowed { ref cte_names } if cte_names.contains("a") && cte_names.contains("b")),
+            matches!(err, SqlError::CteNotAllowed { ref cte_names } if cte_names.contains(&"a".to_string()) && cte_names.contains(&"b".to_string())),
         );
     }
 

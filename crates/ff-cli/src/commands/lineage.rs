@@ -20,7 +20,7 @@ pub async fn execute(args: &LineageArgs, global: &GlobalArgs) -> Result<()> {
     let macro_paths = project.config.macro_paths_absolute(&project.root);
     let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
 
-    let known_models: HashSet<String> = project.models.keys().cloned().collect();
+    let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
 
     // Build external tables lookup for categorization
     let mut external_tables: HashSet<String> =

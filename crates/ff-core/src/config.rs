@@ -285,7 +285,10 @@ impl Config {
             });
         }
 
-        let content = std::fs::read_to_string(path)?;
+        let content = std::fs::read_to_string(path).map_err(|e| CoreError::IoWithPath {
+            path: path.display().to_string(),
+            source: e,
+        })?;
         let config: Config = serde_yaml::from_str(&content)?;
         config.validate()?;
         Ok(config)

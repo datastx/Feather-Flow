@@ -4,7 +4,6 @@
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use ff_core::config::Config;
 use ff_core::Project;
 use ff_db::{quote_ident, quote_qualified, Database, DuckDbBackend};
 use serde::Serialize;
@@ -13,6 +12,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::cli::{DiffArgs, GlobalArgs, OutputFormat};
+use crate::commands::common;
 
 /// Difference summary for JSON output
 #[derive(Debug, Serialize)]
@@ -64,19 +64,8 @@ pub async fn execute(args: &DiffArgs, global: &GlobalArgs) -> Result<()> {
         eprintln!("[verbose] Compare database: {}", args.compare_to);
     }
 
-    // Resolve target from CLI flag or FF_TARGET env var
-    let target = Config::resolve_target(global.target.as_deref());
-
-    // Get current database config
-    let db_config = project
-        .config
-        .get_database_config(target.as_deref())
-        .context("Failed to get database configuration")?;
-
     // Connect to current database
-    let current_db: Arc<dyn Database> = Arc::new(
-        DuckDbBackend::new(&db_config.path).context("Failed to connect to current database")?,
-    );
+    let current_db = common::create_database_connection(&project.config, global.target.as_deref())?;
 
     // Connect to comparison database
     let compare_db: Arc<dyn Database> = Arc::new(
@@ -119,7 +108,7 @@ pub async fn execute(args: &DiffArgs, global: &GlobalArgs) -> Result<()> {
                 let summary = DiffSummary {
                     timestamp: Utc::now(),
                     model: args.model.clone(),
-                    current_db: db_config.path.clone(),
+                    current_db: "current".to_string(),
                     compare_db: args.compare_to.clone(),
                     current_row_count: 0,
                     compare_row_count: 0,

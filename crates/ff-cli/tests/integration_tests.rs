@@ -688,7 +688,7 @@ fn test_docs_dependencies() {
     let mut deps: HashMap<String, Vec<String>> = HashMap::new();
     for name in project.models.keys() {
         // For this test, just verify we can iterate models
-        deps.insert(name.clone(), vec![]);
+        deps.insert(name.to_string(), vec![]);
     }
 
     let dag = ModelDag::build(&deps);
@@ -1489,8 +1489,6 @@ fn test_load_deferred_manifest() {
             wap: None,
         },
     );
-    manifest.model_count = 1;
-
     // Save manifest
     manifest.save(&manifest_path).unwrap();
     assert!(manifest_path.exists());
@@ -1802,7 +1800,7 @@ fn test_ephemeral_model_inlining() {
     // Inline ephemeral CTEs into fct_orders SQL
     let fct_orders_sql =
         "SELECT id, customer_id, SUM(amount) as total FROM stg_orders GROUP BY 1, 2";
-    let inlined = inline_ephemeral_ctes(fct_orders_sql, &collected_ephemeral, &order);
+    let inlined = inline_ephemeral_ctes(fct_orders_sql, &collected_ephemeral, &order).unwrap();
 
     // Verify the inlined SQL has CTEs
     assert!(inlined.starts_with("WITH"), "Should start with WITH clause");
@@ -1850,7 +1848,7 @@ fn test_ephemeral_inlining_with_existing_cte() {
     );
 
     let order = vec!["stg_orders".to_string()];
-    let inlined = inline_ephemeral_ctes(original_sql, &ephemeral_sql, &order);
+    let inlined = inline_ephemeral_ctes(original_sql, &ephemeral_sql, &order).unwrap();
 
     // Should merge CTEs properly
     assert!(inlined.starts_with("WITH"), "Should start with WITH");
@@ -1931,7 +1929,8 @@ fn test_analysis_pass_manager_sample_project() {
     let parser = SqlParser::duckdb();
     let jinja = JinjaEnvironment::new(&project.config.vars);
 
-    let known_models: std::collections::HashSet<String> = project.models.keys().cloned().collect();
+    let known_models: std::collections::HashSet<String> =
+        project.models.keys().map(|k| k.to_string()).collect();
 
     let mut catalog: SchemaCatalog = HashMap::new();
     let mut yaml_schemas: HashMap<String, RelSchema> = HashMap::new();
@@ -1960,8 +1959,8 @@ fn test_analysis_pass_manager_sample_project() {
                 })
                 .collect();
             let rel_schema = RelSchema::new(columns);
-            catalog.insert(name.clone(), rel_schema.clone());
-            yaml_schemas.insert(name.clone(), rel_schema);
+            catalog.insert(name.to_string(), rel_schema.clone());
+            yaml_schemas.insert(name.to_string(), rel_schema);
         }
     }
 
@@ -1973,10 +1972,10 @@ fn test_analysis_pass_manager_sample_project() {
             let deps: Vec<String> = model
                 .depends_on
                 .iter()
-                .filter(|d| known_models.contains(*d))
-                .cloned()
+                .filter(|d| known_models.contains(d.as_str()))
+                .map(|d| d.to_string())
                 .collect();
-            (name.clone(), deps)
+            (name.to_string(), deps)
         })
         .collect();
 
@@ -1985,7 +1984,7 @@ fn test_analysis_pass_manager_sample_project() {
 
     // Lower models in topological order
     for name in &topo_order {
-        let model = project.models.get(name).unwrap();
+        let model = project.models.get(name.as_str()).unwrap();
         let rendered = jinja.render(&model.raw_sql).unwrap();
         let stmts = parser.parse(&rendered).unwrap();
         if let Some(stmt) = stmts.first() {
@@ -1993,8 +1992,8 @@ fn test_analysis_pass_manager_sample_project() {
                 project_lineage.add_model_lineage(lineage);
             }
             if let Ok(ir) = lower_statement(stmt, &catalog) {
-                catalog.insert(name.clone(), ir.schema().clone());
-                model_irs.insert(name.clone(), ir);
+                catalog.insert(name.to_string(), ir.schema().clone());
+                model_irs.insert(name.to_string(), ir);
             }
         }
     }
@@ -2047,7 +2046,8 @@ fn test_analysis_pass_filter() {
     let mut catalog: SchemaCatalog = HashMap::new();
     let mut model_irs: HashMap<String, RelOp> = HashMap::new();
 
-    let known_models: std::collections::HashSet<String> = project.models.keys().cloned().collect();
+    let known_models: std::collections::HashSet<String> =
+        project.models.keys().map(|k| k.to_string()).collect();
 
     let dep_map: HashMap<String, Vec<String>> = project
         .models
@@ -2056,10 +2056,10 @@ fn test_analysis_pass_filter() {
             let deps: Vec<String> = model
                 .depends_on
                 .iter()
-                .filter(|d| known_models.contains(*d))
-                .cloned()
+                .filter(|d| known_models.contains(d.as_str()))
+                .map(|d| d.to_string())
                 .collect();
-            (name.clone(), deps)
+            (name.to_string(), deps)
         })
         .collect();
 
@@ -2067,13 +2067,13 @@ fn test_analysis_pass_filter() {
     let topo_order = dag.topological_order().unwrap();
 
     for name in &topo_order {
-        let model = project.models.get(name).unwrap();
+        let model = project.models.get(name.as_str()).unwrap();
         let rendered = jinja.render(&model.raw_sql).unwrap();
         let stmts = parser.parse(&rendered).unwrap();
         if let Some(stmt) = stmts.first() {
             if let Ok(ir) = lower_statement(stmt, &catalog) {
-                catalog.insert(name.clone(), ir.schema().clone());
-                model_irs.insert(name.clone(), ir);
+                catalog.insert(name.to_string(), ir.schema().clone());
+                model_irs.insert(name.to_string(), ir);
             }
         }
     }

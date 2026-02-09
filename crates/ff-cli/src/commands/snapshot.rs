@@ -3,14 +3,14 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use ff_core::{discover_snapshots, Project, Snapshot, SnapshotStrategy};
-use ff_db::{Database, DuckDbBackend, SnapshotResult};
+use ff_db::{Database, SnapshotResult};
 use serde::Serialize;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
 use crate::cli::{GlobalArgs, SnapshotArgs};
-use crate::commands::common::RunStatus;
+use crate::commands::common::{self, RunStatus};
 
 /// Snapshot run result for a single snapshot
 #[derive(Debug, Clone, Serialize)]
@@ -80,7 +80,7 @@ pub async fn execute(args: &SnapshotArgs, global: &GlobalArgs) -> Result<()> {
     }
 
     // Create database connection
-    let db = create_database_connection(&project, global)?;
+    let db = common::create_database_connection(&project.config, global.target.as_deref())?;
 
     println!("Running {} snapshots...\n", snapshots_to_run.len());
 
@@ -170,32 +170,6 @@ pub async fn execute(args: &SnapshotArgs, global: &GlobalArgs) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Create database connection from project config, resolving target overrides
-///
-/// Uses the same `Config::resolve_target()` → `get_database_config()` pattern
-/// as the test, seed, and freshness commands for consistent `--target` handling.
-fn create_database_connection(project: &Project, global: &GlobalArgs) -> Result<Arc<dyn Database>> {
-    use ff_core::config::Config;
-    let target = Config::resolve_target(global.target.as_deref());
-    let db_config = project
-        .config
-        .get_database_config(target.as_deref())
-        .context("Failed to get database configuration")?;
-
-    if global.verbose {
-        if let Some(ref target_name) = target {
-            eprintln!(
-                "[verbose] Using target '{}' with database: {}",
-                target_name, db_config.path
-            );
-        }
-    }
-
-    let db: Arc<dyn Database> =
-        Arc::new(DuckDbBackend::new(&db_config.path).context("Failed to connect to database")?);
-    Ok(db)
 }
 
 /// Execute a single snapshot

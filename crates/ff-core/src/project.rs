@@ -5,6 +5,7 @@ use crate::error::{CoreError, CoreResult};
 use crate::exposure::{discover_exposures, Exposure};
 use crate::metric::{discover_metrics, Metric};
 use crate::model::{Model, SchemaTest, SingularTest};
+use crate::model_name::ModelName;
 use crate::source::{discover_sources, SourceFile};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -19,7 +20,7 @@ pub struct Project {
     pub config: Config,
 
     /// Models discovered in the project
-    pub models: HashMap<String, Model>,
+    pub models: HashMap<ModelName, Model>,
 
     /// Schema tests from schema.yml files
     pub tests: Vec<SchemaTest>,
@@ -65,7 +66,7 @@ impl Project {
 
         // Discover source definitions
         let source_paths = config.source_paths_absolute(&root);
-        let sources = discover_sources(&root, &source_paths).unwrap_or_default();
+        let sources = discover_sources(&source_paths).unwrap_or_default();
 
         // Collect tests from 1:1 schema files loaded with each model
         let mut tests = Vec::new();
@@ -100,7 +101,7 @@ impl Project {
     ///
     /// Each model lives in `models/<model_name>/<model_name>.sql + .yml`.
     /// Loose SQL files at the root of a model_path are rejected.
-    fn discover_models(root: &Path, config: &Config) -> CoreResult<HashMap<String, Model>> {
+    fn discover_models(root: &Path, config: &Config) -> CoreResult<HashMap<ModelName, Model>> {
         let mut models = HashMap::new();
 
         for model_path in config.model_paths_absolute(root) {
@@ -118,7 +119,7 @@ impl Project {
     ///
     /// Direct children of the models root MUST be directories. Each directory
     /// must contain exactly one `.sql` file whose stem matches the directory name.
-    fn discover_models_flat(dir: &Path, models: &mut HashMap<String, Model>) -> CoreResult<()> {
+    fn discover_models_flat(dir: &Path, models: &mut HashMap<ModelName, Model>) -> CoreResult<()> {
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
@@ -218,7 +219,7 @@ impl Project {
                     });
                 }
 
-                models.insert(model.name.to_string(), model);
+                models.insert(model.name.clone(), model);
             } else if path.extension().is_some_and(|e| e == "sql") {
                 return Err(CoreError::InvalidModelDirectory {
                     path: path.display().to_string(),

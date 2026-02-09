@@ -109,7 +109,7 @@ fn analyze_join_condition(model: &str, expr: &TypedExpr, diags: &mut Vec<Diagnos
             diags.push(Diagnostic {
                 code: DiagnosticCode::A033,
                 severity: Severity::Info,
-                message: format!("Non-equi join condition detected (operator: {})", op.0),
+                message: format!("Non-equi join condition detected (operator: {})", op),
                 model: model.to_string(),
                 column: None,
                 hint: Some("Non-equi joins may have performance implications".to_string()),
@@ -252,7 +252,7 @@ mod tests {
                     resolved_type: SqlType::Integer { bits: 32 },
                     nullability: Nullability::NotNull,
                 }),
-                op: BinOp("=".to_string()),
+                op: BinOp::Eq,
                 right: Box::new(TypedExpr::ColumnRef {
                     table: Some("c".to_string()),
                     column: "order_id".to_string(),
@@ -354,7 +354,7 @@ mod tests {
                     resolved_type: SqlType::Integer { bits: 32 },
                     nullability: Nullability::NotNull,
                 }),
-                op: BinOp(">".to_string()),
+                op: BinOp::Gt,
                 right: Box::new(TypedExpr::ColumnRef {
                     table: Some("b".to_string()),
                     column: "val".to_string(),
@@ -408,7 +408,7 @@ mod tests {
                     resolved_type: SqlType::Integer { bits: 32 },
                     nullability: Nullability::NotNull,
                 }),
-                op: BinOp("=".to_string()),
+                op: BinOp::Eq,
                 right: Box::new(TypedExpr::ColumnRef {
                     table: Some("b".to_string()),
                     column: "id".to_string(),

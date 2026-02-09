@@ -74,8 +74,9 @@ async fn run_single_model(
         );
 
     let result = if is_wap {
-        // Safety: is_wap is only true when wap_schema.is_some() (checked above)
-        let ws = wap_schema.expect("guarded by is_wap check which requires wap_schema.is_some()");
+        let Some(ws) = wap_schema else {
+            unreachable!("is_wap is only true when wap_schema.is_some()")
+        };
         execute_wap(
             db,
             name,
@@ -522,20 +523,7 @@ async fn execute_models_parallel(
                 continue;
             }
             // Clone fields needed inside the spawned task
-            let compiled_owned = CompiledModel {
-                sql: compiled.sql.clone(),
-                query_comment: compiled.query_comment.clone(),
-                materialization: compiled.materialization,
-                schema: compiled.schema.clone(),
-                dependencies: compiled.dependencies.clone(),
-                unique_key: compiled.unique_key.clone(),
-                incremental_strategy: compiled.incremental_strategy,
-                on_schema_change: compiled.on_schema_change,
-                pre_hook: compiled.pre_hook.clone(),
-                post_hook: compiled.post_hook.clone(),
-                model_schema: compiled.model_schema.clone(),
-                wap: compiled.wap,
-            };
+            let compiled_owned = compiled.clone();
             let full_refresh = args.full_refresh;
             let fail_fast = args.fail_fast;
             let wap_schema_owned = wap_schema.map(String::from);

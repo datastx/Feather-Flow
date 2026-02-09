@@ -273,7 +273,7 @@ pub(crate) fn build_model_doc(model: &Model) -> ModelDoc {
     });
 
     // Get dependencies
-    let depends_on: Vec<String> = model.depends_on.iter().cloned().collect();
+    let depends_on: Vec<String> = model.depends_on.iter().map(|m| m.to_string()).collect();
     let external_deps: Vec<String> = model.external_deps.iter().map(|t| t.to_string()).collect();
 
     // Extract column lineage from SQL

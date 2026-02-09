@@ -1,7 +1,7 @@
 //! Test SQL generation
 
 use ff_core::model::{SchemaTest, TestType};
-use ff_core::sql_utils::{quote_ident, quote_qualified};
+use ff_core::sql_utils::{escape_sql_string, quote_ident, quote_qualified};
 
 /// Generate SQL for a unique test
 ///
@@ -57,10 +57,10 @@ pub fn generate_accepted_values_test(
     let formatted_values: Vec<String> = if quote {
         values
             .iter()
-            .map(|v| format!("'{}'", v.replace('\'', "''")))
+            .map(|v| format!("'{}'", escape_sql_string(v)))
             .collect()
     } else {
-        values.to_vec()
+        values.iter().map(|v| escape_sql_string(v)).collect()
     };
     let values_list = formatted_values.join(", ");
     let qt = quote_qualified(table);
@@ -167,11 +167,14 @@ fn generate_sql_for_test_type(
         }
         TestType::Custom { name, kwargs: _ } => {
             // Custom tests require the Jinja environment to render.
-            // Return a placeholder that can be replaced by actual SQL
-            // when the test command is executed with full context.
+            // Return SQL that fails with a descriptive message so users
+            // know the custom test macro was not resolved.
             format!(
-                "-- Custom test '{}' for {}.{} requires Jinja environment",
-                name, table, column
+                "SELECT '{}' AS unresolved_custom_test",
+                escape_sql_string(&format!(
+                    "Custom test '{}' for {}.{} was not resolved — ensure the test macro is registered",
+                    name, table, column
+                ))
             )
         }
     }

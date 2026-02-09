@@ -26,7 +26,7 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
 
     // Collect known models and external tables
     let external_tables: HashSet<String> = project.config.external_tables.iter().cloned().collect();
-    let known_models: HashSet<String> = project.models.keys().cloned().collect();
+    let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
 
     // Compile all models to get dependencies and config
     let mut model_info: Vec<ModelInfo> = Vec::new();
@@ -197,7 +197,7 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
             &affected_exposures,
             args.downstream_exposures,
         )?,
-        LsOutput::Tree => print_tree(&filtered_info, &dag)?,
+        LsOutput::Tree => print_tree(&filtered_info)?,
         LsOutput::Path => print_paths(&filtered_info),
     }
 
@@ -402,7 +402,7 @@ struct ExposureInfo {
 }
 
 /// Print models in tree format
-fn print_tree(models: &[&ModelInfo], _dag: &ModelDag) -> Result<()> {
+fn print_tree(models: &[&ModelInfo]) -> Result<()> {
     // Find root nodes (no dependencies)
     let model_names: HashSet<_> = models.iter().map(|m| &m.name).collect();
     let roots: Vec<_> = models
@@ -416,20 +416,14 @@ fn print_tree(models: &[&ModelInfo], _dag: &ModelDag) -> Result<()> {
     println!();
 
     for root in roots {
-        print_tree_node(root.name.as_str(), models, &model_names, "", true);
+        print_tree_node(root.name.as_str(), models, "", true);
     }
 
     Ok(())
 }
 
 /// Recursively print a tree node
-fn print_tree_node(
-    name: &str,
-    models: &[&ModelInfo],
-    _all_names: &HashSet<&String>, // reserved for future use (filtering visible nodes)
-    prefix: &str,
-    is_last: bool,
-) {
+fn print_tree_node(name: &str, models: &[&ModelInfo], prefix: &str, is_last: bool) {
     let connector = if is_last { "└── " } else { "├── " };
     println!("{}{}{}", prefix, connector, name);
 
@@ -443,13 +437,7 @@ fn print_tree_node(
 
     for (i, dependent) in dependents.iter().enumerate() {
         let is_last_child = i == dependents.len() - 1;
-        print_tree_node(
-            &dependent.name,
-            models,
-            _all_names,
-            &new_prefix,
-            is_last_child,
-        );
+        print_tree_node(&dependent.name, models, &new_prefix, is_last_child);
     }
 }
 
