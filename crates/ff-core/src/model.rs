@@ -781,12 +781,13 @@ impl Model {
         }
 
         // Then check schema YAML config
-        if let Some(schema) = &self.schema {
-            if let Some(config) = &schema.config {
-                if let Some(s) = &config.schema {
-                    return Some(s.clone());
-                }
-            }
+        if let Some(s) = self
+            .schema
+            .as_ref()
+            .and_then(|s| s.config.as_ref())
+            .and_then(|c| c.schema.as_ref())
+        {
+            return Some(s.clone());
         }
 
         // Finally use project default

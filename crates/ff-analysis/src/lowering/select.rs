@@ -77,6 +77,7 @@ pub fn lower_select(select: &Select, catalog: &SchemaCatalog) -> AnalysisResult<
                 {
                     out_cols.push(TypedColumn {
                         name: column.clone(),
+                        source_table: None,
                         sql_type: resolved_type.clone(),
                         nullability: *nullability,
                         provenance: vec![],
@@ -86,6 +87,7 @@ pub fn lower_select(select: &Select, catalog: &SchemaCatalog) -> AnalysisResult<
             for (name, agg_expr) in &agg_items {
                 out_cols.push(TypedColumn {
                     name: name.clone(),
+                    source_table: None,
                     sql_type: agg_expr.resolved_type().clone(),
                     nullability: agg_expr.nullability(),
                     provenance: vec![],
@@ -201,6 +203,10 @@ pub(crate) fn lower_table_factor(
 
             let alias_name = alias.as_ref().map(|a| a.name.value.clone());
 
+            // Tag all columns with their source table (alias takes precedence)
+            let source_label = alias_name.as_deref().unwrap_or(&table_name);
+            let schema = schema.with_source_table(source_label);
+
             Ok(RelOp::Scan {
                 table_name,
                 alias: alias_name,
@@ -267,6 +273,7 @@ fn lower_projection(
                 let name = infer_column_name(expr);
                 out_cols.push(TypedColumn {
                     name: name.clone(),
+                    source_table: None,
                     sql_type: typed.resolved_type().clone(),
                     nullability: typed.nullability(),
                     provenance: vec![],
@@ -278,6 +285,7 @@ fn lower_projection(
                 let name = alias.value.clone();
                 out_cols.push(TypedColumn {
                     name: name.clone(),
+                    source_table: None,
                     sql_type: typed.resolved_type().clone(),
                     nullability: typed.nullability(),
                     provenance: vec![],
@@ -299,16 +307,28 @@ fn lower_projection(
             }
             SelectItem::QualifiedWildcard(name, _) => {
                 let table_name = name.to_string();
-                // Expand table.* — include all columns (since we don't track per-table in schema)
+                let lower_table = table_name.to_lowercase();
+                // Expand table.* — filter by source_table when available
                 for col in &input_schema.columns {
-                    let typed = TypedExpr::ColumnRef {
-                        table: Some(table_name.clone()),
-                        column: col.name.clone(),
-                        resolved_type: col.sql_type.clone(),
-                        nullability: col.nullability,
-                    };
-                    out_cols.push(col.clone());
-                    columns.push((col.name.clone(), typed));
+                    let belongs = col
+                        .source_table
+                        .as_ref()
+                        .is_some_and(|t| t.to_lowercase() == lower_table);
+                    // If no columns have source_table set, fall back to including all
+                    let any_tagged = input_schema
+                        .columns
+                        .iter()
+                        .any(|c| c.source_table.is_some());
+                    if !any_tagged || belongs {
+                        let typed = TypedExpr::ColumnRef {
+                            table: Some(table_name.clone()),
+                            column: col.name.clone(),
+                            resolved_type: col.sql_type.clone(),
+                            nullability: col.nullability,
+                        };
+                        out_cols.push(col.clone());
+                        columns.push((col.name.clone(), typed));
+                    }
                 }
             }
         }

@@ -1,19 +1,15 @@
 //! Test SQL generation
 
 use ff_core::model::{SchemaTest, TestType};
+use ff_core::sql_utils::{quote_ident, quote_qualified};
 
 /// Generate SQL for a unique test
 ///
 /// Returns rows that violate the unique constraint (duplicates).
 pub fn generate_unique_test(table: &str, column: &str) -> String {
-    format!(
-        r#"SELECT {column}, COUNT(*) as cnt
-FROM {table}
-GROUP BY {column}
-HAVING COUNT(*) > 1"#,
-        table = table,
-        column = column
-    )
+    let qt = quote_qualified(table);
+    let qc = quote_ident(column);
+    format!("SELECT {qc}, COUNT(*) as cnt\nFROM {qt}\nGROUP BY {qc}\nHAVING COUNT(*) > 1")
 }
 
 /// Generate SQL for a not_null test
@@ -21,9 +17,9 @@ HAVING COUNT(*) > 1"#,
 /// Returns rows where the column is NULL.
 pub fn generate_not_null_test(table: &str, column: &str) -> String {
     format!(
-        "SELECT * FROM {table} WHERE {column} IS NULL",
-        table = table,
-        column = column
+        "SELECT * FROM {} WHERE {} IS NULL",
+        quote_qualified(table),
+        quote_ident(column)
     )
 }
 
@@ -32,9 +28,9 @@ pub fn generate_not_null_test(table: &str, column: &str) -> String {
 /// Returns rows where the column value is <= 0.
 pub fn generate_positive_test(table: &str, column: &str) -> String {
     format!(
-        "SELECT * FROM {table} WHERE {column} <= 0",
-        table = table,
-        column = column
+        "SELECT * FROM {} WHERE {} <= 0",
+        quote_qualified(table),
+        quote_ident(column)
     )
 }
 
@@ -43,9 +39,9 @@ pub fn generate_positive_test(table: &str, column: &str) -> String {
 /// Returns rows where the column value is < 0.
 pub fn generate_non_negative_test(table: &str, column: &str) -> String {
     format!(
-        "SELECT * FROM {table} WHERE {column} < 0",
-        table = table,
-        column = column
+        "SELECT * FROM {} WHERE {} < 0",
+        quote_qualified(table),
+        quote_ident(column)
     )
 }
 
@@ -67,13 +63,10 @@ pub fn generate_accepted_values_test(
         values.to_vec()
     };
     let values_list = formatted_values.join(", ");
+    let qt = quote_qualified(table);
+    let qc = quote_ident(column);
 
-    format!(
-        "SELECT * FROM {table} WHERE {column} NOT IN ({values_list}) OR {column} IS NULL",
-        table = table,
-        column = column,
-        values_list = values_list
-    )
+    format!("SELECT * FROM {qt} WHERE {qc} NOT IN ({values_list}) OR {qc} IS NULL")
 }
 
 /// Generate SQL for a min_value test
@@ -81,10 +74,10 @@ pub fn generate_accepted_values_test(
 /// Returns rows where the column value is less than the threshold.
 pub fn generate_min_value_test(table: &str, column: &str, min: f64) -> String {
     format!(
-        "SELECT * FROM {table} WHERE {column} < {min}",
-        table = table,
-        column = column,
-        min = min
+        "SELECT * FROM {} WHERE {} < {}",
+        quote_qualified(table),
+        quote_ident(column),
+        min
     )
 }
 
@@ -93,10 +86,10 @@ pub fn generate_min_value_test(table: &str, column: &str, min: f64) -> String {
 /// Returns rows where the column value is greater than the threshold.
 pub fn generate_max_value_test(table: &str, column: &str, max: f64) -> String {
     format!(
-        "SELECT * FROM {table} WHERE {column} > {max}",
-        table = table,
-        column = column,
-        max = max
+        "SELECT * FROM {} WHERE {} > {}",
+        quote_qualified(table),
+        quote_ident(column),
+        max
     )
 }
 
@@ -104,13 +97,12 @@ pub fn generate_max_value_test(table: &str, column: &str, max: f64) -> String {
 ///
 /// Returns rows where the column value does not match the pattern.
 pub fn generate_regex_test(table: &str, column: &str, pattern: &str) -> String {
-    // Escape single quotes to prevent SQL injection
     let escaped_pattern = pattern.replace('\'', "''");
     format!(
-        "SELECT * FROM {table} WHERE NOT regexp_matches({column}, '{escaped_pattern}')",
-        table = table,
-        column = column,
-        escaped_pattern = escaped_pattern
+        "SELECT * FROM {} WHERE NOT regexp_matches({}, '{}')",
+        quote_qualified(table),
+        quote_ident(column),
+        escaped_pattern
     )
 }
 
@@ -125,18 +117,18 @@ pub fn generate_relationship_test(
     ref_table: &str,
     ref_column: &str,
 ) -> String {
+    let qt = quote_qualified(table);
+    let qc = quote_ident(column);
+    let qrt = quote_qualified(ref_table);
+    let qrc = quote_ident(ref_column);
     format!(
-        r#"SELECT src.{column}
-FROM {table} AS src
-WHERE src.{column} IS NOT NULL
-  AND NOT EXISTS (
-    SELECT 1 FROM {ref_table} AS ref
-    WHERE ref.{ref_column} = src.{column}
-  )"#,
-        table = table,
-        column = column,
-        ref_table = ref_table,
-        ref_column = ref_column
+        "SELECT src.{qc}\n\
+         FROM {qt} AS src\n\
+         WHERE src.{qc} IS NOT NULL\n\
+         \x20 AND NOT EXISTS (\n\
+         \x20   SELECT 1 FROM {qrt} AS ref_tbl\n\
+         \x20   WHERE ref_tbl.{qrc} = src.{qc}\n\
+         \x20 )"
     )
 }
 
@@ -316,7 +308,7 @@ mod tests {
     #[test]
     fn test_generate_unique_test() {
         let sql = generate_unique_test("users", "id");
-        assert!(sql.contains("GROUP BY id"));
+        assert!(sql.contains(r#"GROUP BY "id""#));
         assert!(sql.contains("HAVING COUNT(*) > 1"));
     }
 
@@ -324,21 +316,21 @@ mod tests {
     fn test_generate_not_null_test() {
         let sql = generate_not_null_test("users", "email");
         assert!(sql.contains("IS NULL"));
-        assert!(sql.contains("email"));
+        assert!(sql.contains(r#""email""#));
     }
 
     #[test]
     fn test_generate_positive_test() {
         let sql = generate_positive_test("orders", "amount");
-        assert!(sql.contains("amount <= 0"));
-        assert!(sql.contains("FROM orders"));
+        assert!(sql.contains(r#""amount" <= 0"#));
+        assert!(sql.contains(r#"FROM "orders""#));
     }
 
     #[test]
     fn test_generate_non_negative_test() {
         let sql = generate_non_negative_test("orders", "quantity");
-        assert!(sql.contains("quantity < 0"));
-        assert!(sql.contains("FROM orders"));
+        assert!(sql.contains(r#""quantity" < 0"#));
+        assert!(sql.contains(r#"FROM "orders""#));
     }
 
     #[test]
@@ -346,7 +338,7 @@ mod tests {
         let values = vec!["pending".to_string(), "completed".to_string()];
         let sql = generate_accepted_values_test("orders", "status", &values, true);
         assert!(sql.contains("NOT IN ('pending', 'completed')"));
-        assert!(sql.contains("status IS NULL"));
+        assert!(sql.contains(r#""status" IS NULL"#));
     }
 
     #[test]
@@ -359,15 +351,15 @@ mod tests {
     #[test]
     fn test_generate_min_value_test() {
         let sql = generate_min_value_test("products", "price", 0.0);
-        assert!(sql.contains("price < 0"));
-        assert!(sql.contains("FROM products"));
+        assert!(sql.contains(r#""price" < 0"#));
+        assert!(sql.contains(r#"FROM "products""#));
     }
 
     #[test]
     fn test_generate_max_value_test() {
         let sql = generate_max_value_test("products", "discount", 100.0);
-        assert!(sql.contains("discount > 100"));
-        assert!(sql.contains("FROM products"));
+        assert!(sql.contains(r#""discount" > 100"#));
+        assert!(sql.contains(r#"FROM "products""#));
     }
 
     #[test]
@@ -377,7 +369,7 @@ mod tests {
             "email",
             r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$",
         );
-        assert!(sql.contains("regexp_matches(email,"));
+        assert!(sql.contains(r#"regexp_matches("email","#));
         assert!(sql.contains("NOT"));
     }
 
@@ -425,17 +417,17 @@ mod tests {
     #[test]
     fn test_generate_relationship_test() {
         let sql = generate_relationship_test("orders", "customer_id", "customers", "id");
-        assert!(sql.contains("FROM orders AS src"));
-        assert!(sql.contains("FROM customers AS ref"));
-        assert!(sql.contains("ref.id = src.customer_id"));
-        assert!(sql.contains("src.customer_id IS NOT NULL"));
+        assert!(sql.contains(r#"FROM "orders" AS src"#));
+        assert!(sql.contains(r#"FROM "customers" AS ref_tbl"#));
+        assert!(sql.contains(r#"ref_tbl."id" = src."customer_id""#));
+        assert!(sql.contains(r#"src."customer_id" IS NOT NULL"#));
         assert!(sql.contains("NOT EXISTS"));
     }
 
     #[test]
     fn test_generate_relationship_test_same_column() {
         let sql = generate_relationship_test("orders", "customer_id", "customers", "customer_id");
-        assert!(sql.contains("ref.customer_id = src.customer_id"));
+        assert!(sql.contains(r#"ref_tbl."customer_id" = src."customer_id""#));
     }
 
     #[test]
@@ -452,9 +444,11 @@ mod tests {
 
         let generated = GeneratedTest::from_schema_test(&schema_test);
         assert_eq!(generated.name, "relationship_orders__customer_id");
-        assert!(generated.sql.contains("FROM orders AS src"));
-        assert!(generated.sql.contains("FROM customers AS ref"));
-        assert!(generated.sql.contains("ref.id = src.customer_id"));
+        assert!(generated.sql.contains(r#"FROM "orders" AS src"#));
+        assert!(generated.sql.contains(r#"FROM "customers" AS ref_tbl"#));
+        assert!(generated
+            .sql
+            .contains(r#"ref_tbl."id" = src."customer_id""#));
     }
 
     #[test]
@@ -471,7 +465,9 @@ mod tests {
         };
 
         let generated = GeneratedTest::from_schema_test(&schema_test);
-        assert!(generated.sql.contains("ref.user_id = src.user_id"));
+        assert!(generated
+            .sql
+            .contains(r#"ref_tbl."user_id" = src."user_id""#));
     }
 
     #[test]
@@ -488,9 +484,10 @@ mod tests {
 
         let generated =
             GeneratedTest::from_schema_test_qualified(&schema_test, "analytics.fct_orders");
-        assert!(generated.sql.contains("FROM analytics.fct_orders AS src"));
-        // Referenced table uses unqualified name by default
-        assert!(generated.sql.contains("FROM dim_customers AS ref"));
+        assert!(generated
+            .sql
+            .contains(r#"FROM "analytics"."fct_orders" AS src"#));
+        assert!(generated.sql.contains(r#"FROM "dim_customers" AS ref_tbl"#));
     }
 
     #[test]
@@ -513,9 +510,11 @@ mod tests {
             "analytics.fct_orders",
             resolver,
         );
-        assert!(generated.sql.contains("FROM analytics.fct_orders AS src"));
         assert!(generated
             .sql
-            .contains("FROM analytics.dim_customers AS ref"));
+            .contains(r#"FROM "analytics"."fct_orders" AS src"#));
+        assert!(generated
+            .sql
+            .contains(r#"FROM "analytics"."dim_customers" AS ref_tbl"#));
     }
 }

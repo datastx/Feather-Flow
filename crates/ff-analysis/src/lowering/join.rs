@@ -24,7 +24,13 @@ pub fn lower_join(left: RelOp, join: &Join, catalog: &SchemaCatalog) -> Analysis
             (JoinType::FullOuter, extract_join_condition(constraint))
         }
         JoinOperator::CrossJoin => (JoinType::Cross, None),
-        _ => (JoinType::Inner, None),
+        other => {
+            eprintln!(
+                "[warn] Unrecognized join operator {:?}, treating as INNER JOIN",
+                other
+            );
+            (JoinType::Inner, None)
+        }
     };
 
     // Compute output schema with nullability adjustments

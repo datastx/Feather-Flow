@@ -8,6 +8,10 @@ pub mod error;
 pub mod snowflake;
 pub mod traits;
 
-pub use duckdb::{quote_ident, quote_qualified, DuckDbBackend};
+pub use duckdb::DuckDbBackend;
 pub use error::DbError;
-pub use traits::{CsvLoadOptions, Database, SnapshotResult};
+pub use ff_core::sql_utils::{quote_ident, quote_qualified};
+pub use traits::{
+    CsvLoadOptions, Database, DatabaseCore, DatabaseCsv, DatabaseIncremental, DatabaseSchema,
+    DatabaseSnapshot, SnapshotResult,
+};

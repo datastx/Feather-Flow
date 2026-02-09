@@ -23,11 +23,7 @@ use std::time::Instant;
 use tokio::sync::Semaphore;
 
 use crate::cli::{GlobalArgs, OutputFormat, RunArgs};
-use crate::commands::common::RunStatus;
-
-/// Parse hooks from config() values (minijinja::Value)
-/// Hooks can be specified as a single string or an array of strings
-use crate::commands::common::parse_hooks_from_config;
+use crate::commands::common::{self, parse_hooks_from_config, RunStatus};
 
 /// Run result for a single model
 #[derive(Debug, Clone, Serialize)]
@@ -152,7 +148,6 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         handle_resume_mode(
             &run_state_path,
             &compiled_models,
-            &project,
             args,
             global,
             &config_hash,
@@ -395,7 +390,6 @@ fn compute_config_hash(project: &Project) -> String {
 fn handle_resume_mode(
     run_state_path: &Path,
     compiled_models: &HashMap<String, CompiledModel>,
-    _project: &Project,
     args: &RunArgs,
     global: &GlobalArgs,
     config_hash: &str,
@@ -608,12 +602,7 @@ fn compile_all_models(
         let mat = config_values
             .get("materialized")
             .and_then(|v| v.as_str())
-            .map(|s| match s {
-                "table" => Materialization::Table,
-                "incremental" => Materialization::Incremental,
-                "ephemeral" => Materialization::Ephemeral,
-                _ => Materialization::View,
-            })
+            .map(common::parse_materialization)
             .unwrap_or(project.config.materialization);
 
         let schema = config_values
@@ -638,20 +627,12 @@ fn compile_all_models(
                 let strategy = config_values
                     .get("incremental_strategy")
                     .and_then(|v| v.as_str())
-                    .map(|s| match s {
-                        "merge" => IncrementalStrategy::Merge,
-                        "delete+insert" | "delete_insert" => IncrementalStrategy::DeleteInsert,
-                        _ => IncrementalStrategy::Append,
-                    });
+                    .map(common::parse_incremental_strategy);
 
                 let on_change = config_values
                     .get("on_schema_change")
                     .and_then(|v| v.as_str())
-                    .map(|s| match s {
-                        "fail" => OnSchemaChange::Fail,
-                        "append_new_columns" => OnSchemaChange::AppendNewColumns,
-                        _ => OnSchemaChange::Ignore,
-                    });
+                    .map(common::parse_on_schema_change);
 
                 (unique_key, strategy, on_change)
             } else {
@@ -1014,7 +995,7 @@ async fn execute_incremental(
 
     match strategy {
         IncrementalStrategy::Append => {
-            let insert_sql = format!("INSERT INTO {} {}", table_name, exec_sql);
+            let insert_sql = format!("INSERT INTO {} {}", quote_qualified(table_name), exec_sql);
             db.execute(&insert_sql).await.map(|_| ())
         }
         IncrementalStrategy::Merge => {
@@ -1042,13 +1023,18 @@ async fn execute_incremental(
 
 /// Execute hooks (pre or post) for a model
 /// Replaces `{{ this }}` with the qualified table name
+/// Execute pre/post-hook SQL statements for a model.
+///
+/// Replaces `{{ this }}` (or `{{this}}`) with the qualified table name.
+/// Uses simple string replacement rather than full Jinja rendering because
+/// hooks only support the `this` variable and the cost of a full template
+/// engine round-trip is unnecessary here.
 async fn execute_hooks(
     db: &Arc<dyn Database>,
     hooks: &[String],
     qualified_name: &str,
 ) -> ff_db::error::DbResult<()> {
     for hook in hooks {
-        // Replace {{ this }} with the actual table name
         let sql = hook
             .replace("{{ this }}", qualified_name)
             .replace("{{this}}", qualified_name);
@@ -1076,6 +1062,8 @@ async fn execute_wap(
     exec_sql: &str,
 ) -> Result<(), ff_db::error::DbError> {
     let wap_qualified = format!("{}.{}", wap_schema, name);
+    let quoted_wap = quote_qualified(&wap_qualified);
+    let quoted_name = quote_qualified(qualified_name);
 
     // 1. Create WAP schema
     db.create_schema_if_not_exists(wap_schema).await?;
@@ -1092,7 +1080,7 @@ async fn execute_wap(
                 if exists {
                     let copy_sql = format!(
                         "CREATE OR REPLACE TABLE {} AS FROM {}",
-                        wap_qualified, qualified_name
+                        quoted_wap, quoted_name
                     );
                     db.execute(&copy_sql).await?;
                 }
@@ -1119,7 +1107,7 @@ async fn execute_wap(
     // 4. Tests passed — publish: DROP prod + CTAS from WAP
     db.drop_if_exists(qualified_name).await?;
 
-    let publish_sql = format!("CREATE TABLE {} AS FROM {}", qualified_name, wap_qualified);
+    let publish_sql = format!("CREATE TABLE {} AS FROM {}", quoted_name, quoted_wap);
     db.execute(&publish_sql).await?;
 
     // Clean up WAP table after successful publish
@@ -1315,6 +1303,157 @@ async fn execute_models(
     .await
 }
 
+/// Execute a single model: pre-hooks → materialize → post-hooks → contract validation.
+///
+/// Returns a `ModelRunResult` with the outcome. Callers handle state-file updates
+/// because the sequential and parallel paths have different timing requirements.
+async fn run_single_model(
+    db: &Arc<dyn Database>,
+    name: &str,
+    compiled: &CompiledModel,
+    full_refresh: bool,
+    wap_schema: Option<&str>,
+) -> ModelRunResult {
+    let qualified_name = match &compiled.schema {
+        Some(s) => format!("{}.{}", s, name),
+        None => name.to_string(),
+    };
+
+    let model_start = Instant::now();
+
+    // Execute pre-hooks
+    if let Err(e) = execute_hooks(db, &compiled.pre_hook, &qualified_name).await {
+        let duration = model_start.elapsed();
+        println!(
+            "  \u{2717} {} (pre-hook) - {} [{}ms]",
+            name,
+            e,
+            duration.as_millis()
+        );
+        return ModelRunResult {
+            model: name.to_string(),
+            status: RunStatus::Error,
+            materialization: compiled.materialization.to_string(),
+            duration_secs: duration.as_secs_f64(),
+            error: Some(format!("pre-hook failed: {}", e)),
+        };
+    }
+
+    if full_refresh {
+        let _ = db.drop_if_exists(&qualified_name).await;
+    }
+
+    // Append query comment to SQL for execution (compiled.sql stays clean for checksums)
+    let exec_sql = match &compiled.query_comment {
+        Some(comment) => ff_core::query_comment::append_query_comment(&compiled.sql, comment),
+        None => compiled.sql.clone(),
+    };
+
+    // Determine if this model should use WAP flow
+    let is_wap = compiled.wap
+        && wap_schema.is_some()
+        && matches!(
+            compiled.materialization,
+            Materialization::Table | Materialization::Incremental
+        );
+
+    let result = if is_wap {
+        execute_wap(
+            db,
+            name,
+            &qualified_name,
+            wap_schema.unwrap(),
+            compiled,
+            full_refresh,
+            &exec_sql,
+        )
+        .await
+    } else {
+        match compiled.materialization {
+            Materialization::View => db.create_view_as(&qualified_name, &exec_sql, true).await,
+            Materialization::Table => db.create_table_as(&qualified_name, &exec_sql, true).await,
+            Materialization::Incremental => {
+                execute_incremental(db, &qualified_name, compiled, full_refresh, &exec_sql).await
+            }
+            Materialization::Ephemeral => Ok(()),
+        }
+    };
+
+    match result {
+        Ok(_) => {
+            // Execute post-hooks
+            if let Err(e) = execute_hooks(db, &compiled.post_hook, &qualified_name).await {
+                let duration = model_start.elapsed();
+                println!(
+                    "  \u{2717} {} (post-hook) - {} [{}ms]",
+                    name,
+                    e,
+                    duration.as_millis()
+                );
+                return ModelRunResult {
+                    model: name.to_string(),
+                    status: RunStatus::Error,
+                    materialization: compiled.materialization.to_string(),
+                    duration_secs: duration.as_secs_f64(),
+                    error: Some(format!("post-hook failed: {}", e)),
+                };
+            }
+
+            // Validate schema contract if defined
+            if let Err(contract_error) = validate_model_contract(
+                db,
+                name,
+                &qualified_name,
+                compiled.model_schema.as_ref(),
+                false,
+            )
+            .await
+            {
+                let duration = model_start.elapsed();
+                println!(
+                    "  \u{2717} {} (contract) - {} [{}ms]",
+                    name,
+                    contract_error,
+                    duration.as_millis()
+                );
+                return ModelRunResult {
+                    model: name.to_string(),
+                    status: RunStatus::Error,
+                    materialization: compiled.materialization.to_string(),
+                    duration_secs: duration.as_secs_f64(),
+                    error: Some(contract_error),
+                };
+            }
+
+            let duration = model_start.elapsed();
+            println!(
+                "  \u{2713} {} ({}) [{}ms]",
+                name,
+                compiled.materialization,
+                duration.as_millis()
+            );
+            ModelRunResult {
+                model: name.to_string(),
+                status: RunStatus::Success,
+                materialization: compiled.materialization.to_string(),
+                duration_secs: duration.as_secs_f64(),
+                error: None,
+            }
+        }
+        Err(e) => {
+            let duration = model_start.elapsed();
+            println!("  \u{2717} {} - {} [{}ms]", name, e, duration.as_millis());
+            ModelRunResult {
+                model: name.to_string(),
+                status: RunStatus::Error,
+                materialization: compiled.materialization.to_string(),
+                duration_secs: duration.as_secs_f64(),
+                error: Some(e.to_string()),
+            }
+        }
+    }
+}
+
 /// Execute models sequentially (original behavior for --threads=1)
 #[allow(clippy::too_many_arguments)]
 async fn execute_models_sequential(
@@ -1351,7 +1490,7 @@ async fn execute_models_sequential(
                 .template(
                     "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}",
                 )
-                .unwrap()
+                .unwrap_or_else(|_| ProgressStyle::default_bar())
                 .progress_chars("#>-"),
         );
         Some(pb)
@@ -1402,50 +1541,12 @@ async fn execute_models_sequential(
             pb.set_position(executable_idx as u64);
         }
         executable_idx += 1;
-        let qualified_name = match &compiled.schema {
-            Some(s) => format!("{}.{}", s, name),
-            None => name.clone(),
-        };
 
-        let model_start = Instant::now();
+        // Run the model (pre-hooks → materialize → post-hooks → contract)
+        let model_result =
+            run_single_model(db, name, compiled, args.full_refresh, wap_schema).await;
 
-        // Execute pre-hooks
-        let pre_hook_result = execute_hooks(db, &compiled.pre_hook, &qualified_name).await;
-        if let Err(e) = pre_hook_result {
-            failure_count += 1;
-            let duration = model_start.elapsed();
-            println!(
-                "  ✗ {} (pre-hook) - {} [{}ms]",
-                name,
-                e,
-                duration.as_millis()
-            );
-            run_results.push(ModelRunResult {
-                model: name.clone(),
-                status: RunStatus::Error,
-                materialization: compiled.materialization.to_string(),
-                duration_secs: duration.as_secs_f64(),
-                error: Some(format!("pre-hook failed: {}", e)),
-            });
-            if args.fail_fast {
-                stopped_early = true;
-                println!("\n  Stopping due to --fail-fast");
-                break;
-            }
-            continue;
-        }
-
-        if args.full_refresh {
-            let _ = db.drop_if_exists(&qualified_name).await;
-        }
-
-        // Append query comment to SQL for execution (but compiled.sql stays clean for checksums)
-        let exec_sql = match &compiled.query_comment {
-            Some(comment) => ff_core::query_comment::append_query_comment(&compiled.sql, comment),
-            None => compiled.sql.clone(),
-        };
-
-        // Determine if this model should use WAP flow
+        let is_error = matches!(model_result.status, RunStatus::Error);
         let is_wap = compiled.wap
             && wap_schema.is_some()
             && matches!(
@@ -1453,169 +1554,60 @@ async fn execute_models_sequential(
                 Materialization::Table | Materialization::Incremental
             );
 
-        let result = if is_wap {
-            execute_wap(
-                db,
-                name,
-                &qualified_name,
-                wap_schema.unwrap(),
-                compiled,
-                args.full_refresh,
-                &exec_sql,
-            )
-            .await
+        if is_error {
+            failure_count += 1;
+
+            // If WAP model failed, skip all transitive dependents
+            if is_wap {
+                let dependents = get_transitive_dependents(name, compiled_models);
+                for dep in &dependents {
+                    failed_models.insert(dep.clone());
+                }
+            }
+
+            run_results.push(model_result);
+            if args.fail_fast {
+                stopped_early = true;
+                println!("\n  Stopping due to --fail-fast");
+                break;
+            }
         } else {
-            match compiled.materialization {
-                Materialization::View => db.create_view_as(&qualified_name, &exec_sql, true).await,
-                Materialization::Table => {
-                    db.create_table_as(&qualified_name, &exec_sql, true).await
-                }
-                Materialization::Incremental => {
-                    execute_incremental(db, &qualified_name, compiled, args.full_refresh, &exec_sql)
-                        .await
-                }
-                Materialization::Ephemeral => Ok(()),
-            }
-        };
+            success_count += 1;
 
-        let duration = model_start.elapsed();
+            // Try to get row count for state tracking (non-blocking)
+            let qualified_name = match &compiled.schema {
+                Some(s) => format!("{}.{}", s, name),
+                None => name.clone(),
+            };
+            let row_count = db
+                .query_count(&format!(
+                    "SELECT * FROM {}",
+                    quote_qualified(&qualified_name)
+                ))
+                .await
+                .ok();
 
-        match result {
-            Ok(_) => {
-                // Execute post-hooks
-                let post_hook_result =
-                    execute_hooks(db, &compiled.post_hook, &qualified_name).await;
-                let final_duration = model_start.elapsed();
+            // Update state for this model (with checksums for smart builds)
+            let state_config = ModelStateConfig::new(
+                compiled.materialization,
+                compiled.schema.clone(),
+                compiled.unique_key.clone(),
+                compiled.incremental_strategy,
+                compiled.on_schema_change,
+            );
+            let schema_checksum = compute_schema_checksum(name, compiled_models);
+            let input_checksums = compute_input_checksums(name, compiled_models);
+            let model_state = ModelState::new_with_checksums(
+                name.clone(),
+                &compiled.sql,
+                row_count,
+                state_config,
+                schema_checksum,
+                input_checksums,
+            );
+            state_file.upsert_model(model_state);
 
-                if let Err(e) = post_hook_result {
-                    failure_count += 1;
-                    println!(
-                        "  ✗ {} (post-hook) - {} [{}ms]",
-                        name,
-                        e,
-                        final_duration.as_millis()
-                    );
-                    run_results.push(ModelRunResult {
-                        model: name.clone(),
-                        status: RunStatus::Error,
-                        materialization: compiled.materialization.to_string(),
-                        duration_secs: final_duration.as_secs_f64(),
-                        error: Some(format!("post-hook failed: {}", e)),
-                    });
-                    if args.fail_fast {
-                        stopped_early = true;
-                        println!("\n  Stopping due to --fail-fast");
-                        break;
-                    }
-                    continue;
-                }
-
-                // Validate schema contract if defined
-                let contract_result = validate_model_contract(
-                    db,
-                    name,
-                    &qualified_name,
-                    compiled.model_schema.as_ref(),
-                    false, // verbose flag from args would go here
-                )
-                .await;
-
-                if let Err(contract_error) = contract_result {
-                    failure_count += 1;
-                    let final_duration = model_start.elapsed();
-                    println!(
-                        "  ✗ {} (contract) - {} [{}ms]",
-                        name,
-                        contract_error,
-                        final_duration.as_millis()
-                    );
-                    run_results.push(ModelRunResult {
-                        model: name.clone(),
-                        status: RunStatus::Error,
-                        materialization: compiled.materialization.to_string(),
-                        duration_secs: final_duration.as_secs_f64(),
-                        error: Some(contract_error),
-                    });
-                    if args.fail_fast {
-                        stopped_early = true;
-                        println!("\n  Stopping due to --fail-fast");
-                        break;
-                    }
-                    continue;
-                }
-
-                success_count += 1;
-                let final_duration = model_start.elapsed();
-                println!(
-                    "  ✓ {} ({}) [{}ms]",
-                    name,
-                    compiled.materialization,
-                    final_duration.as_millis()
-                );
-
-                // Try to get row count for state tracking (non-blocking)
-                let row_count = db
-                    .query_count(&format!(
-                        "SELECT * FROM {}",
-                        quote_qualified(&qualified_name)
-                    ))
-                    .await
-                    .ok();
-
-                // Update state for this model (with checksums for smart builds)
-                let state_config = ModelStateConfig::new(
-                    compiled.materialization,
-                    compiled.schema.clone(),
-                    compiled.unique_key.clone(),
-                    compiled.incremental_strategy,
-                    compiled.on_schema_change,
-                );
-                let schema_checksum = compute_schema_checksum(name, compiled_models);
-                let input_checksums = compute_input_checksums(name, compiled_models);
-                let model_state = ModelState::new_with_checksums(
-                    name.clone(),
-                    &compiled.sql,
-                    row_count,
-                    state_config,
-                    schema_checksum,
-                    input_checksums,
-                );
-                state_file.upsert_model(model_state);
-
-                run_results.push(ModelRunResult {
-                    model: name.clone(),
-                    status: RunStatus::Success,
-                    materialization: compiled.materialization.to_string(),
-                    duration_secs: final_duration.as_secs_f64(),
-                    error: None,
-                });
-            }
-            Err(e) => {
-                failure_count += 1;
-                println!("  ✗ {} - {} [{}ms]", name, e, duration.as_millis());
-                run_results.push(ModelRunResult {
-                    model: name.clone(),
-                    status: RunStatus::Error,
-                    materialization: compiled.materialization.to_string(),
-                    duration_secs: duration.as_secs_f64(),
-                    error: Some(e.to_string()),
-                });
-
-                // If WAP model failed, skip all transitive dependents
-                if is_wap {
-                    let dependents = get_transitive_dependents(name, compiled_models);
-                    for dep in &dependents {
-                        failed_models.insert(dep.clone());
-                    }
-                }
-
-                // Stop on first failure if --fail-fast is set
-                if args.fail_fast {
-                    stopped_early = true;
-                    println!("\n  Stopping due to --fail-fast");
-                    break;
-                }
-            }
+            run_results.push(model_result);
         }
     }
 
@@ -1672,7 +1664,7 @@ async fn execute_models_parallel(
                 .template(
                     "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({msg})",
                 )
-                .unwrap()
+                .unwrap_or_else(|_| ProgressStyle::default_bar())
                 .progress_chars("#>-"),
         );
         Some(Arc::new(pb))
@@ -1730,17 +1722,21 @@ async fn execute_models_parallel(
                     .insert(name);
                 continue;
             }
-            let sql = compiled.sql.clone();
-            let query_comment = compiled.query_comment.clone();
-            let materialization = compiled.materialization;
-            let schema = compiled.schema.clone();
-            let unique_key = compiled.unique_key.clone();
-            let incremental_strategy = compiled.incremental_strategy;
-            let on_schema_change = compiled.on_schema_change;
-            let pre_hook = compiled.pre_hook.clone();
-            let post_hook = compiled.post_hook.clone();
-            let model_schema = compiled.model_schema.clone();
-            let model_wap = compiled.wap;
+            // Clone fields needed inside the spawned task
+            let compiled_owned = CompiledModel {
+                sql: compiled.sql.clone(),
+                query_comment: compiled.query_comment.clone(),
+                materialization: compiled.materialization,
+                schema: compiled.schema.clone(),
+                dependencies: compiled.dependencies.clone(),
+                unique_key: compiled.unique_key.clone(),
+                incremental_strategy: compiled.incremental_strategy,
+                on_schema_change: compiled.on_schema_change,
+                pre_hook: compiled.pre_hook.clone(),
+                post_hook: compiled.post_hook.clone(),
+                model_schema: compiled.model_schema.clone(),
+                wap: compiled.wap,
+            };
             let full_refresh = args.full_refresh;
             let fail_fast = args.fail_fast;
             let wap_schema_owned = wap_schema.map(String::from);
@@ -1755,216 +1751,38 @@ async fn execute_models_parallel(
 
             let handle = tokio::spawn(async move {
                 // Acquire semaphore permit
-                let _permit = semaphore
-                    .acquire()
-                    .await
-                    .expect("semaphore closed unexpectedly - this should not happen during normal execution");
+                let _permit = match semaphore.acquire().await {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        // Semaphore was closed — treat as cancellation
+                        return (name, None);
+                    }
+                };
 
                 // Check if we should stop
                 if stopped.load(Ordering::SeqCst) && fail_fast {
                     return (name, None);
                 }
 
-                let qualified_name = match &schema {
-                    Some(s) => format!("{}.{}", s, name),
-                    None => name.clone(),
-                };
+                let model_result = run_single_model(
+                    &db,
+                    &name,
+                    &compiled_owned,
+                    full_refresh,
+                    wap_schema_owned.as_deref(),
+                )
+                .await;
 
-                let model_start = Instant::now();
-
-                // Execute pre-hooks
-                if let Err(e) = execute_hooks(&db, &pre_hook, &qualified_name).await {
-                    let duration = model_start.elapsed();
+                let is_error = matches!(model_result.status, RunStatus::Error);
+                if is_error {
                     failure_count.fetch_add(1, Ordering::SeqCst);
-                    println!(
-                        "  ✗ {} (pre-hook) - {} [{}ms]",
-                        name,
-                        e,
-                        duration.as_millis()
-                    );
                     if fail_fast {
                         stopped.store(true, Ordering::SeqCst);
                         println!("\n  Stopping due to --fail-fast");
                     }
-                    let model_result = ModelRunResult {
-                        model: name.clone(),
-                        status: RunStatus::Error,
-                        materialization: materialization.to_string(),
-                        duration_secs: duration.as_secs_f64(),
-                        error: Some(format!("pre-hook failed: {}", e)),
-                    };
-                    run_results
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .push(model_result);
-                    completed
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .insert(name.clone());
-                    return (name, None);
-                }
-
-                if full_refresh {
-                    let _ = db.drop_if_exists(&qualified_name).await;
-                }
-
-                // Append query comment to SQL for execution
-                let exec_sql = match &query_comment {
-                    Some(comment) => ff_core::query_comment::append_query_comment(&sql, comment),
-                    None => sql.clone(),
-                };
-
-                // Create a temporary CompiledModel for execute_incremental/WAP
-                let compiled = CompiledModel {
-                    sql: sql.clone(),
-                    query_comment: query_comment.clone(),
-                    materialization,
-                    schema: schema.clone(),
-                    dependencies: vec![], // Not needed for execution
-                    unique_key: unique_key.clone(),
-                    incremental_strategy,
-                    on_schema_change,
-                    pre_hook: vec![],  // Already executed
-                    post_hook: vec![], // Will execute separately
-                    model_schema: model_schema.clone(),
-                    wap: model_wap,
-                };
-
-                // Determine if this model should use WAP flow
-                let is_wap = model_wap
-                    && wap_schema_owned.is_some()
-                    && matches!(
-                        materialization,
-                        Materialization::Table | Materialization::Incremental
-                    );
-
-                let result = if is_wap {
-                    execute_wap(
-                        &db,
-                        &name,
-                        &qualified_name,
-                        wap_schema_owned.as_ref().unwrap(),
-                        &compiled,
-                        full_refresh,
-                        &exec_sql,
-                    )
-                    .await
                 } else {
-                    match materialization {
-                        Materialization::View => {
-                            db.create_view_as(&qualified_name, &exec_sql, true).await
-                        }
-                        Materialization::Table => {
-                            db.create_table_as(&qualified_name, &exec_sql, true).await
-                        }
-                        Materialization::Incremental => {
-                            execute_incremental(
-                                &db,
-                                &qualified_name,
-                                &compiled,
-                                full_refresh,
-                                &exec_sql,
-                            )
-                            .await
-                        }
-                        Materialization::Ephemeral => Ok(()),
-                    }
-                };
-
-                let model_result = match result {
-                    Ok(_) => {
-                        // Execute post-hooks
-                        if let Err(e) = execute_hooks(&db, &post_hook, &qualified_name).await {
-                            let duration = model_start.elapsed();
-                            failure_count.fetch_add(1, Ordering::SeqCst);
-                            println!(
-                                "  ✗ {} (post-hook) - {} [{}ms]",
-                                name,
-                                e,
-                                duration.as_millis()
-                            );
-                            if fail_fast {
-                                stopped.store(true, Ordering::SeqCst);
-                                println!("\n  Stopping due to --fail-fast");
-                            }
-                            ModelRunResult {
-                                model: name.clone(),
-                                status: RunStatus::Error,
-                                materialization: materialization.to_string(),
-                                duration_secs: duration.as_secs_f64(),
-                                error: Some(format!("post-hook failed: {}", e)),
-                            }
-                        } else {
-                            // Validate schema contract if defined
-                            let contract_result = validate_model_contract(
-                                &db,
-                                &name,
-                                &qualified_name,
-                                model_schema.as_ref(),
-                                false, // verbose
-                            )
-                            .await;
-
-                            if let Err(contract_error) = contract_result {
-                                let duration = model_start.elapsed();
-                                failure_count.fetch_add(1, Ordering::SeqCst);
-                                println!(
-                                    "  ✗ {} (contract) - {} [{}ms]",
-                                    name,
-                                    contract_error,
-                                    duration.as_millis()
-                                );
-                                if fail_fast {
-                                    stopped.store(true, Ordering::SeqCst);
-                                    println!("\n  Stopping due to --fail-fast");
-                                }
-                                ModelRunResult {
-                                    model: name.clone(),
-                                    status: RunStatus::Error,
-                                    materialization: materialization.to_string(),
-                                    duration_secs: duration.as_secs_f64(),
-                                    error: Some(contract_error),
-                                }
-                            } else {
-                                let duration = model_start.elapsed();
-                                success_count.fetch_add(1, Ordering::SeqCst);
-                                println!(
-                                    "  ✓ {} ({}) [{}ms]",
-                                    name,
-                                    materialization,
-                                    duration.as_millis()
-                                );
-
-                                // Row count retrieved later in state update
-                                ModelRunResult {
-                                    model: name.clone(),
-                                    status: RunStatus::Success,
-                                    materialization: materialization.to_string(),
-                                    duration_secs: duration.as_secs_f64(),
-                                    error: None,
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let duration = model_start.elapsed();
-                        failure_count.fetch_add(1, Ordering::SeqCst);
-                        println!("  ✗ {} - {} [{}ms]", name, e, duration.as_millis());
-
-                        if fail_fast {
-                            stopped.store(true, Ordering::SeqCst);
-                            println!("\n  Stopping due to --fail-fast");
-                        }
-
-                        ModelRunResult {
-                            model: name.clone(),
-                            status: RunStatus::Error,
-                            materialization: materialization.to_string(),
-                            duration_secs: duration.as_secs_f64(),
-                            error: Some(e.to_string()),
-                        }
-                    }
-                };
+                    success_count.fetch_add(1, Ordering::SeqCst);
+                }
 
                 run_results
                     .lock()

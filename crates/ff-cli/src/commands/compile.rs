@@ -17,8 +17,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::cli::{CompileArgs, GlobalArgs, OutputFormat};
-use crate::commands::common::RunStatus;
-use ff_core::source::build_source_lookup;
+use crate::commands::common::{self, RunStatus};
 
 /// Compile result for a single model
 #[derive(Debug, Clone, Serialize)]
@@ -371,11 +370,7 @@ fn merge_vars(
 
 /// Build a lookup set of all external tables including sources
 fn build_external_tables_lookup(project: &Project) -> HashSet<String> {
-    let mut external_tables: HashSet<String> =
-        project.config.external_tables.iter().cloned().collect();
-    let source_tables = build_source_lookup(&project.sources);
-    external_tables.extend(source_tables);
-    external_tables
+    common::build_external_tables_lookup(project)
 }
 
 /// Compile a single model (phase 1): render template, parse SQL, extract dependencies
@@ -432,12 +427,7 @@ fn compile_model_phase1(
         materialized: config_values
             .get("materialized")
             .and_then(|v| v.as_str())
-            .map(|s| match s {
-                "table" => Materialization::Table,
-                "incremental" => Materialization::Incremental,
-                "ephemeral" => Materialization::Ephemeral,
-                _ => Materialization::View,
-            }),
+            .map(common::parse_materialization),
         schema: config_values
             .get("schema")
             .and_then(|v| v.as_str())
@@ -458,21 +448,11 @@ fn compile_model_phase1(
         incremental_strategy: config_values
             .get("incremental_strategy")
             .and_then(|v| v.as_str())
-            .map(|s| match s {
-                "merge" => ff_core::config::IncrementalStrategy::Merge,
-                "delete_insert" | "delete+insert" => {
-                    ff_core::config::IncrementalStrategy::DeleteInsert
-                }
-                _ => ff_core::config::IncrementalStrategy::Append,
-            }),
+            .map(common::parse_incremental_strategy),
         on_schema_change: config_values
             .get("on_schema_change")
             .and_then(|v| v.as_str())
-            .map(|s| match s {
-                "fail" => ff_core::config::OnSchemaChange::Fail,
-                "append_new_columns" => ff_core::config::OnSchemaChange::AppendNewColumns,
-                _ => ff_core::config::OnSchemaChange::Ignore,
-            }),
+            .map(common::parse_on_schema_change),
         pre_hook: parse_hooks_from_config(&config_values, "pre_hook"),
         post_hook: parse_hooks_from_config(&config_values, "post_hook"),
         wap: config_values.get("wap").map(|v| {

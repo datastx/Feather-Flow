@@ -5,7 +5,7 @@ use ff_core::manifest::Manifest;
 use ff_core::model::TestDefinition;
 use ff_core::run_state::{RunState, RunStatus};
 use ff_core::Project;
-use ff_db::{Database, DuckDbBackend};
+use ff_db::{DatabaseCore, DatabaseCsv, DatabaseIncremental, DatabaseSchema, DuckDbBackend};
 use ff_jinja::JinjaEnvironment;
 use ff_sql::{extract_dependencies, SqlParser};
 use ff_test::{generator::GeneratedTest, TestRunner};
@@ -1949,6 +1949,7 @@ fn test_analysis_pass_manager_sample_project() {
                         .unwrap_or_else(|| SqlType::Unknown("no type".to_string()));
                     TypedColumn {
                         name: col.name.clone(),
+                        source_table: None,
                         sql_type,
                         nullability: Nullability::Unknown,
                         provenance: vec![],

@@ -10,6 +10,47 @@ use sqlparser::ast::{
 };
 use std::collections::{HashMap, HashSet};
 
+/// Expression type for a lineage column
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ExprType {
+    /// Unknown or unrecognized expression
+    #[default]
+    Unknown,
+    /// Direct column reference (pass-through)
+    Column,
+    /// Function call
+    Function,
+    /// Literal value
+    Literal,
+    /// Computed expression (binary op, unary op, etc.)
+    Expression,
+    /// SELECT * or table.*
+    Wildcard,
+    /// CAST expression
+    Cast,
+    /// CASE expression
+    Case,
+    /// Scalar subquery
+    Subquery,
+}
+
+impl std::fmt::Display for ExprType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExprType::Unknown => write!(f, "unknown"),
+            ExprType::Column => write!(f, "column"),
+            ExprType::Function => write!(f, "function"),
+            ExprType::Literal => write!(f, "literal"),
+            ExprType::Expression => write!(f, "expression"),
+            ExprType::Wildcard => write!(f, "wildcard"),
+            ExprType::Cast => write!(f, "cast"),
+            ExprType::Case => write!(f, "case"),
+            ExprType::Subquery => write!(f, "subquery"),
+        }
+    }
+}
+
 /// Represents a column reference with its source table
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ColumnRef {
@@ -60,8 +101,8 @@ pub struct ColumnLineage {
     pub source_columns: HashSet<ColumnRef>,
     /// Whether this is a direct pass-through (no transformation)
     pub is_direct: bool,
-    /// Expression type (e.g., "column", "function", "literal", "expression")
-    pub expr_type: String,
+    /// Expression type
+    pub expr_type: ExprType,
 }
 
 impl ColumnLineage {
@@ -71,7 +112,7 @@ impl ColumnLineage {
             output_column: output_column.to_string(),
             source_columns: HashSet::new(),
             is_direct: false,
-            expr_type: "unknown".to_string(),
+            expr_type: ExprType::Unknown,
         }
     }
 
@@ -80,7 +121,7 @@ impl ColumnLineage {
         let mut lineage = Self::new(output_column);
         lineage.source_columns.insert(source);
         lineage.is_direct = true;
-        lineage.expr_type = "column".to_string();
+        lineage.expr_type = ExprType::Column;
         lineage
     }
 
@@ -90,7 +131,7 @@ impl ColumnLineage {
             output_column: output_column.to_string(),
             source_columns: sources,
             is_direct: false,
-            expr_type: "function".to_string(),
+            expr_type: ExprType::Function,
         }
     }
 
@@ -100,7 +141,7 @@ impl ColumnLineage {
             output_column: output_column.to_string(),
             source_columns: HashSet::new(),
             is_direct: false,
-            expr_type: "literal".to_string(),
+            expr_type: ExprType::Literal,
         }
     }
 }
@@ -160,8 +201,8 @@ pub struct LineageEdge {
     pub target_column: String,
     /// Whether this is a direct pass-through (no transformation)
     pub is_direct: bool,
-    /// Expression type (column, function, expression, etc.)
-    pub expr_type: String,
+    /// Expression type
+    pub expr_type: ExprType,
     /// Data classification from source column (propagated from schema)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub classification: Option<String>,
@@ -318,11 +359,45 @@ fn extract_lineage_from_query(query: &Query, model_name: &str) -> ModelLineage {
     let mut lineage = ModelLineage::new(model_name);
 
     // Handle the main body of the query
-    if let SetExpr::Select(select) = query.body.as_ref() {
-        extract_lineage_from_select(select, &mut lineage);
+    match query.body.as_ref() {
+        SetExpr::Select(select) => {
+            extract_lineage_from_select(select, &mut lineage);
+        }
+        SetExpr::SetOperation { left, .. } => {
+            // For UNION/INTERSECT/EXCEPT, column names come from the left operand
+            // by SQL convention. Recursively extract from the left side.
+            extract_lineage_from_set_expr(left, &mut lineage);
+        }
+        SetExpr::Query(inner_query) => {
+            let inner = extract_lineage_from_query(inner_query, model_name);
+            lineage.columns = inner.columns;
+            lineage.table_aliases = inner.table_aliases;
+            lineage.source_tables = inner.source_tables;
+        }
+        _ => {}
     }
 
     lineage
+}
+
+/// Recursively extract lineage from a SetExpr (handles nested UNION/INTERSECT/EXCEPT)
+fn extract_lineage_from_set_expr(set_expr: &SetExpr, lineage: &mut ModelLineage) {
+    match set_expr {
+        SetExpr::Select(select) => {
+            extract_lineage_from_select(select, lineage);
+        }
+        SetExpr::SetOperation { left, .. } => {
+            // Column names come from the leftmost SELECT
+            extract_lineage_from_set_expr(left, lineage);
+        }
+        SetExpr::Query(query) => {
+            let inner = extract_lineage_from_query(query, &lineage.model_name.clone());
+            lineage.columns.extend(inner.columns);
+            lineage.table_aliases.extend(inner.table_aliases);
+            lineage.source_tables.extend(inner.source_tables);
+        }
+        _ => {}
+    }
 }
 
 /// Extract lineage from a SELECT clause
@@ -353,7 +428,7 @@ fn extract_lineage_from_select(select: &Select, lineage: &mut ModelLineage) {
                     .collect::<Vec<_>>()
                     .join(".");
                 let mut col_lineage = ColumnLineage::new(&format!("{}.*", table_name));
-                col_lineage.expr_type = "wildcard".to_string();
+                col_lineage.expr_type = ExprType::Wildcard;
                 col_lineage
                     .source_columns
                     .insert(ColumnRef::qualified(&table_name, "*"));
@@ -362,7 +437,7 @@ fn extract_lineage_from_select(select: &Select, lineage: &mut ModelLineage) {
             SelectItem::Wildcard(_) => {
                 // SELECT *
                 let mut col_lineage = ColumnLineage::new("*");
-                col_lineage.expr_type = "wildcard".to_string();
+                col_lineage.expr_type = ExprType::Wildcard;
                 // Add all source tables as potential sources
                 for table in &lineage.source_tables.clone() {
                     col_lineage
@@ -491,7 +566,7 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
             let right_lineage = extract_lineage_from_expr(right, lineage);
 
             let mut combined = ColumnLineage::new("expression");
-            combined.expr_type = "expression".to_string();
+            combined.expr_type = ExprType::Expression;
             combined.source_columns.extend(left_lineage.source_columns);
             combined.source_columns.extend(right_lineage.source_columns);
             combined
@@ -499,14 +574,14 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
         Expr::UnaryOp { expr, .. } => {
             let inner = extract_lineage_from_expr(expr, lineage);
             let mut col_lineage = ColumnLineage::new(&inner.output_column);
-            col_lineage.expr_type = "expression".to_string();
+            col_lineage.expr_type = ExprType::Expression;
             col_lineage.source_columns = inner.source_columns;
             col_lineage
         }
         Expr::Cast { expr, .. } => {
             let inner = extract_lineage_from_expr(expr, lineage);
             let mut col_lineage = ColumnLineage::new(&inner.output_column);
-            col_lineage.expr_type = "cast".to_string();
+            col_lineage.expr_type = ExprType::Cast;
             col_lineage.source_columns = inner.source_columns;
             col_lineage
         }
@@ -539,7 +614,7 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
             }
 
             let mut col_lineage = ColumnLineage::new("case_expr");
-            col_lineage.expr_type = "case".to_string();
+            col_lineage.expr_type = ExprType::Case;
             col_lineage.source_columns = sources;
             col_lineage
         }
@@ -547,7 +622,7 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
             // For subqueries, extract lineage from the subquery
             let sub_lineage = extract_lineage_from_query(query, "subquery");
             let mut col_lineage = ColumnLineage::new("subquery");
-            col_lineage.expr_type = "subquery".to_string();
+            col_lineage.expr_type = ExprType::Subquery;
             for col in sub_lineage.columns {
                 col_lineage.source_columns.extend(col.source_columns);
             }
@@ -561,7 +636,7 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
         Expr::IsNull(inner) | Expr::IsNotNull(inner) => {
             let inner_lineage = extract_lineage_from_expr(inner, lineage);
             let mut col_lineage = ColumnLineage::new(&inner_lineage.output_column);
-            col_lineage.expr_type = "expression".to_string();
+            col_lineage.expr_type = ExprType::Expression;
             col_lineage.source_columns = inner_lineage.source_columns;
             col_lineage
         }
@@ -577,7 +652,7 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
             sources.extend(high_lineage.source_columns);
 
             let mut col_lineage = ColumnLineage::new("between_expr");
-            col_lineage.expr_type = "expression".to_string();
+            col_lineage.expr_type = ExprType::Expression;
             col_lineage.source_columns = sources;
             col_lineage
         }
@@ -591,15 +666,13 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
             }
 
             let mut col_lineage = ColumnLineage::new("in_expr");
-            col_lineage.expr_type = "expression".to_string();
+            col_lineage.expr_type = ExprType::Expression;
             col_lineage.source_columns = sources;
             col_lineage
         }
         _ => {
             // For other expressions, return empty lineage
-            let mut col_lineage = ColumnLineage::new("unknown");
-            col_lineage.expr_type = "unknown".to_string();
-            col_lineage
+            ColumnLineage::new("unknown")
         }
     }
 }
@@ -665,7 +738,7 @@ mod tests {
 
         let id_col = lineage.get_column("id").unwrap();
         assert!(id_col.is_direct);
-        assert_eq!(id_col.expr_type, "column");
+        assert_eq!(id_col.expr_type, ExprType::Column);
 
         let name_col = lineage.get_column("name").unwrap();
         assert!(name_col.is_direct);
@@ -717,12 +790,12 @@ mod tests {
 
         let cnt = lineage.get_column("cnt").unwrap();
         assert!(!cnt.is_direct);
-        assert_eq!(cnt.expr_type, "function");
+        assert_eq!(cnt.expr_type, ExprType::Function);
         assert!(cnt.source_columns.contains(&ColumnRef::simple("id")));
 
         let upper_name = lineage.get_column("upper_name").unwrap();
         assert!(!upper_name.is_direct);
-        assert_eq!(upper_name.expr_type, "function");
+        assert_eq!(upper_name.expr_type, ExprType::Function);
     }
 
     #[test]
@@ -733,7 +806,7 @@ mod tests {
 
         let total = lineage.get_column("total").unwrap();
         assert!(!total.is_direct);
-        assert_eq!(total.expr_type, "expression");
+        assert_eq!(total.expr_type, ExprType::Expression);
         assert!(total.source_columns.contains(&ColumnRef::simple("price")));
         assert!(total
             .source_columns
@@ -750,7 +823,7 @@ mod tests {
 
         let is_active = lineage.get_column("is_active").unwrap();
         assert!(!is_active.is_direct);
-        assert_eq!(is_active.expr_type, "case");
+        assert_eq!(is_active.expr_type, ExprType::Case);
         assert!(is_active
             .source_columns
             .contains(&ColumnRef::simple("status")));
@@ -788,7 +861,7 @@ mod tests {
         assert_eq!(lineage.columns.len(), 1);
         let wildcard = &lineage.columns[0];
         assert_eq!(wildcard.output_column, "*");
-        assert_eq!(wildcard.expr_type, "wildcard");
+        assert_eq!(wildcard.expr_type, ExprType::Wildcard);
     }
 
     #[test]
@@ -801,7 +874,7 @@ mod tests {
 
         let const_col = lineage.get_column("const_col").unwrap();
         assert!(!const_col.is_direct);
-        assert_eq!(const_col.expr_type, "literal");
+        assert_eq!(const_col.expr_type, ExprType::Literal);
         assert!(const_col.source_columns.is_empty());
     }
 
@@ -814,7 +887,7 @@ mod tests {
         .unwrap();
 
         let amount = lineage.get_column("amount_decimal").unwrap();
-        assert_eq!(amount.expr_type, "cast");
+        assert_eq!(amount.expr_type, ExprType::Cast);
         assert!(amount.source_columns.contains(&ColumnRef::simple("amount")));
     }
 

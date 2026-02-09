@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use ff_core::model::{parse_test_definition, SchemaTest, SingularTest, TestSeverity, TestType};
 use ff_core::source::SourceFile;
 use ff_core::Project;
-use ff_db::{Database, DuckDbBackend};
+use ff_db::{Database, DatabaseCore, DuckDbBackend};
 use ff_jinja::{CustomTestRegistry, JinjaEnvironment};
 use ff_test::{generator::GeneratedTest, TestRunner};
 use futures::stream::{self, StreamExt};
@@ -252,8 +252,7 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
     let output_lock = Arc::new(Mutex::new(()));
     let test_results: Arc<Mutex<Vec<TestResultOutput>>> = Arc::new(Mutex::new(Vec::new()));
 
-    // Wrap Jinja environment and custom registry in Arc for sharing
-    let jinja_env = Arc::new(jinja);
+    // Wrap custom registry in Arc for sharing
     let custom_registry = Arc::new(custom_test_registry);
 
     // Run tests based on thread count
@@ -275,7 +274,6 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
             &output_lock,
             &test_results,
             json_mode,
-            &jinja_env,
             &custom_registry,
             &macro_paths,
         )
@@ -294,10 +292,8 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
             &warned,
             &errors,
             &early_stop,
-            &output_lock,
             &test_results,
             json_mode,
-            &jinja_env,
             &custom_registry,
             &macro_paths,
         )
@@ -362,10 +358,8 @@ async fn run_tests_sequential(
     warned: &Arc<AtomicUsize>,
     errors: &Arc<AtomicUsize>,
     early_stop: &Arc<AtomicBool>,
-    _output_lock: &Arc<Mutex<()>>,
     test_results: &Arc<Mutex<Vec<TestResultOutput>>>,
     json_mode: bool,
-    jinja_env: &Arc<JinjaEnvironment<'_>>,
     custom_registry: &Arc<CustomTestRegistry>,
     macro_paths: &[std::path::PathBuf],
 ) {
@@ -386,7 +380,6 @@ async fn run_tests_sequential(
         let generated = generate_test_with_custom_support(
             schema_test,
             qualified_name,
-            jinja_env,
             custom_registry,
             macro_paths,
         );
@@ -459,7 +452,6 @@ async fn run_tests_parallel(
     output_lock: &Arc<Mutex<()>>,
     test_results: &Arc<Mutex<Vec<TestResultOutput>>>,
     json_mode: bool,
-    jinja_env: &Arc<JinjaEnvironment<'_>>,
     custom_registry: &Arc<CustomTestRegistry>,
     macro_paths: &[std::path::PathBuf],
 ) {
@@ -475,7 +467,6 @@ async fn run_tests_parallel(
             let generated = generate_test_with_custom_support(
                 schema_test,
                 &qualified_name,
-                jinja_env,
                 custom_registry,
                 macro_paths,
             );
@@ -833,10 +824,23 @@ async fn store_test_failures(
     // Create a DuckDB file for the failures
     let db_path = failures_dir.join(format!("{}.duckdb", table_name));
 
-    if let Ok(failures_db) = DuckDbBackend::new(db_path.to_str().unwrap_or(":memory:")) {
-        // Create table with failing rows
-        let create_sql = format!("CREATE TABLE IF NOT EXISTS failures AS {}", sql);
-        let _ = failures_db.execute(&create_sql).await;
+    match DuckDbBackend::new(db_path.to_str().unwrap_or(":memory:")) {
+        Ok(failures_db) => {
+            // Create table with failing rows
+            let create_sql = format!("CREATE TABLE IF NOT EXISTS failures AS {}", sql);
+            if let Err(e) = failures_db.execute(&create_sql).await {
+                eprintln!(
+                    "[warn] Failed to store test failures for {}: {}",
+                    table_name, e
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "[warn] Failed to create failures database for {}: {}",
+                table_name, e
+            );
+        }
     }
 }
 
@@ -847,7 +851,6 @@ async fn store_test_failures(
 fn generate_test_with_custom_support(
     schema_test: &SchemaTest,
     qualified_name: &str,
-    _jinja_env: &JinjaEnvironment<'_>,
     custom_registry: &CustomTestRegistry,
     macro_paths: &[std::path::PathBuf],
 ) -> GeneratedTest {

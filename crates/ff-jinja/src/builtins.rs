@@ -3,6 +3,7 @@
 //! This module provides built-in macros that are available in all templates
 //! without needing to import them from macro files.
 
+use ff_core::sql_utils::{escape_sql_string, quote_ident};
 use minijinja::value::Value;
 use minijinja::Error;
 use serde::Serialize;
@@ -317,33 +318,49 @@ pub fn get_macro_categories() -> Vec<String> {
 ///
 /// Usage: `{{ date_spine('2024-01-01', '2024-12-31') }}`
 /// Returns SQL that generates a series of dates
-pub fn date_spine(start_date: &str, end_date: &str) -> String {
+pub(crate) fn date_spine(start_date: &str, end_date: &str) -> String {
     // DuckDB-specific syntax for generating date series
+    let escaped_start = start_date.replace('\'', "''");
+    let escaped_end = end_date.replace('\'', "''");
     format!(
         "SELECT CAST(unnest AS DATE) AS date_day FROM unnest(generate_series(DATE '{}', DATE '{}', INTERVAL '1 day'))",
-        start_date, end_date
+        escaped_start, escaped_end
     )
 }
 
 /// Truncate a date to a specific part
 ///
 /// Usage: `{{ date_trunc('month', 'created_at') }}`
-pub fn date_trunc(date_part: &str, column: &str) -> String {
-    format!("DATE_TRUNC('{}', {})", date_part, column)
+pub(crate) fn date_trunc(date_part: &str, column: &str) -> String {
+    format!(
+        "DATE_TRUNC('{}', {})",
+        escape_sql_string(date_part),
+        quote_ident(column)
+    )
 }
 
 /// Add an interval to a date
 ///
 /// Usage: `{{ date_add('created_at', 7, 'day') }}`
-pub fn date_add(column: &str, amount: i64, unit: &str) -> String {
-    format!("{} + INTERVAL '{} {}'", column, amount, unit)
+pub(crate) fn date_add(column: &str, amount: i64, unit: &str) -> String {
+    format!(
+        "{} + INTERVAL '{} {}'",
+        quote_ident(column),
+        amount,
+        escape_sql_string(unit)
+    )
 }
 
 /// Calculate the difference between two dates
 ///
 /// Usage: `{{ date_diff('day', 'start_date', 'end_date') }}`
-pub fn date_diff(unit: &str, start_col: &str, end_col: &str) -> String {
-    format!("DATE_DIFF('{}', {}, {})", unit, start_col, end_col)
+pub(crate) fn date_diff(unit: &str, start_col: &str, end_col: &str) -> String {
+    format!(
+        "DATE_DIFF('{}', {}, {})",
+        escape_sql_string(unit),
+        quote_ident(start_col),
+        quote_ident(end_col)
+    )
 }
 
 // ===== String Macros =====
@@ -351,25 +368,34 @@ pub fn date_diff(unit: &str, start_col: &str, end_col: &str) -> String {
 /// Convert a string to a URL-friendly slug
 ///
 /// Usage: `{{ slugify('column_name') }}`
-pub fn slugify(column: &str) -> String {
+pub(crate) fn slugify(column: &str) -> String {
     format!(
         "LOWER(REGEXP_REPLACE(REGEXP_REPLACE(TRIM({}), '[^a-zA-Z0-9]+', '-', 'g'), '^-|-$', '', 'g'))",
-        column
+        quote_ident(column)
     )
 }
 
 /// Clean a string by removing special characters
 ///
 /// Usage: `{{ clean_string('column_name') }}`
-pub fn clean_string(column: &str) -> String {
-    format!("TRIM(REGEXP_REPLACE({}, '[^a-zA-Z0-9 ]', '', 'g'))", column)
+pub(crate) fn clean_string(column: &str) -> String {
+    format!(
+        "TRIM(REGEXP_REPLACE({}, '[^a-zA-Z0-9 ]', '', 'g'))",
+        quote_ident(column)
+    )
 }
 
 /// Get a specific part of a split string
 ///
 /// Usage: `{{ split_part('column_name', '-', 1) }}`
-pub fn split_part(column: &str, delimiter: &str, part: i64) -> String {
-    format!("SPLIT_PART({}, '{}', {})", column, delimiter, part)
+pub(crate) fn split_part(column: &str, delimiter: &str, part: i64) -> String {
+    let escaped_delim = delimiter.replace('\'', "''");
+    format!(
+        "SPLIT_PART({}, '{}', {})",
+        quote_ident(column),
+        escaped_delim,
+        part
+    )
 }
 
 // ===== Math Macros =====
@@ -377,27 +403,29 @@ pub fn split_part(column: &str, delimiter: &str, part: i64) -> String {
 /// Safely divide two numbers, returning NULL if denominator is 0
 ///
 /// Usage: `{{ safe_divide('numerator', 'denominator') }}`
-pub fn safe_divide(numerator: &str, denominator: &str) -> String {
+pub(crate) fn safe_divide(numerator: &str, denominator: &str) -> String {
+    let num = quote_ident(numerator);
+    let denom = quote_ident(denominator);
     format!(
-        "CASE WHEN {} = 0 OR {} IS NULL THEN NULL ELSE CAST({} AS DOUBLE) / {} END",
-        denominator, denominator, numerator, denominator
+        "CASE WHEN {denom} = 0 OR {denom} IS NULL THEN NULL ELSE CAST({num} AS DOUBLE) / {denom} END"
     )
 }
 
 /// Round a number to 2 decimal places (for money)
 ///
 /// Usage: `{{ round_money('amount') }}`
-pub fn round_money(column: &str) -> String {
-    format!("ROUND(CAST({} AS DOUBLE), 2)", column)
+pub(crate) fn round_money(column: &str) -> String {
+    format!("ROUND(CAST({} AS DOUBLE), 2)", quote_ident(column))
 }
 
 /// Calculate percentage of a value relative to a total
 ///
 /// Usage: `{{ percent_of('value', 'total') }}`
-pub fn percent_of(value: &str, total: &str) -> String {
+pub(crate) fn percent_of(value: &str, total: &str) -> String {
+    let val = quote_ident(value);
+    let tot = quote_ident(total);
     format!(
-        "CASE WHEN {} = 0 OR {} IS NULL THEN 0.0 ELSE ROUND(100.0 * {} / {}, 2) END",
-        total, total, value, total
+        "CASE WHEN {tot} = 0 OR {tot} IS NULL THEN 0.0 ELSE ROUND(100.0 * {val} / {tot}, 2) END"
     )
 }
 
@@ -406,31 +434,31 @@ pub fn percent_of(value: &str, total: &str) -> String {
 /// Generate a LIMIT 0 clause for schema validation
 ///
 /// Usage: `{{ limit_zero() }}`
-pub fn limit_zero() -> String {
+pub(crate) fn limit_zero() -> String {
     "LIMIT 0".to_string()
 }
 
 /// Boolean OR aggregation (works across dialects)
 ///
 /// Usage: `{{ bool_or('is_active') }}`
-pub fn bool_or(column: &str) -> String {
-    format!("BOOL_OR({})", column)
+pub(crate) fn bool_or(column: &str) -> String {
+    format!("BOOL_OR({})", quote_ident(column))
 }
 
 /// Hash a column using a consistent algorithm
 ///
 /// Usage: `{{ hash('column_name') }}`
-pub fn hash(column: &str) -> String {
-    format!("MD5(CAST({} AS VARCHAR))", column)
+pub(crate) fn hash(column: &str) -> String {
+    format!("MD5(CAST({} AS VARCHAR))", quote_ident(column))
 }
 
 /// Hash multiple columns into a single value
 ///
 /// Usage: `{{ hash_columns(['col1', 'col2', 'col3']) }}`
-pub fn hash_columns(columns: Vec<String>) -> String {
+pub(crate) fn hash_columns(columns: &[String]) -> String {
     let concat_expr = columns
         .iter()
-        .map(|c| format!("COALESCE(CAST({} AS VARCHAR), '')", c))
+        .map(|c| format!("COALESCE(CAST({} AS VARCHAR), '')", quote_ident(c)))
         .collect::<Vec<_>>()
         .join(" || '|' || ");
     format!("MD5({})", concat_expr)
@@ -441,98 +469,106 @@ pub fn hash_columns(columns: Vec<String>) -> String {
 /// Generate a surrogate key from multiple columns
 ///
 /// Usage: `{{ surrogate_key(['col1', 'col2']) }}`
-pub fn surrogate_key(columns: Vec<String>) -> String {
+pub(crate) fn surrogate_key(columns: &[String]) -> String {
     hash_columns(columns)
 }
 
 /// Coalesce multiple columns
 ///
 /// Usage: `{{ coalesce_columns(['col1', 'col2', 'col3']) }}`
-pub fn coalesce_columns(columns: Vec<String>) -> String {
-    format!("COALESCE({})", columns.join(", "))
+pub(crate) fn coalesce_columns(columns: &[String]) -> String {
+    let quoted: Vec<String> = columns.iter().map(|c| quote_ident(c)).collect();
+    format!("COALESCE({})", quoted.join(", "))
 }
 
 /// Generate a not-null check expression
 ///
 /// Usage: `{{ not_null('column_name') }}`
-pub fn not_null(column: &str) -> String {
-    format!("{} IS NOT NULL", column)
+pub(crate) fn not_null(column: &str) -> String {
+    format!("{} IS NOT NULL", quote_ident(column))
 }
 
 // ===== Minijinja Function Wrappers =====
 
 /// Wrapper for date_spine as a minijinja function
-pub fn make_date_spine_fn() -> impl Fn(&str, &str) -> String + Send + Sync + Clone + 'static {
+pub(crate) fn make_date_spine_fn() -> impl Fn(&str, &str) -> String + Send + Sync + Clone + 'static
+{
     move |start: &str, end: &str| date_spine(start, end)
 }
 
 /// Wrapper for date_trunc as a minijinja function
-pub fn make_date_trunc_fn() -> impl Fn(&str, &str) -> String + Send + Sync + Clone + 'static {
+pub(crate) fn make_date_trunc_fn() -> impl Fn(&str, &str) -> String + Send + Sync + Clone + 'static
+{
     move |part: &str, col: &str| date_trunc(part, col)
 }
 
 /// Wrapper for date_add as a minijinja function
-pub fn make_date_add_fn() -> impl Fn(&str, i64, &str) -> String + Send + Sync + Clone + 'static {
+pub(crate) fn make_date_add_fn(
+) -> impl Fn(&str, i64, &str) -> String + Send + Sync + Clone + 'static {
     move |col: &str, amount: i64, unit: &str| date_add(col, amount, unit)
 }
 
 /// Wrapper for date_diff as a minijinja function
-pub fn make_date_diff_fn() -> impl Fn(&str, &str, &str) -> String + Send + Sync + Clone + 'static {
+pub(crate) fn make_date_diff_fn(
+) -> impl Fn(&str, &str, &str) -> String + Send + Sync + Clone + 'static {
     move |unit: &str, start: &str, end: &str| date_diff(unit, start, end)
 }
 
 /// Wrapper for slugify as a minijinja function
-pub fn make_slugify_fn() -> impl Fn(&str) -> String + Send + Sync + Clone + 'static {
+pub(crate) fn make_slugify_fn() -> impl Fn(&str) -> String + Send + Sync + Clone + 'static {
     move |col: &str| slugify(col)
 }
 
 /// Wrapper for clean_string as a minijinja function
-pub fn make_clean_string_fn() -> impl Fn(&str) -> String + Send + Sync + Clone + 'static {
+pub(crate) fn make_clean_string_fn() -> impl Fn(&str) -> String + Send + Sync + Clone + 'static {
     move |col: &str| clean_string(col)
 }
 
 /// Wrapper for split_part as a minijinja function
-pub fn make_split_part_fn() -> impl Fn(&str, &str, i64) -> String + Send + Sync + Clone + 'static {
+pub(crate) fn make_split_part_fn(
+) -> impl Fn(&str, &str, i64) -> String + Send + Sync + Clone + 'static {
     move |col: &str, delim: &str, part: i64| split_part(col, delim, part)
 }
 
 /// Wrapper for safe_divide as a minijinja function
-pub fn make_safe_divide_fn() -> impl Fn(&str, &str) -> String + Send + Sync + Clone + 'static {
+pub(crate) fn make_safe_divide_fn() -> impl Fn(&str, &str) -> String + Send + Sync + Clone + 'static
+{
     move |num: &str, denom: &str| safe_divide(num, denom)
 }
 
 /// Wrapper for round_money as a minijinja function
-pub fn make_round_money_fn() -> impl Fn(&str) -> String + Send + Sync + Clone + 'static {
+pub(crate) fn make_round_money_fn() -> impl Fn(&str) -> String + Send + Sync + Clone + 'static {
     move |col: &str| round_money(col)
 }
 
 /// Wrapper for percent_of as a minijinja function
-pub fn make_percent_of_fn() -> impl Fn(&str, &str) -> String + Send + Sync + Clone + 'static {
+pub(crate) fn make_percent_of_fn() -> impl Fn(&str, &str) -> String + Send + Sync + Clone + 'static
+{
     move |value: &str, total: &str| percent_of(value, total)
 }
 
 /// Wrapper for limit_zero as a minijinja function
-pub fn make_limit_zero_fn() -> impl Fn() -> String + Send + Sync + Clone + 'static {
+pub(crate) fn make_limit_zero_fn() -> impl Fn() -> String + Send + Sync + Clone + 'static {
     || limit_zero()
 }
 
 /// Wrapper for bool_or as a minijinja function
-pub fn make_bool_or_fn() -> impl Fn(&str) -> String + Send + Sync + Clone + 'static {
+pub(crate) fn make_bool_or_fn() -> impl Fn(&str) -> String + Send + Sync + Clone + 'static {
     move |col: &str| bool_or(col)
 }
 
 /// Wrapper for hash as a minijinja function
-pub fn make_hash_fn() -> impl Fn(&str) -> String + Send + Sync + Clone + 'static {
+pub(crate) fn make_hash_fn() -> impl Fn(&str) -> String + Send + Sync + Clone + 'static {
     move |col: &str| hash(col)
 }
 
 /// Wrapper for not_null as a minijinja function
-pub fn make_not_null_fn() -> impl Fn(&str) -> String + Send + Sync + Clone + 'static {
+pub(crate) fn make_not_null_fn() -> impl Fn(&str) -> String + Send + Sync + Clone + 'static {
     move |col: &str| not_null(col)
 }
 
 /// Wrapper for surrogate_key that accepts a Value array
-pub fn make_surrogate_key_fn(
+pub(crate) fn make_surrogate_key_fn(
 ) -> impl Fn(Value) -> Result<String, Error> + Send + Sync + Clone + 'static {
     move |columns: Value| {
         let cols: Vec<String> = columns
@@ -545,12 +581,12 @@ pub fn make_surrogate_key_fn(
             })?
             .filter_map(|v| v.as_str().map(String::from))
             .collect();
-        Ok(surrogate_key(cols))
+        Ok(surrogate_key(&cols))
     }
 }
 
 /// Wrapper for coalesce_columns that accepts a Value array
-pub fn make_coalesce_columns_fn(
+pub(crate) fn make_coalesce_columns_fn(
 ) -> impl Fn(Value) -> Result<String, Error> + Send + Sync + Clone + 'static {
     move |columns: Value| {
         let cols: Vec<String> = columns
@@ -563,7 +599,7 @@ pub fn make_coalesce_columns_fn(
             })?
             .filter_map(|v| v.as_str().map(String::from))
             .collect();
-        Ok(coalesce_columns(cols))
+        Ok(coalesce_columns(&cols))
     }
 }
 
@@ -582,19 +618,19 @@ mod tests {
     #[test]
     fn test_date_trunc() {
         let result = date_trunc("month", "created_at");
-        assert_eq!(result, "DATE_TRUNC('month', created_at)");
+        assert_eq!(result, "DATE_TRUNC('month', \"created_at\")");
     }
 
     #[test]
     fn test_date_add() {
         let result = date_add("order_date", 7, "day");
-        assert_eq!(result, "order_date + INTERVAL '7 day'");
+        assert_eq!(result, "\"order_date\" + INTERVAL '7 day'");
     }
 
     #[test]
     fn test_date_diff() {
         let result = date_diff("day", "start_date", "end_date");
-        assert_eq!(result, "DATE_DIFF('day', start_date, end_date)");
+        assert_eq!(result, "DATE_DIFF('day', \"start_date\", \"end_date\")");
     }
 
     #[test]
@@ -602,7 +638,7 @@ mod tests {
         let result = slugify("title");
         assert!(result.contains("LOWER"));
         assert!(result.contains("REGEXP_REPLACE"));
-        assert!(result.contains("title"));
+        assert!(result.contains("\"title\""));
     }
 
     #[test]
@@ -610,12 +646,13 @@ mod tests {
         let result = clean_string("name");
         assert!(result.contains("TRIM"));
         assert!(result.contains("REGEXP_REPLACE"));
+        assert!(result.contains("\"name\""));
     }
 
     #[test]
     fn test_split_part() {
         let result = split_part("email", "@", 2);
-        assert_eq!(result, "SPLIT_PART(email, '@', 2)");
+        assert_eq!(result, "SPLIT_PART(\"email\", '@', 2)");
     }
 
     #[test]
@@ -623,22 +660,22 @@ mod tests {
         let result = safe_divide("revenue", "count");
         assert!(result.contains("CASE WHEN"));
         assert!(result.contains("IS NULL"));
-        assert!(result.contains("revenue"));
-        assert!(result.contains("count"));
+        assert!(result.contains("\"revenue\""));
+        assert!(result.contains("\"count\""));
     }
 
     #[test]
     fn test_round_money() {
         let result = round_money("amount");
-        assert_eq!(result, "ROUND(CAST(amount AS DOUBLE), 2)");
+        assert_eq!(result, "ROUND(CAST(\"amount\" AS DOUBLE), 2)");
     }
 
     #[test]
     fn test_percent_of() {
         let result = percent_of("sales", "total_sales");
         assert!(result.contains("100.0"));
-        assert!(result.contains("sales"));
-        assert!(result.contains("total_sales"));
+        assert!(result.contains("\"sales\""));
+        assert!(result.contains("\"total_sales\""));
     }
 
     #[test]
@@ -649,40 +686,40 @@ mod tests {
     #[test]
     fn test_bool_or() {
         let result = bool_or("is_active");
-        assert_eq!(result, "BOOL_OR(is_active)");
+        assert_eq!(result, "BOOL_OR(\"is_active\")");
     }
 
     #[test]
     fn test_hash() {
         let result = hash("user_id");
-        assert_eq!(result, "MD5(CAST(user_id AS VARCHAR))");
+        assert_eq!(result, "MD5(CAST(\"user_id\" AS VARCHAR))");
     }
 
     #[test]
     fn test_hash_columns() {
-        let result = hash_columns(vec!["col1".to_string(), "col2".to_string()]);
+        let result = hash_columns(&["col1".to_string(), "col2".to_string()]);
         assert!(result.contains("MD5"));
         assert!(result.contains("COALESCE"));
-        assert!(result.contains("col1"));
-        assert!(result.contains("col2"));
+        assert!(result.contains("\"col1\""));
+        assert!(result.contains("\"col2\""));
     }
 
     #[test]
     fn test_surrogate_key() {
-        let result = surrogate_key(vec!["id".to_string(), "type".to_string()]);
+        let result = surrogate_key(&["id".to_string(), "type".to_string()]);
         assert!(result.contains("MD5"));
     }
 
     #[test]
     fn test_coalesce_columns() {
-        let result = coalesce_columns(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
-        assert_eq!(result, "COALESCE(a, b, c)");
+        let result = coalesce_columns(&["a".to_string(), "b".to_string(), "c".to_string()]);
+        assert_eq!(result, "COALESCE(\"a\", \"b\", \"c\")");
     }
 
     #[test]
     fn test_not_null() {
         let result = not_null("email");
-        assert_eq!(result, "email IS NOT NULL");
+        assert_eq!(result, "\"email\" IS NOT NULL");
     }
 
     // ===== Macro Metadata Tests =====

@@ -52,7 +52,7 @@ pub struct Config {
     pub target_path: String,
 
     /// Default materialization for models (view or table)
-    #[serde(default = "default_materialization")]
+    #[serde(default)]
     pub materialization: Materialization,
 
     /// Default schema for models
@@ -133,12 +133,32 @@ pub struct TargetConfig {
     pub vars: HashMap<String, serde_yaml::Value>,
 }
 
+/// Database type selector
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum DbType {
+    /// DuckDB (default)
+    #[default]
+    DuckDb,
+    /// Snowflake
+    Snowflake,
+}
+
+impl std::fmt::Display for DbType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DbType::DuckDb => write!(f, "duckdb"),
+            DbType::Snowflake => write!(f, "snowflake"),
+        }
+    }
+}
+
 /// Database connection configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DatabaseConfig {
     /// Database type (duckdb or snowflake)
-    #[serde(rename = "type", default = "default_db_type")]
-    pub db_type: String,
+    #[serde(rename = "type", default)]
+    pub db_type: DbType,
 
     /// Database path (for DuckDB file-based or :memory:)
     #[serde(default = "default_db_path")]
@@ -238,26 +258,15 @@ fn default_target_path() -> String {
     "target".to_string()
 }
 
-fn default_materialization() -> Materialization {
-    Materialization::View
-}
-
 fn default_dialect() -> Dialect {
     Dialect::DuckDb
 }
-
-/// Default database type
-pub const DEFAULT_DB_TYPE: &str = "duckdb";
 
 /// Default database path (in-memory)
 pub const DEFAULT_DB_PATH: &str = ":memory:";
 
 /// Default target/output directory name
 pub const DEFAULT_TARGET_DIR: &str = "target";
-
-fn default_db_type() -> String {
-    DEFAULT_DB_TYPE.to_string()
-}
 
 fn default_db_path() -> String {
     DEFAULT_DB_PATH.to_string()

@@ -1,4 +1,14 @@
 //! Database trait definition
+//!
+//! The `Database` trait is split into focused sub-traits for modularity:
+//! - [`DatabaseCore`]: Execute SQL, check existence, query
+//! - [`DatabaseSchema`]: DDL operations (create table/view, drop, alter)
+//! - [`DatabaseCsv`]: CSV loading and schema inference
+//! - [`DatabaseIncremental`]: Merge/delete-insert for incremental models
+//! - [`DatabaseSnapshot`]: SCD Type 2 snapshot operations
+//!
+//! The [`Database`] super-trait combines all of them. Consumers that need
+//! all capabilities use `Arc<dyn Database>`.
 
 use crate::error::DbResult;
 use async_trait::async_trait;
@@ -75,34 +85,14 @@ impl CsvLoadOptions {
     }
 }
 
-/// Database abstraction trait for Featherflow
-///
-/// This trait provides the core database operations needed for model execution,
-/// including SQL execution, table/view creation, CSV loading, and snapshot operations.
-///
-/// # Thread Safety
-///
-/// Implementations must be `Send + Sync` to support:
-/// - Concurrent model execution with `--threads` flag
-/// - Async operations across multiple tokio tasks
-/// - Shared access via `Arc<dyn Database>`
-///
-/// # Implementors
-///
-/// - [`DuckDbBackend`](crate::DuckDbBackend) - Primary implementation using DuckDB
+/// Core database operations: execute SQL, query, check existence.
 #[async_trait]
-pub trait Database: Send + Sync {
+pub trait DatabaseCore: Send + Sync {
     /// Execute SQL that modifies data, returns affected rows
     async fn execute(&self, sql: &str) -> DbResult<usize>;
 
     /// Execute multiple SQL statements
     async fn execute_batch(&self, sql: &str) -> DbResult<()>;
-
-    /// Create table from SELECT statement
-    async fn create_table_as(&self, name: &str, select: &str, replace: bool) -> DbResult<()>;
-
-    /// Create view from SELECT statement
-    async fn create_view_as(&self, name: &str, select: &str, replace: bool) -> DbResult<()>;
 
     /// Check if a table or view exists
     async fn relation_exists(&self, name: &str) -> DbResult<bool>;
@@ -110,15 +100,48 @@ pub trait Database: Send + Sync {
     /// Execute query returning row count (for tests)
     async fn query_count(&self, sql: &str) -> DbResult<usize>;
 
+    /// Query and return sample rows as formatted strings
+    async fn query_sample_rows(&self, sql: &str, limit: usize) -> DbResult<Vec<String>>;
+
+    /// Query and return a single string value from the first row, first column
+    async fn query_one(&self, sql: &str) -> DbResult<Option<String>>;
+
+    /// Database type identifier for logging
+    fn db_type(&self) -> &'static str;
+}
+
+/// DDL operations: create/drop tables and views, alter schema.
+#[async_trait]
+pub trait DatabaseSchema: Send + Sync {
+    /// Create table from SELECT statement
+    async fn create_table_as(&self, name: &str, select: &str, replace: bool) -> DbResult<()>;
+
+    /// Create view from SELECT statement
+    async fn create_view_as(&self, name: &str, select: &str, replace: bool) -> DbResult<()>;
+
+    /// Drop a table or view if it exists
+    async fn drop_if_exists(&self, name: &str) -> DbResult<()>;
+
+    /// Create a schema if it does not exist
+    async fn create_schema_if_not_exists(&self, schema: &str) -> DbResult<()>;
+
+    /// Get the schema (column names and types) for a table
+    async fn get_table_schema(&self, table: &str) -> DbResult<Vec<(String, String)>>;
+
+    /// Get the schema for a SELECT query without executing it
+    async fn describe_query(&self, sql: &str) -> DbResult<Vec<(String, String)>>;
+
+    /// Add columns to an existing table
+    async fn add_columns(&self, table: &str, columns: &[(String, String)]) -> DbResult<()>;
+}
+
+/// CSV loading and schema inference.
+#[async_trait]
+pub trait DatabaseCsv: Send + Sync {
     /// Load CSV file into table
     async fn load_csv(&self, table: &str, path: &str) -> DbResult<()>;
 
     /// Load CSV file into table with options
-    ///
-    /// Options:
-    /// - `delimiter`: CSV delimiter character
-    /// - `column_types`: Override inferred types for specific columns
-    /// - `quote_columns`: Force column quoting
     async fn load_csv_with_options(
         &self,
         table: &str,
@@ -127,29 +150,13 @@ pub trait Database: Send + Sync {
     ) -> DbResult<()>;
 
     /// Get inferred schema for a CSV file without loading it
-    ///
-    /// Returns a list of (column_name, inferred_type) tuples
     async fn infer_csv_schema(&self, path: &str) -> DbResult<Vec<(String, String)>>;
+}
 
-    /// Database type identifier for logging
-    fn db_type(&self) -> &'static str;
-
-    /// Drop a table or view if it exists
-    async fn drop_if_exists(&self, name: &str) -> DbResult<()>;
-
-    /// Create a schema if it does not exist
-    async fn create_schema_if_not_exists(&self, schema: &str) -> DbResult<()>;
-
-    /// Query and return sample rows as formatted strings
-    /// Returns up to `limit` rows, each as a comma-separated string
-    async fn query_sample_rows(&self, sql: &str, limit: usize) -> DbResult<Vec<String>>;
-
-    /// Query and return a single string value from the first row, first column
-    async fn query_one(&self, sql: &str) -> DbResult<Option<String>>;
-
+/// Merge and delete-insert operations for incremental models.
+#[async_trait]
+pub trait DatabaseIncremental: Send + Sync {
     /// Execute a MERGE/UPSERT operation for incremental models
-    ///
-    /// This merges source data into an existing target table based on unique keys.
     async fn merge_into(
         &self,
         target_table: &str,
@@ -158,37 +165,18 @@ pub trait Database: Send + Sync {
     ) -> DbResult<()>;
 
     /// Execute a delete+insert operation for incremental models
-    ///
-    /// This deletes matching rows from target and inserts from source.
     async fn delete_insert(
         &self,
         target_table: &str,
         source_sql: &str,
         unique_keys: &[String],
     ) -> DbResult<()>;
+}
 
-    /// Get the schema (column names and types) for a table
-    ///
-    /// Returns a list of (column_name, column_type) tuples
-    async fn get_table_schema(&self, table: &str) -> DbResult<Vec<(String, String)>>;
-
-    /// Get the schema for a SELECT query without executing it
-    ///
-    /// Returns a list of (column_name, column_type) tuples
-    async fn describe_query(&self, sql: &str) -> DbResult<Vec<(String, String)>>;
-
-    /// Add columns to an existing table
-    ///
-    /// Used for on_schema_change: append_new_columns
-    async fn add_columns(&self, table: &str, columns: &[(String, String)]) -> DbResult<()>;
-
+/// SCD Type 2 snapshot operations.
+#[async_trait]
+pub trait DatabaseSnapshot: Send + Sync {
     /// Execute a snapshot operation (SCD Type 2)
-    ///
-    /// This handles the full snapshot workflow:
-    /// 1. Create snapshot table if it doesn't exist
-    /// 2. Invalidate changed records (set valid_to)
-    /// 3. Insert new records
-    /// 4. Handle hard deletes if configured
     async fn execute_snapshot(
         &self,
         snapshot_table: &str,
@@ -224,6 +212,33 @@ pub trait Database: Send + Sync {
         source_table: &str,
         unique_keys: &[String],
     ) -> DbResult<usize>;
+}
+
+/// Combined database trait providing all capabilities.
+///
+/// This is the main trait used by CLI commands via `Arc<dyn Database>`.
+/// It inherits from all sub-traits, so any type implementing `Database`
+/// must implement all sub-trait methods.
+///
+/// # Thread Safety
+///
+/// Implementations must be `Send + Sync` to support:
+/// - Concurrent model execution with `--threads` flag
+/// - Async operations across multiple tokio tasks
+/// - Shared access via `Arc<dyn Database>`
+///
+/// # Implementors
+///
+/// - [`DuckDbBackend`](crate::DuckDbBackend) - Primary implementation using DuckDB
+pub trait Database:
+    DatabaseCore + DatabaseSchema + DatabaseCsv + DatabaseIncremental + DatabaseSnapshot
+{
+}
+
+/// Blanket implementation: any type that implements all sub-traits also implements Database.
+impl<T> Database for T where
+    T: DatabaseCore + DatabaseSchema + DatabaseCsv + DatabaseIncremental + DatabaseSnapshot
+{
 }
 
 /// Result of a snapshot execution

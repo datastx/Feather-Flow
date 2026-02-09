@@ -52,6 +52,7 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
                     };
                     TypedColumn {
                         name: col.name.clone(),
+                        source_table: None,
                         sql_type,
                         nullability,
                         provenance: vec![],

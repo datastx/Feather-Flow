@@ -199,7 +199,7 @@ async fn show_metric(
     let sql = metric.generate_sql();
 
     if args.execute {
-        execute_metric(project, metric, &sql, args, global, json_mode).await
+        execute_metric(project, metric, &sql, global, json_mode).await
     } else {
         if json_mode {
             let result = MetricResult {
@@ -243,7 +243,6 @@ async fn execute_metric(
     project: &Project,
     metric: &Metric,
     sql: &str,
-    _args: &MetricArgs,
     global: &GlobalArgs,
     json_mode: bool,
 ) -> Result<()> {

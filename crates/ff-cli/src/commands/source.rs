@@ -1,7 +1,7 @@
 //! Source command implementation
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use ff_core::source::{FreshnessPeriodUnit, SourceFile};
 use ff_core::Project;
 use ff_db::{quote_ident, quote_qualified, Database, DuckDbBackend};
@@ -10,6 +10,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::cli::{FreshnessOutput, GlobalArgs, SourceArgs, SourceCommands, SourceFreshnessArgs};
+use crate::commands::common::{self, FreshnessStatus};
 
 /// Execute the source command
 pub async fn execute(args: &SourceArgs, global: &GlobalArgs) -> Result<()> {
@@ -31,27 +32,6 @@ struct FreshnessResult {
     warn_threshold_hours: Option<f64>,
     error_threshold_hours: Option<f64>,
     error: Option<String>,
-}
-
-/// Freshness status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-enum FreshnessStatus {
-    Pass,
-    Warn,
-    Error,
-    RuntimeError,
-}
-
-impl std::fmt::Display for FreshnessStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FreshnessStatus::Pass => write!(f, "pass"),
-            FreshnessStatus::Warn => write!(f, "warn"),
-            FreshnessStatus::Error => write!(f, "error"),
-            FreshnessStatus::RuntimeError => write!(f, "runtime_error"),
-        }
-    }
 }
 
 /// Execute freshness check
@@ -108,7 +88,9 @@ async fn execute_freshness(args: &SourceFreshnessArgs, global: &GlobalArgs) -> R
     let now = Utc::now();
 
     for (source, table) in &tables_with_freshness {
-        let freshness_config = table.freshness.as_ref().unwrap();
+        let Some(freshness_config) = table.freshness.as_ref() else {
+            continue;
+        };
         let qualified_name = source.get_qualified_name(table);
 
         if global.verbose {
@@ -128,7 +110,7 @@ async fn execute_freshness(args: &SourceFreshnessArgs, global: &GlobalArgs) -> R
         let result = match db.query_one(&query).await {
             Ok(Some(loaded_at_str)) => {
                 // Parse the timestamp
-                let loaded_at = parse_timestamp(&loaded_at_str);
+                let loaded_at = common::parse_timestamp(&loaded_at_str);
 
                 match loaded_at {
                     Some(loaded_at_ts) => {
@@ -226,32 +208,6 @@ fn write_results_to_file(project: &Project, results: &[FreshnessResult]) -> Resu
     std::fs::write(&sources_path, json).context("Failed to write sources.json")?;
 
     Ok(())
-}
-
-/// Parse various timestamp formats
-fn parse_timestamp(s: &str) -> Option<DateTime<Utc>> {
-    // Try common formats
-    let formats = [
-        "%Y-%m-%d %H:%M:%S%.f",
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%dT%H:%M:%S%.fZ",
-        "%Y-%m-%dT%H:%M:%SZ",
-        "%Y-%m-%dT%H:%M:%S%.f",
-        "%Y-%m-%dT%H:%M:%S",
-    ];
-
-    for fmt in &formats {
-        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, fmt) {
-            return Some(DateTime::from_naive_utc_and_offset(dt, Utc));
-        }
-    }
-
-    // Try parsing as RFC3339
-    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-        return Some(dt.with_timezone(&Utc));
-    }
-
-    None
 }
 
 /// Convert period to hours
@@ -416,10 +372,10 @@ mod tests {
 
     #[test]
     fn test_parse_timestamp_various_formats() {
-        assert!(parse_timestamp("2024-01-15 10:30:00").is_some());
-        assert!(parse_timestamp("2024-01-15 10:30:00.123").is_some());
-        assert!(parse_timestamp("2024-01-15T10:30:00Z").is_some());
-        assert!(parse_timestamp("2024-01-15T10:30:00.123Z").is_some());
+        assert!(common::parse_timestamp("2024-01-15 10:30:00").is_some());
+        assert!(common::parse_timestamp("2024-01-15 10:30:00.123").is_some());
+        assert!(common::parse_timestamp("2024-01-15T10:30:00Z").is_some());
+        assert!(common::parse_timestamp("2024-01-15T10:30:00.123Z").is_some());
     }
 
     #[test]

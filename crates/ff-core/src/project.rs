@@ -307,9 +307,6 @@ impl Project {
         if parsed_base.is_none() {
             // Unversioned reference - find all versions and return latest
             if let Some((name, model)) = self.get_latest_version(reference) {
-                if model.is_versioned() {
-                    // Resolved to a versioned model - this is normal, no warning needed
-                }
                 // Check for deprecation on resolved model
                 if model.is_deprecated() {
                     let msg = model
@@ -613,7 +610,7 @@ exposure_paths: ["exposures"]
         std::fs::write(
             dir.path().join("exposures/revenue_dashboard.yml"),
             r#"
-version: "1"
+version: 1
 kind: exposure
 name: revenue_dashboard
 type: dashboard
@@ -628,7 +625,7 @@ depends_on:
         std::fs::write(
             dir.path().join("exposures/ml_model.yml"),
             r#"
-version: "1"
+version: 1
 kind: exposure
 name: churn_predictor
 type: ml_model

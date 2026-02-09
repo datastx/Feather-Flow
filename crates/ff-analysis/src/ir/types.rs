@@ -29,7 +29,7 @@ pub enum SqlType {
     /// BINARY / BLOB
     Binary,
     /// Type could not be determined; carries a reason
-    Unknown(std::string::String),
+    Unknown(String),
 }
 
 impl SqlType {
@@ -52,7 +52,7 @@ impl SqlType {
     }
 
     /// Human-readable display name
-    pub fn display_name(&self) -> std::string::String {
+    pub fn display_name(&self) -> String {
         match self {
             SqlType::Boolean => "BOOLEAN".into(),
             SqlType::Integer { bits: 8 } => "TINYINT".into(),
@@ -132,7 +132,10 @@ impl std::fmt::Display for Nullability {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypedColumn {
     /// Column name
-    pub name: std::string::String,
+    pub name: String,
+    /// Source table this column came from (for qualified wildcard expansion)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_table: Option<String>,
     /// Inferred or declared SQL type
     pub sql_type: SqlType,
     /// Nullability state
@@ -145,9 +148,9 @@ pub struct TypedColumn {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnProvenance {
     /// Source table or model name
-    pub source_table: std::string::String,
+    pub source_table: String,
     /// Source column name
-    pub source_column: std::string::String,
+    pub source_column: String,
     /// Whether this is a direct pass-through (vs computed/transformed)
     pub is_direct: bool,
 }

@@ -112,9 +112,21 @@ impl Seed {
         let yaml_path = path.with_extension("yaml");
 
         let config = if yml_path.exists() {
-            SeedConfig::load(&yml_path).ok()
+            match SeedConfig::load(&yml_path) {
+                Ok(c) => Some(c),
+                Err(e) => {
+                    eprintln!("[warn] Failed to parse {}: {}", yml_path.display(), e);
+                    None
+                }
+            }
         } else if yaml_path.exists() {
-            SeedConfig::load(&yaml_path).ok()
+            match SeedConfig::load(&yaml_path) {
+                Ok(c) => Some(c),
+                Err(e) => {
+                    eprintln!("[warn] Failed to parse {}: {}", yaml_path.display(), e);
+                    None
+                }
+            }
         } else {
             None
         };
@@ -168,6 +180,7 @@ impl Seed {
 
 /// Discover all seed files in the given paths
 pub fn discover_seeds(_root: &Path, seed_paths: &[PathBuf]) -> Vec<Seed> {
+    // _root reserved for relative path resolution
     let mut seeds = Vec::new();
 
     for seed_path in seed_paths {

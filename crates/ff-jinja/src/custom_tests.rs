@@ -137,7 +137,9 @@ fn json_value_to_jinja(value: &serde_json::Value) -> String {
             }
         }
         serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::String(s) => format!("\"{}\"", s.replace('"', "\\\"")),
+        serde_json::Value::String(s) => {
+            format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+        }
         serde_json::Value::Array(arr) => {
             let items: Vec<String> = arr.iter().map(json_value_to_jinja).collect();
             format!("[{}]", items.join(", "))
@@ -145,7 +147,10 @@ fn json_value_to_jinja(value: &serde_json::Value) -> String {
         serde_json::Value::Object(obj) => {
             let pairs: Vec<String> = obj
                 .iter()
-                .map(|(k, v)| format!("\"{}\": {}", k, json_value_to_jinja(v)))
+                .map(|(k, v)| {
+                    let escaped_key = k.replace('\\', "\\\\").replace('"', "\\\"");
+                    format!("\"{}\": {}", escaped_key, json_value_to_jinja(v))
+                })
                 .collect();
             format!("{{{}}}", pairs.join(", "))
         }
