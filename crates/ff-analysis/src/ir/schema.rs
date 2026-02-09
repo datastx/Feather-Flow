@@ -29,11 +29,24 @@ impl RelSchema {
         self.columns.iter().find(|c| c.name.to_lowercase() == lower)
     }
 
-    /// Find a column by qualified name (table.column), case-insensitive
-    pub fn find_qualified(&self, _table: &str, column: &str) -> Option<&TypedColumn> {
-        // In our IR, columns are flattened — we look up by column name
-        // Table qualification is used for disambiguation in the lowering phase
-        self.find_column(column)
+    /// Find a column by qualified name (table.column), case-insensitive.
+    ///
+    /// If `source_table` metadata is available, filters by it first.
+    /// Falls back to column-name-only lookup when table info is missing.
+    pub fn find_qualified(&self, table: &str, column: &str) -> Option<&TypedColumn> {
+        let lower_table = table.to_lowercase();
+        let lower_col = column.to_lowercase();
+
+        // Try to find a column that matches both table and name
+        let qualified_match = self.columns.iter().find(|c| {
+            c.name.to_lowercase() == lower_col
+                && c.source_table
+                    .as_ref()
+                    .is_some_and(|t| t.to_lowercase() == lower_table)
+        });
+
+        // Fall back to column-name-only if no qualified match
+        qualified_match.or_else(|| self.find_column(column))
     }
 
     /// Merge two schemas (e.g. for JOIN output)
@@ -51,8 +64,28 @@ impl RelSchema {
                 .iter()
                 .map(|c| TypedColumn {
                     name: c.name.clone(),
+                    source_table: c.source_table.clone(),
                     sql_type: c.sql_type.clone(),
                     nullability,
+                    provenance: c.provenance.clone(),
+                })
+                .collect(),
+        }
+    }
+
+    /// Return a new schema with all columns tagged with the given source table name.
+    ///
+    /// Existing `source_table` values are preserved; only `None` values are filled.
+    pub fn with_source_table(&self, table: &str) -> Self {
+        Self {
+            columns: self
+                .columns
+                .iter()
+                .map(|c| TypedColumn {
+                    name: c.name.clone(),
+                    source_table: c.source_table.clone().or_else(|| Some(table.to_string())),
+                    sql_type: c.sql_type.clone(),
+                    nullability: c.nullability,
                     provenance: c.provenance.clone(),
                 })
                 .collect(),
@@ -89,6 +122,7 @@ mod tests {
     fn make_col(name: &str, ty: SqlType, null: Nullability) -> TypedColumn {
         TypedColumn {
             name: name.to_string(),
+            source_table: None,
             sql_type: ty,
             nullability: null,
             provenance: vec![],

@@ -1,9 +1,13 @@
 //! DuckDB database backend implementation
 
 use crate::error::{DbError, DbResult};
-use crate::traits::{CsvLoadOptions, Database, SnapshotResult};
+use crate::traits::{
+    CsvLoadOptions, DatabaseCore, DatabaseCsv, DatabaseIncremental, DatabaseSchema,
+    DatabaseSnapshot, SnapshotResult,
+};
 use async_trait::async_trait;
 use duckdb::Connection;
+use ff_core::sql_utils::{escape_sql_string, quote_ident, quote_qualified};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -62,15 +66,25 @@ impl DuckDbBackend {
     /// Execute SQL synchronously
     fn execute_sync(&self, sql: &str) -> DbResult<usize> {
         let conn = self.lock_conn()?;
-        conn.execute(sql, [])
-            .map_err(|e| DbError::ExecutionError(format!("{}: {}", e, sql)))
+        conn.execute(sql, []).map_err(|e| {
+            let truncated = if sql.len() > 200 {
+                let end = sql
+                    .char_indices()
+                    .map(|(i, _)| i)
+                    .find(|&i| i >= 200)
+                    .unwrap_or(sql.len());
+                format!("{}...", &sql[..end])
+            } else {
+                sql.to_string()
+            };
+            DbError::ExecutionError(format!("{}: {}", e, truncated))
+        })
     }
 
     /// Execute batch SQL synchronously
     fn execute_batch_sync(&self, sql: &str) -> DbResult<()> {
         let conn = self.lock_conn()?;
-        conn.execute_batch(sql)
-            .map_err(|e| DbError::ExecutionError(e.to_string()))
+        conn.execute_batch(sql).to_db_err()
     }
 
     /// Query count synchronously
@@ -80,8 +94,8 @@ impl DuckDbBackend {
             .query_row(&format!("SELECT COUNT(*) FROM ({})", sql), [], |row| {
                 row.get(0)
             })
-            .map_err(|e| DbError::ExecutionError(e.to_string()))?;
-        Ok(count as usize)
+            .to_db_err()?;
+        Ok(usize::try_from(count).unwrap_or(0))
     }
 
     /// Check if relation exists synchronously
@@ -98,14 +112,14 @@ impl DuckDbBackend {
 
         let count: i64 = conn
             .query_row(sql, duckdb::params![schema, table], |row| row.get(0))
-            .map_err(|e| DbError::ExecutionError(e.to_string()))?;
+            .to_db_err()?;
 
         Ok(count > 0)
     }
 }
 
 #[async_trait]
-impl Database for DuckDbBackend {
+impl DatabaseCore for DuckDbBackend {
     async fn execute(&self, sql: &str) -> DbResult<usize> {
         self.execute_sync(sql)
     }
@@ -114,143 +128,12 @@ impl Database for DuckDbBackend {
         self.execute_batch_sync(sql)
     }
 
-    async fn create_table_as(&self, name: &str, select: &str, replace: bool) -> DbResult<()> {
-        let sql = if replace {
-            format!("CREATE OR REPLACE TABLE {} AS {}", name, select)
-        } else {
-            format!("CREATE TABLE {} AS {}", name, select)
-        };
-        self.execute_sync(&sql)?;
-        Ok(())
-    }
-
-    async fn create_view_as(&self, name: &str, select: &str, replace: bool) -> DbResult<()> {
-        let sql = if replace {
-            format!("CREATE OR REPLACE VIEW {} AS {}", name, select)
-        } else {
-            format!("CREATE VIEW {} AS {}", name, select)
-        };
-        self.execute_sync(&sql)?;
-        Ok(())
-    }
-
     async fn relation_exists(&self, name: &str) -> DbResult<bool> {
         self.relation_exists_sync(name)
     }
 
     async fn query_count(&self, sql: &str) -> DbResult<usize> {
         self.query_count_sync(sql)
-    }
-
-    async fn load_csv(&self, table: &str, path: &str) -> DbResult<()> {
-        let sql = format!(
-            "CREATE OR REPLACE TABLE {} AS SELECT * FROM read_csv_auto('{}')",
-            table, path
-        );
-        self.execute_sync(&sql)?;
-        Ok(())
-    }
-
-    async fn load_csv_with_options(
-        &self,
-        table: &str,
-        path: &str,
-        options: CsvLoadOptions,
-    ) -> DbResult<()> {
-        let mut csv_options = Vec::new();
-
-        if let Some(delim) = options.delimiter() {
-            let delim_str = if delim == '\t' {
-                "\\t".to_string()
-            } else {
-                delim.to_string()
-            };
-            csv_options.push(format!("delim = '{}'", delim_str));
-        }
-
-        if options.quote_columns() {
-            csv_options.push("quote = '\"'".to_string());
-        }
-
-        let type_casts: Vec<String> = options
-            .column_types()
-            .iter()
-            .map(|(col, typ)| format!("CAST({} AS {}) AS {}", col, typ, col))
-            .collect();
-
-        let csv_opts_str = if csv_options.is_empty() {
-            String::new()
-        } else {
-            format!(", {}", csv_options.join(", "))
-        };
-
-        let target_table = if let Some(schema) = options.schema() {
-            self.create_schema_if_not_exists(schema).await?;
-            format!("{}.{}", schema, table)
-        } else {
-            table.to_string()
-        };
-
-        let sql = if type_casts.is_empty() {
-            format!(
-                "CREATE OR REPLACE TABLE {} AS SELECT * FROM read_csv_auto('{}'{})",
-                target_table, path, csv_opts_str
-            )
-        } else {
-            let typed_columns = type_casts.join(", ");
-            format!(
-                "CREATE OR REPLACE TABLE {} AS SELECT {}, * EXCLUDE ({}) FROM read_csv_auto('{}'{})",
-                target_table,
-                typed_columns,
-                options.column_types().keys().cloned().collect::<Vec<_>>().join(", "),
-                path,
-                csv_opts_str
-            )
-        };
-
-        self.execute_sync(&sql)?;
-        Ok(())
-    }
-
-    async fn infer_csv_schema(&self, path: &str) -> DbResult<Vec<(String, String)>> {
-        let conn = self.lock_conn()?;
-        let sql = format!(
-            "DESCRIBE SELECT * FROM read_csv_auto('{}')",
-            path.replace('\'', "''")
-        );
-
-        let mut stmt = conn.prepare(&sql).to_db_err()?;
-        let mut schema: Vec<(String, String)> = Vec::new();
-        let mut rows = stmt.query([]).to_db_err()?;
-
-        while let Some(row) = rows.next().to_db_err()? {
-            let column_name: String = row.get(0).to_db_err()?;
-            let column_type: String = row.get(1).to_db_err()?;
-            schema.push((column_name, column_type));
-        }
-
-        Ok(schema)
-    }
-
-    fn db_type(&self) -> &'static str {
-        "duckdb"
-    }
-
-    async fn drop_if_exists(&self, name: &str) -> DbResult<()> {
-        // Try both VIEW and TABLE; one may fail if the relation is the other type
-        if let Err(e) = self.execute_sync(&format!("DROP VIEW IF EXISTS {}", name)) {
-            eprintln!("[warn] DROP VIEW IF EXISTS {} failed: {}", name, e);
-        }
-        if let Err(e) = self.execute_sync(&format!("DROP TABLE IF EXISTS {}", name)) {
-            eprintln!("[warn] DROP TABLE IF EXISTS {} failed: {}", name, e);
-        }
-        Ok(())
-    }
-
-    async fn create_schema_if_not_exists(&self, schema: &str) -> DbResult<()> {
-        let sql = format!("CREATE SCHEMA IF NOT EXISTS {}", schema);
-        self.execute_sync(&sql)?;
-        Ok(())
     }
 
     async fn query_sample_rows(&self, sql: &str, limit: usize) -> DbResult<Vec<String>> {
@@ -309,68 +192,56 @@ impl Database for DuckDbBackend {
         }
     }
 
-    async fn merge_into(
-        &self,
-        target_table: &str,
-        source_sql: &str,
-        unique_keys: &[String],
-    ) -> DbResult<()> {
-        // DuckDB lacks native MERGE; emulate via DELETE + INSERT through temp table
-        let temp_table = format!("__ff_merge_source_{}", unique_id());
+    fn db_type(&self) -> &'static str {
+        "duckdb"
+    }
+}
 
-        let create_temp = format!("CREATE TEMP TABLE {} AS {}", temp_table, source_sql);
-        self.execute_sync(&create_temp)?;
-
-        let join_conditions: Vec<String> = unique_keys
-            .iter()
-            .map(|k| format!("{}.{} = {}.{}", target_table, k, temp_table, k))
-            .collect();
-        let join_clause = join_conditions.join(" AND ");
-
-        let delete_sql = format!(
-            "DELETE FROM {} WHERE EXISTS (SELECT 1 FROM {} WHERE {})",
-            target_table, temp_table, join_clause
-        );
-        self.execute_sync(&delete_sql)?;
-
-        let insert_sql = format!("INSERT INTO {} SELECT * FROM {}", target_table, temp_table);
-        self.execute_sync(&insert_sql)?;
-
-        let drop_temp = format!("DROP TABLE {}", temp_table);
-        self.execute_sync(&drop_temp)?;
-
+#[async_trait]
+impl DatabaseSchema for DuckDbBackend {
+    async fn create_table_as(&self, name: &str, select: &str, replace: bool) -> DbResult<()> {
+        let quoted = quote_qualified(name);
+        let sql = if replace {
+            format!("CREATE OR REPLACE TABLE {} AS {}", quoted, select)
+        } else {
+            format!("CREATE TABLE {} AS {}", quoted, select)
+        };
+        self.execute_sync(&sql)?;
         Ok(())
     }
 
-    async fn delete_insert(
-        &self,
-        target_table: &str,
-        source_sql: &str,
-        unique_keys: &[String],
-    ) -> DbResult<()> {
-        let temp_table = format!("__ff_delete_insert_source_{}", unique_id());
+    async fn create_view_as(&self, name: &str, select: &str, replace: bool) -> DbResult<()> {
+        let quoted = quote_qualified(name);
+        let sql = if replace {
+            format!("CREATE OR REPLACE VIEW {} AS {}", quoted, select)
+        } else {
+            format!("CREATE VIEW {} AS {}", quoted, select)
+        };
+        self.execute_sync(&sql)?;
+        Ok(())
+    }
 
-        let create_temp = format!("CREATE TEMP TABLE {} AS {}", temp_table, source_sql);
-        self.execute_sync(&create_temp)?;
+    async fn drop_if_exists(&self, name: &str) -> DbResult<()> {
+        let quoted = quote_qualified(name);
+        // Try VIEW first, then TABLE. DuckDB returns a CatalogError when the
+        // relation exists but is the wrong type, so we ignore type-mismatch
+        // errors and propagate everything else.
+        match self.execute_sync(&format!("DROP VIEW IF EXISTS {}", quoted)) {
+            Ok(_) => {}
+            Err(DbError::ExecutionError(msg)) if msg.contains("trying to drop type") => {}
+            Err(e) => return Err(e),
+        }
+        match self.execute_sync(&format!("DROP TABLE IF EXISTS {}", quoted)) {
+            Ok(_) => {}
+            Err(DbError::ExecutionError(msg)) if msg.contains("trying to drop type") => {}
+            Err(e) => return Err(e),
+        }
+        Ok(())
+    }
 
-        let join_conditions: Vec<String> = unique_keys
-            .iter()
-            .map(|k| format!("{}.{} = {}.{}", target_table, k, temp_table, k))
-            .collect();
-        let join_clause = join_conditions.join(" AND ");
-
-        let delete_sql = format!(
-            "DELETE FROM {} WHERE EXISTS (SELECT 1 FROM {} WHERE {})",
-            target_table, temp_table, join_clause
-        );
-        self.execute_sync(&delete_sql)?;
-
-        let insert_sql = format!("INSERT INTO {} SELECT * FROM {}", target_table, temp_table);
-        self.execute_sync(&insert_sql)?;
-
-        let drop_temp = format!("DROP TABLE {}", temp_table);
-        self.execute_sync(&drop_temp)?;
-
+    async fn create_schema_if_not_exists(&self, schema: &str) -> DbResult<()> {
+        let sql = format!("CREATE SCHEMA IF NOT EXISTS {}", quote_ident(schema));
+        self.execute_sync(&sql)?;
         Ok(())
     }
 
@@ -419,15 +290,213 @@ impl Database for DuckDbBackend {
     }
 
     async fn add_columns(&self, table: &str, columns: &[(String, String)]) -> DbResult<()> {
+        let quoted_table = quote_qualified(table);
         for (name, col_type) in columns {
-            let sql = format!("ALTER TABLE {} ADD COLUMN {} {}", table, name, col_type);
+            let sql = format!(
+                "ALTER TABLE {} ADD COLUMN {} {}",
+                quoted_table,
+                quote_ident(name),
+                col_type
+            );
             self.execute_sync(&sql)?;
         }
         Ok(())
     }
+}
 
-    // ===== Snapshot Operations =====
+#[async_trait]
+impl DatabaseCsv for DuckDbBackend {
+    async fn load_csv(&self, table: &str, path: &str) -> DbResult<()> {
+        let sql = format!(
+            "CREATE OR REPLACE TABLE {} AS SELECT * FROM read_csv_auto('{}')",
+            quote_qualified(table),
+            path.replace('\'', "''")
+        );
+        self.execute_sync(&sql)?;
+        Ok(())
+    }
 
+    async fn load_csv_with_options(
+        &self,
+        table: &str,
+        path: &str,
+        options: CsvLoadOptions,
+    ) -> DbResult<()> {
+        let mut csv_options = Vec::new();
+
+        if let Some(delim) = options.delimiter() {
+            let delim_str = if delim == '\t' {
+                "\\t".to_string()
+            } else {
+                delim.to_string()
+            };
+            csv_options.push(format!("delim = '{}'", escape_sql_string(&delim_str)));
+        }
+
+        if options.quote_columns() {
+            csv_options.push("quote = '\"'".to_string());
+        }
+
+        let type_casts: Vec<String> = options
+            .column_types()
+            .iter()
+            .map(|(col, typ)| {
+                format!(
+                    "CAST({} AS {}) AS {}",
+                    quote_ident(col),
+                    typ,
+                    quote_ident(col)
+                )
+            })
+            .collect();
+
+        let csv_opts_str = if csv_options.is_empty() {
+            String::new()
+        } else {
+            format!(", {}", csv_options.join(", "))
+        };
+
+        let target_table = if let Some(schema) = options.schema() {
+            self.create_schema_if_not_exists(schema).await?;
+            format!("{}.{}", quote_ident(schema), quote_ident(table))
+        } else {
+            quote_qualified(table)
+        };
+
+        let escaped_path = path.replace('\'', "''");
+        let sql = if type_casts.is_empty() {
+            format!(
+                "CREATE OR REPLACE TABLE {} AS SELECT * FROM read_csv_auto('{}'{})",
+                target_table, escaped_path, csv_opts_str
+            )
+        } else {
+            let typed_columns = type_casts.join(", ");
+            let exclude_cols: Vec<String> = options
+                .column_types()
+                .keys()
+                .map(|c| quote_ident(c))
+                .collect();
+            format!(
+                "CREATE OR REPLACE TABLE {} AS SELECT {}, * EXCLUDE ({}) FROM read_csv_auto('{}'{})",
+                target_table,
+                typed_columns,
+                exclude_cols.join(", "),
+                escaped_path,
+                csv_opts_str
+            )
+        };
+
+        self.execute_sync(&sql)?;
+        Ok(())
+    }
+
+    async fn infer_csv_schema(&self, path: &str) -> DbResult<Vec<(String, String)>> {
+        let conn = self.lock_conn()?;
+        let sql = format!(
+            "DESCRIBE SELECT * FROM read_csv_auto('{}')",
+            path.replace('\'', "''")
+        );
+
+        let mut stmt = conn.prepare(&sql).to_db_err()?;
+        let mut schema: Vec<(String, String)> = Vec::new();
+        let mut rows = stmt.query([]).to_db_err()?;
+
+        while let Some(row) = rows.next().to_db_err()? {
+            let column_name: String = row.get(0).to_db_err()?;
+            let column_type: String = row.get(1).to_db_err()?;
+            schema.push((column_name, column_type));
+        }
+
+        Ok(schema)
+    }
+}
+
+#[async_trait]
+impl DatabaseIncremental for DuckDbBackend {
+    async fn merge_into(
+        &self,
+        target_table: &str,
+        source_sql: &str,
+        unique_keys: &[String],
+    ) -> DbResult<()> {
+        // DuckDB lacks native MERGE; emulate via DELETE + INSERT through temp table
+        let temp_name = format!("__ff_merge_source_{}", unique_id());
+        let quoted_target = quote_qualified(target_table);
+        let quoted_temp = quote_ident(&temp_name);
+
+        let create_temp = format!("CREATE TEMP TABLE {} AS {}", quoted_temp, source_sql);
+        self.execute_sync(&create_temp)?;
+
+        let join_conditions: Vec<String> = unique_keys
+            .iter()
+            .map(|k| {
+                let qk = quote_ident(k);
+                format!("{}.{} = {}.{}", quoted_target, qk, quoted_temp, qk)
+            })
+            .collect();
+        let join_clause = join_conditions.join(" AND ");
+
+        let delete_sql = format!(
+            "DELETE FROM {} WHERE EXISTS (SELECT 1 FROM {} WHERE {})",
+            quoted_target, quoted_temp, join_clause
+        );
+        self.execute_sync(&delete_sql)?;
+
+        let insert_sql = format!(
+            "INSERT INTO {} SELECT * FROM {}",
+            quoted_target, quoted_temp
+        );
+        self.execute_sync(&insert_sql)?;
+
+        let drop_temp = format!("DROP TABLE {}", quoted_temp);
+        self.execute_sync(&drop_temp)?;
+
+        Ok(())
+    }
+
+    async fn delete_insert(
+        &self,
+        target_table: &str,
+        source_sql: &str,
+        unique_keys: &[String],
+    ) -> DbResult<()> {
+        let temp_name = format!("__ff_delete_insert_source_{}", unique_id());
+        let quoted_target = quote_qualified(target_table);
+        let quoted_temp = quote_ident(&temp_name);
+
+        let create_temp = format!("CREATE TEMP TABLE {} AS {}", quoted_temp, source_sql);
+        self.execute_sync(&create_temp)?;
+
+        let join_conditions: Vec<String> = unique_keys
+            .iter()
+            .map(|k| {
+                let qk = quote_ident(k);
+                format!("{}.{} = {}.{}", quoted_target, qk, quoted_temp, qk)
+            })
+            .collect();
+        let join_clause = join_conditions.join(" AND ");
+
+        let delete_sql = format!(
+            "DELETE FROM {} WHERE EXISTS (SELECT 1 FROM {} WHERE {})",
+            quoted_target, quoted_temp, join_clause
+        );
+        self.execute_sync(&delete_sql)?;
+
+        let insert_sql = format!(
+            "INSERT INTO {} SELECT * FROM {}",
+            quoted_target, quoted_temp
+        );
+        self.execute_sync(&insert_sql)?;
+
+        let drop_temp = format!("DROP TABLE {}", quoted_temp);
+        self.execute_sync(&drop_temp)?;
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl DatabaseSnapshot for DuckDbBackend {
     async fn execute_snapshot(
         &self,
         snapshot_table: &str,
@@ -437,14 +506,28 @@ impl Database for DuckDbBackend {
         check_cols: Option<&[String]>,
         invalidate_hard_deletes: bool,
     ) -> DbResult<SnapshotResult> {
+        // Validate inputs
+        if unique_keys.is_empty() {
+            return Err(DbError::ExecutionError(
+                "Snapshot requires at least one unique_key".to_string(),
+            ));
+        }
+        if snapshot_table == source_table {
+            return Err(DbError::ExecutionError(
+                "Snapshot table and source table must be different".to_string(),
+            ));
+        }
+
         let snapshot_exists = self.relation_exists(snapshot_table).await?;
 
         if !snapshot_exists {
             let source_schema = self.get_table_schema(source_table).await?;
+            let quoted_snap = quote_qualified(snapshot_table);
+            let quoted_src = quote_qualified(source_table);
 
             let mut columns: Vec<String> = source_schema
                 .iter()
-                .map(|(name, dtype)| format!("{} {}", name, dtype))
+                .map(|(name, dtype)| format!("{} {}", quote_ident(name), dtype))
                 .collect();
 
             columns.push("dbt_scd_id VARCHAR".to_string());
@@ -452,20 +535,21 @@ impl Database for DuckDbBackend {
             columns.push("dbt_valid_from TIMESTAMP".to_string());
             columns.push("dbt_valid_to TIMESTAMP".to_string());
 
-            let create_sql = format!("CREATE TABLE {} ({})", snapshot_table, columns.join(", "));
+            let create_sql = format!("CREATE TABLE {} ({})", quoted_snap, columns.join(", "));
             self.execute_sync(&create_sql)?;
 
-            let source_cols: Vec<&str> = source_schema.iter().map(|(n, _)| n.as_str()).collect();
+            let source_cols: Vec<String> =
+                source_schema.iter().map(|(n, _)| quote_ident(n)).collect();
 
             let updated_at_expr = if let Some(col) = updated_at_column {
-                format!("CAST({} AS TIMESTAMP)", col)
+                format!("CAST({} AS TIMESTAMP)", quote_ident(col))
             } else {
                 "CURRENT_TIMESTAMP".to_string()
             };
 
             let key_concat: Vec<String> = unique_keys
                 .iter()
-                .map(|k| format!("COALESCE(CAST({} AS VARCHAR), '')", k))
+                .map(|k| format!("COALESCE(CAST({} AS VARCHAR), '')", quote_ident(k)))
                 .collect();
             let scd_id_expr = format!(
                 "MD5({} || '|' || CAST(CURRENT_TIMESTAMP AS VARCHAR))",
@@ -476,17 +560,17 @@ impl Database for DuckDbBackend {
                 "INSERT INTO {} ({}, dbt_scd_id, dbt_updated_at, dbt_valid_from, dbt_valid_to) \
                  SELECT {}, {}, {}, CURRENT_TIMESTAMP, NULL \
                  FROM {}",
-                snapshot_table,
+                quoted_snap,
                 source_cols.join(", "),
                 source_cols.join(", "),
                 scd_id_expr,
                 updated_at_expr,
-                source_table
+                quoted_src
             );
             self.execute_sync(&insert_sql)?;
 
             let new_count = self
-                .query_count(&format!("SELECT * FROM {}", snapshot_table))
+                .query_count(&format!("SELECT * FROM {}", quoted_snap))
                 .await?;
 
             return Ok(SnapshotResult {
@@ -530,17 +614,23 @@ impl Database for DuckDbBackend {
         source_table: &str,
         unique_keys: &[String],
     ) -> DbResult<usize> {
+        let quoted_snap = quote_qualified(snapshot_table);
+        let quoted_src = quote_qualified(source_table);
+
         let join_conditions: Vec<String> = unique_keys
             .iter()
-            .map(|k| format!("s.{} = snap.{}", k, k))
+            .map(|k| {
+                let qk = quote_ident(k);
+                format!("s.{} = snap.{}", qk, qk)
+            })
             .collect();
 
         let source_schema = self.get_table_schema(source_table).await?;
-        let source_cols: Vec<&str> = source_schema.iter().map(|(n, _)| n.as_str()).collect();
+        let source_cols: Vec<String> = source_schema.iter().map(|(n, _)| quote_ident(n)).collect();
 
         let key_concat: Vec<String> = unique_keys
             .iter()
-            .map(|k| format!("COALESCE(CAST(s.{} AS VARCHAR), '')", k))
+            .map(|k| format!("COALESCE(CAST(s.{} AS VARCHAR), '')", quote_ident(k)))
             .collect();
         let scd_id_expr = format!(
             "MD5({} || '|' || CAST(CURRENT_TIMESTAMP AS VARCHAR))",
@@ -548,36 +638,40 @@ impl Database for DuckDbBackend {
         );
 
         let prefixed_cols: Vec<String> = source_cols.iter().map(|c| format!("s.{}", c)).collect();
-        let first_key = unique_keys.first().map(String::as_str).unwrap_or("id");
+        let first_key = unique_keys
+            .first()
+            .map(|k| quote_ident(k))
+            .unwrap_or_else(|| quote_ident("id"));
 
         let new_records_sql = format!(
-            "SELECT s.* FROM {source} s \
-             LEFT JOIN (SELECT * FROM {snapshot} WHERE dbt_valid_to IS NULL) snap \
-               ON {join_conditions} \
-             WHERE snap.{first_key} IS NULL",
-            source = source_table,
-            snapshot = snapshot_table,
-            join_conditions = join_conditions.join(" AND "),
-            first_key = first_key,
+            "SELECT s.* FROM {} s \
+             LEFT JOIN (SELECT * FROM {} WHERE dbt_valid_to IS NULL) snap \
+               ON {} \
+             WHERE snap.{} IS NULL",
+            quoted_src,
+            quoted_snap,
+            join_conditions.join(" AND "),
+            first_key,
         );
 
         let new_count = self.query_count(&new_records_sql).await?;
 
         if new_count > 0 {
             let insert_sql = format!(
-                "INSERT INTO {snapshot} ({cols}, dbt_scd_id, dbt_updated_at, dbt_valid_from, dbt_valid_to) \
-                 SELECT {prefixed_cols}, {scd_id}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL \
-                 FROM {source} s \
-                 LEFT JOIN (SELECT * FROM {snapshot} WHERE dbt_valid_to IS NULL) snap \
-                   ON {join_conditions} \
-                 WHERE snap.{first_key} IS NULL",
-                snapshot = snapshot_table,
-                cols = source_cols.join(", "),
-                prefixed_cols = prefixed_cols.join(", "),
-                scd_id = scd_id_expr,
-                source = source_table,
-                join_conditions = join_conditions.join(" AND "),
-                first_key = first_key,
+                "INSERT INTO {} ({}, dbt_scd_id, dbt_updated_at, dbt_valid_from, dbt_valid_to) \
+                 SELECT {}, {}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL \
+                 FROM {} s \
+                 LEFT JOIN (SELECT * FROM {} WHERE dbt_valid_to IS NULL) snap \
+                   ON {} \
+                 WHERE snap.{} IS NULL",
+                quoted_snap,
+                source_cols.join(", "),
+                prefixed_cols.join(", "),
+                scd_id_expr,
+                quoted_src,
+                quoted_snap,
+                join_conditions.join(" AND "),
+                first_key,
             );
             self.execute_sync(&insert_sql)?;
         }
@@ -593,17 +687,26 @@ impl Database for DuckDbBackend {
         updated_at_column: Option<&str>,
         check_cols: Option<&[String]>,
     ) -> DbResult<usize> {
+        let quoted_snap = quote_qualified(snapshot_table);
+        let quoted_src = quote_qualified(source_table);
+
         let join_conditions: Vec<String> = unique_keys
             .iter()
-            .map(|k| format!("s.{} = snap.{}", k, k))
+            .map(|k| {
+                let qk = quote_ident(k);
+                format!("s.{} = snap.{}", qk, qk)
+            })
             .collect();
 
         let change_condition = if let Some(updated_at) = updated_at_column {
-            format!("s.{} > snap.dbt_updated_at", updated_at)
+            format!("s.{} > snap.dbt_updated_at", quote_ident(updated_at))
         } else if let Some(cols) = check_cols {
             let comparisons: Vec<String> = cols
                 .iter()
-                .map(|c| format!("(s.{c} IS DISTINCT FROM snap.{c})", c = c))
+                .map(|c| {
+                    let qc = quote_ident(c);
+                    format!("(s.{} IS DISTINCT FROM snap.{})", qc, qc)
+                })
                 .collect();
             comparisons.join(" OR ")
         } else {
@@ -611,14 +714,14 @@ impl Database for DuckDbBackend {
         };
 
         let changed_records_sql = format!(
-            "SELECT s.* FROM {source} s \
-             INNER JOIN (SELECT * FROM {snapshot} WHERE dbt_valid_to IS NULL) snap \
-               ON {join_conditions} \
-             WHERE {change_condition}",
-            source = source_table,
-            snapshot = snapshot_table,
-            join_conditions = join_conditions.join(" AND "),
-            change_condition = change_condition,
+            "SELECT s.* FROM {} s \
+             INNER JOIN (SELECT * FROM {} WHERE dbt_valid_to IS NULL) snap \
+               ON {} \
+             WHERE {}",
+            quoted_src,
+            quoted_snap,
+            join_conditions.join(" AND "),
+            change_condition,
         );
 
         let changed_count = self.query_count(&changed_records_sql).await?;
@@ -628,12 +731,12 @@ impl Database for DuckDbBackend {
         }
 
         let source_schema = self.get_table_schema(source_table).await?;
-        let source_cols: Vec<&str> = source_schema.iter().map(|(n, _)| n.as_str()).collect();
+        let source_cols: Vec<String> = source_schema.iter().map(|(n, _)| quote_ident(n)).collect();
         let prefixed_cols: Vec<String> = source_cols.iter().map(|c| format!("s.{}", c)).collect();
 
         let key_concat: Vec<String> = unique_keys
             .iter()
-            .map(|k| format!("COALESCE(CAST(s.{} AS VARCHAR), '')", k))
+            .map(|k| format!("COALESCE(CAST(s.{} AS VARCHAR), '')", quote_ident(k)))
             .collect();
         let scd_id_expr = format!(
             "MD5({} || '|' || CAST(CURRENT_TIMESTAMP AS VARCHAR))",
@@ -641,46 +744,51 @@ impl Database for DuckDbBackend {
         );
 
         let updated_at_expr = if let Some(col) = updated_at_column {
-            format!("s.{}", col)
+            format!("s.{}", quote_ident(col))
         } else {
             "CURRENT_TIMESTAMP".to_string()
         };
 
         // Insert new versions before invalidating old ones to capture changing records
         let insert_sql = format!(
-            "INSERT INTO {snapshot} ({cols}, dbt_scd_id, dbt_updated_at, dbt_valid_from, dbt_valid_to) \
-             SELECT {prefixed_cols}, {scd_id}, {updated_at_expr}, CURRENT_TIMESTAMP, NULL \
-             FROM {source} s \
-             INNER JOIN (SELECT * FROM {snapshot} WHERE dbt_valid_to IS NULL) snap \
-               ON {join_conditions} \
-             WHERE {change_condition}",
-            snapshot = snapshot_table,
-            cols = source_cols.join(", "),
-            prefixed_cols = prefixed_cols.join(", "),
-            scd_id = scd_id_expr,
-            updated_at_expr = updated_at_expr,
-            source = source_table,
-            join_conditions = join_conditions.join(" AND "),
-            change_condition = change_condition,
+            "INSERT INTO {} ({}, dbt_scd_id, dbt_updated_at, dbt_valid_from, dbt_valid_to) \
+             SELECT {}, {}, {}, CURRENT_TIMESTAMP, NULL \
+             FROM {} s \
+             INNER JOIN (SELECT * FROM {} WHERE dbt_valid_to IS NULL) snap \
+               ON {} \
+             WHERE {}",
+            quoted_snap,
+            source_cols.join(", "),
+            prefixed_cols.join(", "),
+            scd_id_expr,
+            updated_at_expr,
+            quoted_src,
+            quoted_snap,
+            join_conditions.join(" AND "),
+            change_condition,
         );
         self.execute_sync(&insert_sql)?;
 
         let key_match_for_newer: Vec<String> = unique_keys
             .iter()
-            .map(|k| format!("old.{k} = newer.{k}", k = k))
+            .map(|k| {
+                let qk = quote_ident(k);
+                format!("old.{} = newer.{}", qk, qk)
+            })
             .collect();
 
         let update_sql = format!(
-            "UPDATE {snapshot} AS old SET dbt_valid_to = CURRENT_TIMESTAMP \
+            "UPDATE {} AS old SET dbt_valid_to = CURRENT_TIMESTAMP \
              WHERE old.dbt_valid_to IS NULL \
              AND EXISTS ( \
-                 SELECT 1 FROM {snapshot} newer \
-                 WHERE {key_match} \
+                 SELECT 1 FROM {} newer \
+                 WHERE {} \
                  AND newer.dbt_valid_from > old.dbt_valid_from \
                  AND newer.dbt_valid_to IS NULL \
              )",
-            snapshot = snapshot_table,
-            key_match = key_match_for_newer.join(" AND "),
+            quoted_snap,
+            quoted_snap,
+            key_match_for_newer.join(" AND "),
         );
         self.execute_sync(&update_sql)?;
 
@@ -693,21 +801,30 @@ impl Database for DuckDbBackend {
         source_table: &str,
         unique_keys: &[String],
     ) -> DbResult<usize> {
+        let quoted_snap = quote_qualified(snapshot_table);
+        let quoted_src = quote_qualified(source_table);
+
         let join_conditions: Vec<String> = unique_keys
             .iter()
-            .map(|k| format!("snap.{} = s.{}", k, k))
+            .map(|k| {
+                let qk = quote_ident(k);
+                format!("snap.{} = s.{}", qk, qk)
+            })
             .collect();
 
-        let first_key = unique_keys.first().map(String::as_str).unwrap_or("id");
+        let first_key = unique_keys
+            .first()
+            .map(|k| quote_ident(k))
+            .unwrap_or_else(|| quote_ident("id"));
 
         let deleted_records_sql = format!(
-            "SELECT snap.* FROM {snapshot} snap \
-             LEFT JOIN {source} s ON {join_conditions} \
-             WHERE snap.dbt_valid_to IS NULL AND s.{first_key} IS NULL",
-            snapshot = snapshot_table,
-            source = source_table,
-            join_conditions = join_conditions.join(" AND "),
-            first_key = first_key,
+            "SELECT snap.* FROM {} snap \
+             LEFT JOIN {} s ON {} \
+             WHERE snap.dbt_valid_to IS NULL AND s.{} IS NULL",
+            quoted_snap,
+            quoted_src,
+            join_conditions.join(" AND "),
+            first_key,
         );
 
         let deleted_count = self.query_count(&deleted_records_sql).await?;
@@ -716,42 +833,29 @@ impl Database for DuckDbBackend {
             return Ok(0);
         }
 
+        let key_match: Vec<String> = unique_keys
+            .iter()
+            .map(|k| {
+                let qk = quote_ident(k);
+                format!("{}.{} = s.{}", quoted_snap, qk, qk)
+            })
+            .collect();
+
         let update_sql = format!(
-            "UPDATE {snapshot} SET dbt_valid_to = CURRENT_TIMESTAMP \
+            "UPDATE {} SET dbt_valid_to = CURRENT_TIMESTAMP \
              WHERE dbt_valid_to IS NULL \
              AND NOT EXISTS ( \
-                 SELECT 1 FROM {source} s \
-                 WHERE {key_match} \
+                 SELECT 1 FROM {} s \
+                 WHERE {} \
              )",
-            snapshot = snapshot_table,
-            source = source_table,
-            key_match = unique_keys
-                .iter()
-                .map(|k| format!("{snapshot}.{k} = s.{k}", snapshot = snapshot_table, k = k))
-                .collect::<Vec<_>>()
-                .join(" AND "),
+            quoted_snap,
+            quoted_src,
+            key_match.join(" AND "),
         );
         self.execute_sync(&update_sql)?;
 
         Ok(deleted_count)
     }
-}
-
-/// Quote a SQL identifier to prevent injection.
-///
-/// Wraps in double quotes and escapes any embedded double quotes.
-pub fn quote_ident(ident: &str) -> String {
-    format!("\"{}\"", ident.replace('"', "\"\""))
-}
-
-/// Quote a potentially schema-qualified name (e.g. `schema.table`).
-///
-/// Each component is individually quoted.
-pub fn quote_qualified(name: &str) -> String {
-    name.split('.')
-        .map(quote_ident)
-        .collect::<Vec<_>>()
-        .join(".")
 }
 
 /// Generate a unique identifier for temp table names.

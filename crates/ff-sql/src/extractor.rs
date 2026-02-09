@@ -60,10 +60,8 @@ pub fn extract_dependencies(statements: &[Statement]) -> HashSet<String> {
     // Filter out CTE names from dependencies
     deps.retain(|dep| {
         // Normalize the name for comparison (take last component)
-        let normalized = dep
-            .split('.')
-            .next_back()
-            .expect("split always yields at least one element");
+        // Safety: str::split() always yields at least one element
+        let normalized = dep.split('.').next_back().unwrap_or(dep);
         !all_cte_names.contains(normalized)
     });
 
@@ -144,10 +142,8 @@ pub fn categorize_dependencies_with_unknown(
 /// Normalize a table name by taking only the last component
 /// This handles cases like "schema.table" -> "table" for model matching
 fn normalize_table_name(name: &str) -> String {
-    name.split('.')
-        .next_back()
-        .expect("split always yields at least one element")
-        .to_string()
+    // Safety: str::split() always yields at least one element
+    name.split('.').next_back().unwrap_or(name).to_string()
 }
 
 #[cfg(test)]

@@ -1,10 +1,10 @@
 //! Validate command implementation
 
+use crate::commands::common;
 use anyhow::{Context, Result};
 use ff_core::dag::ModelDag;
 use ff_core::manifest::Manifest;
 use ff_core::model::TestDefinition;
-use ff_core::source::build_source_lookup;
 use ff_core::Project;
 use ff_jinja::JinjaEnvironment;
 use ff_sql::SqlParser;
@@ -160,11 +160,7 @@ fn get_models_to_validate(project: &Project, filter: &Option<String>) -> Vec<Str
 
 /// Build external tables lookup including sources
 fn build_external_tables_lookup(project: &Project) -> HashSet<String> {
-    let mut external_tables: HashSet<String> =
-        project.config.external_tables.iter().cloned().collect();
-    let source_tables = build_source_lookup(&project.sources);
-    external_tables.extend(source_tables);
-    external_tables
+    common::build_external_tables_lookup(project)
 }
 
 /// Validate SQL syntax and extract dependencies
@@ -612,11 +608,6 @@ fn validate_contracts(
             "{} warnings ({} contracts, {} enforced)",
             contract_warnings, models_with_contracts, enforced_count
         );
-    }
-
-    // Add note about runtime validation
-    if models_with_contracts > 0 && contract_warnings == 0 {
-        // Informational: contracts are fully validated at runtime
     }
 
     Ok(())

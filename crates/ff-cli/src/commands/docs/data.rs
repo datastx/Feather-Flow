@@ -84,7 +84,7 @@ pub(crate) struct ColumnLineageDoc {
     /// Whether this is a direct pass-through
     pub is_direct: bool,
     /// Expression type (column, function, expression, etc.)
-    pub expr_type: String,
+    pub expr_type: String, // Serialized as string for JSON docs output
 }
 
 /// Model summary for index
@@ -341,7 +341,7 @@ pub(crate) fn extract_column_lineage_from_model(model: &Model) -> Vec<ColumnLine
                 .map(|c| c.to_string())
                 .collect(),
             is_direct: col.is_direct,
-            expr_type: col.expr_type,
+            expr_type: col.expr_type.to_string(),
         })
         .collect()
 }

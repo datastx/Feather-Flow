@@ -8,9 +8,9 @@ use ff_db::{quote_ident, quote_qualified, Database, DuckDbBackend};
 use serde::Serialize;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::cli::{FreshnessArgs, FreshnessOutput as CliOutput, GlobalArgs};
+use crate::commands::common::{self, FreshnessStatus};
 
 /// Execute the freshness command
 pub async fn execute(args: &FreshnessArgs, global: &GlobalArgs) -> Result<()> {
@@ -37,7 +37,8 @@ pub async fn execute(args: &FreshnessArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
-    let db: Arc<dyn Database> = Arc::new(DuckDbBackend::new(&db_config.path)?);
+    let db: Arc<dyn Database> =
+        Arc::new(DuckDbBackend::new(&db_config.path).context("Failed to connect to database")?);
 
     // Collect models with freshness config
     let models_to_check: Vec<&str> = if let Some(filter) = &args.models {
@@ -150,27 +151,6 @@ struct FreshnessResult {
 struct FreshnessJsonOutput {
     results: Vec<FreshnessResult>,
     checked_at: String,
-}
-
-/// Freshness status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-enum FreshnessStatus {
-    Pass,
-    Warn,
-    Error,
-    RuntimeError,
-}
-
-impl std::fmt::Display for FreshnessStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FreshnessStatus::Pass => write!(f, "pass"),
-            FreshnessStatus::Warn => write!(f, "warn"),
-            FreshnessStatus::Error => write!(f, "error"),
-            FreshnessStatus::RuntimeError => write!(f, "runtime_error"),
-        }
-    }
 }
 
 /// Check freshness for a single model
@@ -308,39 +288,20 @@ async fn check_model_freshness(
     }
 }
 
-/// Parse timestamp string and calculate age in seconds from now
+/// Parse timestamp string and calculate age in seconds from now.
+///
+/// Delegates to `common::parse_timestamp` for parsing, then computes
+/// the difference from the current time.
 fn parse_timestamp_age(ts: &str) -> Option<u64> {
-    // Try various timestamp formats
-    let formats = [
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%d %H:%M:%S%.f",
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%dT%H:%M:%S%.f",
-        "%Y-%m-%dT%H:%M:%SZ",
-        "%Y-%m-%dT%H:%M:%S%.fZ",
-    ];
-
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
-
-    for fmt in &formats {
-        if let Ok(parsed) = chrono::NaiveDateTime::parse_from_str(ts, fmt) {
-            let timestamp_secs = parsed.and_utc().timestamp() as u64;
-            if timestamp_secs <= now {
-                return Some(now - timestamp_secs);
-            }
-        }
+    let parsed = common::parse_timestamp(ts)?;
+    let now = chrono::Utc::now();
+    let age = now.signed_duration_since(parsed);
+    let secs = age.num_seconds();
+    if secs >= 0 {
+        Some(secs as u64)
+    } else {
+        None
     }
-
-    // Try parsing as date only
-    if let Ok(date) = chrono::NaiveDate::parse_from_str(ts, "%Y-%m-%d") {
-        let datetime = date.and_hms_opt(0, 0, 0)?;
-        let timestamp_secs = datetime.and_utc().timestamp() as u64;
-        if timestamp_secs <= now {
-            return Some(now - timestamp_secs);
-        }
-    }
-
-    None
 }
 
 /// Format duration in human-readable form

@@ -119,24 +119,21 @@ fn collect_consumed_columns(
     // Also walk downstream IR to find column references
     for dep_name in dependents {
         if let Some(dep_ir) = models.get(dep_name) {
-            collect_column_refs_from_ir(dep_ir, source_model, &mut consumed);
+            collect_column_refs_from_ir(dep_ir, &mut consumed);
         }
     }
 
     consumed
 }
 
-/// Walk an IR tree and collect column references that might reference the source model
-fn collect_column_refs_from_ir(ir: &RelOp, source_model: &str, consumed: &mut HashSet<String>) {
+/// Walk an IR tree and collect column references
+fn collect_column_refs_from_ir(ir: &RelOp, consumed: &mut HashSet<String>) {
     match ir {
-        RelOp::Scan { table_name, .. } => {
-            // If this scan references the source model, all its schema columns are "potentially consumed"
-            if table_name.contains(source_model) {
-                // We don't add all columns here — the projection will tell us which ones are used
-            }
+        RelOp::Scan { .. } => {
+            // Scans don't directly consume columns — the projection above tells us which are used
         }
         RelOp::Project { input, columns, .. } => {
-            collect_column_refs_from_ir(input, source_model, consumed);
+            collect_column_refs_from_ir(input, consumed);
             for (_, expr) in columns {
                 collect_column_refs_from_expr(expr, consumed);
             }
@@ -144,7 +141,7 @@ fn collect_column_refs_from_ir(ir: &RelOp, source_model: &str, consumed: &mut Ha
         RelOp::Filter {
             input, predicate, ..
         } => {
-            collect_column_refs_from_ir(input, source_model, consumed);
+            collect_column_refs_from_ir(input, consumed);
             collect_column_refs_from_expr(predicate, consumed);
         }
         RelOp::Join {
@@ -153,8 +150,8 @@ fn collect_column_refs_from_ir(ir: &RelOp, source_model: &str, consumed: &mut Ha
             condition,
             ..
         } => {
-            collect_column_refs_from_ir(left, source_model, consumed);
-            collect_column_refs_from_ir(right, source_model, consumed);
+            collect_column_refs_from_ir(left, consumed);
+            collect_column_refs_from_ir(right, consumed);
             if let Some(cond) = condition {
                 collect_column_refs_from_expr(cond, consumed);
             }
@@ -165,7 +162,7 @@ fn collect_column_refs_from_ir(ir: &RelOp, source_model: &str, consumed: &mut Ha
             aggregates,
             ..
         } => {
-            collect_column_refs_from_ir(input, source_model, consumed);
+            collect_column_refs_from_ir(input, consumed);
             for g in group_by {
                 collect_column_refs_from_expr(g, consumed);
             }
@@ -176,17 +173,17 @@ fn collect_column_refs_from_ir(ir: &RelOp, source_model: &str, consumed: &mut Ha
         RelOp::Sort {
             input, order_by, ..
         } => {
-            collect_column_refs_from_ir(input, source_model, consumed);
+            collect_column_refs_from_ir(input, consumed);
             for sk in order_by {
                 collect_column_refs_from_expr(&sk.expr, consumed);
             }
         }
         RelOp::Limit { input, .. } => {
-            collect_column_refs_from_ir(input, source_model, consumed);
+            collect_column_refs_from_ir(input, consumed);
         }
         RelOp::SetOp { left, right, .. } => {
-            collect_column_refs_from_ir(left, source_model, consumed);
-            collect_column_refs_from_ir(right, source_model, consumed);
+            collect_column_refs_from_ir(left, consumed);
+            collect_column_refs_from_ir(right, consumed);
         }
     }
 }
@@ -254,6 +251,7 @@ mod tests {
     fn make_col(name: &str, ty: SqlType, null: Nullability) -> TypedColumn {
         TypedColumn {
             name: name.to_string(),
+            source_table: None,
             sql_type: ty,
             nullability: null,
             provenance: vec![],

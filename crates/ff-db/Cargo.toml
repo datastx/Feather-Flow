@@ -6,6 +6,7 @@ license.workspace = true
 description = "Database abstraction layer for Featherflow - traits and DuckDB implementation"
 
 [dependencies]
+ff-core = { path = "../ff-core" }
 thiserror.workspace = true
 async-trait.workspace = true
 tokio.workspace = true

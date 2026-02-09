@@ -12,6 +12,7 @@ serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
 regex = "1.10"
+ff-core = { path = "../ff-core" }
 
 [dev-dependencies]
 tempfile = "3.10"

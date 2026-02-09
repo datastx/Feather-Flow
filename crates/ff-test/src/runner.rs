@@ -113,7 +113,10 @@ impl TestSummary {
         let total = results.len();
         let passed = results.iter().filter(|r| r.passed).count();
         let errors = results.iter().filter(|r| r.error.is_some()).count();
-        let failed = total - passed;
+        let failed = results
+            .iter()
+            .filter(|r| !r.passed && r.error.is_none())
+            .count();
 
         Self {
             total,
@@ -201,7 +204,7 @@ impl<'a> TestRunner<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ff_db::DuckDbBackend;
+    use ff_db::{DatabaseCore, DuckDbBackend};
 
     #[tokio::test]
     async fn test_unique_pass() {

@@ -21,13 +21,14 @@ pub mod seed;
 pub mod selector;
 pub mod snapshot;
 pub mod source;
+pub mod sql_utils;
 pub mod state;
 
 pub use breaking_changes::{
     detect_breaking_changes, detect_breaking_changes_simple, BreakingChange, BreakingChangeReport,
     BreakingChangeType,
 };
-pub use config::Config;
+pub use config::{Config, DbType};
 pub use contract::{validate_contract, ContractValidationResult, ContractViolation, ViolationType};
 pub use error::CoreError;
 pub use exposure::{discover_exposures, Exposure, ExposureMaturity, ExposureOwner, ExposureType};

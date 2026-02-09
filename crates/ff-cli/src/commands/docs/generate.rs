@@ -1483,7 +1483,7 @@ fn generate_macros_markdown() -> String {
             .enumerate()
             .map(|(i, c)| {
                 if i == 0 {
-                    c.to_uppercase().next().unwrap()
+                    c.to_uppercase().next().unwrap_or(c)
                 } else if c == '_' {
                     ' '
                 } else {
@@ -1573,7 +1573,7 @@ fn generate_macros_html() -> String {
             .enumerate()
             .map(|(i, c)| {
                 if i == 0 {
-                    c.to_uppercase().next().unwrap()
+                    c.to_uppercase().next().unwrap_or(c)
                 } else if c == '_' {
                     ' '
                 } else {

@@ -1,7 +1,10 @@
 //! Snowflake database backend stub
 
 use crate::error::{DbError, DbResult};
-use crate::traits::{CsvLoadOptions, Database, SnapshotResult};
+use crate::traits::{
+    CsvLoadOptions, DatabaseCore, DatabaseCsv, DatabaseIncremental, DatabaseSchema,
+    DatabaseSnapshot, SnapshotResult,
+};
 use async_trait::async_trait;
 
 /// Snowflake database backend (stub implementation)
@@ -22,7 +25,7 @@ impl SnowflakeBackend {
 }
 
 #[async_trait]
-impl Database for SnowflakeBackend {
+impl DatabaseCore for SnowflakeBackend {
     async fn execute(&self, _sql: &str) -> DbResult<usize> {
         Err(DbError::NotImplemented {
             backend: "snowflake".to_string(),
@@ -34,20 +37,6 @@ impl Database for SnowflakeBackend {
         Err(DbError::NotImplemented {
             backend: "snowflake".to_string(),
             feature: "execute_batch".to_string(),
-        })
-    }
-
-    async fn create_table_as(&self, _name: &str, _select: &str, _replace: bool) -> DbResult<()> {
-        Err(DbError::NotImplemented {
-            backend: "snowflake".to_string(),
-            feature: "create_table_as".to_string(),
-        })
-    }
-
-    async fn create_view_as(&self, _name: &str, _select: &str, _replace: bool) -> DbResult<()> {
-        Err(DbError::NotImplemented {
-            backend: "snowflake".to_string(),
-            feature: "create_view_as".to_string(),
         })
     }
 
@@ -65,6 +54,79 @@ impl Database for SnowflakeBackend {
         })
     }
 
+    async fn query_sample_rows(&self, _sql: &str, _limit: usize) -> DbResult<Vec<String>> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "query_sample_rows".to_string(),
+        })
+    }
+
+    async fn query_one(&self, _sql: &str) -> DbResult<Option<String>> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "query_one".to_string(),
+        })
+    }
+
+    fn db_type(&self) -> &'static str {
+        "snowflake"
+    }
+}
+
+#[async_trait]
+impl DatabaseSchema for SnowflakeBackend {
+    async fn create_table_as(&self, _name: &str, _select: &str, _replace: bool) -> DbResult<()> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "create_table_as".to_string(),
+        })
+    }
+
+    async fn create_view_as(&self, _name: &str, _select: &str, _replace: bool) -> DbResult<()> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "create_view_as".to_string(),
+        })
+    }
+
+    async fn drop_if_exists(&self, _name: &str) -> DbResult<()> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "drop_if_exists".to_string(),
+        })
+    }
+
+    async fn create_schema_if_not_exists(&self, _schema: &str) -> DbResult<()> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "create_schema_if_not_exists".to_string(),
+        })
+    }
+
+    async fn get_table_schema(&self, _table: &str) -> DbResult<Vec<(String, String)>> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "get_table_schema".to_string(),
+        })
+    }
+
+    async fn describe_query(&self, _sql: &str) -> DbResult<Vec<(String, String)>> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "describe_query".to_string(),
+        })
+    }
+
+    async fn add_columns(&self, _table: &str, _columns: &[(String, String)]) -> DbResult<()> {
+        Err(DbError::NotImplemented {
+            backend: "snowflake".to_string(),
+            feature: "add_columns".to_string(),
+        })
+    }
+}
+
+#[async_trait]
+impl DatabaseCsv for SnowflakeBackend {
     async fn load_csv(&self, _table: &str, _path: &str) -> DbResult<()> {
         Err(DbError::NotImplemented {
             backend: "snowflake".to_string(),
@@ -90,39 +152,10 @@ impl Database for SnowflakeBackend {
             feature: "infer_csv_schema".to_string(),
         })
     }
+}
 
-    fn db_type(&self) -> &'static str {
-        "snowflake"
-    }
-
-    async fn drop_if_exists(&self, _name: &str) -> DbResult<()> {
-        Err(DbError::NotImplemented {
-            backend: "snowflake".to_string(),
-            feature: "drop_if_exists".to_string(),
-        })
-    }
-
-    async fn create_schema_if_not_exists(&self, _schema: &str) -> DbResult<()> {
-        Err(DbError::NotImplemented {
-            backend: "snowflake".to_string(),
-            feature: "create_schema_if_not_exists".to_string(),
-        })
-    }
-
-    async fn query_sample_rows(&self, _sql: &str, _limit: usize) -> DbResult<Vec<String>> {
-        Err(DbError::NotImplemented {
-            backend: "snowflake".to_string(),
-            feature: "query_sample_rows".to_string(),
-        })
-    }
-
-    async fn query_one(&self, _sql: &str) -> DbResult<Option<String>> {
-        Err(DbError::NotImplemented {
-            backend: "snowflake".to_string(),
-            feature: "query_one".to_string(),
-        })
-    }
-
+#[async_trait]
+impl DatabaseIncremental for SnowflakeBackend {
     async fn merge_into(
         &self,
         _target_table: &str,
@@ -146,30 +179,10 @@ impl Database for SnowflakeBackend {
             feature: "delete_insert".to_string(),
         })
     }
+}
 
-    async fn get_table_schema(&self, _table: &str) -> DbResult<Vec<(String, String)>> {
-        Err(DbError::NotImplemented {
-            backend: "snowflake".to_string(),
-            feature: "get_table_schema".to_string(),
-        })
-    }
-
-    async fn describe_query(&self, _sql: &str) -> DbResult<Vec<(String, String)>> {
-        Err(DbError::NotImplemented {
-            backend: "snowflake".to_string(),
-            feature: "describe_query".to_string(),
-        })
-    }
-
-    async fn add_columns(&self, _table: &str, _columns: &[(String, String)]) -> DbResult<()> {
-        Err(DbError::NotImplemented {
-            backend: "snowflake".to_string(),
-            feature: "add_columns".to_string(),
-        })
-    }
-
-    // ===== Snapshot Operations =====
-
+#[async_trait]
+impl DatabaseSnapshot for SnowflakeBackend {
     async fn execute_snapshot(
         &self,
         _snapshot_table: &str,

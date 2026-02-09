@@ -808,6 +808,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "duckdb",
+ "ff-core",
  "tempfile",
  "thiserror",
  "tokio",
@@ -817,6 +818,7 @@ dependencies = [
 name = "ff-jinja"
 version = "0.1.0"
 dependencies = [
+ "ff-core",
  "minijinja",
  "regex",
  "serde",

@@ -33,7 +33,7 @@ impl std::fmt::Display for MetricCalculation {
             MetricCalculation::Avg => "AVG",
             MetricCalculation::Min => "MIN",
             MetricCalculation::Max => "MAX",
-            MetricCalculation::CountDistinct => "COUNT(DISTINCT",
+            MetricCalculation::CountDistinct => "COUNT_DISTINCT",
         };
         write!(f, "{}", s)
     }

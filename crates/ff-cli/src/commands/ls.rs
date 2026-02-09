@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::cli::{GlobalArgs, LsArgs, LsOutput, ResourceType};
+use crate::commands::common;
 
 /// Execute the ls command
 pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
@@ -55,12 +56,7 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
         let mat = config_values
             .get("materialized")
             .and_then(|v| v.as_str())
-            .map(|s| match s {
-                "table" => Materialization::Table,
-                "incremental" => Materialization::Incremental,
-                "ephemeral" => Materialization::Ephemeral,
-                _ => Materialization::View,
-            })
+            .map(common::parse_materialization)
             .unwrap_or(project.config.materialization);
 
         // Get schema
@@ -430,7 +426,7 @@ fn print_tree(models: &[&ModelInfo], _dag: &ModelDag) -> Result<()> {
 fn print_tree_node(
     name: &str,
     models: &[&ModelInfo],
-    _all_names: &HashSet<&String>,
+    _all_names: &HashSet<&String>, // reserved for future use (filtering visible nodes)
     prefix: &str,
     is_last: bool,
 ) {

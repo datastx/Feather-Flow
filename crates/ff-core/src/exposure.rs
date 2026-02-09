@@ -79,7 +79,7 @@ pub struct ExposureOwner {
 pub struct Exposure {
     /// Version of the exposure format
     #[serde(default = "default_version")]
-    pub version: String,
+    pub version: u32,
 
     /// Kind must be "exposure"
     #[serde(default = "default_kind")]
@@ -120,8 +120,8 @@ pub struct Exposure {
     pub source_path: Option<String>,
 }
 
-fn default_version() -> String {
-    "1".to_string()
+fn default_version() -> u32 {
+    1
 }
 
 fn default_kind() -> String {
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn test_parse_minimal_exposure() {
         let yaml = r#"
-version: "1"
+version: 1
 kind: exposure
 name: revenue_dashboard
 owner:
@@ -255,7 +255,7 @@ owner:
     #[test]
     fn test_parse_full_exposure() {
         let yaml = r#"
-version: "1"
+version: 1
 kind: exposure
 name: revenue_dashboard
 type: dashboard
@@ -309,7 +309,7 @@ tags:
         for (type_str, expected) in cases {
             let yaml = format!(
                 r#"
-version: "1"
+version: 1
 kind: exposure
 name: test_exposure
 type: {}
@@ -334,7 +334,7 @@ owner:
         for (maturity_str, expected) in cases {
             let yaml = format!(
                 r#"
-version: "1"
+version: 1
 kind: exposure
 name: test_exposure
 maturity: {}
@@ -351,7 +351,7 @@ owner:
     #[test]
     fn test_invalid_kind() {
         let yaml = r#"
-version: "1"
+version: 1
 kind: model
 name: not_an_exposure
 owner:
@@ -366,7 +366,7 @@ owner:
     #[test]
     fn test_missing_name() {
         let yaml = r#"
-version: "1"
+version: 1
 kind: exposure
 name: ""
 owner:
@@ -381,7 +381,7 @@ owner:
     #[test]
     fn test_missing_owner_name() {
         let yaml = r#"
-version: "1"
+version: 1
 kind: exposure
 name: test_exposure
 owner:
@@ -396,7 +396,7 @@ owner:
     #[test]
     fn test_depends_on_model() {
         let yaml = r#"
-version: "1"
+version: 1
 kind: exposure
 name: test_exposure
 depends_on:
@@ -419,7 +419,7 @@ owner:
         fs::write(
             &exposure_path,
             r#"
-version: "1"
+version: 1
 kind: exposure
 name: revenue_dashboard
 type: dashboard
@@ -447,7 +447,7 @@ depends_on:
         fs::write(
             exposures_dir.join("dashboard1.yml"),
             r#"
-version: "1"
+version: 1
 kind: exposure
 name: dashboard_one
 owner:
@@ -461,7 +461,7 @@ depends_on:
         fs::write(
             exposures_dir.join("dashboard2.yaml"),
             r#"
-version: "1"
+version: 1
 kind: exposure
 name: dashboard_two
 owner:

@@ -101,6 +101,9 @@ impl<'a> JinjaEnvironment<'a> {
 
     /// Get the captured config values from the last render
     pub fn get_captured_config(&self) -> HashMap<String, Value> {
+        // Poisoned mutex recovery: these getters read non-critical config
+        // metadata. If a panic poisoned the lock, we still want to return
+        // the inner data rather than propagate the poison.
         self.config_capture
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -109,6 +112,7 @@ impl<'a> JinjaEnvironment<'a> {
 
     /// Extract materialization from captured config
     pub fn get_materialization(&self) -> Option<String> {
+        // Poisoned mutex recovery — see get_captured_config comment
         self.config_capture
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -118,6 +122,7 @@ impl<'a> JinjaEnvironment<'a> {
 
     /// Extract schema from captured config
     pub fn get_schema(&self) -> Option<String> {
+        // Poisoned mutex recovery — see get_captured_config comment
         self.config_capture
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -127,6 +132,7 @@ impl<'a> JinjaEnvironment<'a> {
 
     /// Extract tags from captured config
     pub fn get_tags(&self) -> Vec<String> {
+        // Poisoned mutex recovery — see get_captured_config comment
         self.config_capture
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -463,7 +469,7 @@ SELECT * FROM orders WHERE {{ date_filter("created_at", var("start_date"), var("
         let result = env
             .render("{{ date_trunc('month', 'created_at') }}")
             .unwrap();
-        assert_eq!(result, "DATE_TRUNC('month', created_at)");
+        assert_eq!(result, "DATE_TRUNC('month', \"created_at\")");
     }
 
     #[test]
@@ -472,7 +478,7 @@ SELECT * FROM orders WHERE {{ date_filter("created_at", var("start_date"), var("
         let result = env
             .render("{{ date_add('order_date', 7, 'day') }}")
             .unwrap();
-        assert_eq!(result, "order_date + INTERVAL '7 day'");
+        assert_eq!(result, "\"order_date\" + INTERVAL '7 day'");
     }
 
     #[test]
@@ -481,7 +487,7 @@ SELECT * FROM orders WHERE {{ date_filter("created_at", var("start_date"), var("
         let result = env
             .render("{{ date_diff('day', 'start_date', 'end_date') }}")
             .unwrap();
-        assert_eq!(result, "DATE_DIFF('day', start_date, end_date)");
+        assert_eq!(result, "DATE_DIFF('day', \"start_date\", \"end_date\")");
     }
 
     #[test]
@@ -496,7 +502,7 @@ SELECT * FROM orders WHERE {{ date_filter("created_at", var("start_date"), var("
     fn test_builtin_round_money() {
         let env = JinjaEnvironment::default();
         let result = env.render("{{ round_money('amount') }}").unwrap();
-        assert_eq!(result, "ROUND(CAST(amount AS DOUBLE), 2)");
+        assert_eq!(result, "ROUND(CAST(\"amount\" AS DOUBLE), 2)");
     }
 
     #[test]
@@ -504,8 +510,8 @@ SELECT * FROM orders WHERE {{ date_filter("created_at", var("start_date"), var("
         let env = JinjaEnvironment::default();
         let result = env.render("{{ percent_of('sales', 'total') }}").unwrap();
         assert!(result.contains("100.0"));
-        assert!(result.contains("sales"));
-        assert!(result.contains("total"));
+        assert!(result.contains("\"sales\""));
+        assert!(result.contains("\"total\""));
     }
 
     #[test]
@@ -528,7 +534,7 @@ SELECT * FROM orders WHERE {{ date_filter("created_at", var("start_date"), var("
     fn test_builtin_split_part() {
         let env = JinjaEnvironment::default();
         let result = env.render("{{ split_part('email', '@', 2) }}").unwrap();
-        assert_eq!(result, "SPLIT_PART(email, '@', 2)");
+        assert_eq!(result, "SPLIT_PART(\"email\", '@', 2)");
     }
 
     #[test]
@@ -542,21 +548,21 @@ SELECT * FROM orders WHERE {{ date_filter("created_at", var("start_date"), var("
     fn test_builtin_bool_or() {
         let env = JinjaEnvironment::default();
         let result = env.render("{{ bool_or('is_active') }}").unwrap();
-        assert_eq!(result, "BOOL_OR(is_active)");
+        assert_eq!(result, "BOOL_OR(\"is_active\")");
     }
 
     #[test]
     fn test_builtin_hash() {
         let env = JinjaEnvironment::default();
         let result = env.render("{{ hash('user_id') }}").unwrap();
-        assert_eq!(result, "MD5(CAST(user_id AS VARCHAR))");
+        assert_eq!(result, "MD5(CAST(\"user_id\" AS VARCHAR))");
     }
 
     #[test]
     fn test_builtin_not_null() {
         let env = JinjaEnvironment::default();
         let result = env.render("{{ not_null('email') }}").unwrap();
-        assert_eq!(result, "email IS NOT NULL");
+        assert_eq!(result, "\"email\" IS NOT NULL");
     }
 
     #[test]
@@ -564,8 +570,8 @@ SELECT * FROM orders WHERE {{ date_filter("created_at", var("start_date"), var("
         let env = JinjaEnvironment::default();
         let result = env.render("{{ surrogate_key(['col1', 'col2']) }}").unwrap();
         assert!(result.contains("MD5"));
-        assert!(result.contains("col1"));
-        assert!(result.contains("col2"));
+        assert!(result.contains("\"col1\""));
+        assert!(result.contains("\"col2\""));
     }
 
     #[test]
@@ -574,7 +580,7 @@ SELECT * FROM orders WHERE {{ date_filter("created_at", var("start_date"), var("
         let result = env
             .render("{{ coalesce_columns(['a', 'b', 'c']) }}")
             .unwrap();
-        assert_eq!(result, "COALESCE(a, b, c)");
+        assert_eq!(result, "COALESCE(\"a\", \"b\", \"c\")");
     }
 
     #[test]
@@ -589,9 +595,9 @@ FROM sales
 WHERE {{ not_null('customer_id') }}"#;
 
         let result = env.render(template).unwrap();
-        assert!(result.contains("ROUND(CAST(price AS DOUBLE), 2) AS price_rounded"));
-        assert!(result.contains("CASE WHEN orders = 0 OR orders IS NULL THEN NULL"));
-        assert!(result.contains("DATE_TRUNC('month', created_at) AS month"));
-        assert!(result.contains("WHERE customer_id IS NOT NULL"));
+        assert!(result.contains(r#"ROUND(CAST("price" AS DOUBLE), 2) AS price_rounded"#));
+        assert!(result.contains(r#"CASE WHEN "orders" = 0 OR "orders" IS NULL THEN NULL"#));
+        assert!(result.contains(r#"DATE_TRUNC('month', "created_at") AS month"#));
+        assert!(result.contains(r#"WHERE "customer_id" IS NOT NULL"#));
     }
 }

@@ -207,6 +207,7 @@ mod tests {
     fn make_col(name: &str, ty: SqlType, null: Nullability) -> TypedColumn {
         TypedColumn {
             name: name.to_string(),
+            source_table: None,
             sql_type: ty,
             nullability: null,
             provenance: vec![],
