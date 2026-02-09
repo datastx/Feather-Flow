@@ -12,21 +12,22 @@ A dbt-inspired CLI tool built in Rust for SQL templating, compilation, and execu
 4. [Configuration](#configuration)
 5. [Project Structure](#project-structure)
 6. [Subcommand Specifications](#subcommand-specifications)
-7. [Sources Specification](#sources-specification)
-8. [Custom Macros System](#custom-macros-system)
-9. [Selection Syntax](#selection-syntax)
-10. [Schema Testing Framework](#schema-testing-framework)
-11. [Incremental Models](#incremental-models)
-12. [Snapshots](#snapshots)
-13. [Hooks & Operations](#hooks--operations)
-14. [Error Handling](#error-handling)
-15. [Known Limitations & Edge Cases](#known-limitations--edge-cases)
-16. [Testing Strategy](#testing-strategy)
-17. [Roadmap & Implementation Status](#roadmap--implementation-status)
-18. [Dialect Extensibility](#dialect-extensibility)
-19. [CI/CD](#cicd)
-20. [Development Workflow](#development-workflow)
-21. [Appendix: dbt Comparison](#appendix-dbt-comparison)
+7. [Static Analysis Engine](#static-analysis-engine)
+8. [Sources Specification](#sources-specification)
+9. [Custom Macros System](#custom-macros-system)
+10. [Selection Syntax](#selection-syntax)
+11. [Schema Testing Framework](#schema-testing-framework)
+12. [Incremental Models](#incremental-models)
+13. [Snapshots](#snapshots)
+14. [Hooks & Operations](#hooks--operations)
+15. [Error Handling](#error-handling)
+16. [Known Limitations & Edge Cases](#known-limitations--edge-cases)
+17. [Testing Strategy](#testing-strategy)
+18. [Roadmap & Implementation Status](#roadmap--implementation-status)
+19. [Dialect Extensibility](#dialect-extensibility)
+20. [CI/CD](#cicd)
+21. [Development Workflow](#development-workflow)
+22. [Appendix: dbt Comparison](#appendix-dbt-comparison)
 
 ---
 
@@ -149,7 +150,7 @@ columns: ...
 
 ### 1. AST-Based Dependency Extraction
 
-**Decision**: Use `sqlparser-rs` to parse SQL and extract table dependencies from the AST.
+**Decision**: Use `sqlparser-rs` (v0.60) to parse SQL and extract table dependencies from the AST.
 
 **How it works**:
 1. Parse each SQL file using the configured dialect
@@ -203,9 +204,10 @@ columns: ...
 | `ff-cli` | Argument parsing, user interaction, command dispatch |
 | `ff-core` | Configuration, model discovery, DAG construction |
 | `ff-jinja` | Template rendering, macro loading |
-| `ff-sql` | SQL parsing, dependency extraction, validation |
+| `ff-sql` | SQL parsing, dependency extraction, validation, AST-based lineage |
 | `ff-db` | Database connections, query execution |
 | `ff-test` | Test SQL generation, result evaluation |
+| `ff-analysis` | DataFusion-based static analysis, type inference, schema propagation, LogicalPlan lineage |
 
 ---
 
@@ -422,6 +424,9 @@ my_project/
 | `--output-dir` | | Override output directory |
 | `--vars` | | Pass variables as JSON |
 | `--parse-only` | | Compile but don't write files |
+| `--skip-static-analysis` | | Skip DataFusion static analysis |
+| `--explain` | | Print the DataFusion LogicalPlan for a model |
+| `--output` | `-o` | Output format: `text`, `json` |
 
 **Example scenarios**:
 
@@ -439,6 +444,16 @@ my_project/
 - Command: `ff compile --parse-only`
 - Output: Success/failure status
 - Use case: CI check that templates render correctly
+
+*Inspect logical plan*:
+- Command: `ff compile --explain stg_orders`
+- Output: DataFusion LogicalPlan with schema for the model
+- Use case: Debug type inference and query planning issues
+
+*Skip static analysis for speed*:
+- Command: `ff compile --skip-static-analysis`
+- Output: Compiled SQL without DataFusion analysis phase
+- Use case: Quick iteration when you know the SQL is correct
 
 **Manifest Structure**:
 
@@ -464,6 +479,10 @@ The manifest (`target/manifest.json`) contains:
 - [x] Generates manifest.json with all metadata
 - [x] Respects --vars for variable overrides
 - [x] --parse-only validates without writing
+- [x] Runs DataFusion static analysis (schema propagation, type checking)
+- [x] --skip-static-analysis bypasses analysis phase
+- [x] --explain prints LogicalPlan for a model
+- [x] Reports schema mismatches (extra/missing/type) as warnings/errors
 - [x] Integration test: compile project, verify manifest structure
 
 ### 3. `ff run`
@@ -481,6 +500,10 @@ The manifest (`target/manifest.json`) contains:
 | `--threads` | `-t` | Number of parallel threads |
 | `--defer` | | Defer to another manifest for unselected models |
 | `--state` | | Path to manifest for state comparison |
+| `--skip-static-analysis` | | Skip DataFusion static analysis gate |
+| `--smart` | | Skip unchanged models (smart build) |
+| `--resume` | | Resume from a previous failed run |
+| `--output` | `-o` | Output format: `text`, `json` |
 
 **Example scenarios**:
 
@@ -515,16 +538,21 @@ The manifest (`target/manifest.json`) contains:
 2. Compile all Jinja templates
 3. Extract dependencies and build DAG
 4. Validate no circular dependencies
-5. Apply selection filters
-6. Create required schemas
-7. Topologically sort selected models
-8. For each model (respecting parallelism):
-   - Check if upstream dependencies completed
-   - For incremental: check if model exists and is incremental
-   - Execute CREATE TABLE/VIEW AS or incremental merge
-   - Record timing and status
-9. Write run_results.json
-10. Report summary
+5. **Run DataFusion static analysis** (unless `--skip-static-analysis`):
+   - Build LogicalPlan for each model via schema propagation
+   - Cross-check inferred schemas against YAML declarations
+   - Fail with exit code 1 if schema errors found (e.g., column in YAML missing from SQL)
+6. Apply selection filters
+7. Apply smart build filtering (if `--smart`)
+8. Create required schemas
+9. Topologically sort selected models
+10. For each model (respecting parallelism):
+    - Check if upstream dependencies completed
+    - For incremental: check if model exists and is incremental
+    - Execute CREATE TABLE/VIEW AS or incremental merge
+    - Record timing and status
+11. Write run_results.json
+12. Report summary
 
 **Definition of Done**:
 - [x] Executes models in correct dependency order
@@ -541,6 +569,10 @@ The manifest (`target/manifest.json`) contains:
 - [x] Creates schemas before models that need them
 - [x] Clear error messages on SQL execution failure
 - [x] Writes run_results.json with timing and status
+- [x] Static analysis gates execution (blocks on schema errors)
+- [x] `--skip-static-analysis` bypasses the analysis gate
+- [x] `--smart` skips unchanged models
+- [x] `--resume` continues from failed run state
 - [x] Integration test: run models, verify tables exist
 
 ### 4. `ff test`
@@ -725,7 +757,9 @@ For each model, documentation includes:
 |--------|-------|-------------|
 | `--models` | `-m` | Specific models to validate |
 | `--strict` | | Fail on warnings |
-| `--show-all` | | Show all issues, not just first per category |
+| `--contracts` | | Validate schema contracts against a reference manifest |
+| `--state` | | Path to reference manifest (used with `--contracts`) |
+| `--governance` | | Enable governance checks (data classification completeness) |
 
 **Example scenarios**:
 
@@ -759,6 +793,8 @@ For each model, documentation includes:
 | Model directory mismatch (E012) | Error | SQL file stem doesn't match directory name |
 | CTE not allowed (S005) | Error | CTEs prohibited — each transform must be its own model |
 | Derived table not allowed (S006) | Error | FROM-clause subqueries prohibited |
+| Static analysis: missing column (SA01) | Error | Column in YAML not produced by SQL |
+| Static analysis: mismatch (SA02) | Warning | Extra column, type mismatch, or nullability mismatch vs YAML |
 | Orphaned schema files | Warning | Schema without corresponding model |
 | Undeclared external tables | Warning | References to unknown tables |
 | Unused macros | Warning | Macros defined but never used |
@@ -774,8 +810,11 @@ For each model, documentation includes:
 - [x] Validates schema YAML structure
 - [x] Warns on orphaned schema files
 - [x] Warns on undeclared external tables
+- [x] Runs DataFusion static analysis (schema propagation and cross-checking)
+- [x] Reports schema mismatches as SA01 errors / SA02 warnings
 - [x] `--strict` mode fails on warnings
-- [x] `--show-all` shows all issues (shows all by default)
+- [x] `--contracts` validates schema contracts
+- [x] `--governance` checks data classification completeness
 - [x] No database connection required
 - [x] Exit code 0 for valid, 1 for errors
 - [x] Integration test: validate pass and fail cases
@@ -927,10 +966,17 @@ For each model, documentation includes:
 | `ColumnRef` | Reference to a specific column in a model |
 | `LineageEdge` | Connection between column references across models |
 
+**DataFusion Lineage Types** (defined in `ff-analysis`):
+
+| Type | Description |
+|------|-------------|
+| `ModelColumnLineage` | All lineage edges for one model extracted from its LogicalPlan |
+| `ColumnLineageEdge` | Single edge: output column, source table, source column, kind |
+| `LineageKind` | Copy (direct ref), Transform (computation), Inspect (WHERE/JOIN) |
+
 **Behavior**:
-- Lineage is extracted from the SQL AST using `sqlparser-rs`
-- `ProjectLineage::resolve_edges()` connects cross-model column references
-- Column aliases, expressions, and pass-through columns are tracked
+- **AST-based lineage** (`ff-sql`): Extracted from the SQL AST using `sqlparser-rs`. `ProjectLineage::resolve_edges()` connects cross-model column references. Column aliases, expressions, and pass-through columns are tracked.
+- **DataFusion lineage** (`ff-analysis`): Extracted from DataFusion LogicalPlans by walking Projection, Filter, Join, Aggregate, and other plan nodes. Provides richer classification (Copy vs Transform vs Inspect) with full type information.
 - DOT output can be rendered with Graphviz for visualization
 
 **Definition of Done**:
@@ -942,6 +988,175 @@ For each model, documentation includes:
 - [x] DOT output is valid Graphviz format
 - [x] Cross-model column references resolved
 - [x] Integration test: lineage matches expected output
+
+### 12. `ff analyze`
+
+**Purpose**: Run static analysis passes on SQL models to detect potential issues without executing against the database.
+
+**Options**:
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--models` | `-m` | Specific models to analyze (comma-separated) |
+| `--pass` | | Run only specific passes (comma-separated) |
+| `--output` | `-o` | Output format: `table`, `json` |
+| `--severity` | `-s` | Minimum severity: `info`, `warning`, `error` |
+
+**Example scenarios**:
+
+*Run full analysis*:
+- Command: `ff analyze`
+- Behavior: Runs all analysis passes on all models
+- Output: Table of diagnostics with model, severity, code, pass, and message
+
+*Analyze specific model*:
+- Command: `ff analyze --models fct_orders`
+- Behavior: Runs all passes on fct_orders only
+- Output: Diagnostics for that model
+
+*Run specific pass*:
+- Command: `ff analyze --pass type_inference,nullability`
+- Behavior: Runs only the specified passes
+- Output: Filtered diagnostics
+
+*Show only warnings and errors*:
+- Command: `ff analyze --severity warning`
+- Behavior: Filters out info-level diagnostics
+- Use case: Focus on actionable issues
+
+*JSON output for CI*:
+- Command: `ff analyze --output json`
+- Behavior: Machine-readable diagnostic output
+- Use case: Integration with CI pipelines or code review tools
+
+**Analysis Passes**:
+
+The analyze command runs two tiers of passes:
+
+*IR-based passes* (custom relational algebra IR from `sqlparser-rs`):
+| Pass | Diagnostics | Description |
+|------|-------------|-------------|
+| `type_inference` | A001-A005 | Type checking: unknown types, UNION mismatches, numeric ops on strings, lossy casts |
+| `nullability` | A010-A012 | Nullable columns from JOINs without null guards, YAML vs inferred nullability |
+| `join_keys` | A030, A032-A033 | Join key type mismatches, cross joins, non-equi joins |
+| `unused_columns` | A020-A021 | Unused columns in downstream models, SELECT * detection |
+
+*LogicalPlan-based passes* (DataFusion LogicalPlan):
+| Pass | Diagnostics | Description |
+|------|-------------|-------------|
+| `cross_model_consistency` | A040-A041 | Cross-model schema mismatches: extra/missing columns, type conflicts, nullability conflicts |
+
+**Exit codes**:
+- 0: No error-severity diagnostics
+- 1: At least one error-severity diagnostic found
+
+**Definition of Done**:
+- [x] Runs all IR-based passes (type_inference, nullability, join_keys, unused_columns)
+- [x] Runs DataFusion LogicalPlan-based passes (cross_model_consistency)
+- [x] Schema propagation through DAG in topological order
+- [x] `--models` filters to specific models
+- [x] `--pass` filters to specific passes
+- [x] `--severity` filters by minimum severity
+- [x] Table output with aligned columns
+- [x] JSON output with full diagnostic structure
+- [x] Exit code 1 on error-severity diagnostics
+- [x] No database connection required
+
+---
+
+## Static Analysis Engine
+
+Featherflow includes a DataFusion-based static analysis engine that validates SQL models semantically before execution. This catches type mismatches, schema inconsistencies, and structural issues at compile time without requiring a database connection.
+
+### Architecture
+
+The analysis engine lives in the `ff-analysis` crate and uses two complementary approaches:
+
+1. **Custom IR passes**: SQL is parsed with `sqlparser-rs` (v0.60), lowered to a relational algebra IR (`RelOp`/`TypedExpr`), and analyzed by composable passes (type inference, nullability propagation, join key analysis, unused column detection).
+
+2. **DataFusion LogicalPlan passes**: SQL is re-parsed through DataFusion's SQL planner (using DataFusion 52.x with its bundled sqlparser v0.59), producing `LogicalPlan` nodes with full type information. This enables cross-model schema propagation and consistency checking.
+
+### DataFusion Bridge
+
+The `datafusion_bridge` module provides:
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `provider.rs` | `ContextProvider` impl | Resolves model/source schemas as DataFusion table sources |
+| `planner.rs` | `sql_to_plan()` | Converts SQL strings to DataFusion LogicalPlans |
+| `functions.rs` | DuckDB function stubs | Registers DuckDB-specific UDFs for planning (not execution) |
+| `types.rs` | Type bridge | Converts between `SqlType` and Arrow `DataType` |
+| `propagation.rs` | Schema propagation | Walks DAG in topological order, building schemas for downstream models |
+| `lineage.rs` | Column lineage | Extracts Copy/Transform/Inspect lineage from LogicalPlans |
+
+### Schema Propagation
+
+The `propagate_schemas()` function is the core of cross-model analysis:
+
+1. Start with source/seed schemas from YAML definitions
+2. For each model in topological order:
+   - Build a `ContextProvider` with the current schema catalog
+   - Convert SQL to `LogicalPlan` via `sql_to_plan()`
+   - Extract the inferred output schema from `plan.schema()`
+   - Cross-check against the model's YAML schema declaration
+   - Register the inferred schema in the catalog for downstream models
+3. Return all plans, inferred schemas, and detected mismatches
+
+### Schema Mismatch Types
+
+| Mismatch | Severity | Description |
+|----------|----------|-------------|
+| `MissingFromSql` | Error | Column declared in YAML but not produced by the SQL query |
+| `ExtraInSql` | Warning | Column produced by SQL but not declared in YAML |
+| `TypeMismatch` | Warning | YAML-declared type differs from DataFusion-inferred type |
+| `NullabilityMismatch` | Warning | YAML nullability constraint conflicts with inferred nullability |
+
+### Diagnostic Codes
+
+**IR-based passes:**
+| Code | Pass | Description |
+|------|------|-------------|
+| A001 | type_inference | Unknown type for column |
+| A002 | type_inference | Type mismatch in UNION columns |
+| A003 | type_inference | UNION column count mismatch |
+| A004 | type_inference | SUM/AVG on string column |
+| A005 | type_inference | Lossy cast detected |
+| A010 | nullability | Nullable column from JOIN without null guard |
+| A011 | nullability | YAML NOT NULL vs JOIN-inferred nullable |
+| A012 | nullability | Redundant IS NULL check |
+| A020 | unused_columns | Unused column in downstream models |
+| A021 | unused_columns | SELECT * blocks unused column detection |
+| A030 | join_keys | Join key type mismatch |
+| A032 | join_keys | Cross join detected |
+| A033 | join_keys | Non-equi join detected |
+
+**LogicalPlan-based passes:**
+| Code | Pass | Description |
+|------|------|-------------|
+| A040 | cross_model_consistency | Schema mismatch (extra/missing/type) between YAML and SQL output |
+| A041 | cross_model_consistency | Nullability mismatch between YAML and SQL output |
+
+### Column-Level Lineage (DataFusion)
+
+In addition to the AST-based lineage in `ff-sql`, the analysis engine extracts column-level lineage from DataFusion LogicalPlans:
+
+| Lineage Kind | Description | Example |
+|--------------|-------------|---------|
+| `Copy` | Direct column reference | `SELECT id FROM orders` — `id` is Copy of `orders.id` |
+| `Transform` | Column used in computation | `SELECT a + b AS c` — `c` is Transform of `a` and `b` |
+| `Inspect` | Column read but not in output | `WHERE status = 'active'` — `status` is Inspect |
+
+The LogicalPlan walker handles: Projection, Filter, Join (keys as Inspect), Aggregate (GROUP BY keys, aggregate expressions as Transform), SubqueryAlias, Sort, Limit, Union, and TableScan nodes.
+
+### Integration Points
+
+Static analysis is integrated into three CLI commands:
+
+| Command | Behavior | Skip flag |
+|---------|----------|-----------|
+| `ff compile` | Runs after compilation, reports mismatches | `--skip-static-analysis` |
+| `ff validate` | Always runs as part of validation | N/A |
+| `ff run` | Gates execution — blocks on errors | `--skip-static-analysis` |
+| `ff analyze` | Dedicated analysis command with pass filtering | N/A |
 
 ---
 
@@ -1581,6 +1796,14 @@ Standalone SQL operations not tied to models:
 | E020 | StateError | State file corrupted or invalid |
 | S005 | CteNotAllowed | CTEs prohibited — each transform must be its own model |
 | S006 | DerivedTableNotAllowed | FROM-clause subqueries prohibited |
+| SA01 | StaticAnalysisError | Column in YAML not produced by SQL (from schema propagation) |
+| SA02 | StaticAnalysisWarning | Extra column, type mismatch, or nullability mismatch vs YAML |
+| A001-A005 | AnalysisTypeInference | Type inference diagnostics (see Static Analysis Engine) |
+| A010-A012 | AnalysisNullability | Nullability propagation diagnostics |
+| A020-A021 | AnalysisUnusedColumns | Unused column diagnostics |
+| A030-A033 | AnalysisJoinKeys | Join key analysis diagnostics |
+| A040-A041 | AnalysisCrossModel | Cross-model consistency diagnostics (DataFusion) |
+| AE001-AE008 | AnalysisInternalError | Internal analysis errors (lowering, planning, etc.) |
 
 ### Exit Codes
 
@@ -1708,13 +1931,15 @@ Errors include relevant context:
 | Command | Critical Tests |
 |---------|----------------|
 | `ff parse` | Dependency extraction, CTE rejection (S005), parse errors |
-| `ff compile` | Jinja rendering, manifest structure, circular deps |
-| `ff run` | Execution order, materializations, error handling |
+| `ff compile` | Jinja rendering, manifest structure, circular deps, static analysis |
+| `ff run` | Execution order, materializations, error handling, static analysis gate |
 | `ff test` | All test types, pass/fail cases, store failures |
-| `ff validate` | All validation rules, strict mode |
+| `ff validate` | All validation rules, strict mode, static analysis |
 | `ff seed` | Type inference, full refresh |
 | `ff docs` | All formats, missing schemas |
 | `ff ls` | Selection syntax, output formats |
+| `ff analyze` | All passes, severity filtering, pass filtering, JSON/table output |
+| `ff lineage` | AST lineage, DataFusion lineage, DOT output |
 
 ### Test Coverage Goals
 
@@ -1872,22 +2097,40 @@ Errors include relevant context:
 
 **Key Files**: `inline.rs`, `builtins.rs`, `model.rs`, `project.rs`, `metric.rs`
 
-### Phase D: dbt-Fusion Features (v1.3.0) - PLANNED
+### Phase D: DataFusion Static Analysis Engine (v1.3.0) - COMPLETE
+
+| Feature | Work Units | Status |
+|---------|------------|--------|
+| sqlparser 0.52 → 0.60 upgrade | 2 | Done |
+| Type registry & required column types (SqlType extensions, Arrow bridge) | 3 | Done |
+| DataFusion LogicalPlan generator (ContextProvider, planner, DuckDB function stubs) | 4 | Done |
+| DAG-wide schema propagation (cross-model type checking) | 3 | Done |
+| Static validation passes (PlanPass/DagPlanPass traits, CrossModelConsistency) | 3 | Done |
+| Column-level lineage from DataFusion LogicalPlan | 2 | Done |
+| CLI integration (compile, validate, run, analyze) | 3 | Done |
+| Smart builds (skip unchanged models via `--smart`) | 3 | Done |
+
+**Key Files**: `crates/ff-analysis/src/datafusion_bridge/` (provider, planner, functions, types, propagation, lineage), `crates/ff-analysis/src/pass/plan_pass.rs`, `crates/ff-analysis/src/pass/plan_cross_model.rs`
+
+**New Dependencies**: `datafusion-common 52`, `datafusion-expr 52`, `datafusion-sql 52`, `arrow 54`
+
+### Phase E: Advanced Analysis & IDE (v1.4.0) - PLANNED
 
 | Feature | Work Units | Status |
 |---------|------------|--------|
 | PII/sensitive data classification with lineage propagation | 4 | Not started |
-| Smart builds (skip unchanged models) | 3 | Not started |
 | Impact analysis for compliance | 3 | Not started |
-| IDE integration | 4 | Not started |
+| IDE integration (LSP) | 4 | Not started |
+| Port remaining IR passes to DataFusion LogicalPlan | 3 | Not started |
+| Remove legacy RelOp IR (after all passes migrated) | 2 | Not started |
 
 **PII/Sensitive Data Classification**: Tag columns as PII or sensitive in schema YAML, then use column-level lineage to automatically propagate classification downstream. Any model that derives from a PII column inherits the classification, enabling compliance teams to track sensitive data flow across the entire project.
-
-**Smart Builds**: Compare model SQL checksums and upstream data freshness against the last successful run. Skip models whose inputs and SQL have not changed, dramatically reducing build times for large projects.
 
 **Impact Analysis for Compliance**: Given a source column change or deprecation, use lineage to enumerate every downstream model, metric, exposure, and test affected. Generate compliance reports showing the full blast radius of schema changes.
 
 **IDE Integration**: Language server protocol (LSP) support for Featherflow projects, providing autocomplete for model names, column references, and Jinja variables, inline validation errors, go-to-definition for model dependencies, and lineage visualization in the editor.
+
+**Pass Migration**: The existing IR-based passes (type_inference, nullability, join_keys, unused_columns) currently operate on a custom `RelOp`/`TypedExpr` IR. These will be rewritten to operate on DataFusion `LogicalPlan` nodes, leveraging DataFusion's richer type information and `DFSchema` nullability tracking. Once all passes are ported, the legacy `lowering/` module and custom IR can be removed.
 
 ---
 
@@ -2188,7 +2431,8 @@ Build targets:
 | Hooks | Yes | Yes | Done |
 | Exposures | Yes | Yes | Done |
 | Metrics | Yes | Yes | Done |
-| Column lineage | Limited | Full AST-based | Done |
+| Column lineage | Limited | Full AST-based + DataFusion LogicalPlan | Done |
+| Static analysis | None | DataFusion-based type checking, schema propagation | Done |
 | Python models | Yes | No | Not planned |
 | Adapters | Many | DuckDB first | Others later |
 
@@ -2205,6 +2449,7 @@ Build targets:
 - You use DuckDB primarily
 - You want faster CLI performance
 - You prefer plain SQL without ref()
+- You want compile-time static analysis (type checking, schema validation)
 - You want a simpler tool
 - You want single binary deployment
 

@@ -49,7 +49,7 @@ pub fn extract_dependencies(statements: &[Statement]) -> HashSet<String> {
             let table_name = relation
                 .0
                 .iter()
-                .map(|ident| ident.value.clone())
+                .map(|part| part.to_string())
                 .collect::<Vec<_>>()
                 .join(".");
             deps.insert(table_name);
@@ -58,7 +58,7 @@ pub fn extract_dependencies(statements: &[Statement]) -> HashSet<String> {
     }
 
     // Filter out CTE names from dependencies
-    deps.retain(|dep| {
+    deps.retain(|dep: &String| {
         // Normalize the name for comparison (take last component)
         // Safety: str::split() always yields at least one element
         let normalized = dep.split('.').next_back().unwrap_or(dep);

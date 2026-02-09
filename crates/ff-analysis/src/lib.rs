@@ -4,10 +4,14 @@
 //! and composable analysis passes for detecting SQL issues.
 
 pub mod context;
+pub mod datafusion_bridge;
 pub mod error;
 pub mod ir;
 pub mod lowering;
 pub mod pass;
+
+#[cfg(test)]
+mod test_utils;
 
 pub use context::AnalysisContext;
 pub use error::{AnalysisError, AnalysisResult};
@@ -18,4 +22,15 @@ pub use ir::types::{
     parse_sql_type, FloatBitWidth, IntBitWidth, Nullability, SqlType, TypedColumn,
 };
 pub use lowering::{lower_statement, SchemaCatalog};
+pub use pass::plan_pass::{DagPlanPass, PlanPass, PlanPassManager};
 pub use pass::{AnalysisPass, DagPass, Diagnostic, DiagnosticCode, PassManager, Severity};
+
+// DataFusion bridge re-exports
+pub use datafusion_bridge::lineage::{
+    deduplicate_edges, extract_column_lineage as extract_plan_column_lineage, ColumnLineageEdge,
+    LineageKind, ModelColumnLineage,
+};
+pub use datafusion_bridge::planner::sql_to_plan;
+pub use datafusion_bridge::propagation::{
+    propagate_schemas, ModelPlanResult, PropagationResult, SchemaMismatch,
+};

@@ -316,7 +316,6 @@ impl TypedExpr {
 
 /// Static unknown type for wildcard (avoids returning reference to temporary)
 fn resolved_type_unknown() -> &'static SqlType {
-    // Using a leaked Box to create a static reference — only called for Wildcard
     use std::sync::OnceLock;
     static UNKNOWN: OnceLock<SqlType> = OnceLock::new();
     UNKNOWN.get_or_init(|| SqlType::Unknown("wildcard".to_string()))

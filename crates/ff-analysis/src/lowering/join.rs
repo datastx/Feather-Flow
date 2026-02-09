@@ -17,17 +17,19 @@ pub(crate) fn lower_join(
     let right = crate::lowering::select::lower_table_factor(&join.relation, catalog)?;
 
     let (join_type, condition) = match &join.join_operator {
-        JoinOperator::Inner(constraint) => (JoinType::Inner, extract_join_condition(constraint)),
-        JoinOperator::LeftOuter(constraint) => {
+        JoinOperator::Join(constraint) | JoinOperator::Inner(constraint) => {
+            (JoinType::Inner, extract_join_condition(constraint))
+        }
+        JoinOperator::Left(constraint) | JoinOperator::LeftOuter(constraint) => {
             (JoinType::LeftOuter, extract_join_condition(constraint))
         }
-        JoinOperator::RightOuter(constraint) => {
+        JoinOperator::Right(constraint) | JoinOperator::RightOuter(constraint) => {
             (JoinType::RightOuter, extract_join_condition(constraint))
         }
         JoinOperator::FullOuter(constraint) => {
             (JoinType::FullOuter, extract_join_condition(constraint))
         }
-        JoinOperator::CrossJoin => (JoinType::Cross, None),
+        JoinOperator::CrossJoin(_) => (JoinType::Cross, None),
         other => {
             log::warn!(
                 "Unrecognized join operator {:?}, treating as INNER JOIN",

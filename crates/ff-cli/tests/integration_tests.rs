@@ -1922,7 +1922,7 @@ fn test_analysis_lower_sample_project() {
 fn test_analysis_pass_manager_sample_project() {
     use ff_analysis::{
         lower_statement, parse_sql_type, AnalysisContext, Nullability, PassManager, RelOp,
-        RelSchema, SchemaCatalog, SqlType, TypedColumn,
+        RelSchema, SchemaCatalog, TypedColumn,
     };
     use ff_sql::{extract_column_lineage, ProjectLineage};
 
@@ -1945,11 +1945,7 @@ fn test_analysis_pass_manager_sample_project() {
                 .columns
                 .iter()
                 .map(|col| {
-                    let sql_type = col
-                        .data_type
-                        .as_ref()
-                        .map(|dt| parse_sql_type(dt))
-                        .unwrap_or_else(|| SqlType::Unknown("no type".to_string()));
+                    let sql_type = parse_sql_type(&col.data_type);
                     TypedColumn {
                         name: col.name.clone(),
                         source_table: None,

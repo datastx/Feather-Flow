@@ -154,8 +154,11 @@ fn analyze_select(select: &Select, suggestions: &mut ModelSuggestions) {
 fn analyze_table_joins(table: &TableWithJoins, suggestions: &mut ModelSuggestions) {
     // Get columns used in join conditions
     for join in &table.joins {
-        if let JoinOperator::Inner(constraint)
+        if let JoinOperator::Join(constraint)
+        | JoinOperator::Inner(constraint)
+        | JoinOperator::Left(constraint)
         | JoinOperator::LeftOuter(constraint)
+        | JoinOperator::Right(constraint)
         | JoinOperator::RightOuter(constraint)
         | JoinOperator::FullOuter(constraint) = &join.join_operator
         {

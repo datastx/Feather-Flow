@@ -7,7 +7,7 @@ use crate::pass::{DagPass, Diagnostic, DiagnosticCode, Severity};
 use std::collections::{HashMap, HashSet};
 
 /// Unused column detection pass (DAG-level)
-pub struct UnusedColumnDetection;
+pub(crate) struct UnusedColumnDetection;
 
 impl DagPass for UnusedColumnDetection {
     fn name(&self) -> &'static str {
@@ -247,21 +247,12 @@ mod tests {
     use crate::ir::expr::TypedExpr;
     use crate::ir::relop::RelOp;
     use crate::ir::schema::RelSchema;
-    use crate::ir::types::{IntBitWidth, Nullability, SqlType, TypedColumn};
+    use crate::ir::types::{IntBitWidth, Nullability, SqlType};
+    use crate::test_utils::make_col;
     use ff_core::dag::ModelDag;
     use ff_core::Project;
     use ff_sql::ProjectLineage;
     use std::path::Path;
-
-    fn make_col(name: &str, ty: SqlType, null: Nullability) -> TypedColumn {
-        TypedColumn {
-            name: name.to_string(),
-            source_table: None,
-            sql_type: ty,
-            nullability: null,
-            provenance: vec![],
-        }
-    }
 
     fn make_ctx_with_dag(dep_map: &HashMap<String, Vec<String>>) -> AnalysisContext {
         let project = Project::load(Path::new("../../tests/fixtures/sample_project")).unwrap();

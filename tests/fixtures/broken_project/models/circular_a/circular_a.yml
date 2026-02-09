@@ -2,5 +2,8 @@ version: 1
 description: "Circular dependency test model A"
 columns:
   - name: id
+    type: INTEGER
   - name: name
+    type: VARCHAR
   - name: value
+    type: DECIMAL(10,2)

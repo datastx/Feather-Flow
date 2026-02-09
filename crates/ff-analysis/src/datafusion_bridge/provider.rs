@@ -1,0 +1,185 @@
+//! DataFusion ContextProvider for Feather-Flow schema catalog
+//!
+//! Implements the `ContextProvider` trait so that `SqlToRel` can resolve
+//! table names, UDF signatures, and aggregate functions during planning.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use arrow::datatypes::{Field, Schema, SchemaRef};
+use datafusion_common::config::ConfigOptions;
+use datafusion_common::{plan_err, Result as DFResult};
+use datafusion_expr::planner::ExprPlanner;
+use datafusion_expr::{AggregateUDF, ScalarUDF, TableSource, WindowUDF};
+use datafusion_sql::planner::ContextProvider;
+use datafusion_sql::TableReference;
+
+use crate::datafusion_bridge::functions;
+use crate::datafusion_bridge::types::sql_type_to_arrow;
+use crate::ir::schema::RelSchema;
+use crate::ir::types::Nullability;
+use crate::lowering::SchemaCatalog;
+
+/// A ContextProvider backed by a Feather-Flow SchemaCatalog.
+///
+/// Maps model/source names to Arrow schemas so DataFusion's `SqlToRel`
+/// can resolve table references during SQL-to-LogicalPlan conversion.
+/// Borrows the catalog to avoid cloning during DAG-wide propagation.
+pub struct FeatherFlowProvider<'a> {
+    catalog: &'a SchemaCatalog,
+    config: ConfigOptions,
+    scalar_functions: HashMap<String, Arc<ScalarUDF>>,
+    aggregate_functions: HashMap<String, Arc<AggregateUDF>>,
+}
+
+impl<'a> FeatherFlowProvider<'a> {
+    /// Create a new provider from a schema catalog reference
+    pub fn new(catalog: &'a SchemaCatalog) -> Self {
+        let scalar_functions: HashMap<String, Arc<ScalarUDF>> = functions::duckdb_scalar_udfs()
+            .into_iter()
+            .map(|f| (f.name().to_uppercase(), f))
+            .collect();
+        let aggregate_functions: HashMap<String, Arc<AggregateUDF>> =
+            functions::duckdb_aggregate_udfs()
+                .into_iter()
+                .map(|f| (f.name().to_uppercase(), f))
+                .collect();
+        Self {
+            catalog,
+            config: ConfigOptions::default(),
+            scalar_functions,
+            aggregate_functions,
+        }
+    }
+
+    /// Convert a RelSchema to an Arrow SchemaRef
+    fn rel_schema_to_arrow(schema: &RelSchema) -> SchemaRef {
+        let fields: Vec<Field> = schema
+            .columns
+            .iter()
+            .map(|col| {
+                let arrow_type = sql_type_to_arrow(&col.sql_type);
+                let nullable = !matches!(col.nullability, Nullability::NotNull);
+                Field::new(&col.name, arrow_type, nullable)
+            })
+            .collect();
+        Arc::new(Schema::new(fields))
+    }
+}
+
+/// Minimal table source backed by an Arrow schema
+struct LogicalTableSource {
+    schema: SchemaRef,
+}
+
+impl TableSource for LogicalTableSource {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+}
+
+impl ContextProvider for FeatherFlowProvider<'_> {
+    fn get_table_source(&self, name: TableReference) -> DFResult<Arc<dyn TableSource>> {
+        let table_name = name.table();
+        // Try exact match first, then case-insensitive
+        if let Some(schema) = self.catalog.get(table_name) {
+            let arrow_schema = Self::rel_schema_to_arrow(schema);
+            return Ok(Arc::new(LogicalTableSource {
+                schema: arrow_schema,
+            }));
+        }
+
+        // Try lowercase match
+        let lower = table_name.to_lowercase();
+        for (key, schema) in self.catalog {
+            if key.to_lowercase() == lower {
+                let arrow_schema = Self::rel_schema_to_arrow(schema);
+                return Ok(Arc::new(LogicalTableSource {
+                    schema: arrow_schema,
+                }));
+            }
+        }
+
+        plan_err!("Table not found: {table_name}")
+    }
+
+    fn get_function_meta(&self, name: &str) -> Option<Arc<ScalarUDF>> {
+        self.scalar_functions.get(&name.to_uppercase()).cloned()
+    }
+
+    fn get_aggregate_meta(&self, name: &str) -> Option<Arc<AggregateUDF>> {
+        self.aggregate_functions.get(&name.to_uppercase()).cloned()
+    }
+
+    fn get_window_meta(&self, _name: &str) -> Option<Arc<WindowUDF>> {
+        // Window functions not yet registered
+        None
+    }
+
+    fn get_variable_type(&self, _variable_names: &[String]) -> Option<arrow::datatypes::DataType> {
+        None
+    }
+
+    fn options(&self) -> &ConfigOptions {
+        &self.config
+    }
+
+    fn udf_names(&self) -> Vec<String> {
+        self.scalar_functions.keys().cloned().collect()
+    }
+
+    fn udaf_names(&self) -> Vec<String> {
+        self.aggregate_functions.keys().cloned().collect()
+    }
+
+    fn udwf_names(&self) -> Vec<String> {
+        vec![]
+    }
+
+    fn get_expr_planners(&self) -> &[Arc<dyn ExprPlanner>] {
+        &[]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::types::{IntBitWidth, SqlType, TypedColumn};
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_provider_resolves_table() {
+        let mut catalog: SchemaCatalog = HashMap::new();
+        catalog.insert(
+            "orders".to_string(),
+            RelSchema::new(vec![TypedColumn {
+                name: "id".to_string(),
+                source_table: None,
+                sql_type: SqlType::Integer {
+                    bits: IntBitWidth::I32,
+                },
+                nullability: Nullability::NotNull,
+                provenance: vec![],
+            }]),
+        );
+
+        let provider = FeatherFlowProvider::new(&catalog);
+        let result = provider.get_table_source(TableReference::bare("orders"));
+        assert!(result.is_ok());
+        let source = result.unwrap();
+        assert_eq!(source.schema().fields().len(), 1);
+        assert_eq!(source.schema().field(0).name(), "id");
+    }
+
+    #[test]
+    fn test_provider_unknown_table_errors() {
+        let catalog: SchemaCatalog = HashMap::new();
+        let provider = FeatherFlowProvider::new(&catalog);
+        let result = provider.get_table_source(TableReference::bare("nonexistent"));
+        assert!(result.is_err());
+    }
+}

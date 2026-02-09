@@ -86,15 +86,18 @@ description: "Example model that transforms raw data"
 
 columns:
   - name: id
+    type: INTEGER
     description: "Primary key"
     tests:
       - unique
       - not_null
   - name: name
+    type: VARCHAR
     description: "Entity name"
     tests:
       - not_null
   - name: created_at
+    type: TIMESTAMP
     description: "Timestamp when the record was created"
 "#;
     fs::write(

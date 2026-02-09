@@ -6,7 +6,7 @@ use crate::ir::relop::{JoinType, RelOp};
 use crate::pass::{AnalysisPass, Diagnostic, DiagnosticCode, Severity};
 
 /// Join key analysis pass
-pub struct JoinKeyAnalysis;
+pub(crate) struct JoinKeyAnalysis;
 
 impl AnalysisPass for JoinKeyAnalysis {
     fn name(&self) -> &'static str {
@@ -174,28 +174,8 @@ mod tests {
     use crate::ir::expr::{BinOp, TypedExpr};
     use crate::ir::relop::{JoinType, RelOp};
     use crate::ir::schema::RelSchema;
-    use crate::ir::types::{IntBitWidth, Nullability, SqlType, TypedColumn};
-    use ff_core::dag::ModelDag;
-    use ff_core::Project;
-    use ff_sql::ProjectLineage;
-    use std::collections::HashMap;
-    use std::path::Path;
-
-    fn make_col(name: &str, ty: SqlType, null: Nullability) -> TypedColumn {
-        TypedColumn {
-            name: name.to_string(),
-            source_table: None,
-            sql_type: ty,
-            nullability: null,
-            provenance: vec![],
-        }
-    }
-
-    fn make_ctx() -> AnalysisContext {
-        let project = Project::load(Path::new("../../tests/fixtures/sample_project")).unwrap();
-        let dag = ModelDag::build(&HashMap::new()).unwrap();
-        AnalysisContext::new(project, dag, HashMap::new(), ProjectLineage::new())
-    }
+    use crate::ir::types::{IntBitWidth, Nullability, SqlType};
+    use crate::test_utils::{make_col, make_ctx};
 
     #[test]
     fn test_a030_join_key_type_mismatch() {

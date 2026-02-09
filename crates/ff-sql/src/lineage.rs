@@ -5,8 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 use sqlparser::ast::{
-    Expr, FunctionArg, FunctionArgExpr, ObjectName, Query, Select, SelectItem, SetExpr, Statement,
-    TableFactor, TableWithJoins,
+    Expr, FunctionArg, FunctionArgExpr, ObjectName, Query, Select, SelectItem,
+    SelectItemQualifiedWildcardKind, SetExpr, Statement, TableFactor, TableWithJoins,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -419,14 +419,14 @@ fn extract_lineage_from_select(select: &Select, lineage: &mut ModelLineage) {
                 col_lineage.output_column = alias.value.clone();
                 lineage.add_column(col_lineage);
             }
-            SelectItem::QualifiedWildcard(name, _) => {
+            SelectItem::QualifiedWildcard(kind, _) => {
                 // SELECT table.*
-                let table_name = name
-                    .0
-                    .iter()
-                    .map(|i| i.value.clone())
-                    .collect::<Vec<_>>()
-                    .join(".");
+                let table_name = match kind {
+                    SelectItemQualifiedWildcardKind::ObjectName(name) => {
+                        object_name_to_string(name)
+                    }
+                    SelectItemQualifiedWildcardKind::Expr(expr) => format!("{expr}"),
+                };
                 let mut col_lineage = ColumnLineage::new(&format!("{}.*", table_name));
                 col_lineage.expr_type = ExprType::Wildcard;
                 col_lineage
@@ -503,7 +503,7 @@ fn extract_table_factor_alias(factor: &TableFactor, lineage: &mut ModelLineage) 
 fn object_name_to_string(name: &ObjectName) -> String {
     name.0
         .iter()
-        .map(|i| i.value.clone())
+        .map(|part| part.to_string())
         .collect::<Vec<_>>()
         .join(".")
 }
@@ -545,13 +545,7 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
         }
         Expr::Function(func) => {
             // Function call - extract all column references from arguments
-            let func_name = func
-                .name
-                .0
-                .iter()
-                .map(|i| i.value.clone())
-                .collect::<Vec<_>>()
-                .join(".");
+            let func_name = object_name_to_string(&func.name);
 
             let mut sources = HashSet::new();
             extract_columns_from_function_args(&func.args, lineage, &mut sources);
@@ -588,8 +582,8 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
         Expr::Case {
             operand,
             conditions,
-            results,
             else_result,
+            ..
         } => {
             let mut sources = HashSet::new();
 
@@ -599,13 +593,11 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
                 sources.extend(op_lineage.source_columns);
             }
 
-            // Extract from conditions and results
-            for cond in conditions {
-                let cond_lineage = extract_lineage_from_expr(cond, lineage);
+            // Extract from conditions and results (now CaseWhen structs)
+            for case_when in conditions {
+                let cond_lineage = extract_lineage_from_expr(&case_when.condition, lineage);
                 sources.extend(cond_lineage.source_columns);
-            }
-            for result in results {
-                let result_lineage = extract_lineage_from_expr(result, lineage);
+                let result_lineage = extract_lineage_from_expr(&case_when.result, lineage);
                 sources.extend(result_lineage.source_columns);
             }
             if let Some(else_expr) = else_result {
@@ -629,7 +621,7 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
             col_lineage
         }
         Expr::Nested(inner) => extract_lineage_from_expr(inner, lineage),
-        Expr::Value(_) | Expr::TypedString { .. } => {
+        Expr::Value(..) | Expr::TypedString { .. } => {
             // Literal value - no source columns
             ColumnLineage::literal("literal")
         }
@@ -687,21 +679,21 @@ fn extract_columns_from_function_args(
         sqlparser::ast::FunctionArguments::List(arg_list) => {
             for arg in &arg_list.args {
                 match arg {
-                    FunctionArg::Unnamed(arg_expr) | FunctionArg::Named { arg: arg_expr, .. } => {
-                        match arg_expr {
-                            FunctionArgExpr::Expr(expr) => {
-                                let expr_lineage = extract_lineage_from_expr(expr, lineage);
-                                sources.extend(expr_lineage.source_columns);
-                            }
-                            FunctionArgExpr::QualifiedWildcard(name) => {
-                                let table_name = object_name_to_string(name);
-                                sources.insert(ColumnRef::qualified(&table_name, "*"));
-                            }
-                            FunctionArgExpr::Wildcard => {
-                                sources.insert(ColumnRef::simple("*"));
-                            }
+                    FunctionArg::Unnamed(arg_expr)
+                    | FunctionArg::Named { arg: arg_expr, .. }
+                    | FunctionArg::ExprNamed { arg: arg_expr, .. } => match arg_expr {
+                        FunctionArgExpr::Expr(expr) => {
+                            let expr_lineage = extract_lineage_from_expr(expr, lineage);
+                            sources.extend(expr_lineage.source_columns);
                         }
-                    }
+                        FunctionArgExpr::QualifiedWildcard(name) => {
+                            let table_name = object_name_to_string(name);
+                            sources.insert(ColumnRef::qualified(&table_name, "*"));
+                        }
+                        FunctionArgExpr::Wildcard => {
+                            sources.insert(ColumnRef::simple("*"));
+                        }
+                    },
                 }
             }
         }

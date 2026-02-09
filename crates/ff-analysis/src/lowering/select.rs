@@ -195,7 +195,8 @@ pub(crate) fn lower_table_factor(
             let schema = catalog
                 .get(&table_name)
                 .or_else(|| {
-                    let short = name.0.last().map(|i| i.value.as_str()).unwrap_or("");
+                    let short_string = name.0.last().map(|i| i.to_string());
+                    let short = short_string.as_deref().unwrap_or("");
                     catalog.get(short)
                 })
                 .cloned()
@@ -305,8 +306,8 @@ fn lower_projection(
                     columns.push((col.name.clone(), typed));
                 }
             }
-            SelectItem::QualifiedWildcard(name, _) => {
-                let table_name = name.to_string();
+            SelectItem::QualifiedWildcard(kind, _) => {
+                let table_name = kind.to_string();
                 let lower_table = table_name.to_lowercase();
                 // Expand table.* — filter by source_table when available
                 for col in &input_schema.columns {

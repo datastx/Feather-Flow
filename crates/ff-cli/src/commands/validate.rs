@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use ff_core::dag::ModelDag;
 use ff_core::manifest::Manifest;
 use ff_core::model::TestDefinition;
+use ff_core::source::build_source_lookup;
 use ff_core::{ModelName, Project};
 use ff_jinja::JinjaEnvironment;
 use ff_sql::SqlParser;
@@ -130,6 +131,19 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
     validate_schemas(&project, &models_to_validate, &known_models, &mut ctx);
     validate_sources(&project);
     validate_macros(&project.config.vars, &macro_paths, &mut ctx);
+
+    // Run DataFusion static analysis (unless DAG has circular deps, which would prevent topo sort)
+    if !ctx.has_circular_dependency() {
+        validate_static_analysis(
+            &project,
+            &models_to_validate,
+            &jinja,
+            &external_tables,
+            &dependencies,
+            global,
+            &mut ctx,
+        );
+    }
 
     // Validate contracts if --contracts flag is set
     if args.contracts {
@@ -401,21 +415,19 @@ fn validate_schemas(
                         }
                     }
 
-                    if let Some(data_type) = &column.data_type {
-                        for test in &column.tests {
-                            if let Some(warning) = check_test_type_compatibility(
-                                test,
-                                &data_type.to_uppercase(),
-                                &column.name,
-                                name,
-                            ) {
-                                ctx.warning(
-                                    "W005",
-                                    warning,
-                                    Some(model.path.with_extension("yml").display().to_string()),
-                                );
-                                schema_warnings += 1;
-                            }
+                    for test in &column.tests {
+                        if let Some(warning) = check_test_type_compatibility(
+                            test,
+                            &column.data_type.to_uppercase(),
+                            &column.name,
+                            name,
+                        ) {
+                            ctx.warning(
+                                "W005",
+                                warning,
+                                Some(model.path.with_extension("yml").display().to_string()),
+                            );
+                            schema_warnings += 1;
                         }
                     }
                 }
@@ -500,6 +512,155 @@ fn validate_macros(
     }
 }
 
+/// Run DataFusion-based static analysis on SQL models
+///
+/// Builds LogicalPlans for each model and checks for schema mismatches
+/// between YAML declarations and inferred SQL output.
+fn validate_static_analysis(
+    project: &Project,
+    models: &[String],
+    jinja: &JinjaEnvironment,
+    external_tables: &HashSet<String>,
+    dependencies: &HashMap<String, Vec<String>>,
+    global: &GlobalArgs,
+    ctx: &mut ValidationContext,
+) {
+    use ff_analysis::{
+        parse_sql_type, propagate_schemas, Nullability, RelSchema, SchemaCatalog, TypedColumn,
+    };
+
+    print!("Running static analysis... ");
+
+    // Build schema catalog from YAML definitions
+    let mut schema_catalog: SchemaCatalog = HashMap::new();
+    let mut yaml_schemas: HashMap<String, RelSchema> = HashMap::new();
+
+    for (name, model) in &project.models {
+        if let Some(schema) = &model.schema {
+            let columns: Vec<TypedColumn> = schema
+                .columns
+                .iter()
+                .map(|col| {
+                    let sql_type = parse_sql_type(&col.data_type);
+                    let nullability = if col
+                        .constraints
+                        .iter()
+                        .any(|c| matches!(c, ff_core::ColumnConstraint::NotNull))
+                    {
+                        Nullability::NotNull
+                    } else {
+                        Nullability::Unknown
+                    };
+                    TypedColumn {
+                        name: col.name.clone(),
+                        source_table: None,
+                        sql_type,
+                        nullability,
+                        provenance: vec![],
+                    }
+                })
+                .collect();
+            let rel_schema = RelSchema::new(columns);
+            schema_catalog.insert(name.to_string(), rel_schema.clone());
+            yaml_schemas.insert(name.to_string(), rel_schema);
+        }
+    }
+
+    // Add external tables/sources to catalog
+    let source_tables = build_source_lookup(&project.sources);
+    let mut all_external: HashSet<String> = external_tables.clone();
+    all_external.extend(source_tables);
+    for ext in &all_external {
+        if !schema_catalog.contains_key(ext) {
+            schema_catalog.insert(ext.clone(), RelSchema::empty());
+        }
+    }
+
+    // Build topological order from dependencies
+    let dag = match ModelDag::build(dependencies) {
+        Ok(d) => d,
+        Err(_) => {
+            println!("(skipped — DAG error)");
+            return;
+        }
+    };
+    let topo_order = match dag.topological_order() {
+        Ok(o) => o,
+        Err(_) => {
+            println!("(skipped — cycle detected)");
+            return;
+        }
+    };
+
+    // Filter to requested models
+    let model_filter: HashSet<&str> = models.iter().map(|s| s.as_str()).collect();
+
+    // Build SQL sources from rendered models
+    let sql_sources: HashMap<String, String> = topo_order
+        .iter()
+        .filter(|n| model_filter.contains(n.as_str()))
+        .filter_map(|name| {
+            let model = project.get_model(name)?;
+            let rendered = jinja.render(&model.raw_sql).ok()?;
+            Some((name.clone(), rendered))
+        })
+        .collect();
+
+    // Filter topo order to only include models we have SQL for
+    let filtered_order: Vec<String> = topo_order
+        .into_iter()
+        .filter(|n| sql_sources.contains_key(n))
+        .collect();
+
+    if filtered_order.is_empty() {
+        println!("(no models to analyze)");
+        return;
+    }
+
+    // Run schema propagation
+    let result = propagate_schemas(
+        &filtered_order,
+        &sql_sources,
+        &yaml_schemas,
+        &schema_catalog,
+    );
+
+    let mut issue_count = 0;
+
+    // Report failures
+    for (model, err) in &result.failures {
+        if global.verbose {
+            eprintln!("[verbose] Static analysis failed for '{}': {}", model, err);
+        }
+    }
+
+    // Report schema mismatches
+    for (model_name, plan_result) in &result.model_plans {
+        for mismatch in &plan_result.mismatches {
+            let is_error = matches!(mismatch, ff_analysis::SchemaMismatch::MissingFromSql { .. });
+            if is_error {
+                ctx.error("SA01", format!("{}: {}", model_name, mismatch), None);
+            } else {
+                ctx.warning("SA02", format!("{}: {}", model_name, mismatch), None);
+            }
+            issue_count += 1;
+        }
+    }
+
+    let plan_count = result.model_plans.len();
+    let failure_count = result.failures.len();
+    if issue_count == 0 && failure_count == 0 {
+        println!("✓ ({} models analyzed)", plan_count);
+    } else if issue_count == 0 {
+        println!(
+            "✓ ({} analyzed, {} could not be planned)",
+            plan_count, failure_count
+        );
+    } else {
+        println!("{} issues ({} analyzed)", issue_count, plan_count);
+    }
+}
+
 /// Validate schema contracts
 ///
 /// Without --state: Reports models with contracts defined and validates structure
@@ -559,21 +720,6 @@ fn validate_contracts(
                             Some(file_path.clone()),
                         );
                         contract_warnings += 1;
-                    }
-
-                    // Check that columns have types defined (recommended for contracts)
-                    for column in &schema.columns {
-                        if column.data_type.is_none() {
-                            ctx.warning(
-                                "C007",
-                                format!(
-                                    "Column '{}' in model '{}' has no type defined in contract",
-                                    column.name, name
-                                ),
-                                Some(file_path.clone()),
-                            );
-                            contract_warnings += 1;
-                        }
                     }
 
                     // If we have a reference manifest, verify model exists

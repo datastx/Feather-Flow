@@ -150,6 +150,14 @@ pub struct CompileArgs {
     #[arg(long)]
     pub parse_only: bool,
 
+    /// Skip DataFusion static analysis
+    #[arg(long)]
+    pub skip_static_analysis: bool,
+
+    /// Print the DataFusion LogicalPlan for a model
+    #[arg(long)]
+    pub explain: Option<String>,
+
     /// Output format (text or json for CI integration)
     #[arg(short, long, value_enum, default_value = "text")]
     pub output: OutputFormat,
@@ -217,6 +225,10 @@ pub struct RunArgs {
     /// Smart build: skip models whose SQL, schema, and inputs haven't changed
     #[arg(long)]
     pub smart: bool,
+
+    /// Skip DataFusion static analysis
+    #[arg(long)]
+    pub skip_static_analysis: bool,
 }
 
 /// Arguments for the ls command

@@ -122,21 +122,19 @@ pub fn validate_contract(
                 );
             }
             Some(actual_type) => {
-                // Check type compatibility if type is specified in contract
-                if let Some(ref expected_type) = column_def.data_type {
-                    if !types_compatible(expected_type, actual_type) {
-                        result.add_violation(
-                            ViolationType::TypeMismatch {
-                                column: column_def.name.clone(),
-                                expected: expected_type.clone(),
-                                actual: actual_type.to_string(),
-                            },
-                            format!(
-                                "Column '{}' type mismatch: contract specifies {}, but got {}",
-                                column_def.name, expected_type, actual_type
-                            ),
-                        );
-                    }
+                // Check type compatibility
+                if !types_compatible(&column_def.data_type, actual_type) {
+                    result.add_violation(
+                        ViolationType::TypeMismatch {
+                            column: column_def.name.clone(),
+                            expected: column_def.data_type.clone(),
+                            actual: actual_type.to_string(),
+                        },
+                        format!(
+                            "Column '{}' type mismatch: contract specifies {}, but got {}",
+                            column_def.name, column_def.data_type, actual_type
+                        ),
+                    );
                 }
             }
         }
@@ -252,7 +250,7 @@ mod tests {
     use super::*;
     use crate::model::{SchemaColumnDef, SchemaContract};
 
-    fn make_schema(columns: Vec<(&str, Option<&str>)>, enforced: bool) -> ModelSchema {
+    fn make_schema(columns: Vec<(&str, &str)>, enforced: bool) -> ModelSchema {
         ModelSchema {
             version: 1,
             description: None,
@@ -266,7 +264,7 @@ mod tests {
                 .into_iter()
                 .map(|(name, dtype)| SchemaColumnDef {
                     name: name.to_string(),
-                    data_type: dtype.map(|s| s.to_string()),
+                    data_type: dtype.to_string(),
                     description: None,
                     primary_key: false,
                     constraints: vec![],
@@ -282,10 +280,7 @@ mod tests {
 
     #[test]
     fn test_contract_passes() {
-        let schema = make_schema(
-            vec![("id", Some("INTEGER")), ("name", Some("VARCHAR"))],
-            true,
-        );
+        let schema = make_schema(vec![("id", "INTEGER"), ("name", "VARCHAR")], true);
         let actual = vec![
             ("id".to_string(), "INTEGER".to_string()),
             ("name".to_string(), "VARCHAR".to_string()),
@@ -298,10 +293,7 @@ mod tests {
 
     #[test]
     fn test_missing_column_enforced() {
-        let schema = make_schema(
-            vec![("id", Some("INTEGER")), ("name", Some("VARCHAR"))],
-            true,
-        );
+        let schema = make_schema(vec![("id", "INTEGER"), ("name", "VARCHAR")], true);
         let actual = vec![("id".to_string(), "INTEGER".to_string())];
 
         let result = validate_contract("test_model", &schema, &actual);
@@ -315,10 +307,7 @@ mod tests {
 
     #[test]
     fn test_missing_column_not_enforced() {
-        let schema = make_schema(
-            vec![("id", Some("INTEGER")), ("name", Some("VARCHAR"))],
-            false,
-        );
+        let schema = make_schema(vec![("id", "INTEGER"), ("name", "VARCHAR")], false);
         let actual = vec![("id".to_string(), "INTEGER".to_string())];
 
         let result = validate_contract("test_model", &schema, &actual);
@@ -330,7 +319,7 @@ mod tests {
 
     #[test]
     fn test_type_mismatch() {
-        let schema = make_schema(vec![("id", Some("INTEGER"))], true);
+        let schema = make_schema(vec![("id", "INTEGER")], true);
         let actual = vec![("id".to_string(), "VARCHAR".to_string())];
 
         let result = validate_contract("test_model", &schema, &actual);
@@ -343,7 +332,7 @@ mod tests {
 
     #[test]
     fn test_type_compatible_int_variants() {
-        let schema = make_schema(vec![("id", Some("INT"))], true);
+        let schema = make_schema(vec![("id", "INT")], true);
         let actual = vec![("id".to_string(), "INTEGER".to_string())];
 
         let result = validate_contract("test_model", &schema, &actual);
@@ -352,7 +341,7 @@ mod tests {
 
     #[test]
     fn test_type_compatible_varchar_text() {
-        let schema = make_schema(vec![("name", Some("VARCHAR"))], true);
+        let schema = make_schema(vec![("name", "VARCHAR")], true);
         let actual = vec![("name".to_string(), "TEXT".to_string())];
 
         let result = validate_contract("test_model", &schema, &actual);
@@ -361,7 +350,7 @@ mod tests {
 
     #[test]
     fn test_extra_column_warning() {
-        let schema = make_schema(vec![("id", Some("INTEGER"))], true);
+        let schema = make_schema(vec![("id", "INTEGER")], true);
         let actual = vec![
             ("id".to_string(), "INTEGER".to_string()),
             ("extra_col".to_string(), "VARCHAR".to_string()),
@@ -379,7 +368,7 @@ mod tests {
 
     #[test]
     fn test_case_insensitive_column_match() {
-        let schema = make_schema(vec![("OrderId", Some("INTEGER"))], true);
+        let schema = make_schema(vec![("OrderId", "INTEGER")], true);
         let actual = vec![("orderid".to_string(), "INTEGER".to_string())];
 
         let result = validate_contract("test_model", &schema, &actual);
@@ -387,10 +376,10 @@ mod tests {
     }
 
     #[test]
-    fn test_no_type_in_contract() {
-        // When contract doesn't specify type, any type is acceptable
-        let schema = make_schema(vec![("id", None)], true);
-        let actual = vec![("id".to_string(), "VARCHAR".to_string())];
+    fn test_compatible_type_in_contract() {
+        // When contract specifies a compatible type family, validation passes
+        let schema = make_schema(vec![("id", "VARCHAR")], true);
+        let actual = vec![("id".to_string(), "TEXT".to_string())];
 
         let result = validate_contract("test_model", &schema, &actual);
         assert!(result.passed);

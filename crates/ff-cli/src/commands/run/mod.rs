@@ -17,8 +17,9 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use ff_core::config::Materialization;
 use ff_core::run_state::RunState;
+use ff_core::source::build_source_lookup;
 use ff_core::state::StateFile;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Instant;
 
@@ -54,6 +55,17 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     };
 
     let compiled_models = load_or_compile_models(&project, args, global, comment_ctx.as_ref())?;
+
+    // Static analysis gate: validate SQL models before execution
+    if !args.skip_static_analysis {
+        let has_errors = run_pre_execution_analysis(&project, &compiled_models, global, json_mode)?;
+        if has_errors {
+            if !json_mode {
+                eprintln!("Static analysis found errors. Use --skip-static-analysis to bypass.");
+            }
+            return Err(crate::commands::common::ExitCode(1).into());
+        }
+    }
 
     // Smart build: filter out unchanged models
     let smart_skipped: HashSet<String> = if args.smart {
@@ -302,4 +314,138 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Run DataFusion-based static analysis before execution.
+///
+/// Returns `true` if there are schema errors that should block execution.
+fn run_pre_execution_analysis(
+    project: &ff_core::Project,
+    compiled_models: &HashMap<String, compile::CompiledModel>,
+    global: &GlobalArgs,
+    json_mode: bool,
+) -> Result<bool> {
+    use ff_analysis::{
+        parse_sql_type, propagate_schemas, Nullability, RelSchema, SchemaCatalog, TypedColumn,
+    };
+
+    if global.verbose {
+        eprintln!("[verbose] Running pre-execution static analysis...");
+    }
+
+    // Build schema catalog from YAML definitions
+    let mut schema_catalog: SchemaCatalog = HashMap::new();
+    let mut yaml_schemas: HashMap<String, RelSchema> = HashMap::new();
+
+    for (name, model) in &project.models {
+        if let Some(schema) = &model.schema {
+            let columns: Vec<TypedColumn> = schema
+                .columns
+                .iter()
+                .map(|col| {
+                    let sql_type = parse_sql_type(&col.data_type);
+                    let nullability = if col
+                        .constraints
+                        .iter()
+                        .any(|c| matches!(c, ff_core::ColumnConstraint::NotNull))
+                    {
+                        Nullability::NotNull
+                    } else {
+                        Nullability::Unknown
+                    };
+                    TypedColumn {
+                        name: col.name.clone(),
+                        source_table: None,
+                        sql_type,
+                        nullability,
+                        provenance: vec![],
+                    }
+                })
+                .collect();
+            let rel_schema = RelSchema::new(columns);
+            schema_catalog.insert(name.to_string(), rel_schema.clone());
+            yaml_schemas.insert(name.to_string(), rel_schema);
+        }
+    }
+
+    // Add external tables/sources to catalog
+    let source_tables = build_source_lookup(&project.sources);
+    let mut external_tables: HashSet<String> =
+        project.config.external_tables.iter().cloned().collect();
+    external_tables.extend(source_tables);
+    for ext in &external_tables {
+        if !schema_catalog.contains_key(ext) {
+            schema_catalog.insert(ext.clone(), RelSchema::empty());
+        }
+    }
+
+    // Build dependency map and topological order
+    let dependencies: HashMap<String, Vec<String>> = compiled_models
+        .iter()
+        .map(|(name, model)| (name.clone(), model.dependencies.clone()))
+        .collect();
+
+    let dag =
+        ff_core::dag::ModelDag::build(&dependencies).context("Failed to build dependency DAG")?;
+    let topo_order = dag
+        .topological_order()
+        .context("Failed to get topological order")?;
+
+    // Build SQL sources from compiled models
+    let sql_sources: HashMap<String, String> = compiled_models
+        .iter()
+        .map(|(name, model)| (name.clone(), model.sql.clone()))
+        .collect();
+
+    // Filter topo order to models we have SQL for
+    let filtered_order: Vec<String> = topo_order
+        .into_iter()
+        .filter(|n| sql_sources.contains_key(n))
+        .collect();
+
+    if filtered_order.is_empty() {
+        return Ok(false);
+    }
+
+    // Run schema propagation
+    let result = propagate_schemas(
+        &filtered_order,
+        &sql_sources,
+        &yaml_schemas,
+        &schema_catalog,
+    );
+
+    // Check for blocking errors (MissingFromSql = column in YAML but not in SQL output)
+    let mut has_errors = false;
+    for (model_name, plan_result) in &result.model_plans {
+        for mismatch in &plan_result.mismatches {
+            let is_error = matches!(mismatch, ff_analysis::SchemaMismatch::MissingFromSql { .. });
+            if is_error {
+                has_errors = true;
+            }
+            if !json_mode {
+                let severity = if is_error { "error" } else { "warning" };
+                eprintln!(
+                    "  [{severity}] {model_name}: {mismatch}",
+                    severity = severity,
+                    model_name = model_name,
+                    mismatch = mismatch
+                );
+            }
+        }
+    }
+
+    if global.verbose {
+        let plan_count = result.model_plans.len();
+        let failure_count = result.failures.len();
+        eprintln!(
+            "[verbose] Static analysis: {} models planned, {} failures",
+            plan_count, failure_count
+        );
+        for (model, err) in &result.failures {
+            eprintln!("[verbose] Static analysis failed for '{}': {}", model, err);
+        }
+    }
+
+    Ok(has_errors)
 }

@@ -12,3 +12,12 @@ log.workspace = true
 thiserror.workspace = true
 serde = { workspace = true, features = ["derive"] }
 sqlparser.workspace = true
+
+# DataFusion static analysis
+datafusion-common.workspace = true
+datafusion-expr.workspace = true
+datafusion-sql.workspace = true
+arrow.workspace = true
+
+[dev-dependencies]
+serde_yaml.workspace = true

@@ -2,8 +2,8 @@
 
 use anyhow::{Context, Result};
 use ff_analysis::{
-    lower_statement, parse_sql_type, AnalysisContext, Nullability, PassManager, RelSchema,
-    SchemaCatalog, Severity, SqlType, TypedColumn,
+    lower_statement, parse_sql_type, propagate_schemas, AnalysisContext, Nullability, PassManager,
+    PlanPassManager, RelSchema, SchemaCatalog, Severity, TypedColumn,
 };
 use ff_core::dag::ModelDag;
 use ff_core::source::build_source_lookup;
@@ -35,11 +35,7 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
                 .columns
                 .iter()
                 .map(|col| {
-                    let sql_type = col
-                        .data_type
-                        .as_ref()
-                        .map(|dt| parse_sql_type(dt))
-                        .unwrap_or_else(|| SqlType::Unknown("no type declared".to_string()));
+                    let sql_type = parse_sql_type(&col.data_type);
                     let nullability = if col
                         .constraints
                         .iter()
@@ -187,7 +183,37 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
         .filter(|n| model_irs.contains_key(n))
         .collect();
 
-    let diagnostics = pass_manager.run(&order, &model_irs, &ctx, pass_filter.as_deref());
+    let mut diagnostics = pass_manager.run(&order, &model_irs, &ctx, pass_filter.as_deref());
+
+    // Run DataFusion LogicalPlan-based passes (cross-model consistency)
+    {
+        let sql_sources: HashMap<String, String> = order
+            .iter()
+            .filter_map(|name| {
+                let model = ctx.project.models.get(name.as_str())?;
+                let rendered = jinja.render(&model.raw_sql).ok()?;
+                Some((name.clone(), rendered))
+            })
+            .collect();
+
+        // Rebuild schema catalog from context for DataFusion propagation
+        let mut plan_catalog: SchemaCatalog = ctx.yaml_schemas.clone();
+        for ext in &external_tables {
+            if !plan_catalog.contains_key(ext) {
+                plan_catalog.insert(ext.clone(), RelSchema::empty());
+            }
+        }
+
+        let propagation = propagate_schemas(&order, &sql_sources, &ctx.yaml_schemas, &plan_catalog);
+        let plan_pass_manager = PlanPassManager::with_defaults();
+        let plan_diagnostics = plan_pass_manager.run(
+            &order,
+            &propagation.model_plans,
+            &ctx,
+            pass_filter.as_deref(),
+        );
+        diagnostics.extend(plan_diagnostics);
+    }
 
     // Filter by severity
     let min_severity = match args.severity {
