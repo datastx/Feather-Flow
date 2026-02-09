@@ -1,0 +1,266 @@
+//! Incremental strategies and Write-Audit-Publish (WAP) execution.
+
+use ff_core::config::{IncrementalStrategy, Materialization, OnSchemaChange};
+use ff_core::model::ModelSchema;
+use ff_db::{quote_qualified, Database};
+use std::sync::Arc;
+
+use super::compile::CompiledModel;
+
+/// Execute an incremental model with schema change handling
+pub(crate) async fn execute_incremental(
+    db: &Arc<dyn Database>,
+    table_name: &str,
+    compiled: &CompiledModel,
+    full_refresh: bool,
+    exec_sql: &str,
+) -> ff_db::error::DbResult<()> {
+    // Check if table exists
+    let exists = db.relation_exists(table_name).await.unwrap_or(false);
+
+    if !exists || full_refresh {
+        // First run or full refresh: create table from full query
+        return db.create_table_as(table_name, exec_sql, true).await;
+    }
+
+    // Check for schema changes
+    let on_schema_change = compiled.on_schema_change.unwrap_or(OnSchemaChange::Ignore);
+
+    if on_schema_change != OnSchemaChange::Ignore {
+        handle_schema_changes(db, table_name, compiled, on_schema_change).await?;
+    }
+
+    // Execute the incremental strategy
+    execute_strategy(db, table_name, compiled, exec_sql).await
+}
+
+/// Check for and handle schema changes on an incremental model
+async fn handle_schema_changes(
+    db: &Arc<dyn Database>,
+    table_name: &str,
+    compiled: &CompiledModel,
+    on_schema_change: OnSchemaChange,
+) -> ff_db::error::DbResult<()> {
+    // Get existing table schema
+    let existing_schema = db.get_table_schema(table_name).await?;
+    let existing_columns: std::collections::HashSet<String> = existing_schema
+        .iter()
+        .map(|(name, _)| name.to_lowercase())
+        .collect();
+
+    // Get new query schema (use clean SQL without comment for describe)
+    let new_schema = db.describe_query(&compiled.sql).await?;
+    let new_columns: std::collections::HashMap<String, String> = new_schema
+        .iter()
+        .map(|(name, typ)| (name.to_lowercase(), typ.clone()))
+        .collect();
+
+    // Find columns that are in new but not in existing
+    let added_columns: Vec<(String, String)> = new_schema
+        .iter()
+        .filter(|(name, _)| !existing_columns.contains(&name.to_lowercase()))
+        .map(|(name, typ)| (name.clone(), typ.clone()))
+        .collect();
+
+    // Find columns that are in existing but not in new
+    let removed_columns: Vec<String> = existing_schema
+        .iter()
+        .filter(|(name, _)| !new_columns.contains_key(&name.to_lowercase()))
+        .map(|(name, _)| name.clone())
+        .collect();
+
+    let has_changes = !added_columns.is_empty() || !removed_columns.is_empty();
+
+    if has_changes {
+        match on_schema_change {
+            OnSchemaChange::Fail => {
+                let mut msg = String::from("Schema change detected: ");
+                if !added_columns.is_empty() {
+                    msg.push_str(&format!(
+                        "new columns: {}; ",
+                        added_columns
+                            .iter()
+                            .map(|(n, t)| format!("{} ({})", n, t))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+                if !removed_columns.is_empty() {
+                    msg.push_str(&format!("removed columns: {}", removed_columns.join(", ")));
+                }
+                return Err(ff_db::DbError::ExecutionError(msg));
+            }
+            OnSchemaChange::AppendNewColumns => {
+                // Add new columns to existing table
+                if !added_columns.is_empty() {
+                    db.add_columns(table_name, &added_columns).await?;
+                }
+                // Note: removed columns are ignored in append_new_columns mode
+            }
+            OnSchemaChange::Ignore => {
+                // Do nothing - handled by outer condition
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Execute the incremental strategy (append, merge, or delete+insert)
+async fn execute_strategy(
+    db: &Arc<dyn Database>,
+    table_name: &str,
+    compiled: &CompiledModel,
+    exec_sql: &str,
+) -> ff_db::error::DbResult<()> {
+    let strategy = compiled
+        .incremental_strategy
+        .unwrap_or(IncrementalStrategy::Append);
+
+    match strategy {
+        IncrementalStrategy::Append => {
+            let insert_sql = format!("INSERT INTO {} {}", quote_qualified(table_name), exec_sql);
+            db.execute(&insert_sql).await.map(|_| ())
+        }
+        IncrementalStrategy::Merge => {
+            let unique_keys = compiled.unique_key.clone().unwrap_or_default();
+            if unique_keys.is_empty() {
+                Err(ff_db::DbError::ExecutionError(
+                    "Merge strategy requires unique_key to be specified".to_string(),
+                ))
+            } else {
+                db.merge_into(table_name, exec_sql, &unique_keys).await
+            }
+        }
+        IncrementalStrategy::DeleteInsert => {
+            let unique_keys = compiled.unique_key.clone().unwrap_or_default();
+            if unique_keys.is_empty() {
+                Err(ff_db::DbError::ExecutionError(
+                    "Delete+insert strategy requires unique_key to be specified".to_string(),
+                ))
+            } else {
+                db.delete_insert(table_name, exec_sql, &unique_keys).await
+            }
+        }
+    }
+}
+
+/// Execute Write-Audit-Publish flow for a model.
+///
+/// 1. Create WAP schema if needed
+/// 2. For tables: CTAS into wap_schema
+///    For incremental: copy prod to wap_schema, then apply incremental
+/// 3. Run schema tests against wap_schema copy
+/// 4. If tests pass: DROP prod + CTAS from wap to prod
+/// 5. If tests fail: keep wap table, return error
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn execute_wap(
+    db: &Arc<dyn Database>,
+    name: &str,
+    qualified_name: &str,
+    wap_schema: &str,
+    compiled: &CompiledModel,
+    full_refresh: bool,
+    exec_sql: &str,
+) -> Result<(), ff_db::error::DbError> {
+    let wap_qualified = format!("{}.{}", wap_schema, name);
+    let quoted_wap = quote_qualified(&wap_qualified);
+    let quoted_name = quote_qualified(qualified_name);
+
+    // 1. Create WAP schema
+    db.create_schema_if_not_exists(wap_schema).await?;
+
+    // 2. Materialize into WAP schema
+    match compiled.materialization {
+        Materialization::Table => {
+            db.create_table_as(&wap_qualified, exec_sql, true).await?;
+        }
+        Materialization::Incremental => {
+            // Copy existing prod table to WAP schema (if it exists and not full refresh)
+            if !full_refresh {
+                let exists = db.relation_exists(qualified_name).await.unwrap_or(false);
+                if exists {
+                    let copy_sql = format!(
+                        "CREATE OR REPLACE TABLE {} AS FROM {}",
+                        quoted_wap, quoted_name
+                    );
+                    db.execute(&copy_sql).await?;
+                }
+            }
+            // Apply incremental logic against the WAP copy
+            execute_incremental(db, &wap_qualified, compiled, full_refresh, exec_sql).await?;
+        }
+        _ => unreachable!("WAP only applies to table/incremental"),
+    }
+
+    // 3. Run schema tests against WAP copy
+    let test_failures =
+        run_wap_tests(db, name, &wap_qualified, compiled.model_schema.as_ref()).await;
+
+    if test_failures > 0 {
+        return Err(ff_db::error::DbError::ExecutionError(format!(
+            "WAP audit failed: {} test(s) failed for '{}'. \
+             Staging table preserved at '{}' for debugging. \
+             Production table is untouched.",
+            test_failures, name, wap_qualified
+        )));
+    }
+
+    // 4. Tests passed -- publish: DROP prod + CTAS from WAP
+    db.drop_if_exists(qualified_name).await?;
+
+    let publish_sql = format!("CREATE TABLE {} AS FROM {}", quoted_name, quoted_wap);
+    db.execute(&publish_sql).await?;
+
+    // Clean up WAP table after successful publish
+    let _ = db.drop_if_exists(&wap_qualified).await;
+
+    Ok(())
+}
+
+/// Run schema tests for a single model against a specific qualified name.
+///
+/// Returns the number of test failures.
+async fn run_wap_tests(
+    db: &Arc<dyn Database>,
+    model_name: &str,
+    wap_qualified_name: &str,
+    model_schema: Option<&ModelSchema>,
+) -> usize {
+    let schema = match model_schema {
+        Some(s) => s,
+        None => return 0, // No schema = no tests = pass
+    };
+
+    let tests = schema.extract_tests(model_name);
+    if tests.is_empty() {
+        return 0;
+    }
+
+    let mut failures = 0;
+
+    for test in &tests {
+        let generated =
+            ff_test::generator::GeneratedTest::from_schema_test_qualified(test, wap_qualified_name);
+
+        match db.query_count(&generated.sql).await {
+            Ok(count) if count > 0 => {
+                println!(
+                    "    WAP audit FAIL: {} on {}.{} ({} failures)",
+                    test.test_type, model_name, test.column, count
+                );
+                failures += 1;
+            }
+            Err(e) => {
+                println!(
+                    "    WAP audit ERROR: {} on {}.{}: {}",
+                    test.test_type, model_name, test.column, e
+                );
+                failures += 1;
+            }
+            _ => {} // pass
+        }
+    }
+
+    failures
+}

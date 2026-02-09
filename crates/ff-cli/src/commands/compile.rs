@@ -93,7 +93,7 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
     let jinja = JinjaEnvironment::with_macros(&vars, &macro_paths);
 
     let model_names = filter_models(&project, &args.models);
-    let external_tables = build_external_tables_lookup(&project);
+    let external_tables = common::build_external_tables_lookup(&project);
     let known_models: HashSet<String> = project.models.keys().cloned().collect();
 
     if !json_mode {
@@ -368,11 +368,6 @@ fn merge_vars(
     Ok(vars)
 }
 
-/// Build a lookup set of all external tables including sources
-fn build_external_tables_lookup(project: &Project) -> HashSet<String> {
-    common::build_external_tables_lookup(project)
-}
-
 /// Compile a single model (phase 1): render template, parse SQL, extract dependencies
 /// Does not write files - returns compiled model info for phase 2
 #[allow(clippy::too_many_arguments)]
@@ -422,7 +417,10 @@ fn compile_model_phase1(
 
     model.compiled_sql = Some(rendered.clone());
     model.depends_on = model_deps.iter().cloned().collect();
-    model.external_deps = ext_deps.iter().cloned().collect();
+    model.external_deps = ext_deps
+        .iter()
+        .map(|s| ff_core::TableName::new(s.clone()))
+        .collect();
     model.config = ModelConfig {
         materialized: config_values
             .get("materialized")
@@ -520,7 +518,6 @@ fn write_manifest(
     Ok(())
 }
 
-/// Filter models based on the --models argument
 /// Compute the output path for a compiled model, preserving directory structure
 fn compute_compiled_path(
     model_path: &Path,

@@ -41,6 +41,9 @@ rust-embed = "8"
 mime_guess = "2"
 open = "5"
 
+# Logging
+log = "0.4"
+
 # Utilities
 petgraph = "0.6"
 chrono = { version = "0.4", features = ["serde"] }

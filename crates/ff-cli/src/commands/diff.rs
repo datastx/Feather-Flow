@@ -301,51 +301,83 @@ async fn find_differences(
     let mut sample_diffs = Vec::new();
     let mut new_count = 0;
     let mut removed_count = 0;
-    let changed_count = 0;
+    let mut changed_count = 0;
+
+    // Build key-based maps to distinguish "new" from "changed"
+    let extract_key = |row_str: &str| -> String {
+        let values: Vec<&str> = row_str.split(", ").collect();
+        key_columns
+            .iter()
+            .enumerate()
+            .filter_map(|(j, k)| values.get(j).map(|v| format!("{}={}", k, v)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    // Map key → full row string for each side
+    let current_by_key: HashMap<String, &String> =
+        current_sample.iter().map(|r| (extract_key(r), r)).collect();
+    let compare_by_key: HashMap<String, &String> =
+        compare_sample.iter().map(|r| (extract_key(r), r)).collect();
 
     // Rows in current but not in compare (new or changed)
     for row_str in &current_sample {
         if !compare_set.contains(row_str) {
+            let key_value = extract_key(row_str);
+            let values: Vec<&str> = row_str.split(", ").collect();
+
+            let is_changed = compare_by_key.contains_key(&key_value);
+            if is_changed {
+                changed_count += 1;
+            } else {
+                new_count += 1;
+            }
+
             if sample_diffs.len() < sample_size {
-                // Parse the row string to extract values
-                let values: Vec<&str> = row_str.split(", ").collect();
-
-                let key_value = key_columns
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(j, k)| values.get(j).map(|v| format!("{}={}", k, v)))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-
                 let current_values: HashMap<String, String> = columns
                     .iter()
                     .enumerate()
                     .filter_map(|(j, c)| values.get(j).map(|v| (c.clone(), v.to_string())))
                     .collect();
 
+                let (diff_type, compare_vals) = if is_changed {
+                    // Include compare-side values for changed rows
+                    let compare_row = compare_by_key[&key_value];
+                    let cmp_values: Vec<&str> = compare_row.split(", ").collect();
+                    let cmp_map: HashMap<String, String> = columns
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(j, c)| cmp_values.get(j).map(|v| (c.clone(), v.to_string())))
+                        .collect();
+                    ("changed".to_string(), cmp_map)
+                } else {
+                    ("new".to_string(), HashMap::new())
+                };
+
                 sample_diffs.push(RowDifference {
                     key: key_value,
-                    diff_type: "new_or_changed".to_string(),
+                    diff_type,
                     current_values,
-                    compare_values: HashMap::new(),
+                    compare_values: compare_vals,
                 });
             }
-            new_count += 1;
         }
     }
 
     // Rows in compare but not in current (removed)
     for row_str in &compare_sample {
         if !current_set.contains(row_str) {
+            let key_value = extract_key(row_str);
+
+            // Skip rows that exist in current by key (already counted as "changed" above)
+            if current_by_key.contains_key(&key_value) {
+                continue;
+            }
+
+            removed_count += 1;
+
             if sample_diffs.len() < sample_size {
                 let values: Vec<&str> = row_str.split(", ").collect();
-
-                let key_value = key_columns
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(j, k)| values.get(j).map(|v| format!("{}={}", k, v)))
-                    .collect::<Vec<_>>()
-                    .join(", ");
 
                 let compare_values: HashMap<String, String> = columns
                     .iter()
@@ -360,7 +392,6 @@ async fn find_differences(
                     compare_values,
                 });
             }
-            removed_count += 1;
         }
     }
 

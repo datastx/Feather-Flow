@@ -172,14 +172,29 @@ pub async fn execute(args: &SnapshotArgs, global: &GlobalArgs) -> Result<()> {
     Ok(())
 }
 
-/// Create database connection from project config or CLI override
+/// Create database connection from project config, resolving target overrides
+///
+/// Uses the same `Config::resolve_target()` → `get_database_config()` pattern
+/// as the test, seed, and freshness commands for consistent `--target` handling.
 fn create_database_connection(project: &Project, global: &GlobalArgs) -> Result<Arc<dyn Database>> {
-    let db_path = global
-        .target
-        .as_ref()
-        .unwrap_or(&project.config.database.path);
+    use ff_core::config::Config;
+    let target = Config::resolve_target(global.target.as_deref());
+    let db_config = project
+        .config
+        .get_database_config(target.as_deref())
+        .context("Failed to get database configuration")?;
+
+    if global.verbose {
+        if let Some(ref target_name) = target {
+            eprintln!(
+                "[verbose] Using target '{}' with database: {}",
+                target_name, db_config.path
+            );
+        }
+    }
+
     let db: Arc<dyn Database> =
-        Arc::new(DuckDbBackend::new(db_path).context("Failed to connect to database")?);
+        Arc::new(DuckDbBackend::new(&db_config.path).context("Failed to connect to database")?);
     Ok(db)
 }
 

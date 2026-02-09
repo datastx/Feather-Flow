@@ -111,11 +111,6 @@ impl Nullability {
             _ => Nullability::NotNull,
         }
     }
-
-    /// Make this nullability state nullable (e.g. after a LEFT JOIN)
-    pub fn make_nullable(self) -> Nullability {
-        Nullability::Nullable
-    }
 }
 
 impl std::fmt::Display for Nullability {

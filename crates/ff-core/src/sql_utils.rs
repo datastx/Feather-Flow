@@ -35,6 +35,26 @@ pub fn quote_qualified(name: &str) -> String {
         .join(".")
 }
 
+/// Split a potentially schema-qualified table name into (schema, table).
+///
+/// Uses the last `.` as the separator. If no `.` is present, returns
+/// `("main", name)` as the default schema.
+///
+/// # Examples
+/// ```
+/// use ff_core::sql_utils::split_qualified_name;
+/// assert_eq!(split_qualified_name("users"), ("main", "users"));
+/// assert_eq!(split_qualified_name("staging.orders"), ("staging", "orders"));
+/// assert_eq!(split_qualified_name("catalog.schema.table"), ("catalog.schema", "table"));
+/// ```
+pub fn split_qualified_name(name: &str) -> (&str, &str) {
+    if let Some(pos) = name.rfind('.') {
+        (&name[..pos], &name[pos + 1..])
+    } else {
+        ("main", name)
+    }
+}
+
 /// Escape a SQL string literal value by doubling single quotes.
 ///
 /// This is for use inside single-quoted SQL string literals, not identifiers.
@@ -98,5 +118,26 @@ mod tests {
         assert_eq!(escape_sql_string("hello"), "hello");
         assert_eq!(escape_sql_string("it's"), "it''s");
         assert_eq!(escape_sql_string("O'Brien's"), "O''Brien''s");
+    }
+
+    #[test]
+    fn test_split_qualified_name_no_dot() {
+        assert_eq!(split_qualified_name("users"), ("main", "users"));
+    }
+
+    #[test]
+    fn test_split_qualified_name_single_dot() {
+        assert_eq!(
+            split_qualified_name("staging.orders"),
+            ("staging", "orders")
+        );
+    }
+
+    #[test]
+    fn test_split_qualified_name_multiple_dots() {
+        assert_eq!(
+            split_qualified_name("catalog.schema.table"),
+            ("catalog.schema", "table")
+        );
     }
 }

@@ -1,0 +1,240 @@
+//! Run state tracking: results, checksums, smart builds, and resume support.
+
+use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
+use ff_core::run_state::RunState;
+use ff_core::state::{compute_checksum, ModelState, ModelStateConfig, StateFile};
+use ff_core::Project;
+use serde::Serialize;
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+
+use crate::cli::{GlobalArgs, RunArgs};
+use crate::commands::common::RunStatus;
+
+use super::compile::CompiledModel;
+
+/// Run result for a single model
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ModelRunResult {
+    pub(crate) model: String,
+    pub(crate) status: RunStatus,
+    pub(crate) materialization: String,
+    pub(crate) duration_secs: f64,
+    pub(crate) error: Option<String>,
+}
+
+/// Run results output file format
+#[derive(Debug, Serialize)]
+pub(crate) struct RunResults {
+    pub(crate) timestamp: DateTime<Utc>,
+    pub(crate) elapsed_secs: f64,
+    pub(crate) success_count: usize,
+    pub(crate) failure_count: usize,
+    pub(crate) results: Vec<ModelRunResult>,
+}
+
+/// Compute a hash of the project configuration for resume validation
+pub(super) fn compute_config_hash(project: &Project) -> String {
+    let config_str = format!(
+        "{}:{}:{}",
+        project.config.name,
+        project.config.database.path,
+        project.config.schema.as_deref().unwrap_or("default")
+    );
+    compute_checksum(&config_str)
+}
+
+/// Handle resume mode - load previous state and determine what to run
+pub(super) fn handle_resume_mode(
+    run_state_path: &Path,
+    compiled_models: &HashMap<String, CompiledModel>,
+    args: &RunArgs,
+    global: &GlobalArgs,
+    config_hash: &str,
+) -> Result<(Vec<String>, Option<RunState>)> {
+    let previous_state = RunState::load(run_state_path)
+        .context("Failed to load run state")?
+        .ok_or_else(|| anyhow::anyhow!("No run state found. Run 'ff run' first."))?;
+
+    // Warn if config has changed
+    if previous_state.config_hash != config_hash {
+        eprintln!("Warning: Project configuration has changed since last run");
+    }
+
+    // Determine which models to run
+    let models_to_run = if args.retry_failed {
+        // Only retry failed models
+        previous_state.failed_model_names()
+    } else {
+        // Retry failed + run pending
+        previous_state.models_to_run()
+    };
+
+    // Filter to only models that exist in compiled_models
+    let execution_order: Vec<String> = models_to_run
+        .into_iter()
+        .filter(|m| compiled_models.contains_key(m))
+        .collect();
+
+    // Log what we're skipping
+    for completed in &previous_state.completed_models {
+        if global.verbose {
+            eprintln!(
+                "[verbose] Skipping {} (completed in previous run)",
+                completed.name
+            );
+        }
+    }
+
+    Ok((execution_order, Some(previous_state)))
+}
+
+/// Compute which models can be skipped in smart build mode
+pub(super) fn compute_smart_skips(
+    project: &Project,
+    compiled_models: &HashMap<String, CompiledModel>,
+    global: &GlobalArgs,
+) -> Result<HashSet<String>> {
+    let state_path = project.target_dir().join("state.json");
+    let state_file = StateFile::load(&state_path).unwrap_or_default();
+
+    let mut skipped = HashSet::new();
+
+    for (name, compiled) in compiled_models {
+        let sql_checksum = compute_checksum(&compiled.sql);
+        let schema_checksum = compute_schema_checksum(name, compiled_models);
+        let input_checksums = compute_input_checksums(name, compiled_models);
+
+        if !state_file.is_model_or_inputs_modified(
+            name,
+            &sql_checksum,
+            schema_checksum.as_deref(),
+            &input_checksums,
+        ) {
+            if global.verbose {
+                eprintln!("[verbose] Smart build: skipping unchanged model '{}'", name);
+            }
+            skipped.insert(name.clone());
+        }
+    }
+
+    Ok(skipped)
+}
+
+/// Compute schema checksum for a model (from its YAML schema)
+pub(crate) fn compute_schema_checksum(
+    name: &str,
+    compiled_models: &HashMap<String, CompiledModel>,
+) -> Option<String> {
+    compiled_models
+        .get(name)
+        .and_then(|c| c.model_schema.as_ref())
+        .map(|schema| {
+            let yaml = serde_json::to_string(schema).unwrap_or_default();
+            compute_checksum(&yaml)
+        })
+}
+
+/// Compute input checksums for a model (upstream model SQL checksums)
+pub(crate) fn compute_input_checksums(
+    name: &str,
+    compiled_models: &HashMap<String, CompiledModel>,
+) -> HashMap<String, String> {
+    compiled_models
+        .get(name)
+        .map(|compiled| {
+            compiled
+                .dependencies
+                .iter()
+                .filter_map(|dep| {
+                    compiled_models
+                        .get(dep)
+                        .map(|dep_compiled| (dep.clone(), compute_checksum(&dep_compiled.sql)))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Update state file entry for a successfully-run model
+pub(crate) fn update_state_for_model(
+    state_file: &mut StateFile,
+    name: &str,
+    compiled: &CompiledModel,
+    compiled_models: &HashMap<String, CompiledModel>,
+    row_count: Option<usize>,
+) {
+    let state_config = ModelStateConfig::new(
+        compiled.materialization,
+        compiled.schema.clone(),
+        compiled.unique_key.clone(),
+        compiled.incremental_strategy,
+        compiled.on_schema_change,
+    );
+    let schema_checksum = compute_schema_checksum(name, compiled_models);
+    let input_checksums = compute_input_checksums(name, compiled_models);
+    let model_state = ModelState::new_with_checksums(
+        name.to_string(),
+        &compiled.sql,
+        row_count,
+        state_config,
+        schema_checksum,
+        input_checksums,
+    );
+    state_file.upsert_model(model_state);
+}
+
+/// Write run results to JSON file
+pub(super) fn write_run_results(
+    project: &Project,
+    run_results: &[ModelRunResult],
+    start_time: std::time::Instant,
+    success_count: usize,
+    failure_count: usize,
+) -> Result<()> {
+    let results = RunResults {
+        timestamp: Utc::now(),
+        elapsed_secs: start_time.elapsed().as_secs_f64(),
+        success_count,
+        failure_count,
+        results: run_results.to_vec(),
+    };
+
+    let target_dir = project.target_dir();
+    std::fs::create_dir_all(&target_dir).context("Failed to create target directory")?;
+    let results_path = target_dir.join("run_results.json");
+    let results_json =
+        serde_json::to_string_pretty(&results).context("Failed to serialize run results")?;
+    std::fs::write(&results_path, results_json).context("Failed to write run_results.json")?;
+
+    Ok(())
+}
+
+/// Find exposures that depend on any of the models being run.
+///
+/// Returns a list of (exposure_name, exposure_type, depends_on models).
+pub(super) fn find_affected_exposures(
+    project: &Project,
+    models_to_run: &[String],
+) -> Vec<(String, String, Vec<String>)> {
+    let model_set: HashSet<&str> = models_to_run.iter().map(|s| s.as_str()).collect();
+
+    project
+        .exposures
+        .iter()
+        .filter(|exposure| {
+            exposure
+                .depends_on
+                .iter()
+                .any(|dep| model_set.contains(dep.as_str()))
+        })
+        .map(|exposure| {
+            (
+                exposure.name.clone(),
+                format!("{}", exposure.exposure_type),
+                exposure.depends_on.clone(),
+            )
+        })
+        .collect()
+}

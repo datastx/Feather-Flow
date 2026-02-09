@@ -2,6 +2,8 @@
 
 use crate::config::{IncrementalStrategy, Materialization, OnSchemaChange};
 use crate::error::CoreError;
+use crate::model_name::ModelName;
+use crate::table_name::TableName;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -10,7 +12,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Model {
     /// Model name (derived from filename without extension)
-    pub name: String,
+    pub name: ModelName,
 
     /// Path to the source SQL file
     pub path: PathBuf,
@@ -32,7 +34,7 @@ pub struct Model {
 
     /// Dependencies on external tables
     #[serde(default)]
-    pub external_deps: HashSet<String>,
+    pub external_deps: HashSet<TableName>,
 
     /// Schema metadata from 1:1 .yml file (optional)
     #[serde(default)]
@@ -203,7 +205,10 @@ pub struct SchemaConfig {
 impl ModelSchema {
     /// Load schema from a file path
     pub fn load(path: &std::path::Path) -> Result<Self, CoreError> {
-        let content = std::fs::read_to_string(path)?;
+        let content = std::fs::read_to_string(path).map_err(|e| CoreError::IoWithPath {
+            path: path.display().to_string(),
+            source: e,
+        })?;
         let schema: ModelSchema = serde_yaml::from_str(&content)?;
         Ok(schema)
     }
@@ -416,7 +421,10 @@ impl SingularTest {
             })?
             .to_string();
 
-        let sql = std::fs::read_to_string(&path)?;
+        let sql = std::fs::read_to_string(&path).map_err(|e| CoreError::IoWithPath {
+            path: path.display().to_string(),
+            source: e,
+        })?;
 
         if sql.trim().is_empty() {
             return Err(CoreError::ModelParseError {
@@ -526,29 +534,7 @@ pub struct TestConfig {
     pub warn_if: Option<String>,
 }
 
-/// Schema definition from schema.yml
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SchemaYml {
-    /// Version of the schema file format
-    pub version: u32,
-
-    /// Model definitions with column tests
-    #[serde(default)]
-    pub models: Vec<SchemaModelDef>,
-}
-
-/// Model definition in schema.yml
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SchemaModelDef {
-    /// Model name
-    pub name: String,
-
-    /// Column definitions with tests
-    #[serde(default)]
-    pub columns: Vec<SchemaColumnDef>,
-}
-
-/// Column definition in schema.yml
+/// Column definition in a model's schema YAML
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaColumnDef {
     /// Column name
@@ -665,7 +651,10 @@ impl Model {
             })?
             .to_string();
 
-        let raw_sql = std::fs::read_to_string(&path)?;
+        let raw_sql = std::fs::read_to_string(&path).map_err(|e| CoreError::IoWithPath {
+            path: path.display().to_string(),
+            source: e,
+        })?;
 
         // Look for matching 1:1 schema file (required)
         let yml_path = path.with_extension("yml");
@@ -686,7 +675,7 @@ impl Model {
         let (base_name, version) = Self::parse_version(&name);
 
         Ok(Self {
-            name,
+            name: ModelName::new(name),
             path,
             raw_sql,
             compiled_sql: None,
@@ -824,10 +813,9 @@ impl Model {
 
     /// Get all dependencies (both model and external)
     pub fn all_dependencies(&self) -> HashSet<String> {
-        self.depends_on
-            .union(&self.external_deps)
-            .cloned()
-            .collect()
+        let mut deps: HashSet<String> = self.depends_on.clone();
+        deps.extend(self.external_deps.iter().map(|t| t.to_string()));
+        deps
     }
 
     /// Get tests from the model's 1:1 schema file
@@ -883,40 +871,7 @@ impl Model {
     }
 }
 
-impl SchemaYml {
-    /// Parse schema.yml from a string
-    pub fn parse(content: &str) -> Result<Self, serde_yaml::Error> {
-        serde_yaml::from_str(content)
-    }
-
-    /// Load schema.yml from a file
-    pub fn load(path: &std::path::Path) -> Result<Self, crate::error::CoreError> {
-        let content = std::fs::read_to_string(path)?;
-        Ok(Self::parse(&content)?)
-    }
-
-    /// Extract all schema tests from this schema definition
-    pub fn extract_tests(&self) -> Vec<SchemaTest> {
-        let mut tests = Vec::new();
-
-        for model_def in &self.models {
-            for column_def in &model_def.columns {
-                for test_def in &column_def.tests {
-                    if let Some(test_type) = parse_test_definition(test_def) {
-                        tests.push(SchemaTest {
-                            test_type,
-                            column: column_def.name.clone(),
-                            model: model_def.name.clone(),
-                            config: TestConfig::default(),
-                        });
-                    }
-                }
-            }
-        }
-
-        tests
-    }
-}
+// SchemaYml impl moved to #[cfg(test)] — only used in tests
 
 impl std::fmt::Display for TestType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -938,6 +893,46 @@ impl std::fmt::Display for TestType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Legacy schema.yml container type (only used in tests)
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct SchemaYml {
+        version: u32,
+        #[serde(default)]
+        models: Vec<SchemaModelDef>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct SchemaModelDef {
+        name: String,
+        #[serde(default)]
+        columns: Vec<SchemaColumnDef>,
+    }
+
+    impl SchemaYml {
+        fn parse(content: &str) -> Result<Self, serde_yaml::Error> {
+            serde_yaml::from_str(content)
+        }
+
+        fn extract_tests(&self) -> Vec<SchemaTest> {
+            let mut tests = Vec::new();
+            for model_def in &self.models {
+                for column_def in &model_def.columns {
+                    for test_def in &column_def.tests {
+                        if let Some(test_type) = parse_test_definition(test_def) {
+                            tests.push(SchemaTest {
+                                test_type,
+                                column: column_def.name.clone(),
+                                model: model_def.name.clone(),
+                                config: TestConfig::default(),
+                            });
+                        }
+                    }
+                }
+            }
+            tests
+        }
+    }
 
     #[test]
     fn test_parse_schema_yml() {
@@ -1316,7 +1311,7 @@ columns:
 
         // Create a model with SQL config and schema config
         let model = Model {
-            name: "test".to_string(),
+            name: ModelName::new("test"),
             path: std::path::PathBuf::from("test.sql"),
             raw_sql: String::new(),
             compiled_sql: None,
@@ -1368,7 +1363,7 @@ columns:
 
         // Create a model with only schema config (no SQL config)
         let model = Model {
-            name: "test".to_string(),
+            name: ModelName::new("test"),
             path: std::path::PathBuf::from("test.sql"),
             raw_sql: String::new(),
             compiled_sql: None,
@@ -1410,7 +1405,7 @@ columns:
 
         // Create a model with no config
         let model = Model {
-            name: "test".to_string(),
+            name: ModelName::new("test"),
             path: std::path::PathBuf::from("test.sql"),
             raw_sql: String::new(),
             compiled_sql: None,
@@ -1902,7 +1897,7 @@ columns:
     fn test_model_version_methods() {
         // Create a versioned model
         let mut model = Model {
-            name: "fct_orders_v2".to_string(),
+            name: ModelName::new("fct_orders_v2"),
             path: std::path::PathBuf::from("models/fct_orders_v2.sql"),
             raw_sql: "SELECT 1".to_string(),
             compiled_sql: None,
@@ -1921,7 +1916,7 @@ columns:
         // Non-versioned model
         model.base_name = None;
         model.version = None;
-        model.name = "dim_products".to_string();
+        model.name = ModelName::new("dim_products");
 
         assert!(!model.is_versioned());
         assert_eq!(model.get_version(), None);
@@ -1949,7 +1944,7 @@ columns:
     #[test]
     fn test_deprecated_model_via_model() {
         let mut model = Model {
-            name: "fct_orders_v1".to_string(),
+            name: ModelName::new("fct_orders_v1"),
             path: std::path::PathBuf::from("models/fct_orders_v1.sql"),
             raw_sql: "SELECT 1".to_string(),
             compiled_sql: None,

@@ -4,7 +4,7 @@ use crate::context::AnalysisContext;
 use crate::ir::expr::TypedExpr;
 use crate::ir::relop::{JoinType, RelOp};
 use crate::ir::types::SqlType;
-use crate::pass::{AnalysisPass, Diagnostic, Severity};
+use crate::pass::{AnalysisPass, Diagnostic, DiagnosticCode, Severity};
 
 /// Join key analysis pass
 pub struct JoinKeyAnalysis;
@@ -41,7 +41,7 @@ fn walk_for_joins(model: &str, op: &RelOp, diags: &mut Vec<Diagnostic>) {
             // A032: Cross join detected
             if *join_type == JoinType::Cross {
                 diags.push(Diagnostic {
-                    code: "A032".to_string(),
+                    code: DiagnosticCode::A032,
                     severity: Severity::Info,
                     message: "Cross join (Cartesian product) detected".to_string(),
                     model: model.to_string(),
@@ -61,7 +61,7 @@ fn walk_for_joins(model: &str, op: &RelOp, diags: &mut Vec<Diagnostic>) {
                     // No condition on a non-cross join is unusual
                     if *join_type != JoinType::Cross {
                         diags.push(Diagnostic {
-                            code: "A032".to_string(),
+                            code: DiagnosticCode::A032,
                             severity: Severity::Info,
                             message: format!("{} JOIN without ON condition", join_type),
                             model: model.to_string(),
@@ -107,7 +107,7 @@ fn analyze_join_condition(model: &str, expr: &TypedExpr, diags: &mut Vec<Diagnos
         } else {
             // A033: Non-equi join detected
             diags.push(Diagnostic {
-                code: "A033".to_string(),
+                code: DiagnosticCode::A033,
                 severity: Severity::Info,
                 message: format!("Non-equi join condition detected (operator: {})", op.0),
                 model: model.to_string(),
@@ -139,7 +139,7 @@ fn check_join_key_types(
         let right_desc = describe_join_key(right);
 
         diags.push(Diagnostic {
-            code: "A030".to_string(),
+            code: DiagnosticCode::A030,
             severity: Severity::Warning,
             message: format!(
                 "Join key type mismatch: '{}' ({}) = '{}' ({})",
@@ -269,10 +269,13 @@ mod tests {
         let diags = JoinKeyAnalysis.run_model("test_model", &ir, &ctx);
 
         assert!(
-            diags.iter().any(|d| d.code == "A030"),
+            diags.iter().any(|d| d.code == DiagnosticCode::A030),
             "Expected A030 for INTEGER = VARCHAR join key type mismatch"
         );
-        let a030 = diags.iter().find(|d| d.code == "A030").unwrap();
+        let a030 = diags
+            .iter()
+            .find(|d| d.code == DiagnosticCode::A030)
+            .unwrap();
         assert_eq!(a030.severity, Severity::Warning);
     }
 
@@ -309,10 +312,13 @@ mod tests {
         let diags = JoinKeyAnalysis.run_model("test_model", &ir, &ctx);
 
         assert!(
-            diags.iter().any(|d| d.code == "A032"),
+            diags.iter().any(|d| d.code == DiagnosticCode::A032),
             "Expected A032 for cross join"
         );
-        let a032 = diags.iter().find(|d| d.code == "A032").unwrap();
+        let a032 = diags
+            .iter()
+            .find(|d| d.code == DiagnosticCode::A032)
+            .unwrap();
         assert!(a032.message.contains("Cross join"));
     }
 
@@ -365,7 +371,7 @@ mod tests {
         let diags = JoinKeyAnalysis.run_model("test_model", &ir, &ctx);
 
         assert!(
-            diags.iter().any(|d| d.code == "A033"),
+            diags.iter().any(|d| d.code == DiagnosticCode::A033),
             "Expected A033 for non-equi join (>)"
         );
     }
@@ -420,7 +426,7 @@ mod tests {
 
         // INT32 = INT64 are compatible — no A030
         assert!(
-            !diags.iter().any(|d| d.code == "A030"),
+            !diags.iter().any(|d| d.code == DiagnosticCode::A030),
             "Compatible join key types (INT32 = INT64) should not produce A030"
         );
     }

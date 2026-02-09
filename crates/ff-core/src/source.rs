@@ -4,7 +4,7 @@
 //! managed by Featherflow (e.g., tables loaded by ETL pipelines).
 
 use crate::error::{CoreError, CoreResult};
-use crate::model::TestDefinition;
+use crate::model::{FreshnessConfig, TestDefinition};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -98,38 +98,9 @@ pub struct SourceColumn {
     pub tests: Vec<TestDefinition>,
 }
 
-/// Freshness monitoring configuration (future implementation)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FreshnessConfig {
-    /// Column containing the loaded_at timestamp
-    pub loaded_at_field: String,
-
-    /// Warning threshold
-    #[serde(default)]
-    pub warn_after: Option<FreshnessPeriod>,
-
-    /// Error threshold
-    #[serde(default)]
-    pub error_after: Option<FreshnessPeriod>,
-}
-
-/// Freshness period specification
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FreshnessPeriod {
-    /// Number of units
-    pub count: u32,
-    /// Time period unit
-    pub period: FreshnessPeriodUnit,
-}
-
-/// Freshness period units
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum FreshnessPeriodUnit {
-    Minute,
-    Hour,
-    Day,
-}
+// FreshnessConfig, FreshnessThreshold, and FreshnessPeriod are imported from
+// crate::model to avoid duplication. Both model and source freshness use the
+// same unified types.
 
 impl SourceFile {
     /// Load and validate a source file from a path

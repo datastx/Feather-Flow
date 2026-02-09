@@ -16,4 +16,4 @@ pub use ir::relop::RelOp;
 pub use ir::schema::RelSchema;
 pub use ir::types::{Nullability, SqlType, TypedColumn};
 pub use lowering::{lower_statement, SchemaCatalog};
-pub use pass::{AnalysisPass, DagPass, Diagnostic, PassManager, Severity};
+pub use pass::{AnalysisPass, DagPass, Diagnostic, DiagnosticCode, PassManager, Severity};

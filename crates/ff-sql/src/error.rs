@@ -21,10 +21,6 @@ pub enum SqlError {
     #[error("[S003] Unsupported SQL statement type: {0}")]
     UnsupportedStatement(String),
 
-    /// Validation error (S004)
-    #[error("[S004] SQL validation failed: {0}")]
-    ValidationError(String),
-
     /// CTE not allowed (S005)
     #[error("[S005] CTEs are not allowed — each transform must be its own model. Found CTE(s): {cte_names}")]
     CteNotAllowed { cte_names: String },

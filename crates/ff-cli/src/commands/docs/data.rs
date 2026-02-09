@@ -274,7 +274,7 @@ pub(crate) fn build_model_doc(model: &Model) -> ModelDoc {
 
     // Get dependencies
     let depends_on: Vec<String> = model.depends_on.iter().cloned().collect();
-    let external_deps: Vec<String> = model.external_deps.iter().cloned().collect();
+    let external_deps: Vec<String> = model.external_deps.iter().map(|t| t.to_string()).collect();
 
     // Extract column lineage from SQL
     let column_lineage = extract_column_lineage_from_model(model);
@@ -290,7 +290,7 @@ pub(crate) fn build_model_doc(model: &Model) -> ModelDoc {
     let contact = model.get_meta_string("contact");
 
     ModelDoc {
-        name: model.name.clone(),
+        name: model.name.to_string(),
         description,
         owner,
         team,

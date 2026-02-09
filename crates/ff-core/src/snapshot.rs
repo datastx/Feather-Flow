@@ -135,7 +135,10 @@ fn default_version() -> u32 {
 impl SnapshotFile {
     /// Load snapshot configuration from a YAML file
     pub fn load(path: &Path) -> Result<Self, CoreError> {
-        let content = std::fs::read_to_string(path)?;
+        let content = std::fs::read_to_string(path).map_err(|e| CoreError::IoWithPath {
+            path: path.display().to_string(),
+            source: e,
+        })?;
         let file: SnapshotFile = serde_yaml::from_str(&content)?;
 
         // Validate all snapshots

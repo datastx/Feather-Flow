@@ -209,55 +209,16 @@ impl Manifest {
         default_materialization: Materialization,
         default_schema: Option<&str>,
     ) {
-        // Get tags from schema file if available
-        let tags = model
-            .schema
-            .as_ref()
-            .map(|s| s.tags.clone())
-            .unwrap_or_default();
+        let source_path = model.path.display().to_string();
+        let compiled_path_str = compiled_path.display().to_string();
 
-        let materialized = model.materialization(default_materialization);
-
-        // Only include incremental fields if model is incremental
-        let (unique_key, incremental_strategy, on_schema_change) =
-            if materialized == Materialization::Incremental {
-                (
-                    model.unique_key(),
-                    Some(model.incremental_strategy()),
-                    Some(model.on_schema_change()),
-                )
-            } else {
-                (None, None, None)
-            };
-
-        // Resolve WAP setting
-        let wap = if model.wap_enabled() {
-            Some(true)
-        } else {
-            None
-        };
-
-        // Use paths as-is (caller should provide relative paths)
-        let manifest_model = ManifestModel {
-            name: model.name.clone(),
-            source_path: model.path.display().to_string(),
-            compiled_path: compiled_path.display().to_string(),
-            materialized,
-            schema: model.target_schema(default_schema),
-            tags,
-            depends_on: model.depends_on.iter().cloned().collect(),
-            external_deps: model.external_deps.iter().cloned().collect(),
-            referenced_tables: model.all_dependencies().into_iter().collect(),
-            unique_key,
-            incremental_strategy,
-            on_schema_change,
-            pre_hook: model.config.pre_hook.clone(),
-            post_hook: model.config.post_hook.clone(),
-            wap,
-        };
-
-        self.models.insert(model.name.clone(), manifest_model);
-        self.model_count = self.models.len();
+        self.insert_model(
+            model,
+            source_path,
+            compiled_path_str,
+            default_materialization,
+            default_schema,
+        );
     }
 
     /// Add a model to the manifest with paths relative to project root
@@ -269,13 +230,6 @@ impl Manifest {
         default_materialization: Materialization,
         default_schema: Option<&str>,
     ) {
-        // Get tags from schema file if available
-        let tags = model
-            .schema
-            .as_ref()
-            .map(|s| s.tags.clone())
-            .unwrap_or_default();
-
         // Compute relative paths from project root
         let source_path = model
             .path
@@ -283,10 +237,37 @@ impl Manifest {
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| model.path.display().to_string());
 
-        let compiled_path_rel = compiled_path
+        let compiled_path_str = compiled_path
             .strip_prefix(project_root)
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| compiled_path.display().to_string());
+
+        self.insert_model(
+            model,
+            source_path,
+            compiled_path_str,
+            default_materialization,
+            default_schema,
+        );
+    }
+
+    /// Build a `ManifestModel` from pre-resolved paths and insert it into the manifest.
+    ///
+    /// This is the shared implementation used by both `add_model` and `add_model_relative`.
+    fn insert_model(
+        &mut self,
+        model: &Model,
+        source_path: String,
+        compiled_path: String,
+        default_materialization: Materialization,
+        default_schema: Option<&str>,
+    ) {
+        // Get tags from schema file if available
+        let tags = model
+            .schema
+            .as_ref()
+            .map(|s| s.tags.clone())
+            .unwrap_or_default();
 
         let materialized = model.materialization(default_materialization);
 
@@ -310,14 +291,14 @@ impl Manifest {
         };
 
         let manifest_model = ManifestModel {
-            name: model.name.clone(),
+            name: model.name.to_string(),
             source_path,
-            compiled_path: compiled_path_rel,
+            compiled_path,
             materialized,
             schema: model.target_schema(default_schema),
             tags,
             depends_on: model.depends_on.iter().cloned().collect(),
-            external_deps: model.external_deps.iter().cloned().collect(),
+            external_deps: model.external_deps.iter().map(|t| t.to_string()).collect(),
             referenced_tables: model.all_dependencies().into_iter().collect(),
             unique_key,
             incremental_strategy,
@@ -327,7 +308,7 @@ impl Manifest {
             wap,
         };
 
-        self.models.insert(model.name.clone(), manifest_model);
+        self.models.insert(model.name.to_string(), manifest_model);
         self.model_count = self.models.len();
     }
 
@@ -377,6 +358,7 @@ fn chrono_lite_now() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model_name::ModelName;
     use std::collections::HashSet;
 
     #[test]
@@ -384,7 +366,7 @@ mod tests {
         let mut manifest = Manifest::new("test_project");
 
         let model = Model {
-            name: "test_model".to_string(),
+            name: ModelName::new("test_model"),
             path: std::path::PathBuf::from("models/test_model.sql"),
             raw_sql: "SELECT 1".to_string(),
             compiled_sql: Some("SELECT 1".to_string()),

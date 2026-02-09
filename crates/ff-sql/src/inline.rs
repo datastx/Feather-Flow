@@ -1,14 +1,26 @@
 //! Ephemeral model inlining
 //!
 //! This module provides functionality to inline ephemeral models as CTEs
-//! in downstream SQL queries.
+//! in downstream SQL queries. CTE injection is performed via AST manipulation
+//! using `sqlparser`, ensuring correctness even when CTE names are SQL
+//! reserved words.
 
 use std::collections::{HashMap, HashSet};
+
+use sqlparser::ast::{Cte, Ident, Statement, TableAlias, With};
+use sqlparser::dialect::DuckDbDialect;
+use sqlparser::parser::Parser;
 
 /// Inline ephemeral model SQL as CTEs in the target SQL.
 ///
 /// Given a SQL query and a map of ephemeral model names to their compiled SQL,
 /// this function prepends CTE definitions for all ephemeral dependencies.
+///
+/// Both the target SQL and each ephemeral SQL fragment are parsed into AST
+/// nodes.  The ephemeral queries are injected into the target statement's
+/// `WITH` clause (creating one when absent), and the result is emitted via
+/// `Statement::to_string()`.  CTE names are always double-quoted so that SQL
+/// reserved words work correctly.
 ///
 /// # Arguments
 ///
@@ -31,7 +43,7 @@ use std::collections::{HashMap, HashSet};
 /// ephemeral_deps.insert("stg_orders".to_string(), "SELECT id, amount FROM raw_orders".to_string());
 ///
 /// let result = inline_ephemeral_ctes(sql, &ephemeral_deps, &["stg_orders".to_string()]);
-/// assert!(result.contains("WITH stg_orders AS"));
+/// assert!(result.contains(r#""stg_orders" AS"#));
 /// ```
 pub fn inline_ephemeral_ctes(
     sql: &str,
@@ -42,39 +54,82 @@ pub fn inline_ephemeral_ctes(
         return sql.to_string();
     }
 
-    // Build CTEs in dependency order (from model_deps)
-    let mut ctes: Vec<String> = Vec::new();
+    let dialect = DuckDbDialect {};
+
+    // ---- Build CTE AST nodes in dependency order ----
+    let mut new_ctes: Vec<Cte> = Vec::new();
     let mut seen: HashSet<&str> = HashSet::new();
 
     for dep in model_deps {
         if let Some(ephemeral_sql) = ephemeral_deps.get(dep) {
-            if !seen.contains(dep.as_str()) {
-                seen.insert(dep);
-                // Clean up the ephemeral SQL (remove trailing semicolons)
-                let clean_sql = ephemeral_sql.trim().trim_end_matches(';').trim();
-                ctes.push(format!("{} AS (\n{}\n)", dep, clean_sql));
+            if seen.contains(dep.as_str()) {
+                continue;
             }
+            seen.insert(dep);
+
+            // Clean trailing semicolons before parsing
+            let clean_sql = ephemeral_sql.trim().trim_end_matches(';').trim();
+
+            // Parse the ephemeral SQL into a Query AST node
+            let ephemeral_query = match Parser::parse_sql(&dialect, clean_sql) {
+                Ok(stmts) => match stmts.into_iter().next() {
+                    Some(Statement::Query(q)) => q,
+                    _ => {
+                        // Fallback: wrap in a trivial query if parsing fails or
+                        // returns a non-query statement.  This shouldn't happen
+                        // with valid model SQL.
+                        continue;
+                    }
+                },
+                Err(_) => continue,
+            };
+
+            new_ctes.push(Cte {
+                alias: TableAlias {
+                    name: Ident::with_quote('"', dep),
+                    columns: vec![],
+                },
+                query: ephemeral_query,
+                from: None,
+                materialized: None,
+            });
         }
     }
 
-    if ctes.is_empty() {
+    if new_ctes.is_empty() {
         return sql.to_string();
     }
 
-    // Check if original SQL already has a WITH clause
-    let trimmed_sql = sql.trim();
-    let upper_sql = trimmed_sql.to_uppercase();
+    // ---- Parse the target SQL ----
+    let trimmed_sql = sql.trim().trim_end_matches(';').trim();
+    let mut stmts = match Parser::parse_sql(&dialect, trimmed_sql) {
+        Ok(s) => s,
+        Err(_) => return sql.to_string(), // Unparseable target → return as-is
+    };
 
-    if upper_sql.starts_with("WITH ") {
-        // Merge with existing WITH clause
-        // Find the position after "WITH " and insert our CTEs before the existing ones
-        let with_end = "WITH".len();
-        let rest = &trimmed_sql[with_end..].trim_start();
-        format!("WITH {},\n{}", ctes.join(",\n"), rest)
-    } else {
-        // Prepend new WITH clause
-        format!("WITH {}\n{}", ctes.join(",\n"), trimmed_sql)
-    }
+    let stmt = match stmts.first_mut() {
+        Some(Statement::Query(ref mut query)) => {
+            // Inject CTEs into the query's WITH clause
+            match query.with.as_mut() {
+                Some(with) => {
+                    // Prepend new CTEs before existing ones
+                    new_ctes.append(&mut with.cte_tables);
+                    with.cte_tables = new_ctes;
+                }
+                None => {
+                    query.with = Some(With {
+                        recursive: false,
+                        cte_tables: new_ctes,
+                    });
+                }
+            }
+            // Return the modified statement tree
+            stmts.first().unwrap()
+        }
+        _ => return sql.to_string(), // Not a query → return as-is
+    };
+
+    stmt.to_string()
 }
 
 /// Resolve all ephemeral dependencies for a model, including nested ephemeral models.
@@ -181,9 +236,18 @@ mod tests {
         let order = vec!["stg_orders".to_string()];
 
         let result = inline_ephemeral_ctes(sql, &ephemeral_deps, &order);
-        assert!(result.contains("WITH stg_orders AS"));
-        assert!(result.contains("SELECT id, amount FROM raw_orders"));
-        assert!(result.contains("SELECT * FROM stg_orders"));
+        assert!(
+            result.contains(r#""stg_orders" AS"#),
+            "expected quoted CTE name, got: {result}"
+        );
+        assert!(
+            result.contains("raw_orders"),
+            "expected raw_orders in CTE body, got: {result}"
+        );
+        assert!(
+            result.contains("stg_orders"),
+            "expected stg_orders in final SELECT, got: {result}"
+        );
     }
 
     #[test]
@@ -202,11 +266,23 @@ mod tests {
         let order = vec!["stg_orders".to_string(), "stg_customers".to_string()];
 
         let result = inline_ephemeral_ctes(sql, &ephemeral_deps, &order);
-        assert!(result.contains("WITH stg_orders AS"));
-        assert!(result.contains("stg_customers AS"));
+        assert!(
+            result.contains(r#""stg_orders" AS"#),
+            "expected quoted stg_orders CTE, got: {result}"
+        );
+        assert!(
+            result.contains(r#""stg_customers" AS"#),
+            "expected quoted stg_customers CTE, got: {result}"
+        );
         // Both CTEs should be present
-        assert!(result.contains("FROM raw_orders"));
-        assert!(result.contains("FROM raw_customers"));
+        assert!(
+            result.contains("raw_orders"),
+            "expected raw_orders, got: {result}"
+        );
+        assert!(
+            result.contains("raw_customers"),
+            "expected raw_customers, got: {result}"
+        );
     }
 
     #[test]
@@ -220,9 +296,15 @@ mod tests {
         let order = vec!["stg_orders".to_string()];
 
         let result = inline_ephemeral_ctes(sql, &ephemeral_deps, &order);
-        // Should merge CTEs
-        assert!(result.contains("WITH stg_orders AS"));
-        assert!(result.contains("my_cte AS"));
+        // Should merge CTEs — new ephemeral CTE is prepended before existing ones
+        assert!(
+            result.contains(r#""stg_orders" AS"#),
+            "expected quoted stg_orders CTE, got: {result}"
+        );
+        assert!(
+            result.contains("my_cte AS"),
+            "expected existing my_cte CTE, got: {result}"
+        );
     }
 
     #[test]
@@ -247,8 +329,14 @@ mod tests {
 
         let result = inline_ephemeral_ctes(sql, &ephemeral_deps, &order);
         // The inner SQL should not have a trailing semicolon
-        assert!(result.contains("FROM raw_orders\n)"));
-        assert!(!result.contains("FROM raw_orders;"));
+        assert!(
+            result.contains("raw_orders"),
+            "expected raw_orders in CTE body, got: {result}"
+        );
+        assert!(
+            !result.contains("raw_orders;"),
+            "semicolon should have been stripped, got: {result}"
+        );
     }
 
     #[test]
@@ -316,12 +404,60 @@ mod tests {
 
         let result = inline_ephemeral_ctes(sql, &ephemeral_deps, &order);
 
-        // Find positions of each CTE in the result
-        let pos_c = result.find("c AS").unwrap();
-        let pos_b = result.find("b AS").unwrap();
-        let pos_a = result.find("a AS").unwrap();
+        // Find positions of each CTE in the result (names are double-quoted)
+        let pos_c = result
+            .find(r#""c" AS"#)
+            .unwrap_or_else(|| panic!("expected \"c\" AS in: {result}"));
+        let pos_b = result
+            .find(r#""b" AS"#)
+            .unwrap_or_else(|| panic!("expected \"b\" AS in: {result}"));
+        let pos_a = result
+            .find(r#""a" AS"#)
+            .unwrap_or_else(|| panic!("expected \"a\" AS in: {result}"));
 
-        assert!(pos_c < pos_b, "c should come before b");
-        assert!(pos_b < pos_a, "b should come before a");
+        assert!(pos_c < pos_b, "c should come before b in: {result}");
+        assert!(pos_b < pos_a, "b should come before a in: {result}");
+    }
+
+    #[test]
+    fn test_inline_reserved_word_cte_name() {
+        // CTE names that are SQL reserved words should be properly quoted
+        let sql = "SELECT * FROM \"select\"";
+        let mut ephemeral_deps = HashMap::new();
+        ephemeral_deps.insert(
+            "select".to_string(),
+            "SELECT id, name FROM raw_data".to_string(),
+        );
+        let order = vec!["select".to_string()];
+
+        let result = inline_ephemeral_ctes(sql, &ephemeral_deps, &order);
+        // The reserved word must be double-quoted in the CTE definition
+        assert!(
+            result.contains(r#""select" AS"#),
+            "expected quoted reserved-word CTE name, got: {result}"
+        );
+        assert!(
+            result.contains("raw_data"),
+            "expected CTE body, got: {result}"
+        );
+
+        // Also test with another reserved word: "order"
+        let sql2 = "SELECT * FROM \"order\"";
+        let mut ephemeral_deps2 = HashMap::new();
+        ephemeral_deps2.insert(
+            "order".to_string(),
+            "SELECT id, total FROM raw_orders".to_string(),
+        );
+        let order2 = vec!["order".to_string()];
+
+        let result2 = inline_ephemeral_ctes(sql2, &ephemeral_deps2, &order2);
+        assert!(
+            result2.contains(r#""order" AS"#),
+            "expected quoted reserved-word CTE name, got: {result2}"
+        );
+        assert!(
+            result2.contains("raw_orders"),
+            "expected CTE body, got: {result2}"
+        );
     }
 }

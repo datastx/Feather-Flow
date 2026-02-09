@@ -14,6 +14,7 @@ pub mod exposure;
 pub mod manifest;
 pub mod metric;
 pub mod model;
+pub mod model_name;
 pub mod project;
 pub mod query_comment;
 pub mod run_state;
@@ -23,6 +24,7 @@ pub mod snapshot;
 pub mod source;
 pub mod sql_utils;
 pub mod state;
+pub mod table_name;
 
 pub use breaking_changes::{
     detect_breaking_changes, detect_breaking_changes_simple, BreakingChange, BreakingChangeReport,
@@ -38,6 +40,7 @@ pub use model::{
     ColumnConstraint, DataClassification, FreshnessConfig, FreshnessPeriod, FreshnessThreshold,
     Model, ModelSchema, SchemaContract,
 };
+pub use model_name::ModelName;
 pub use project::Project;
 pub use query_comment::{QueryCommentContext, QueryCommentMetadata};
 pub use run_state::{CompletedModel, FailedModel, RunState, RunStateSummary, RunStatus};
@@ -46,3 +49,4 @@ pub use selector::Selector;
 pub use snapshot::{discover_snapshots, Snapshot, SnapshotConfig, SnapshotStrategy};
 pub use source::{SourceFile, SourceTable};
 pub use state::{ModelState, ModelStateConfig, StateFile};
+pub use table_name::TableName;

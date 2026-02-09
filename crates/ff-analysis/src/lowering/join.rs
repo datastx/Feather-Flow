@@ -25,8 +25,8 @@ pub fn lower_join(left: RelOp, join: &Join, catalog: &SchemaCatalog) -> Analysis
         }
         JoinOperator::CrossJoin => (JoinType::Cross, None),
         other => {
-            eprintln!(
-                "[warn] Unrecognized join operator {:?}, treating as INNER JOIN",
+            log::warn!(
+                "Unrecognized join operator {:?}, treating as INNER JOIN",
                 other
             );
             (JoinType::Inner, None)
