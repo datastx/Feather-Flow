@@ -1446,7 +1446,6 @@ Each model can have a corresponding `.yml` file with the same name:
 | `version` | Yes | Schema version (currently "1") |
 | `name` | Yes | Model name (must match SQL file) |
 | `description` | No | Human-readable description |
-| `config` | No | Model configuration overrides |
 | `columns` | No | Column definitions and tests |
 | `tests` | No | Model-level tests |
 | `tags` | No | Tags for selection |
@@ -1782,13 +1781,6 @@ WAP materializes a model into a private staging schema, runs schema tests agains
 wap_schema: wap_staging
 ```
 
-**Model-level** (YAML):
-```yaml
-config:
-  materialized: table
-  wap: true
-```
-
 **Model-level** (SQL config function):
 ```sql
 {{ config(wap='true') }}
@@ -1827,7 +1819,7 @@ If any test fails during the audit step:
 
 ### Config Precedence
 
-SQL `config()` > YAML `config` > default (`false`)
+SQL `config()` > project default (`false`)
 
 Target-level `wap_schema` > project-level `wap_schema`
 

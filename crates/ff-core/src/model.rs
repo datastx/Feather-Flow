@@ -53,10 +53,19 @@ pub struct Model {
 ///
 /// This follows the 1:1 naming convention where each model's schema file
 /// has the same name as its SQL file (e.g., stg_orders.sql + stg_orders.yml)
+///
+/// Uses `deny_unknown_fields` so that any YAML containing a `config:` key
+/// (which is no longer supported) will fail with a clear deserialization error.
+/// Config should only be specified via the SQL `{{ config() }}` function.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ModelSchema {
     /// Schema format version
     pub version: u32,
+
+    /// Model name (optional, must match SQL file if provided)
+    #[serde(default)]
+    pub name: Option<String>,
 
     /// Model description
     #[serde(default)]
@@ -73,10 +82,6 @@ pub struct ModelSchema {
     /// Tags for categorization
     #[serde(default)]
     pub tags: Vec<String>,
-
-    /// Model-level configuration (can override project defaults)
-    #[serde(default)]
-    pub config: Option<SchemaConfig>,
 
     /// Data contract definition for schema enforcement
     #[serde(default)]
@@ -184,22 +189,6 @@ pub enum ColumnConstraint {
     PrimaryKey,
     /// Column values must be unique
     Unique,
-}
-
-/// Configuration from schema YAML that can override project defaults
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SchemaConfig {
-    /// Materialization type (view or table)
-    #[serde(default)]
-    pub materialized: Option<Materialization>,
-
-    /// Target schema
-    #[serde(default)]
-    pub schema: Option<String>,
-
-    /// Whether this model uses Write-Audit-Publish pattern
-    #[serde(default)]
-    pub wap: Option<bool>,
 }
 
 impl ModelSchema {
@@ -737,70 +726,28 @@ impl Model {
 
     /// Get the materialization for this model, falling back through the precedence chain:
     /// 1. SQL config() function (self.config.materialized)
-    /// 2. Schema YAML config section (self.schema.config.materialized)
-    /// 3. Project default
+    /// 2. Project default
     pub fn materialization(&self, default: Materialization) -> Materialization {
-        // First check SQL config
-        if let Some(mat) = self.config.materialized {
-            return mat;
-        }
-
-        // Then check schema YAML config
-        if let Some(mat) = self
-            .schema
-            .as_ref()
-            .and_then(|s| s.config.as_ref())
-            .and_then(|c| c.materialized)
-        {
-            return mat;
-        }
-
-        // Finally use project default
-        default
+        self.config.materialized.unwrap_or(default)
     }
 
     /// Get the schema for this model, falling back through the precedence chain:
     /// 1. SQL config() function (self.config.schema)
-    /// 2. Schema YAML config section (self.schema.config.schema)
-    /// 3. Project default
+    /// 2. Project default
     pub fn target_schema(&self, default: Option<&str>) -> Option<String> {
-        // First check SQL config
-        if let Some(s) = &self.config.schema {
-            return Some(s.clone());
-        }
-
-        // Then check schema YAML config
-        if let Some(s) = self
+        self.config
             .schema
-            .as_ref()
-            .and_then(|s| s.config.as_ref())
-            .and_then(|c| c.schema.as_ref())
-        {
-            return Some(s.clone());
-        }
-
-        // Finally use project default
-        default.map(String::from)
+            .clone()
+            .or_else(|| default.map(String::from))
     }
 
     /// Check if WAP is enabled for this model
     ///
-    /// Follows the same precedence chain as other config options:
+    /// Follows the precedence chain:
     /// 1. SQL config() function (self.config.wap)
-    /// 2. Schema YAML config section (self.schema.config.wap)
-    /// 3. Default: false
+    /// 2. Default: false
     pub fn wap_enabled(&self) -> bool {
-        // Check SQL config first
-        if let Some(wap) = self.config.wap {
-            return wap;
-        }
-
-        // Then check schema YAML config
-        self.schema
-            .as_ref()
-            .and_then(|s| s.config.as_ref())
-            .and_then(|c| c.wap)
-            .unwrap_or(false)
+        self.config.wap.unwrap_or(false)
     }
 
     /// Get the schema for this model (deprecated, use target_schema instead)
@@ -1300,7 +1247,7 @@ columns:
     }
 
     #[test]
-    fn test_parse_schema_config() {
+    fn test_yaml_with_config_key_fails_to_parse() {
         let yaml = r#"
 version: 1
 description: "Test model"
@@ -1313,25 +1260,30 @@ columns:
     tests:
       - unique
 "#;
-        let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
-        assert!(schema.config.is_some());
-        let config = schema.config.unwrap();
-        assert_eq!(config.materialized, Some(Materialization::Table));
-        assert_eq!(config.schema, Some("staging".to_string()));
+        let result: Result<ModelSchema, _> = serde_yaml::from_str(yaml);
+        assert!(
+            result.is_err(),
+            "YAML with config: key should fail to parse"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("unknown field"),
+            "Error should mention unknown field, got: {err}"
+        );
     }
 
     #[test]
     fn test_config_precedence_sql_wins() {
         use crate::config::Materialization;
 
-        // Create a model with SQL config and schema config
+        // Create a model with SQL config set
         let model = Model {
             name: ModelName::new("test"),
             path: std::path::PathBuf::from("test.sql"),
             raw_sql: String::new(),
             compiled_sql: None,
             config: ModelConfig {
-                materialized: Some(Materialization::Table), // SQL wins
+                materialized: Some(Materialization::Table),
                 schema: Some("sql_schema".to_string()),
                 tags: vec![],
                 unique_key: None,
@@ -1345,15 +1297,11 @@ columns:
             external_deps: HashSet::new(),
             schema: Some(ModelSchema {
                 version: 1,
+                name: None,
                 description: None,
                 owner: None,
                 meta: std::collections::HashMap::new(),
                 tags: vec![],
-                config: Some(SchemaConfig {
-                    materialized: Some(Materialization::View), // Should be ignored
-                    schema: Some("yaml_schema".to_string()),   // Should be ignored
-                    wap: None,
-                }),
                 contract: None,
                 freshness: None,
                 columns: vec![],
@@ -1364,7 +1312,7 @@ columns:
             version: None,
         };
 
-        // SQL config should win
+        // SQL config should win over project default
         assert_eq!(
             model.materialization(Materialization::View),
             Materialization::Table
@@ -1373,29 +1321,25 @@ columns:
     }
 
     #[test]
-    fn test_config_precedence_yaml_fallback() {
+    fn test_config_precedence_falls_back_to_project_default() {
         use crate::config::Materialization;
 
-        // Create a model with only schema config (no SQL config)
+        // Create a model with no SQL config — should fall back to project default
         let model = Model {
             name: ModelName::new("test"),
             path: std::path::PathBuf::from("test.sql"),
             raw_sql: String::new(),
             compiled_sql: None,
-            config: ModelConfig::default(), // No SQL config
+            config: ModelConfig::default(),
             depends_on: HashSet::new(),
             external_deps: HashSet::new(),
             schema: Some(ModelSchema {
                 version: 1,
+                name: None,
                 description: None,
                 owner: None,
                 meta: std::collections::HashMap::new(),
                 tags: vec![],
-                config: Some(SchemaConfig {
-                    materialized: Some(Materialization::Table), // Should be used
-                    schema: Some("yaml_schema".to_string()),    // Should be used
-                    wap: None,
-                }),
                 contract: None,
                 freshness: None,
                 columns: vec![],
@@ -1406,12 +1350,16 @@ columns:
             version: None,
         };
 
-        // YAML config should be used when SQL config is not set
+        // Should use the passed-in project default
         assert_eq!(
             model.materialization(Materialization::View),
-            Materialization::Table
+            Materialization::View
         );
-        assert_eq!(model.target_schema(None), Some("yaml_schema".to_string()));
+        assert_eq!(model.target_schema(None), None);
+        assert_eq!(
+            model.target_schema(Some("default_schema")),
+            Some("default_schema".to_string())
+        );
     }
 
     #[test]
@@ -1978,11 +1926,11 @@ columns:
             external_deps: std::collections::HashSet::new(),
             schema: Some(ModelSchema {
                 version: 1,
+                name: None,
                 description: None,
                 owner: None,
                 meta: std::collections::HashMap::new(),
                 tags: vec![],
-                config: None,
                 contract: None,
                 freshness: None,
                 columns: vec![],

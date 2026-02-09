@@ -433,6 +433,7 @@ mod tests {
             "model_a".to_string(),
             ModelSchema {
                 version: 1,
+                name: None,
                 description: None,
                 owner: None,
                 meta: std::collections::HashMap::new(),
@@ -459,7 +460,6 @@ mod tests {
                         classification: None,
                     },
                 ],
-                config: None,
                 contract: None,
                 freshness: None,
                 deprecated: false,
@@ -473,6 +473,7 @@ mod tests {
             "model_a".to_string(),
             ModelSchema {
                 version: 1,
+                name: None,
                 description: None,
                 owner: None,
                 meta: std::collections::HashMap::new(),
@@ -487,7 +488,6 @@ mod tests {
                     references: None,
                     classification: None,
                 }],
-                config: None,
                 contract: None,
                 freshness: None,
                 deprecated: false,
@@ -519,6 +519,7 @@ mod tests {
             "model_a".to_string(),
             ModelSchema {
                 version: 1,
+                name: None,
                 description: None,
                 owner: None,
                 meta: std::collections::HashMap::new(),
@@ -533,7 +534,6 @@ mod tests {
                     references: None,
                     classification: None,
                 }],
-                config: None,
                 contract: None,
                 freshness: None,
                 deprecated: false,
@@ -547,6 +547,7 @@ mod tests {
             "model_a".to_string(),
             ModelSchema {
                 version: 1,
+                name: None,
                 description: None,
                 owner: None,
                 meta: std::collections::HashMap::new(),
@@ -561,7 +562,6 @@ mod tests {
                     references: None,
                     classification: None,
                 }],
-                config: None,
                 contract: None,
                 freshness: None,
                 deprecated: false,

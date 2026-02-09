@@ -7,10 +7,6 @@ tags:
   - facts
   - orders
 
-config:
-  materialized: table
-  wap: true
-
 columns:
   - name: order_id
     type: INTEGER
