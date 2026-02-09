@@ -112,11 +112,17 @@ pub fn generate_custom_test_sql(
         format!(", {}", pairs.join(", "))
     };
 
+    // Escape model and column for safe embedding in Jinja string literals.
+    // Without this, a model/column name containing `"` or `{{` could break
+    // out of the string literal and inject template code.
+    let safe_model = model.replace('\\', "\\\\").replace('"', "\\\"");
+    let safe_column = column.replace('\\', "\\\\").replace('"', "\\\"");
+
     // Create template that imports and calls the macro
     let template = format!(
         r#"{{% from "{}" import {} %}}
 {{{{ {}("{}", "{}"{}) }}}}"#,
-        relative_file, macro_name, macro_name, model, column, kwargs_str
+        relative_file, macro_name, macro_name, safe_model, safe_column, kwargs_str
     );
 
     // Render the template

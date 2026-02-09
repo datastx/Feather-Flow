@@ -2,9 +2,9 @@
 
 use crate::builtins::{
     make_bool_or_fn, make_clean_string_fn, make_coalesce_columns_fn, make_date_add_fn,
-    make_date_diff_fn, make_date_spine_fn, make_date_trunc_fn, make_hash_fn, make_limit_zero_fn,
-    make_not_null_fn, make_percent_of_fn, make_round_money_fn, make_safe_divide_fn,
-    make_slugify_fn, make_split_part_fn, make_surrogate_key_fn,
+    make_date_diff_fn, make_date_spine_fn, make_date_trunc_fn, make_hash_columns_fn, make_hash_fn,
+    make_limit_zero_fn, make_not_null_fn, make_percent_of_fn, make_round_money_fn,
+    make_safe_divide_fn, make_slugify_fn, make_split_part_fn, make_surrogate_key_fn,
 };
 use crate::error::{JinjaError, JinjaResult};
 use crate::functions::{
@@ -218,6 +218,7 @@ fn register_builtins(env: &mut Environment<'_>) {
     env.add_function("hash", make_hash_fn());
 
     // Utility macros
+    env.add_function("hash_columns", make_hash_columns_fn());
     env.add_function("surrogate_key", make_surrogate_key_fn());
     env.add_function("coalesce_columns", make_coalesce_columns_fn());
     env.add_function("not_null", make_not_null_fn());

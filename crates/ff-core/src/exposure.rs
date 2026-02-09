@@ -212,7 +212,7 @@ pub fn discover_exposures(paths: &[impl AsRef<Path>]) -> Vec<Exposure> {
                         Err(e) => {
                             // Log warning but don't fail - file might not be an exposure
                             eprintln!(
-                                "Warning: Failed to load exposure from {}: {}",
+                                "[warn] Failed to load exposure from {}: {}",
                                 file_path.display(),
                                 e
                             );

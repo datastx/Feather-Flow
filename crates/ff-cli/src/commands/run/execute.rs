@@ -163,7 +163,7 @@ async fn run_single_model(
                     status: RunStatus::Error,
                     materialization: compiled.materialization.to_string(),
                     duration_secs: duration.as_secs_f64(),
-                    error: Some(contract_error),
+                    error: Some(contract_error.to_string()),
                 };
             }
 
@@ -663,8 +663,9 @@ fn compute_execution_levels(
             completed.insert(name.clone());
         }
 
-        // Remove current level from remaining
-        remaining.retain(|name| !current_level.contains(name));
+        // Remove current level from remaining (use HashSet for O(1) lookup)
+        let current_set: HashSet<&String> = current_level.iter().collect();
+        remaining.retain(|name| !current_set.contains(name));
 
         if !current_level.is_empty() {
             levels.push(current_level);

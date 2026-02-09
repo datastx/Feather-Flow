@@ -29,8 +29,8 @@ pub enum DbError {
     #[error("[D006] Database mutex poisoned: {0}")]
     MutexPoisoned(String),
 
-    /// Internal error
-    #[error("Internal database error: {0}")]
+    /// Internal error (D007)
+    #[error("[D007] Internal database error: {0}")]
     Internal(String),
 }
 

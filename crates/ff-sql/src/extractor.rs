@@ -1,7 +1,7 @@
 //! Table dependency extraction from SQL AST
 
 use sqlparser::ast::{visit_relations, Query, Statement, With};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Extract CTE names from a WITH clause
 fn extract_cte_names(with: &With) -> HashSet<String> {
@@ -46,13 +46,7 @@ pub fn extract_dependencies(statements: &[Statement]) -> HashSet<String> {
     // Then extract all table references
     for stmt in statements {
         let _ = visit_relations(stmt, |relation| {
-            let table_name = relation
-                .0
-                .iter()
-                .map(|part| part.to_string())
-                .collect::<Vec<_>>()
-                .join(".");
-            deps.insert(table_name);
+            deps.insert(crate::object_name_to_string(relation));
             std::ops::ControlFlow::<()>::Continue(())
         });
     }
@@ -66,11 +60,6 @@ pub fn extract_dependencies(statements: &[Statement]) -> HashSet<String> {
     });
 
     deps
-}
-
-/// Extract dependencies from a single statement
-pub fn extract_dependencies_single(statement: &Statement) -> HashSet<String> {
-    extract_dependencies(std::slice::from_ref(statement))
 }
 
 /// Categorize dependencies into models vs external tables
@@ -100,9 +89,9 @@ pub fn categorize_dependencies_with_unknown(
     let mut external_deps = Vec::new();
     let mut unknown_deps = Vec::new();
 
-    // Build lowercase set of known models for case-insensitive matching
-    let known_models_lower: HashSet<String> =
-        known_models.iter().map(|s| s.to_lowercase()).collect();
+    // Build lowercase -> original-case map for O(1) case-insensitive lookup
+    let known_models_map: HashMap<String, &String> =
+        known_models.iter().map(|s| (s.to_lowercase(), s)).collect();
 
     for dep in deps {
         // Normalize the dependency name for comparison
@@ -110,14 +99,8 @@ pub fn categorize_dependencies_with_unknown(
         let dep_lower = dep_normalized.to_lowercase();
 
         // Check for case-insensitive model match
-        if known_models_lower.contains(&dep_lower) {
-            // Find the original model name (with original case) to preserve it
-            let model_name = known_models
-                .iter()
-                .find(|m| m.to_lowercase() == dep_lower)
-                .cloned()
-                .unwrap_or(dep_normalized);
-            model_deps.push(model_name);
+        if let Some(original_name) = known_models_map.get(&dep_lower) {
+            model_deps.push((*original_name).clone());
         } else if external_tables.contains(&dep) || external_tables.contains(&dep_normalized) {
             external_deps.push(dep);
         } else {

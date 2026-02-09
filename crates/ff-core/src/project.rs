@@ -58,7 +58,7 @@ impl Project {
         // Emit deprecation warning if external_tables is used
         if !config.external_tables.is_empty() {
             eprintln!(
-                "Warning: 'external_tables' is deprecated. Use source_paths and source files (kind: sources) instead."
+                "[warn] 'external_tables' is deprecated. Use source_paths and source files (kind: sources) instead."
             );
         }
 
@@ -263,7 +263,7 @@ impl Project {
                     Ok(test) => tests.push(test),
                     Err(e) => {
                         // Log warning but continue - don't fail on a single bad test file
-                        eprintln!("Warning: Failed to load test file: {}", e);
+                        eprintln!("[warn] Failed to load test file: {}", e);
                     }
                 }
             }

@@ -105,7 +105,7 @@ database:
         let args = CleanArgs { dry_run: false };
         let global = GlobalArgs {
             verbose: false,
-            project_dir: project_path.to_str().unwrap().to_string(),
+            project_dir: project_path.to_path_buf(),
             config: None,
             target: None,
         };
@@ -139,7 +139,7 @@ database:
         let args = CleanArgs { dry_run: true };
         let global = GlobalArgs {
             verbose: false,
-            project_dir: project_path.to_str().unwrap().to_string(),
+            project_dir: project_path.to_path_buf(),
             config: None,
             target: None,
         };
@@ -174,7 +174,7 @@ database:
         let args = CleanArgs { dry_run: false };
         let global = GlobalArgs {
             verbose: true,
-            project_dir: project_path.to_str().unwrap().to_string(),
+            project_dir: project_path.to_path_buf(),
             config: None,
             target: None,
         };

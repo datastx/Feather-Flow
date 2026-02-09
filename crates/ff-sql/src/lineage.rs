@@ -501,11 +501,7 @@ fn extract_table_factor_alias(factor: &TableFactor, lineage: &mut ModelLineage) 
 
 /// Convert ObjectName to string
 fn object_name_to_string(name: &ObjectName) -> String {
-    name.0
-        .iter()
-        .map(|part| part.to_string())
-        .collect::<Vec<_>>()
-        .join(".")
+    crate::object_name_to_string(name)
 }
 
 /// Extract lineage information from an expression

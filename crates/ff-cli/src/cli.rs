@@ -1,6 +1,7 @@
 //! CLI argument definitions using clap derive API
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
 
 /// Featherflow - A dbt-like CLI tool for SQL templating and execution
 #[derive(Parser, Debug)]
@@ -25,7 +26,7 @@ pub struct GlobalArgs {
 
     /// Path to project directory
     #[arg(short = 'p', long, global = true, default_value = ".")]
-    pub project_dir: String,
+    pub project_dir: PathBuf,
 
     /// Override config file path
     #[arg(short, long, global = true)]

@@ -24,3 +24,14 @@ pub use lineage::{
 pub use parser::SqlParser;
 pub use suggestions::{suggest_tests, ColumnSuggestions, ModelSuggestions, TestSuggestion};
 pub use validator::validate_no_complex_queries;
+
+/// Convert a sqlparser `ObjectName` to a dot-separated string.
+///
+/// Shared utility used by both `extractor` and `lineage` modules.
+pub(crate) fn object_name_to_string(name: &sqlparser::ast::ObjectName) -> String {
+    name.0
+        .iter()
+        .map(|part| part.to_string())
+        .collect::<Vec<_>>()
+        .join(".")
+}

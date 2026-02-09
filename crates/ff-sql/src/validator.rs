@@ -4,7 +4,8 @@ use crate::error::{SqlError, SqlResult};
 use sqlparser::ast::{Query, SetExpr, Statement, TableFactor, TableWithJoins};
 
 /// Validate that SQL contains only supported statements
-pub fn validate_statements(statements: &[Statement]) -> SqlResult<()> {
+#[cfg(test)]
+fn validate_statements(statements: &[Statement]) -> SqlResult<()> {
     for stmt in statements {
         validate_statement(stmt)?;
     }
@@ -12,7 +13,8 @@ pub fn validate_statements(statements: &[Statement]) -> SqlResult<()> {
 }
 
 /// Validate a single SQL statement
-pub fn validate_statement(statement: &Statement) -> SqlResult<()> {
+#[cfg(test)]
+fn validate_statement(statement: &Statement) -> SqlResult<()> {
     match statement {
         // Supported statements for models
         Statement::Query(_) => Ok(()),
@@ -40,7 +42,8 @@ pub fn validate_statement(statement: &Statement) -> SqlResult<()> {
 }
 
 /// Check if SQL is a SELECT statement
-pub fn is_select_statement(statement: &Statement) -> bool {
+#[cfg(test)]
+fn is_select_statement(statement: &Statement) -> bool {
     matches!(statement, Statement::Query(_))
 }
 
@@ -48,7 +51,7 @@ pub fn is_select_statement(statement: &Statement) -> bool {
 ///
 /// Every transform should be its own model — CTEs violate the
 /// directory-per-model architecture.
-pub fn validate_no_ctes(statements: &[Statement]) -> SqlResult<()> {
+fn validate_no_ctes(statements: &[Statement]) -> SqlResult<()> {
     for stmt in statements {
         if let Statement::Query(query) = stmt {
             if let Some(with) = &query.with {
@@ -68,7 +71,7 @@ pub fn validate_no_ctes(statements: &[Statement]) -> SqlResult<()> {
 ///
 /// Scalar subqueries in SELECT/WHERE/HAVING are still allowed —
 /// only FROM-clause derived tables are rejected.
-pub fn validate_no_derived_tables(statements: &[Statement]) -> SqlResult<()> {
+fn validate_no_derived_tables(statements: &[Statement]) -> SqlResult<()> {
     for stmt in statements {
         if let Statement::Query(query) = stmt {
             check_query_for_derived_tables(query)?;

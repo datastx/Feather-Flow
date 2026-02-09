@@ -9,14 +9,6 @@ pub enum JinjaError {
     #[error("[J001] Jinja render error: {0}")]
     RenderError(String),
 
-    /// Unknown variable (J002)
-    #[error("[J002] Undefined variable '{name}'. Define it in vars: section of featherflow.yml")]
-    UnknownVariable { name: String },
-
-    /// Invalid config key (J003)
-    #[error("[J003] Invalid config key '{key}'. Valid keys: materialized, schema, tags")]
-    InvalidConfigKey { key: String },
-
     /// Internal error
     #[error("Internal error: {0}")]
     Internal(String),

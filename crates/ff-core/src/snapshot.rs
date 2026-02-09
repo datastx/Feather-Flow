@@ -5,6 +5,7 @@
 //! of changes over time.
 
 use crate::error::CoreError;
+use crate::sql_utils::{quote_ident, quote_qualified};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -108,7 +109,7 @@ impl SnapshotConfig {
         Ok(())
     }
 
-    /// Get the qualified name for the snapshot table
+    /// Get the unquoted qualified name for the snapshot table
     pub fn qualified_name(&self) -> String {
         match &self.schema {
             Some(schema) => format!("{}.{}", schema, self.name),
@@ -175,23 +176,23 @@ impl Snapshot {
 
     /// Generate the SQL to create the snapshot table if it doesn't exist
     pub fn create_table_sql(&self, source_columns: &[(String, String)]) -> String {
-        let qualified_name = self.config.qualified_name();
+        let quoted_name = quote_qualified(&self.config.qualified_name());
 
         // Build column definitions from source columns plus SCD columns
         let mut columns: Vec<String> = source_columns
             .iter()
-            .map(|(name, dtype)| format!("    {} {}", name, dtype))
+            .map(|(name, dtype)| format!("    {} {}", quote_ident(name), dtype))
             .collect();
 
         // Add SCD Type 2 tracking columns
-        columns.push("    dbt_scd_id VARCHAR".to_string());
-        columns.push("    dbt_updated_at TIMESTAMP".to_string());
-        columns.push("    dbt_valid_from TIMESTAMP".to_string());
-        columns.push("    dbt_valid_to TIMESTAMP".to_string());
+        columns.push(format!("    {} VARCHAR", quote_ident("dbt_scd_id")));
+        columns.push(format!("    {} TIMESTAMP", quote_ident("dbt_updated_at")));
+        columns.push(format!("    {} TIMESTAMP", quote_ident("dbt_valid_from")));
+        columns.push(format!("    {} TIMESTAMP", quote_ident("dbt_valid_to")));
 
         format!(
             "CREATE TABLE IF NOT EXISTS {} (\n{}\n)",
-            qualified_name,
+            quoted_name,
             columns.join(",\n")
         )
     }
@@ -199,70 +200,77 @@ impl Snapshot {
     /// Generate the SQL to get current (active) records from snapshot
     pub fn current_records_sql(&self) -> String {
         format!(
-            "SELECT * FROM {} WHERE dbt_valid_to IS NULL",
-            self.config.qualified_name()
+            "SELECT * FROM {} WHERE {} IS NULL",
+            quote_qualified(&self.config.qualified_name()),
+            quote_ident("dbt_valid_to")
         )
     }
 
     /// Generate SQL to detect new records (INSERT)
     pub fn new_records_sql(&self, source_alias: &str, snapshot_alias: &str) -> String {
+        let src_alias = quote_ident(source_alias);
+        let snap_alias = quote_ident(snapshot_alias);
         let unique_key_conditions: Vec<String> = self
             .config
             .unique_key
             .iter()
-            .map(|k| format!("{}.{} = {}.{}", snapshot_alias, k, source_alias, k))
+            .map(|k| {
+                let qk = quote_ident(k);
+                format!("{snap_alias}.{qk} = {src_alias}.{qk}")
+            })
             .collect();
+
+        let first_key = quote_ident(
+            self.config
+                .unique_key
+                .first()
+                .expect("unique_key validated non-empty"),
+        );
 
         format!(
             "SELECT {source}.* \
-             FROM {source} AS {source_alias} \
-             LEFT JOIN ({current}) AS {snapshot_alias} \
+             FROM {source} AS {src_alias} \
+             LEFT JOIN ({current}) AS {snap_alias} \
                ON {conditions} \
-             WHERE {snapshot_alias}.{first_key} IS NULL",
-            source = self.config.source,
-            source_alias = source_alias,
+             WHERE {snap_alias}.{first_key} IS NULL",
+            source = quote_qualified(&self.config.source),
+            src_alias = src_alias,
             current = self.current_records_sql(),
-            snapshot_alias = snapshot_alias,
+            snap_alias = snap_alias,
             conditions = unique_key_conditions.join(" AND "),
-            first_key = self
-                .config
-                .unique_key
-                .first()
-                .map(String::as_str)
-                .unwrap_or("id"),
+            first_key = first_key,
         )
     }
 
     /// Generate SQL to detect changed records based on strategy
     pub fn changed_records_sql(&self, source_alias: &str, snapshot_alias: &str) -> String {
+        let src_alias = quote_ident(source_alias);
+        let snap_alias = quote_ident(snapshot_alias);
         let unique_key_conditions: Vec<String> = self
             .config
             .unique_key
             .iter()
-            .map(|k| format!("{}.{} = {}.{}", snapshot_alias, k, source_alias, k))
+            .map(|k| {
+                let qk = quote_ident(k);
+                format!("{snap_alias}.{qk} = {src_alias}.{qk}")
+            })
             .collect();
 
         let change_condition = match self.config.strategy {
             SnapshotStrategy::Timestamp => {
-                let updated_at = self.config.updated_at.as_deref().unwrap_or("updated_at");
-                format!(
-                    "{}.{} > {}.dbt_updated_at",
-                    source_alias, updated_at, snapshot_alias
-                )
+                let updated_at =
+                    quote_ident(self.config.updated_at.as_deref().unwrap_or("updated_at"));
+                let dbt_updated_at = quote_ident("dbt_updated_at");
+                format!("{src_alias}.{updated_at} > {snap_alias}.{dbt_updated_at}")
             }
             SnapshotStrategy::Check => {
-                // For check strategy, compare the check_cols
                 let col_comparisons: Vec<String> = self
                     .config
                     .check_cols
                     .iter()
                     .map(|c| {
-                        format!(
-                            "({s}.{c} IS DISTINCT FROM {snap}.{c})",
-                            s = source_alias,
-                            snap = snapshot_alias,
-                            c = c
-                        )
+                        let qc = quote_ident(c);
+                        format!("({src_alias}.{qc} IS DISTINCT FROM {snap_alias}.{qc})")
                     })
                     .collect();
                 col_comparisons.join(" OR ")
@@ -271,14 +279,14 @@ impl Snapshot {
 
         format!(
             "SELECT {source}.* \
-             FROM {source} AS {source_alias} \
-             INNER JOIN ({current}) AS {snapshot_alias} \
+             FROM {source} AS {src_alias} \
+             INNER JOIN ({current}) AS {snap_alias} \
                ON {conditions} \
              WHERE {change_condition}",
-            source = self.config.source,
-            source_alias = source_alias,
+            source = quote_qualified(&self.config.source),
+            src_alias = src_alias,
             current = self.current_records_sql(),
-            snapshot_alias = snapshot_alias,
+            snap_alias = snap_alias,
             conditions = unique_key_conditions.join(" AND "),
             change_condition = change_condition,
         )
@@ -286,40 +294,54 @@ impl Snapshot {
 
     /// Generate SQL to detect hard deletes (records missing from source)
     pub fn deleted_records_sql(&self, source_alias: &str, snapshot_alias: &str) -> String {
+        let src_alias = quote_ident(source_alias);
+        let snap_alias = quote_ident(snapshot_alias);
         let unique_key_conditions: Vec<String> = self
             .config
             .unique_key
             .iter()
-            .map(|k| format!("{}.{} = {}.{}", snapshot_alias, k, source_alias, k))
+            .map(|k| {
+                let qk = quote_ident(k);
+                format!("{snap_alias}.{qk} = {src_alias}.{qk}")
+            })
             .collect();
 
-        format!(
-            "SELECT {snapshot_alias}.* \
-             FROM ({current}) AS {snapshot_alias} \
-             LEFT JOIN {source} AS {source_alias} \
-               ON {conditions} \
-             WHERE {source_alias}.{first_key} IS NULL",
-            current = self.current_records_sql(),
-            snapshot_alias = snapshot_alias,
-            source = self.config.source,
-            source_alias = source_alias,
-            conditions = unique_key_conditions.join(" AND "),
-            first_key = self
-                .config
+        let first_key = quote_ident(
+            self.config
                 .unique_key
                 .first()
-                .map(String::as_str)
-                .unwrap_or("id"),
+                .expect("unique_key validated non-empty"),
+        );
+
+        format!(
+            "SELECT {snap_alias}.* \
+             FROM ({current}) AS {snap_alias} \
+             LEFT JOIN {source} AS {src_alias} \
+               ON {conditions} \
+             WHERE {src_alias}.{first_key} IS NULL",
+            current = self.current_records_sql(),
+            snap_alias = snap_alias,
+            source = quote_qualified(&self.config.source),
+            src_alias = src_alias,
+            conditions = unique_key_conditions.join(" AND "),
+            first_key = first_key,
         )
     }
 
     /// Generate a unique SCD ID for a record
     pub fn scd_id_expression(&self) -> String {
         // Create a hash of unique key columns plus timestamp
-        let key_cols = self.config.unique_key.join(" || '|' || ");
+        let key_cols: Vec<String> = self
+            .config
+            .unique_key
+            .iter()
+            .map(|k| quote_ident(k))
+            .collect();
+        let key_expr = key_cols.join(" || '|' || ");
         format!(
-            "MD5({} || '|' || CAST(dbt_valid_from AS VARCHAR))",
-            key_cols
+            "MD5({} || '|' || CAST({} AS VARCHAR))",
+            key_expr,
+            quote_ident("dbt_valid_from")
         )
     }
 }
@@ -527,12 +549,12 @@ snapshots:
         ];
 
         let sql = snapshot.create_table_sql(&source_columns);
-        assert!(sql.contains("CREATE TABLE IF NOT EXISTS customer_history"));
-        assert!(sql.contains("id INTEGER"));
-        assert!(sql.contains("name VARCHAR"));
-        assert!(sql.contains("dbt_scd_id VARCHAR"));
-        assert!(sql.contains("dbt_valid_from TIMESTAMP"));
-        assert!(sql.contains("dbt_valid_to TIMESTAMP"));
+        assert!(sql.contains(r#"CREATE TABLE IF NOT EXISTS "customer_history""#));
+        assert!(sql.contains(r#""id" INTEGER"#));
+        assert!(sql.contains(r#""name" VARCHAR"#));
+        assert!(sql.contains(r#""dbt_scd_id" VARCHAR"#));
+        assert!(sql.contains(r#""dbt_valid_from" TIMESTAMP"#));
+        assert!(sql.contains(r#""dbt_valid_to" TIMESTAMP"#));
     }
 
     #[test]

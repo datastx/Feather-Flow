@@ -1,14 +1,16 @@
 //! Pre/post-hook execution, schema creation, database connection, and contract validation.
 
 use anyhow::{Context, Result};
+use ff_core::config::Config;
 use ff_core::contract::{validate_contract, ContractValidationResult, ViolationType};
 use ff_core::model::ModelSchema;
 use ff_core::Project;
-use ff_db::{Database, DuckDbBackend};
+use ff_db::Database;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::cli::GlobalArgs;
+use crate::commands::common;
 
 use super::compile::CompiledModel;
 
@@ -20,31 +22,16 @@ pub(super) fn create_database_connection(
     project: &Project,
     global: &GlobalArgs,
 ) -> Result<Arc<dyn Database>> {
-    use ff_core::config::Config;
-
-    // Resolve target from CLI flag or FF_TARGET env var
-    let target = Config::resolve_target(global.target.as_deref());
-
-    // Get database config, applying target overrides if specified
-    let db_config = project
-        .config
-        .get_database_config(target.as_deref())
-        .context("Failed to get database configuration")?;
-
     if global.verbose {
+        let target = Config::resolve_target(global.target.as_deref());
         if let Some(ref target_name) = target {
-            eprintln!(
-                "[verbose] Using target '{}' with database: {}",
-                target_name, db_config.path
-            );
+            eprintln!("[verbose] Using target '{}' database", target_name);
         } else {
-            eprintln!("[verbose] Using default database: {}", db_config.path);
+            eprintln!("[verbose] Using default database");
         }
     }
 
-    let db: Arc<dyn Database> =
-        Arc::new(DuckDbBackend::new(&db_config.path).context("Failed to connect to database")?);
-    Ok(db)
+    common::create_database_connection(&project.config, global.target.as_deref())
 }
 
 /// Create all required schemas before running models
@@ -101,7 +88,7 @@ pub(crate) async fn validate_model_contract(
     qualified_name: &str,
     model_schema: Option<&ModelSchema>,
     verbose: bool,
-) -> Result<Option<ContractValidationResult>, String> {
+) -> Result<Option<ContractValidationResult>> {
     // Check if model has a schema with contract
     let schema = match model_schema {
         Some(s) if s.contract.is_some() => s,
@@ -113,15 +100,10 @@ pub(crate) async fn validate_model_contract(
     }
 
     // Get actual table schema from database
-    let actual_columns = match db.get_table_schema(qualified_name).await {
-        Ok(cols) => cols,
-        Err(e) => {
-            return Err(format!(
-                "Failed to get schema for contract validation: {}",
-                e
-            ));
-        }
-    };
+    let actual_columns = db
+        .get_table_schema(qualified_name)
+        .await
+        .context("Failed to get schema for contract validation")?;
 
     // Validate the contract
     let result = validate_contract(model_name, schema, &actual_columns);
@@ -167,10 +149,10 @@ pub(crate) async fn validate_model_contract(
             .iter()
             .filter(|v| !matches!(v.violation_type, ViolationType::ExtraColumn { .. }))
             .count();
-        return Err(format!(
+        anyhow::bail!(
             "Contract enforcement failed: {} violation(s)",
             violation_count
-        ));
+        );
     }
 
     Ok(Some(result))

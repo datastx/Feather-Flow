@@ -2,17 +2,16 @@
 
 use anyhow::{Context, Result};
 use ff_analysis::{
-    lower_statement, parse_sql_type, propagate_schemas, AnalysisContext, Nullability, PassManager,
-    PlanPassManager, RelSchema, SchemaCatalog, Severity, TypedColumn,
+    lower_statement, propagate_schemas, AnalysisContext, PassManager, PlanPassManager, RelSchema,
+    SchemaCatalog, Severity,
 };
 use ff_core::dag::ModelDag;
-use ff_core::source::build_source_lookup;
 use ff_jinja::JinjaEnvironment;
 use ff_sql::{extract_column_lineage, ProjectLineage, SqlParser};
 use std::collections::{HashMap, HashSet};
 
 use crate::cli::{AnalyzeArgs, AnalyzeOutput, AnalyzeSeverity, GlobalArgs};
-use crate::commands::common::load_project;
+use crate::commands::common::{build_external_tables_lookup, build_schema_catalog, load_project};
 
 /// Execute the analyze command
 pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
@@ -25,51 +24,9 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
 
     let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
 
-    // Build schema catalog from YAML definitions
-    let mut schema_catalog: SchemaCatalog = HashMap::new();
-    let mut yaml_schemas: HashMap<String, RelSchema> = HashMap::new();
-
-    for (name, model) in &project.models {
-        if let Some(schema) = &model.schema {
-            let columns: Vec<TypedColumn> = schema
-                .columns
-                .iter()
-                .map(|col| {
-                    let sql_type = parse_sql_type(&col.data_type);
-                    let nullability = if col
-                        .constraints
-                        .iter()
-                        .any(|c| matches!(c, ff_core::ColumnConstraint::NotNull))
-                    {
-                        Nullability::NotNull
-                    } else {
-                        Nullability::Unknown
-                    };
-                    TypedColumn {
-                        name: col.name.clone(),
-                        source_table: None,
-                        sql_type,
-                        nullability,
-                        provenance: vec![],
-                    }
-                })
-                .collect();
-            let rel_schema = RelSchema::new(columns);
-            schema_catalog.insert(name.to_string(), rel_schema.clone());
-            yaml_schemas.insert(name.to_string(), rel_schema);
-        }
-    }
-
-    // Add external tables/sources to catalog
-    let source_tables = build_source_lookup(&project.sources);
-    let mut external_tables: HashSet<String> =
-        project.config.external_tables.iter().cloned().collect();
-    external_tables.extend(source_tables);
-    for ext in &external_tables {
-        if !schema_catalog.contains_key(ext) {
-            schema_catalog.insert(ext.clone(), RelSchema::empty());
-        }
-    }
+    // Build schema catalog from YAML definitions and external tables
+    let external_tables = build_external_tables_lookup(&project);
+    let (mut schema_catalog, yaml_schemas) = build_schema_catalog(&project, &external_tables);
 
     // Build dependency map and DAG
     let dep_map: HashMap<String, Vec<String>> = project

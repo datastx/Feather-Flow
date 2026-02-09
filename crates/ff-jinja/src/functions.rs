@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 /// Captured config values from config() calls
-pub type ConfigCapture = Arc<Mutex<HashMap<String, Value>>>;
+pub(crate) type ConfigCapture = Arc<Mutex<HashMap<String, Value>>>;
 
 /// State for is_incremental() function
 #[derive(Debug, Clone, Default)]
@@ -48,7 +48,7 @@ impl IncrementalState {
 ///   WHERE updated_at > (SELECT MAX(updated_at) FROM {{ this }})
 /// {% endif %}
 /// ```
-pub fn make_is_incremental_fn(
+pub(crate) fn make_is_incremental_fn(
     state: IncrementalState,
 ) -> impl Fn() -> bool + Send + Sync + Clone + 'static {
     move || state.is_incremental_run()
@@ -60,7 +60,9 @@ pub fn make_is_incremental_fn(
 /// ```jinja
 /// SELECT MAX(updated_at) FROM {{ this }}
 /// ```
-pub fn make_this_fn(qualified_name: String) -> impl Fn() -> String + Send + Sync + Clone + 'static {
+pub(crate) fn make_this_fn(
+    qualified_name: String,
+) -> impl Fn() -> String + Send + Sync + Clone + 'static {
     move || qualified_name.clone()
 }
 
@@ -70,7 +72,7 @@ pub fn make_this_fn(qualified_name: String) -> impl Fn() -> String + Send + Sync
 /// ```jinja
 /// {{ config(materialized='table', schema='staging') }}
 /// ```
-pub fn make_config_fn(
+pub(crate) fn make_config_fn(
     capture: ConfigCapture,
 ) -> impl Fn(Kwargs) -> Result<String, Error> + Send + Sync + Clone + 'static {
     move |kwargs: Kwargs| {
@@ -100,7 +102,7 @@ pub fn make_config_fn(
 /// {{ var('start_date') }}
 /// {{ var('missing', 'default_value') }}
 /// ```
-pub fn make_var_fn(
+pub(crate) fn make_var_fn(
     vars: HashMap<String, serde_json::Value>,
 ) -> impl Fn(&str, Option<Value>) -> Result<Value, Error> + Send + Sync + Clone + 'static {
     move |name: &str, default: Option<Value>| {
@@ -147,7 +149,7 @@ fn json_to_minijinja_value(json: &serde_json::Value) -> Value {
 }
 
 /// Convert serde_yaml::Value to serde_json::Value
-pub fn yaml_to_json(yaml: &serde_yaml::Value) -> serde_json::Value {
+pub(crate) fn yaml_to_json(yaml: &serde_yaml::Value) -> serde_json::Value {
     match yaml {
         serde_yaml::Value::Null => serde_json::Value::Null,
         serde_yaml::Value::Bool(b) => serde_json::Value::Bool(*b),

@@ -60,7 +60,19 @@ pub fn generate_accepted_values_test(
             .map(|v| format!("'{}'", escape_sql_string(v)))
             .collect()
     } else {
-        values.iter().map(|v| escape_sql_string(v)).collect()
+        // When unquoted, values are intended to be numeric literals.
+        // Always quote them to prevent SQL injection from non-numeric values.
+        values
+            .iter()
+            .map(|v| {
+                // If the value parses as a number, emit it unquoted; otherwise quote it.
+                if v.parse::<f64>().is_ok() || v.parse::<i64>().is_ok() {
+                    v.clone()
+                } else {
+                    format!("'{}'", escape_sql_string(v))
+                }
+            })
+            .collect()
     };
     let values_list = formatted_values.join(", ");
     let qt = quote_qualified(table);
@@ -73,6 +85,7 @@ pub fn generate_accepted_values_test(
 ///
 /// Returns rows where the column value is less than the threshold.
 pub fn generate_min_value_test(table: &str, column: &str, min: f64) -> String {
+    assert!(min.is_finite(), "min_value threshold must be finite");
     format!(
         "SELECT * FROM {} WHERE {} < {}",
         quote_qualified(table),
@@ -85,6 +98,7 @@ pub fn generate_min_value_test(table: &str, column: &str, min: f64) -> String {
 ///
 /// Returns rows where the column value is greater than the threshold.
 pub fn generate_max_value_test(table: &str, column: &str, max: f64) -> String {
+    assert!(max.is_finite(), "max_value threshold must be finite");
     format!(
         "SELECT * FROM {} WHERE {} > {}",
         quote_qualified(table),
@@ -97,12 +111,11 @@ pub fn generate_max_value_test(table: &str, column: &str, max: f64) -> String {
 ///
 /// Returns rows where the column value does not match the pattern.
 pub fn generate_regex_test(table: &str, column: &str, pattern: &str) -> String {
-    let escaped_pattern = pattern.replace('\'', "''");
     format!(
         "SELECT * FROM {} WHERE NOT regexp_matches({}, '{}')",
         quote_qualified(table),
         quote_ident(column),
-        escaped_pattern
+        escape_sql_string(pattern)
     )
 }
 

@@ -1,6 +1,6 @@
 //! Validate command implementation
 
-use crate::commands::common::{self, load_project};
+use crate::commands::common::{self, build_schema_catalog, load_project};
 use anyhow::{Context, Result};
 use ff_core::dag::ModelDag;
 use ff_core::manifest::Manifest;
@@ -525,56 +525,15 @@ fn validate_static_analysis(
     global: &GlobalArgs,
     ctx: &mut ValidationContext,
 ) {
-    use ff_analysis::{
-        parse_sql_type, propagate_schemas, Nullability, RelSchema, SchemaCatalog, TypedColumn,
-    };
+    use ff_analysis::propagate_schemas;
 
     print!("Running static analysis... ");
 
-    // Build schema catalog from YAML definitions
-    let mut schema_catalog: SchemaCatalog = HashMap::new();
-    let mut yaml_schemas: HashMap<String, RelSchema> = HashMap::new();
-
-    for (name, model) in &project.models {
-        if let Some(schema) = &model.schema {
-            let columns: Vec<TypedColumn> = schema
-                .columns
-                .iter()
-                .map(|col| {
-                    let sql_type = parse_sql_type(&col.data_type);
-                    let nullability = if col
-                        .constraints
-                        .iter()
-                        .any(|c| matches!(c, ff_core::ColumnConstraint::NotNull))
-                    {
-                        Nullability::NotNull
-                    } else {
-                        Nullability::Unknown
-                    };
-                    TypedColumn {
-                        name: col.name.clone(),
-                        source_table: None,
-                        sql_type,
-                        nullability,
-                        provenance: vec![],
-                    }
-                })
-                .collect();
-            let rel_schema = RelSchema::new(columns);
-            schema_catalog.insert(name.to_string(), rel_schema.clone());
-            yaml_schemas.insert(name.to_string(), rel_schema);
-        }
-    }
-
-    // Add external tables/sources to catalog
+    // Build schema catalog from YAML definitions and external tables
     let source_tables = build_source_lookup(&project.sources);
     let mut all_external: HashSet<String> = external_tables.clone();
     all_external.extend(source_tables);
-    for ext in &all_external {
-        if !schema_catalog.contains_key(ext) {
-            schema_catalog.insert(ext.clone(), RelSchema::empty());
-        }
-    }
+    let (schema_catalog, yaml_schemas) = build_schema_catalog(project, &all_external);
 
     // Build topological order from dependencies
     let dag = match ModelDag::build(dependencies) {

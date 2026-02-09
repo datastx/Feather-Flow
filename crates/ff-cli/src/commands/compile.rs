@@ -17,7 +17,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::cli::{CompileArgs, GlobalArgs, OutputFormat};
-use crate::commands::common::{self, load_project, RunStatus};
+use crate::commands::common::{self, build_schema_catalog, load_project, RunStatus};
 
 /// Compile result for a single model
 #[derive(Debug, Clone, Serialize)]
@@ -45,7 +45,7 @@ struct CompileResults {
 use crate::commands::common::{filter_models, parse_hooks_from_config};
 
 /// Intermediate compilation result before ephemeral inlining
-struct CompiledModel {
+struct CompileOutput {
     name: String,
     sql: String,
     materialization: Materialization,
@@ -148,7 +148,7 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
     let default_materialization = project.config.materialization;
 
     // Phase 1: Compile all models (render Jinja, parse SQL, extract dependencies)
-    let mut compiled_models: Vec<CompiledModel> = Vec::new();
+    let mut compiled_models: Vec<CompileOutput> = Vec::new();
     let mut materializations: HashMap<String, Materialization> = HashMap::new();
 
     let compile_ctx = CompileContext {
@@ -418,7 +418,7 @@ fn compile_model_phase1(
     project: &mut Project,
     name: &str,
     ctx: &CompileContext<'_>,
-) -> Result<CompiledModel> {
+) -> Result<CompileOutput> {
     let model = project
         .get_model_mut(name)
         .context(format!("Model not found: {}", name))?;
@@ -512,7 +512,7 @@ fn compile_model_phase1(
         ff_core::query_comment::build_query_comment(&metadata)
     });
 
-    Ok(CompiledModel {
+    Ok(CompileOutput {
         name: name.to_string(),
         sql: rendered,
         materialization: mat,
@@ -584,7 +584,7 @@ fn compute_compiled_path(
 #[allow(clippy::too_many_arguments)]
 fn run_static_analysis(
     project: &Project,
-    compiled_models: &[CompiledModel],
+    compiled_models: &[CompileOutput],
     topo_order: &[String],
     _known_models: &HashSet<String>,
     external_tables: &HashSet<String>,
@@ -592,55 +592,14 @@ fn run_static_analysis(
     global: &GlobalArgs,
     json_mode: bool,
 ) -> Result<()> {
-    use ff_analysis::{
-        parse_sql_type, propagate_schemas, Nullability, RelSchema, SchemaCatalog, TypedColumn,
-    };
+    use ff_analysis::propagate_schemas;
 
     if global.verbose {
         eprintln!("[verbose] Running DataFusion static analysis...");
     }
 
-    // Build schema catalog from YAML definitions
-    let mut schema_catalog: SchemaCatalog = HashMap::new();
-    let mut yaml_schemas: HashMap<String, RelSchema> = HashMap::new();
-
-    for (name, model) in &project.models {
-        if let Some(schema) = &model.schema {
-            let columns: Vec<TypedColumn> = schema
-                .columns
-                .iter()
-                .map(|col| {
-                    let sql_type = parse_sql_type(&col.data_type);
-                    let nullability = if col
-                        .constraints
-                        .iter()
-                        .any(|c| matches!(c, ff_core::ColumnConstraint::NotNull))
-                    {
-                        Nullability::NotNull
-                    } else {
-                        Nullability::Unknown
-                    };
-                    TypedColumn {
-                        name: col.name.clone(),
-                        source_table: None,
-                        sql_type,
-                        nullability,
-                        provenance: vec![],
-                    }
-                })
-                .collect();
-            let rel_schema = RelSchema::new(columns);
-            schema_catalog.insert(name.to_string(), rel_schema.clone());
-            yaml_schemas.insert(name.to_string(), rel_schema);
-        }
-    }
-
-    // Add external tables to catalog
-    for ext in external_tables {
-        if !schema_catalog.contains_key(ext) {
-            schema_catalog.insert(ext.clone(), RelSchema::empty());
-        }
-    }
+    // Build schema catalog from YAML definitions and external tables
+    let (schema_catalog, yaml_schemas) = build_schema_catalog(project, external_tables);
 
     // Build SQL sources from compiled models
     let sql_sources: HashMap<String, String> = compiled_models

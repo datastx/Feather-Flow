@@ -137,7 +137,7 @@ pub async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
 fn build_csv_options(seed: &Seed, default_schema: Option<&str>) -> CsvLoadOptions {
     let mut opts = CsvLoadOptions::new()
         .with_delimiter(seed.delimiter())
-        .with_column_types(seed.column_types())
+        .with_column_types(seed.column_types().clone())
         .with_quote_columns(seed.quote_columns());
 
     if let Some(schema) = seed.target_schema().or(default_schema) {
