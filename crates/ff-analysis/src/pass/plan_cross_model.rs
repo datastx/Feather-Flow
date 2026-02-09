@@ -119,27 +119,7 @@ mod tests {
     use crate::ir::schema::RelSchema;
     use crate::ir::types::Nullability;
     use crate::lowering::SchemaCatalog;
-    use crate::test_utils::{int32, make_col, varchar};
-    use ff_core::dag::ModelDag;
-    use ff_core::Project;
-    use ff_sql::ProjectLineage;
-    use std::path::PathBuf;
-
-    fn make_test_context() -> AnalysisContext {
-        let config: ff_core::config::Config = serde_yaml::from_str("name: test_project").unwrap();
-        let project = Project {
-            root: PathBuf::from("/tmp/test"),
-            config,
-            models: HashMap::new(),
-            tests: vec![],
-            singular_tests: vec![],
-            sources: vec![],
-            exposures: vec![],
-            metrics: vec![],
-        };
-        let dag = ModelDag::build(&HashMap::new()).unwrap();
-        AnalysisContext::new(project, dag, HashMap::new(), ProjectLineage::new())
-    }
+    use crate::test_utils::*;
 
     #[test]
     fn test_a040_extra_column_in_sql() {
@@ -167,7 +147,7 @@ mod tests {
         );
 
         let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &initial_catalog);
-        let ctx = make_test_context();
+        let ctx = make_ctx();
         let pass = CrossModelConsistency;
         let diagnostics = pass.run_project(&result.model_plans, &ctx);
 
@@ -205,7 +185,7 @@ mod tests {
         );
 
         let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &initial_catalog);
-        let ctx = make_test_context();
+        let ctx = make_ctx();
         let pass = CrossModelConsistency;
         let diagnostics = pass.run_project(&result.model_plans, &ctx);
 
@@ -245,7 +225,7 @@ mod tests {
         );
 
         let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &initial_catalog);
-        let ctx = make_test_context();
+        let ctx = make_ctx();
         let pass = CrossModelConsistency;
         let diagnostics = pass.run_project(&result.model_plans, &ctx);
 
@@ -254,5 +234,298 @@ mod tests {
             "Should have no diagnostics for matching schemas, got: {:?}",
             diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
         );
+    }
+
+    // ── A040: Additional type mismatch / extra / missing tests ──────────
+
+    #[test]
+    fn test_a040_type_mismatch() {
+        // VARCHAR vs INTEGER are NOT compatible (different type families)
+        let mut initial_catalog: SchemaCatalog = HashMap::new();
+        initial_catalog.insert(
+            "source".to_string(),
+            RelSchema::new(vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("code", varchar(), Nullability::Nullable),
+            ]),
+        );
+
+        let topo_order = vec!["test_model".to_string()];
+        let mut sql_sources = HashMap::new();
+        sql_sources.insert(
+            "test_model".to_string(),
+            "SELECT id, code FROM source".to_string(),
+        );
+
+        // YAML declares code as INTEGER, but SQL infers VARCHAR
+        let mut yaml_schemas = HashMap::new();
+        yaml_schemas.insert(
+            "test_model".to_string(),
+            RelSchema::new(vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("code", int32(), Nullability::Nullable),
+            ]),
+        );
+
+        let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &initial_catalog);
+        let ctx = make_ctx();
+        let diagnostics = CrossModelConsistency.run_project(&result.model_plans, &ctx);
+
+        assert!(
+            diagnostics.iter().any(|d| d.code == DiagnosticCode::A040
+                && d.column.as_deref() == Some("code")
+                && d.message.contains("type mismatch")),
+            "Should emit A040 for type mismatch on 'code', got: {:?}",
+            diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_a040_multiple_extras() {
+        let mut initial_catalog: SchemaCatalog = HashMap::new();
+        initial_catalog.insert(
+            "source".to_string(),
+            RelSchema::new(vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("name", varchar(), Nullability::Nullable),
+                make_col("email", varchar(), Nullability::Nullable),
+            ]),
+        );
+
+        let topo_order = vec!["test_model".to_string()];
+        let mut sql_sources = HashMap::new();
+        sql_sources.insert(
+            "test_model".to_string(),
+            "SELECT id, name, email FROM source".to_string(),
+        );
+
+        // YAML only declares 'id' — both 'name' and 'email' are extra
+        let mut yaml_schemas = HashMap::new();
+        yaml_schemas.insert(
+            "test_model".to_string(),
+            RelSchema::new(vec![make_col("id", int32(), Nullability::NotNull)]),
+        );
+
+        let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &initial_catalog);
+        let ctx = make_ctx();
+        let diagnostics = CrossModelConsistency.run_project(&result.model_plans, &ctx);
+
+        let extras: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| {
+                d.code == DiagnosticCode::A040 && d.message.contains("not declared in YAML")
+            })
+            .collect();
+        assert!(
+            extras.len() >= 2,
+            "Should emit at least 2 A040 diagnostics for extra columns, got {}",
+            extras.len()
+        );
+    }
+
+    #[test]
+    fn test_a040_combo_extra_and_missing() {
+        let mut initial_catalog: SchemaCatalog = HashMap::new();
+        initial_catalog.insert(
+            "source".to_string(),
+            RelSchema::new(vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("name", varchar(), Nullability::Nullable),
+            ]),
+        );
+
+        let topo_order = vec!["test_model".to_string()];
+        let mut sql_sources = HashMap::new();
+        sql_sources.insert(
+            "test_model".to_string(),
+            "SELECT id, name FROM source".to_string(),
+        );
+
+        // YAML declares 'id' and 'email' (missing from SQL), but not 'name' (extra in SQL)
+        let mut yaml_schemas = HashMap::new();
+        yaml_schemas.insert(
+            "test_model".to_string(),
+            RelSchema::new(vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("email", varchar(), Nullability::Nullable),
+            ]),
+        );
+
+        let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &initial_catalog);
+        let ctx = make_ctx();
+        let diagnostics = CrossModelConsistency.run_project(&result.model_plans, &ctx);
+
+        // 'name' is extra in SQL
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == DiagnosticCode::A040 && d.column.as_deref() == Some("name")),
+            "Should emit A040 for extra 'name'"
+        );
+        // 'email' is missing from SQL
+        let missing = diagnostics
+            .iter()
+            .find(|d| d.code == DiagnosticCode::A040 && d.column.as_deref() == Some("email"));
+        assert!(missing.is_some(), "Should emit A040 for missing 'email'");
+        assert_eq!(missing.unwrap().severity, Severity::Error);
+    }
+
+    #[test]
+    fn test_a040_compatible_types_no_diagnostic() {
+        let mut initial_catalog: SchemaCatalog = HashMap::new();
+        initial_catalog.insert(
+            "source".to_string(),
+            RelSchema::new(vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("name", varchar(), Nullability::Nullable),
+            ]),
+        );
+
+        let topo_order = vec!["test_model".to_string()];
+        let mut sql_sources = HashMap::new();
+        sql_sources.insert(
+            "test_model".to_string(),
+            "SELECT id, name FROM source".to_string(),
+        );
+
+        // YAML matches SQL types exactly
+        let mut yaml_schemas = HashMap::new();
+        yaml_schemas.insert(
+            "test_model".to_string(),
+            RelSchema::new(vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("name", varchar(), Nullability::Nullable),
+            ]),
+        );
+
+        let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &initial_catalog);
+        let ctx = make_ctx();
+        let diagnostics = CrossModelConsistency.run_project(&result.model_plans, &ctx);
+
+        assert_no_diagnostic(&diagnostics, DiagnosticCode::A040);
+    }
+
+    // ── A041: Nullability mismatch tests ────────────────────────────────
+
+    #[test]
+    fn test_a041_left_join_nullable_vs_yaml_not_null() {
+        // LEFT JOIN makes right-side columns nullable
+        // If YAML declares them NOT NULL, that's a nullability mismatch
+        let mut initial_catalog: SchemaCatalog = HashMap::new();
+        initial_catalog.insert(
+            "orders".to_string(),
+            RelSchema::new(vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("customer_id", int32(), Nullability::NotNull),
+            ]),
+        );
+        initial_catalog.insert(
+            "customers".to_string(),
+            RelSchema::new(vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("name", varchar(), Nullability::NotNull),
+            ]),
+        );
+
+        let topo_order = vec!["test_model".to_string()];
+        let mut sql_sources = HashMap::new();
+        sql_sources.insert(
+            "test_model".to_string(),
+            "SELECT orders.id, customers.name FROM orders LEFT JOIN customers ON orders.customer_id = customers.id".to_string(),
+        );
+
+        // YAML declares customers.name as NOT NULL, but LEFT JOIN makes it nullable
+        let mut yaml_schemas = HashMap::new();
+        yaml_schemas.insert(
+            "test_model".to_string(),
+            RelSchema::new(vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("name", varchar(), Nullability::NotNull),
+            ]),
+        );
+
+        let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &initial_catalog);
+        let ctx = make_ctx();
+        let diagnostics = CrossModelConsistency.run_project(&result.model_plans, &ctx);
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == DiagnosticCode::A041 && d.column.as_deref() == Some("name")),
+            "Should emit A041 for 'name' nullable from LEFT JOIN but YAML NOT NULL, got: {:?}",
+            diagnostics
+                .iter()
+                .map(|d| (&d.code, &d.column, &d.message))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_a041_both_nullable_no_diagnostic() {
+        // If both YAML and SQL agree on nullable, no diagnostic
+        let mut initial_catalog: SchemaCatalog = HashMap::new();
+        initial_catalog.insert(
+            "source".to_string(),
+            RelSchema::new(vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("name", varchar(), Nullability::Nullable),
+            ]),
+        );
+
+        let topo_order = vec!["test_model".to_string()];
+        let mut sql_sources = HashMap::new();
+        sql_sources.insert(
+            "test_model".to_string(),
+            "SELECT id, name FROM source".to_string(),
+        );
+
+        let mut yaml_schemas = HashMap::new();
+        yaml_schemas.insert(
+            "test_model".to_string(),
+            RelSchema::new(vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("name", varchar(), Nullability::Nullable),
+            ]),
+        );
+
+        let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &initial_catalog);
+        let ctx = make_ctx();
+        let diagnostics = CrossModelConsistency.run_project(&result.model_plans, &ctx);
+
+        assert_no_diagnostic(&diagnostics, DiagnosticCode::A041);
+    }
+
+    #[test]
+    fn test_a041_both_not_null_no_diagnostic() {
+        let mut initial_catalog: SchemaCatalog = HashMap::new();
+        initial_catalog.insert(
+            "source".to_string(),
+            RelSchema::new(vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("name", varchar(), Nullability::NotNull),
+            ]),
+        );
+
+        let topo_order = vec!["test_model".to_string()];
+        let mut sql_sources = HashMap::new();
+        sql_sources.insert(
+            "test_model".to_string(),
+            "SELECT id, name FROM source".to_string(),
+        );
+
+        let mut yaml_schemas = HashMap::new();
+        yaml_schemas.insert(
+            "test_model".to_string(),
+            RelSchema::new(vec![
+                make_col("id", int32(), Nullability::NotNull),
+                make_col("name", varchar(), Nullability::NotNull),
+            ]),
+        );
+
+        let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &initial_catalog);
+        let ctx = make_ctx();
+        let diagnostics = CrossModelConsistency.run_project(&result.model_plans, &ctx);
+
+        assert_no_diagnostic(&diagnostics, DiagnosticCode::A041);
     }
 }

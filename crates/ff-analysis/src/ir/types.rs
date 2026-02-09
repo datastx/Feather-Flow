@@ -116,7 +116,7 @@ impl SqlType {
     /// Numeric types (Integer, Float, Decimal) are mutually compatible,
     /// String types are compatible with each other, Date/Timestamp are
     /// compatible, and Unknown is compatible with anything.
-    pub(crate) fn is_compatible_with(&self, other: &SqlType) -> bool {
+    pub fn is_compatible_with(&self, other: &SqlType) -> bool {
         if self.is_unknown() || other.is_unknown() {
             return true;
         }
