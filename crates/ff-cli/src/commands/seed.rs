@@ -3,39 +3,18 @@
 use anyhow::{Context, Result};
 use ff_core::seed::{discover_seeds, Seed};
 use ff_core::Project;
-use ff_db::{quote_qualified, CsvLoadOptions, Database, DuckDbBackend};
+use ff_db::{quote_qualified, CsvLoadOptions, Database};
 use std::path::Path;
-use std::sync::Arc;
 
 use crate::cli::{GlobalArgs, SeedArgs};
+use crate::commands::common;
 
 /// Execute the seed command
 pub async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
-    use ff_core::config::Config;
-
     let project_path = Path::new(&global.project_dir);
     let project = Project::load(project_path).context("Failed to load project")?;
 
-    // Resolve target from CLI flag or FF_TARGET env var
-    let target = Config::resolve_target(global.target.as_deref());
-
-    // Get database config, applying target overrides if specified
-    let db_config = project
-        .config
-        .get_database_config(target.as_deref())
-        .context("Failed to get database configuration")?;
-
-    if global.verbose {
-        if let Some(ref target_name) = target {
-            eprintln!(
-                "[verbose] Using target '{}' with database: {}",
-                target_name, db_config.path
-            );
-        }
-    }
-
-    let db: Arc<dyn Database> =
-        Arc::new(DuckDbBackend::new(&db_config.path).context("Failed to connect to database")?);
+    let db = common::create_database_connection(&project.config, global.target.as_deref())?;
 
     let seed_paths = project.config.seed_paths_absolute(&project.root);
     let all_seeds = discover_seeds(&project.root, &seed_paths);

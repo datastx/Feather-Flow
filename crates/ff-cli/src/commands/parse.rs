@@ -28,7 +28,7 @@ pub async fn execute(args: &ParseArgs, global: &GlobalArgs) -> Result<()> {
 
     // Collect external tables as a set
     let external_tables: HashSet<String> = project.config.external_tables.iter().cloned().collect();
-    let known_models: HashSet<String> = project.models.keys().cloned().collect();
+    let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
 
     if global.verbose {
         eprintln!("[verbose] Parsing {} models", model_names.len());

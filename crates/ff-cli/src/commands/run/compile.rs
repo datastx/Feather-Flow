@@ -16,6 +16,7 @@ use crate::cli::{GlobalArgs, RunArgs};
 use crate::commands::common::{self, parse_hooks_from_config};
 
 /// Compiled model data needed for execution
+#[derive(Clone)]
 pub(crate) struct CompiledModel {
     pub(crate) sql: String,
     pub(crate) materialization: Materialization,
@@ -189,7 +190,7 @@ fn compile_all_models(
     let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
 
     let external_tables: HashSet<String> = project.config.external_tables.iter().cloned().collect();
-    let known_models: HashSet<String> = project.models.keys().cloned().collect();
+    let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
 
     let mut compiled_models = HashMap::new();
 

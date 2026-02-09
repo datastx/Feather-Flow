@@ -359,7 +359,7 @@ mod tests {
                     resolved_type: SqlType::Integer { bits: 32 },
                     nullability: Nullability::NotNull,
                 }),
-                op: BinOp("=".to_string()),
+                op: BinOp::Eq,
                 right: Box::new(TypedExpr::ColumnRef {
                     table: Some("c".to_string()),
                     column: "customer_id".to_string(),

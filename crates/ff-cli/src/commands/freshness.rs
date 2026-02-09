@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result};
 use ff_core::Project;
-use ff_db::{quote_ident, quote_qualified, Database, DuckDbBackend};
+use ff_db::{quote_ident, quote_qualified, Database};
 use serde::Serialize;
 use std::path::Path;
 use std::sync::Arc;
@@ -14,31 +14,10 @@ use crate::commands::common::{self, FreshnessStatus};
 
 /// Execute the freshness command
 pub async fn execute(args: &FreshnessArgs, global: &GlobalArgs) -> Result<()> {
-    use ff_core::config::Config;
-
     let project_path = Path::new(&global.project_dir);
     let project = Project::load(project_path).context("Failed to load project")?;
 
-    // Resolve target from CLI flag or FF_TARGET env var
-    let target = Config::resolve_target(global.target.as_deref());
-
-    // Get database config, applying target overrides if specified
-    let db_config = project
-        .config
-        .get_database_config(target.as_deref())
-        .context("Failed to get database configuration")?;
-
-    if global.verbose {
-        if let Some(ref target_name) = target {
-            eprintln!(
-                "[verbose] Using target '{}' with database: {}",
-                target_name, db_config.path
-            );
-        }
-    }
-
-    let db: Arc<dyn Database> =
-        Arc::new(DuckDbBackend::new(&db_config.path).context("Failed to connect to database")?);
+    let db = common::create_database_connection(&project.config, global.target.as_deref())?;
 
     // Collect models with freshness config
     let models_to_check: Vec<&str> = if let Some(filter) = &args.models {
@@ -85,13 +64,19 @@ pub async fn execute(args: &FreshnessArgs, global: &GlobalArgs) -> Result<()> {
     if args.write_json {
         let output_path = project_path.join("target/freshness.json");
         if let Some(parent) = output_path.parent() {
-            std::fs::create_dir_all(parent)?;
+            std::fs::create_dir_all(parent)
+                .context("Failed to create target directory for freshness output")?;
         }
         let json = serde_json::to_string_pretty(&FreshnessJsonOutput {
             results: results.clone(),
             checked_at: current_timestamp(),
         })?;
-        std::fs::write(&output_path, json)?;
+        std::fs::write(&output_path, &json).with_context(|| {
+            format!(
+                "Failed to write freshness results to '{}'",
+                output_path.display()
+            )
+        })?;
         println!("\nResults written to: {}", output_path.display());
     }
 

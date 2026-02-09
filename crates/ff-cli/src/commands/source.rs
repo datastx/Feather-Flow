@@ -5,10 +5,9 @@ use chrono::Utc;
 use ff_core::model::FreshnessPeriod;
 use ff_core::source::SourceFile;
 use ff_core::Project;
-use ff_db::{quote_ident, quote_qualified, Database, DuckDbBackend};
+use ff_db::{quote_ident, quote_qualified};
 use serde::Serialize;
 use std::path::Path;
-use std::sync::Arc;
 
 use crate::cli::{FreshnessOutput, GlobalArgs, SourceArgs, SourceCommands, SourceFreshnessArgs};
 use crate::commands::common::{self, FreshnessStatus};
@@ -40,25 +39,7 @@ async fn execute_freshness(args: &SourceFreshnessArgs, global: &GlobalArgs) -> R
     let project_path = Path::new(&global.project_dir);
     let project = Project::load(project_path).context("Failed to load project")?;
 
-    // Get database connection using target resolution (matches test/seed/freshness commands)
-    use ff_core::config::Config;
-    let target = Config::resolve_target(global.target.as_deref());
-    let db_config = project
-        .config
-        .get_database_config(target.as_deref())
-        .context("Failed to get database configuration")?;
-
-    if global.verbose {
-        if let Some(ref target_name) = target {
-            eprintln!(
-                "[verbose] Using target '{}' with database: {}",
-                target_name, db_config.path
-            );
-        }
-    }
-
-    let db: Arc<dyn Database> =
-        Arc::new(DuckDbBackend::new(&db_config.path).context("Failed to connect to database")?);
+    let db = common::create_database_connection(&project.config, global.target.as_deref())?;
 
     // Filter sources if specified
     let sources_to_check: Vec<&SourceFile> = if let Some(source_filter) = &args.sources {

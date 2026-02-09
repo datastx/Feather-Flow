@@ -25,8 +25,13 @@ impl DagPass for UnusedColumnDetection {
     ) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
 
+        // Sort model names for deterministic diagnostic ordering
+        let mut sorted_names: Vec<&String> = models.keys().collect();
+        sorted_names.sort();
+
         // For each model, determine which of its output columns are consumed downstream
-        for (model_name, ir) in models {
+        for model_name in sorted_names {
+            let ir = &models[model_name];
             let output_columns = get_output_columns(ir);
 
             // Check if this model has any downstream dependents

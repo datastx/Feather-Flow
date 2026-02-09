@@ -105,7 +105,10 @@ pub struct SourceColumn {
 impl SourceFile {
     /// Load and validate a source file from a path
     pub fn load(path: &Path) -> CoreResult<Self> {
-        let content = std::fs::read_to_string(path)?;
+        let content = std::fs::read_to_string(path).map_err(|e| CoreError::IoWithPath {
+            path: path.display().to_string(),
+            source: e,
+        })?;
 
         let source: SourceFile =
             serde_yaml::from_str(&content).map_err(|e| CoreError::SourceParseError {
@@ -163,16 +166,19 @@ impl SourceFile {
 }
 
 /// Discover and load all source files from configured directories
-pub fn discover_sources(root: &Path, source_paths: &[PathBuf]) -> CoreResult<Vec<SourceFile>> {
+///
+/// `source_paths` are expected to be absolute paths (e.g., from
+/// `Config::source_paths_absolute`). If a relative path is passed it is
+/// used as-is; callers are responsible for resolving paths beforehand.
+pub fn discover_sources(source_paths: &[PathBuf]) -> CoreResult<Vec<SourceFile>> {
     let mut sources = Vec::new();
 
     for source_path in source_paths {
-        let full_path = root.join(source_path);
-        if !full_path.exists() {
+        if !source_path.exists() {
             continue;
         }
 
-        discover_sources_recursive(&full_path, &mut sources)?;
+        discover_sources_recursive(source_path, &mut sources)?;
     }
 
     Ok(sources)
@@ -329,7 +335,7 @@ tables:
 "#,
         );
 
-        let sources = discover_sources(temp.path(), &[PathBuf::from("sources")]).unwrap();
+        let sources = discover_sources(std::slice::from_ref(&sources_dir)).unwrap();
         assert_eq!(sources.len(), 2);
     }
 

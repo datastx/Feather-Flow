@@ -15,6 +15,7 @@ use crate::dag::ModelDag;
 use crate::error::{CoreError, CoreResult};
 use crate::manifest::Manifest;
 use crate::Model;
+use crate::ModelName;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -160,7 +161,7 @@ impl Selector {
     /// Returns a list of model names that match the selector
     pub fn apply(
         &self,
-        models: &HashMap<String, Model>,
+        models: &HashMap<ModelName, Model>,
         dag: &ModelDag,
     ) -> CoreResult<Vec<String>> {
         self.apply_with_state(models, dag, None)
@@ -171,7 +172,7 @@ impl Selector {
     /// Returns a list of model names that match the selector
     pub fn apply_with_state(
         &self,
-        models: &HashMap<String, Model>,
+        models: &HashMap<ModelName, Model>,
         dag: &ModelDag,
         reference_manifest: Option<&Manifest>,
     ) -> CoreResult<Vec<String>> {
@@ -235,13 +236,13 @@ impl Selector {
     fn select_by_path(
         &self,
         pattern: &str,
-        models: &HashMap<String, Model>,
+        models: &HashMap<ModelName, Model>,
     ) -> CoreResult<Vec<String>> {
         let mut selected = Vec::new();
 
         for (name, model) in models {
             if Self::matches_path_pattern(&model.path, pattern) {
-                selected.push(name.clone());
+                selected.push(name.to_string());
             }
         }
 
@@ -295,12 +296,22 @@ impl Selector {
     }
 
     /// Select models by tag
-    fn select_by_tag(&self, tag: &str, models: &HashMap<String, Model>) -> CoreResult<Vec<String>> {
+    ///
+    /// Checks both `model.config.tags` (from SQL config()) and
+    /// `model.schema.tags` (from the model's YAML schema file).
+    fn select_by_tag(&self, tag: &str, models: &HashMap<ModelName, Model>) -> CoreResult<Vec<String>> {
         let mut selected = Vec::new();
+        let tag_str = tag.to_string();
 
         for (name, model) in models {
-            if model.config.tags.contains(&tag.to_string()) {
-                selected.push(name.clone());
+            let in_config = model.config.tags.contains(&tag_str);
+            let in_schema = model
+                .schema
+                .as_ref()
+                .map(|s| s.tags.contains(&tag_str))
+                .unwrap_or(false);
+            if in_config || in_schema {
+                selected.push(name.to_string());
             }
         }
 
@@ -311,7 +322,7 @@ impl Selector {
     fn select_by_owner(
         &self,
         owner: &str,
-        models: &HashMap<String, Model>,
+        models: &HashMap<ModelName, Model>,
     ) -> CoreResult<Vec<String>> {
         let mut selected = Vec::new();
         let owner_lower = owner.to_lowercase();
@@ -321,7 +332,7 @@ impl Selector {
             if let Some(model_owner) = model.get_owner() {
                 // Support partial matching (e.g., "data-team" matches "data-team@company.com")
                 if model_owner.to_lowercase().contains(&owner_lower) {
-                    selected.push(name.clone());
+                    selected.push(name.to_string());
                 }
             }
         }
@@ -334,7 +345,7 @@ impl Selector {
         &self,
         state_type: &StateType,
         include_descendants: bool,
-        models: &HashMap<String, Model>,
+        models: &HashMap<ModelName, Model>,
         dag: &ModelDag,
         reference_manifest: &Manifest,
     ) -> CoreResult<Vec<String>> {
@@ -344,11 +355,11 @@ impl Selector {
             let should_select = match state_type {
                 StateType::New => {
                     // Model is new if it doesn't exist in reference manifest
-                    !reference_manifest.models.contains_key(name)
+                    !reference_manifest.models.contains_key(name.as_str())
                 }
                 StateType::Modified => {
                     // Model is modified if SQL content differs from reference
-                    if let Some(ref_model) = reference_manifest.models.get(name) {
+                    if let Some(ref_model) = reference_manifest.models.get(name.as_str()) {
                         // Compare SQL content by reading the reference source file
                         // For simplicity, we compare the raw SQL from current model
                         // against what we can infer changed
@@ -361,7 +372,7 @@ impl Selector {
             };
 
             if should_select {
-                selected.insert(name.clone());
+                selected.insert(name.to_string());
             }
         }
 
@@ -386,8 +397,9 @@ impl Selector {
         reference: &crate::manifest::ManifestModel,
     ) -> bool {
         // Compare by checking if dependencies changed
-        let current_deps: HashSet<_> = current.depends_on.iter().cloned().collect();
-        let ref_deps: HashSet<_> = reference.depends_on.iter().cloned().collect();
+        let current_deps: HashSet<String> =
+            current.depends_on.iter().map(|m| m.to_string()).collect();
+        let ref_deps: HashSet<String> = reference.depends_on.iter().cloned().collect();
 
         if current_deps != ref_deps {
             return true;

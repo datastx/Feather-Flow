@@ -18,7 +18,7 @@ use std::time::Instant;
 use tokio::sync::Mutex;
 
 use crate::cli::{GlobalArgs, OutputFormat, TestArgs};
-use crate::commands::common::TestStatus;
+use crate::commands::common::{self, TestStatus};
 
 /// Test result for JSON output
 #[derive(Debug, Clone, Serialize)]
@@ -81,23 +81,7 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
     // Resolve target from CLI flag or FF_TARGET env var
     let target = Config::resolve_target(global.target.as_deref());
 
-    // Get database config, applying target overrides if specified
-    let db_config = project
-        .config
-        .get_database_config(target.as_deref())
-        .context("Failed to get database configuration")?;
-
-    if global.verbose {
-        if let Some(ref target_name) = target {
-            eprintln!(
-                "[verbose] Using target '{}' with database: {}",
-                target_name, db_config.path
-            );
-        }
-    }
-
-    let db: Arc<dyn Database> =
-        Arc::new(DuckDbBackend::new(&db_config.path).context("Failed to connect to database")?);
+    let db = common::create_database_connection(&project.config, global.target.as_deref())?;
 
     // Get merged vars with target overrides
     let merged_vars = project.config.get_merged_vars(target.as_deref());
@@ -140,9 +124,9 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
 
         let qualified_name = match schema {
             Some(s) => format!("{}.{}", s, name),
-            None => name.clone(),
+            None => name.to_string(),
         };
-        model_qualified_names.insert(name.clone(), qualified_name);
+        model_qualified_names.insert(name.to_string(), qualified_name);
     }
 
     // Filter tests based on --models argument

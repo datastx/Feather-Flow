@@ -7,6 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::error::{SqlError, SqlResult};
 use sqlparser::ast::{Cte, Ident, Statement, TableAlias, With};
 use sqlparser::dialect::DuckDbDialect;
 use sqlparser::parser::Parser;
@@ -43,15 +44,15 @@ use sqlparser::parser::Parser;
 /// ephemeral_deps.insert("stg_orders".to_string(), "SELECT id, amount FROM raw_orders".to_string());
 ///
 /// let result = inline_ephemeral_ctes(sql, &ephemeral_deps, &["stg_orders".to_string()]);
-/// assert!(result.contains(r#""stg_orders" AS"#));
+/// assert!(result.unwrap().contains(r#""stg_orders" AS"#));
 /// ```
 pub fn inline_ephemeral_ctes(
     sql: &str,
     ephemeral_deps: &HashMap<String, String>,
     model_deps: &[String],
-) -> String {
+) -> SqlResult<String> {
     if ephemeral_deps.is_empty() {
-        return sql.to_string();
+        return Ok(sql.to_string());
     }
 
     let dialect = DuckDbDialect {};
@@ -74,14 +75,25 @@ pub fn inline_ephemeral_ctes(
             let ephemeral_query = match Parser::parse_sql(&dialect, clean_sql) {
                 Ok(stmts) => match stmts.into_iter().next() {
                     Some(Statement::Query(q)) => q,
-                    _ => {
-                        // Fallback: wrap in a trivial query if parsing fails or
-                        // returns a non-query statement.  This shouldn't happen
-                        // with valid model SQL.
-                        continue;
+                    Some(other) => {
+                        return Err(SqlError::InlineError {
+                            model_name: dep.clone(),
+                            reason: format!("expected a SELECT query, got {}", statement_kind(&other)),
+                        });
+                    }
+                    None => {
+                        return Err(SqlError::InlineError {
+                            model_name: dep.clone(),
+                            reason: "SQL parsed to empty statement list".to_string(),
+                        });
                     }
                 },
-                Err(_) => continue,
+                Err(e) => {
+                    return Err(SqlError::InlineError {
+                        model_name: dep.clone(),
+                        reason: format!("parse error: {e}"),
+                    });
+                }
             };
 
             new_ctes.push(Cte {
@@ -97,39 +109,54 @@ pub fn inline_ephemeral_ctes(
     }
 
     if new_ctes.is_empty() {
-        return sql.to_string();
+        return Ok(sql.to_string());
     }
 
     // ---- Parse the target SQL ----
     let trimmed_sql = sql.trim().trim_end_matches(';').trim();
-    let mut stmts = match Parser::parse_sql(&dialect, trimmed_sql) {
-        Ok(s) => s,
-        Err(_) => return sql.to_string(), // Unparseable target → return as-is
-    };
-
-    let stmt = match stmts.first_mut() {
-        Some(Statement::Query(ref mut query)) => {
-            // Inject CTEs into the query's WITH clause
-            match query.with.as_mut() {
-                Some(with) => {
-                    // Prepend new CTEs before existing ones
-                    new_ctes.append(&mut with.cte_tables);
-                    with.cte_tables = new_ctes;
-                }
-                None => {
-                    query.with = Some(With {
-                        recursive: false,
-                        cte_tables: new_ctes,
-                    });
-                }
-            }
-            // Return the modified statement tree
-            stmts.first().unwrap()
+    let mut stmts = Parser::parse_sql(&dialect, trimmed_sql).map_err(|e| {
+        SqlError::InlineError {
+            model_name: String::new(),
+            reason: format!("failed to parse target SQL: {e}"),
         }
-        _ => return sql.to_string(), // Not a query → return as-is
+    })?;
+
+    let Some(Statement::Query(ref mut query)) = stmts.first_mut() else {
+        return Err(SqlError::InlineError {
+            model_name: String::new(),
+            reason: "target SQL is not a SELECT query".to_string(),
+        });
     };
 
-    stmt.to_string()
+    // Inject CTEs into the query's WITH clause
+    match query.with.as_mut() {
+        Some(with) => {
+            // Prepend new CTEs before existing ones
+            new_ctes.append(&mut with.cte_tables);
+            with.cte_tables = new_ctes;
+        }
+        None => {
+            query.with = Some(With {
+                recursive: false,
+                cte_tables: new_ctes,
+            });
+        }
+    }
+
+    Ok(stmts[0].to_string())
+}
+
+/// Return a human-readable label for a SQL statement kind
+fn statement_kind(stmt: &Statement) -> &'static str {
+    match stmt {
+        Statement::Insert { .. } => "INSERT",
+        Statement::Update { .. } => "UPDATE",
+        Statement::Delete(_) => "DELETE",
+        Statement::CreateTable { .. } => "CREATE TABLE",
+        Statement::CreateView { .. } => "CREATE VIEW",
+        Statement::Drop { .. } => "DROP",
+        _ => "non-SELECT statement",
+    }
 }
 
 /// Resolve all ephemeral dependencies for a model, including nested ephemeral models.
@@ -235,7 +262,7 @@ mod tests {
         );
         let order = vec!["stg_orders".to_string()];
 
-        let result = inline_ephemeral_ctes(sql, &ephemeral_deps, &order);
+        let result = inline_ephemeral_ctes(sql, &ephemeral_deps, &order).unwrap();
         assert!(
             result.contains(r#""stg_orders" AS"#),
             "expected quoted CTE name, got: {result}"
@@ -265,7 +292,7 @@ mod tests {
         );
         let order = vec!["stg_orders".to_string(), "stg_customers".to_string()];
 
-        let result = inline_ephemeral_ctes(sql, &ephemeral_deps, &order);
+        let result = inline_ephemeral_ctes(sql, &ephemeral_deps, &order).unwrap();
         assert!(
             result.contains(r#""stg_orders" AS"#),
             "expected quoted stg_orders CTE, got: {result}"
@@ -295,7 +322,7 @@ mod tests {
         );
         let order = vec!["stg_orders".to_string()];
 
-        let result = inline_ephemeral_ctes(sql, &ephemeral_deps, &order);
+        let result = inline_ephemeral_ctes(sql, &ephemeral_deps, &order).unwrap();
         // Should merge CTEs — new ephemeral CTE is prepended before existing ones
         assert!(
             result.contains(r#""stg_orders" AS"#),
@@ -313,7 +340,7 @@ mod tests {
         let ephemeral_deps = HashMap::new();
         let order: Vec<String> = vec![];
 
-        let result = inline_ephemeral_ctes(sql, &ephemeral_deps, &order);
+        let result = inline_ephemeral_ctes(sql, &ephemeral_deps, &order).unwrap();
         assert_eq!(result, "SELECT * FROM orders");
     }
 
@@ -327,7 +354,7 @@ mod tests {
         );
         let order = vec!["stg_orders".to_string()];
 
-        let result = inline_ephemeral_ctes(sql, &ephemeral_deps, &order);
+        let result = inline_ephemeral_ctes(sql, &ephemeral_deps, &order).unwrap();
         // The inner SQL should not have a trailing semicolon
         assert!(
             result.contains("raw_orders"),
@@ -402,7 +429,7 @@ mod tests {
         // Order matters: c must come before b, b before a
         let order = vec!["c".to_string(), "b".to_string(), "a".to_string()];
 
-        let result = inline_ephemeral_ctes(sql, &ephemeral_deps, &order);
+        let result = inline_ephemeral_ctes(sql, &ephemeral_deps, &order).unwrap();
 
         // Find positions of each CTE in the result (names are double-quoted)
         let pos_c = result
@@ -430,7 +457,7 @@ mod tests {
         );
         let order = vec!["select".to_string()];
 
-        let result = inline_ephemeral_ctes(sql, &ephemeral_deps, &order);
+        let result = inline_ephemeral_ctes(sql, &ephemeral_deps, &order).unwrap();
         // The reserved word must be double-quoted in the CTE definition
         assert!(
             result.contains(r#""select" AS"#),
@@ -450,7 +477,7 @@ mod tests {
         );
         let order2 = vec!["order".to_string()];
 
-        let result2 = inline_ephemeral_ctes(sql2, &ephemeral_deps2, &order2);
+        let result2 = inline_ephemeral_ctes(sql2, &ephemeral_deps2, &order2).unwrap();
         assert!(
             result2.contains(r#""order" AS"#),
             "expected quoted reserved-word CTE name, got: {result2}"

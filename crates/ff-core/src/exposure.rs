@@ -63,6 +63,15 @@ impl std::fmt::Display for ExposureMaturity {
     }
 }
 
+/// Kind discriminator for exposure files (must be "exposure")
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExposureKind {
+    /// The only valid kind value
+    #[default]
+    Exposure,
+}
+
 /// Owner information for an exposure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExposureOwner {
@@ -82,8 +91,8 @@ pub struct Exposure {
     pub version: u32,
 
     /// Kind must be "exposure"
-    #[serde(default = "default_kind")]
-    pub kind: String,
+    #[serde(default)]
+    pub kind: ExposureKind,
 
     /// Unique name of the exposure
     pub name: String,
@@ -122,10 +131,6 @@ pub struct Exposure {
 
 fn default_version() -> u32 {
     1
-}
-
-fn default_kind() -> String {
-    "exposure".to_string()
 }
 
 impl Exposure {
@@ -167,15 +172,6 @@ impl Exposure {
         if self.name.is_empty() {
             return Err(CoreError::ConfigInvalid {
                 message: "Exposure name cannot be empty".to_string(),
-            });
-        }
-
-        if self.kind != "exposure" {
-            return Err(CoreError::ConfigInvalid {
-                message: format!(
-                    "Invalid kind '{}' for exposure '{}', expected 'exposure'",
-                    self.kind, self.name
-                ),
             });
         }
 
@@ -359,8 +355,6 @@ owner:
 "#;
         let result = Exposure::from_yaml(yaml);
         assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("Invalid kind"));
     }
 
     #[test]

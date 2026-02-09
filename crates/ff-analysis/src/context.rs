@@ -28,7 +28,7 @@ impl AnalysisContext {
         yaml_schemas: HashMap<String, RelSchema>,
         lineage: ProjectLineage,
     ) -> Self {
-        let known_models = project.models.keys().cloned().collect();
+        let known_models = project.models.keys().map(|k| k.to_string()).collect();
         Self {
             project,
             dag,

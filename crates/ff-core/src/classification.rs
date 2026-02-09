@@ -22,7 +22,7 @@ pub fn build_classification_lookup(project: &Project) -> HashMap<String, HashMap
                 }
             }
             if !col_map.is_empty() {
-                lookup.insert(name.clone(), col_map);
+                lookup.insert(name.to_string(), col_map);
             }
         }
     }

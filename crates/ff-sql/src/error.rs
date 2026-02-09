@@ -22,8 +22,8 @@ pub enum SqlError {
     UnsupportedStatement(String),
 
     /// CTE not allowed (S005)
-    #[error("[S005] CTEs are not allowed — each transform must be its own model. Found CTE(s): {cte_names}")]
-    CteNotAllowed { cte_names: String },
+    #[error("[S005] CTEs are not allowed — each transform must be its own model. Found CTE(s): {}", cte_names.join(", "))]
+    CteNotAllowed { cte_names: Vec<String> },
 
     /// Derived table not allowed (S006)
     #[error("[S006] Derived tables (subqueries in FROM clause) are not allowed — each transform must be its own model")]
@@ -32,6 +32,10 @@ pub enum SqlError {
     /// Unknown SQL dialect (S007)
     #[error("[S007] Unknown SQL dialect: {0}")]
     UnknownDialect(String),
+
+    /// Ephemeral model inlining failed (S008)
+    #[error("[S008] Failed to inline ephemeral model '{model_name}': {reason}")]
+    InlineError { model_name: String, reason: String },
 }
 
 /// Result type alias for SqlError

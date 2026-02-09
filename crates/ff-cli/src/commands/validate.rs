@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use ff_core::dag::ModelDag;
 use ff_core::manifest::Manifest;
 use ff_core::model::TestDefinition;
-use ff_core::Project;
+use ff_core::{ModelName, Project};
 use ff_jinja::JinjaEnvironment;
 use ff_sql::SqlParser;
 use std::collections::{HashMap, HashSet};
@@ -114,7 +114,7 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
     let macro_paths = project.config.macro_paths_absolute(&project.root);
     let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
     let external_tables = build_external_tables_lookup(&project);
-    let known_models: HashSet<String> = project.models.keys().cloned().collect();
+    let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
 
     let dependencies = validate_sql_syntax(
         &project,
@@ -310,7 +310,7 @@ fn validate_dag(dependencies: &HashMap<String, Vec<String>>, ctx: &mut Validatio
 /// Validate no duplicate model names
 fn validate_duplicates(project: &Project, ctx: &mut ValidationContext) {
     print!("Checking for duplicates... ");
-    let model_names: Vec<&String> = project.models.keys().collect();
+    let model_names: Vec<&ModelName> = project.models.keys().collect();
     let unique_count = model_names.iter().collect::<HashSet<_>>().len();
     if model_names.len() == unique_count {
         println!("✓");

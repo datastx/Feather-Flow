@@ -103,38 +103,94 @@ pub fn lower_expr(expr: &Expr, schema: &RelSchema) -> TypedExpr {
             let inner_expr = lower_expr(inner, schema);
             let low_expr = lower_expr(low, schema);
             let high_expr = lower_expr(high, schema);
-            let ge = TypedExpr::BinaryOp {
+            let combined_nullability = inner_expr.nullability().combine(
+                low_expr.nullability().combine(high_expr.nullability()),
+            );
+            // BETWEEN: expr >= low AND expr <= high
+            // NOT BETWEEN: expr < low OR expr > high
+            let (low_op, high_op, combine_op) = if *negated {
+                (&BinaryOperator::Lt, &BinaryOperator::Gt, &BinaryOperator::Or)
+            } else {
+                (&BinaryOperator::GtEq, &BinaryOperator::LtEq, &BinaryOperator::And)
+            };
+            let left_cmp = TypedExpr::BinaryOp {
                 left: Box::new(inner_expr.clone()),
-                op: BinOp::from_sqlparser(&BinaryOperator::GtEq),
+                op: BinOp::from_sqlparser(low_op),
                 right: Box::new(low_expr),
                 resolved_type: SqlType::Boolean,
-                nullability: inner_expr.nullability(),
+                nullability: combined_nullability,
             };
-            let le = TypedExpr::BinaryOp {
+            let right_cmp = TypedExpr::BinaryOp {
                 left: Box::new(inner_expr),
-                op: BinOp::from_sqlparser(&BinaryOperator::LtEq),
+                op: BinOp::from_sqlparser(high_op),
                 right: Box::new(high_expr),
                 resolved_type: SqlType::Boolean,
-                nullability: Nullability::Unknown,
+                nullability: combined_nullability,
             };
             TypedExpr::BinaryOp {
-                left: Box::new(ge),
-                op: BinOp::from_sqlparser(if *negated {
-                    &BinaryOperator::Or
-                } else {
-                    &BinaryOperator::And
-                }),
-                right: Box::new(le),
+                left: Box::new(left_cmp),
+                op: BinOp::from_sqlparser(combine_op),
+                right: Box::new(right_cmp),
                 resolved_type: SqlType::Boolean,
-                nullability: Nullability::Unknown,
+                nullability: combined_nullability,
             }
         }
 
-        Expr::InList { .. } => TypedExpr::Unsupported {
-            description: "IN list".to_string(),
-            resolved_type: SqlType::Boolean,
-            nullability: Nullability::Unknown,
-        },
+        Expr::InList {
+            expr: lhs,
+            list,
+            negated,
+        } => {
+            if list.is_empty() {
+                // Empty IN list: always false (or true for NOT IN)
+                return TypedExpr::Literal {
+                    value: LiteralValue::Boolean(!negated),
+                    resolved_type: SqlType::Boolean,
+                };
+            }
+
+            let lhs_expr = lower_expr(lhs, schema);
+            let (cmp_op, combine_op) = if *negated {
+                (BinOp::NotEq, BinOp::And)
+            } else {
+                (BinOp::Eq, BinOp::Or)
+            };
+
+            // Build a chain: lhs = list[0] OR lhs = list[1] OR ...
+            let mut result = {
+                let rhs = lower_expr(&list[0], schema);
+                let nullability = lhs_expr.nullability().combine(rhs.nullability());
+                TypedExpr::BinaryOp {
+                    left: Box::new(lhs_expr.clone()),
+                    op: cmp_op.clone(),
+                    right: Box::new(rhs),
+                    resolved_type: SqlType::Boolean,
+                    nullability,
+                }
+            };
+
+            for item in &list[1..] {
+                let rhs = lower_expr(item, schema);
+                let cmp_nullability = lhs_expr.nullability().combine(rhs.nullability());
+                let cmp = TypedExpr::BinaryOp {
+                    left: Box::new(lhs_expr.clone()),
+                    op: cmp_op.clone(),
+                    right: Box::new(rhs),
+                    resolved_type: SqlType::Boolean,
+                    nullability: cmp_nullability,
+                };
+                let combined_nullability = result.nullability().combine(cmp.nullability());
+                result = TypedExpr::BinaryOp {
+                    left: Box::new(result),
+                    op: combine_op.clone(),
+                    right: Box::new(cmp),
+                    resolved_type: SqlType::Boolean,
+                    nullability: combined_nullability,
+                };
+            }
+
+            result
+        }
 
         Expr::Subquery(_) => TypedExpr::Subquery {
             resolved_type: SqlType::Unknown("subquery".to_string()),

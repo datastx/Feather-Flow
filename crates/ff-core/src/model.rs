@@ -30,7 +30,7 @@ pub struct Model {
 
     /// Dependencies on other models
     #[serde(default)]
-    pub depends_on: HashSet<String>,
+    pub depends_on: HashSet<ModelName>,
 
     /// Dependencies on external tables
     #[serde(default)]
@@ -794,15 +794,13 @@ impl Model {
         if let Some(wap) = self.config.wap {
             return wap;
         }
-        // Check schema YAML config
-        if let Some(schema) = &self.schema {
-            if let Some(config) = &schema.config {
-                if let Some(wap) = config.wap {
-                    return wap;
-                }
-            }
-        }
-        false
+
+        // Then check schema YAML config
+        self.schema
+            .as_ref()
+            .and_then(|s| s.config.as_ref())
+            .and_then(|c| c.wap)
+            .unwrap_or(false)
     }
 
     /// Get the schema for this model (deprecated, use target_schema instead)
@@ -813,7 +811,8 @@ impl Model {
 
     /// Get all dependencies (both model and external)
     pub fn all_dependencies(&self) -> HashSet<String> {
-        let mut deps: HashSet<String> = self.depends_on.clone();
+        let mut deps: HashSet<String> =
+            self.depends_on.iter().map(|m| m.to_string()).collect();
         deps.extend(self.external_deps.iter().map(|t| t.to_string()));
         deps
     }

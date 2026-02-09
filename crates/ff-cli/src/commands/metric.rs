@@ -6,13 +6,12 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use ff_core::metric::Metric;
 use ff_core::Project;
-use ff_db::{Database, DuckDbBackend};
 use serde::Serialize;
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Instant;
 
 use crate::cli::{GlobalArgs, MetricArgs, OutputFormat};
+use crate::commands::common;
 
 /// Metric information for JSON output
 #[derive(Debug, Serialize)]
@@ -246,29 +245,12 @@ async fn execute_metric(
     global: &GlobalArgs,
     json_mode: bool,
 ) -> Result<()> {
-    use ff_core::config::Config;
-
     let start_time = Instant::now();
 
-    // Resolve target from CLI flag or FF_TARGET env var
-    let target = Config::resolve_target(global.target.as_deref());
-
-    // Get database config, applying target overrides if specified
-    let db_config = project
-        .config
-        .get_database_config(target.as_deref())
-        .context("Failed to get database configuration")?;
-
-    // Create database connection
-    let db: Arc<dyn Database> = Arc::new(
-        DuckDbBackend::new(&db_config.path).context("Failed to create database connection")?,
-    );
+    let db = common::create_database_connection(&project.config, global.target.as_deref())?;
 
     if global.verbose {
-        eprintln!(
-            "[verbose] Executing metric SQL against database: {}",
-            db_config.path
-        );
+        eprintln!("[verbose] Executing metric SQL");
         eprintln!("[verbose] SQL:\n{}", sql);
     }
 
