@@ -9,7 +9,10 @@ use ff_db::{Database, DuckDbBackend};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::path::Path;
 use std::sync::Arc;
+
+use crate::cli::GlobalArgs;
 
 /// Error type representing a non-zero process exit code.
 ///
@@ -199,6 +202,136 @@ impl fmt::Display for FreshnessStatus {
             FreshnessStatus::RuntimeError => write!(f, "runtime_error"),
         }
     }
+}
+
+/// Load a project from the directory specified in global CLI arguments.
+///
+/// Converts the `project_dir` string to a `Path` and delegates to
+/// `Project::load`, adding context on failure.
+pub fn load_project(global: &GlobalArgs) -> Result<Project> {
+    let project_path = Path::new(&global.project_dir);
+    Project::load(project_path).context("Failed to load project")
+}
+
+/// Generic wrapper for command results written to JSON.
+///
+/// Many commands (run, snapshot, etc.) produce a JSON file with the same
+/// envelope: a timestamp, elapsed seconds, success/failure counts, and a
+/// vec of per-item results.  `CommandResults<T>` captures that pattern so
+/// each command only needs to define its per-item result type.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct CommandResults<T: Serialize> {
+    pub timestamp: DateTime<Utc>,
+    pub elapsed_secs: f64,
+    pub success_count: usize,
+    pub failure_count: usize,
+    pub results: Vec<T>,
+}
+
+/// Serialize `data` as pretty-printed JSON and write it to `path`.
+///
+/// Creates any missing parent directories before writing.  Returns an
+/// `anyhow::Result` with context describing which step failed.
+pub(crate) fn write_json_results<T: Serialize + ?Sized>(path: &Path, data: &T) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).context("Failed to create target directory")?;
+    }
+    let json = serde_json::to_string_pretty(data).context("Failed to serialize results")?;
+    std::fs::write(path, json).with_context(|| format!("Failed to write {}", path.display()))?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Table-printing utilities
+// ---------------------------------------------------------------------------
+
+/// Calculate column widths for a table given headers and row data.
+///
+/// For each column, returns the maximum width across the header and all
+/// row values so that data aligns when printed with left-padding.
+pub fn calculate_column_widths(headers: &[&str], rows: &[Vec<String>]) -> Vec<usize> {
+    let mut widths: Vec<usize> = headers.iter().map(|h| h.len()).collect();
+    for row in rows {
+        for (i, cell) in row.iter().enumerate() {
+            if i < widths.len() {
+                widths[i] = widths[i].max(cell.len());
+            }
+        }
+    }
+    widths
+}
+
+/// Print a formatted table to stdout.
+///
+/// Calculates column widths from `headers` and `rows`, then prints
+/// a left-aligned header row, a separator line of dashes, and each
+/// data row.  Columns are separated by two spaces.
+///
+/// # Examples
+///
+/// ```ignore
+/// print_table(
+///     &["NAME", "TYPE"],
+///     &[vec!["orders".into(), "model".into()]],
+/// );
+/// // NAME    TYPE
+/// // ------  -----
+/// // orders  model
+/// ```
+pub fn print_table(headers: &[&str], rows: &[Vec<String>]) {
+    let widths = calculate_column_widths(headers, rows);
+
+    // Print header
+    let header_parts: Vec<String> = headers
+        .iter()
+        .zip(&widths)
+        .map(|(h, &w)| format!("{:<width$}", h, width = w))
+        .collect();
+    println!("{}", header_parts.join("  "));
+
+    // Print separator
+    let sep_parts: Vec<String> = widths.iter().map(|&w| "-".repeat(w)).collect();
+    println!("{}", sep_parts.join("  "));
+
+    // Print rows
+    for row in rows {
+        let row_parts: Vec<String> = row
+            .iter()
+            .zip(&widths)
+            .map(|(cell, &w)| format!("{:<width$}", cell, width = w))
+            .collect();
+        println!("{}", row_parts.join("  "));
+    }
+}
+
+/// Print just the header and separator lines for a table.
+///
+/// This is useful for commands that need to print rows individually
+/// (e.g. to interleave extra output like error messages between rows).
+/// Use [`calculate_column_widths`] to obtain the `widths` parameter.
+pub fn print_table_header(headers: &[&str], widths: &[usize]) {
+    let header_parts: Vec<String> = headers
+        .iter()
+        .zip(widths)
+        .map(|(h, &w)| format!("{:<width$}", h, width = w))
+        .collect();
+    println!("{}", header_parts.join("  "));
+
+    let sep_parts: Vec<String> = widths.iter().map(|&w| "-".repeat(w)).collect();
+    println!("{}", sep_parts.join("  "));
+}
+
+/// Format a single table row as a string using pre-computed column widths.
+///
+/// Each cell is left-aligned and padded to the corresponding width.
+/// Columns are separated by two spaces.
+pub fn format_table_row(row: &[String], widths: &[usize]) -> String {
+    let parts: Vec<String> = row
+        .iter()
+        .zip(widths)
+        .map(|(cell, &w)| format!("{:<width$}", cell, width = w))
+        .collect();
+    parts.join("  ")
 }
 
 /// Create a database connection from a config and optional target override.

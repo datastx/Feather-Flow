@@ -1,6 +1,6 @@
 //! Relational Algebra IR — canonical intermediate representation for SQL analysis
 
-pub mod expr;
-pub mod relop;
-pub mod schema;
-pub mod types;
+pub(crate) mod expr;
+pub(crate) mod relop;
+pub(crate) mod schema;
+pub(crate) mod types;

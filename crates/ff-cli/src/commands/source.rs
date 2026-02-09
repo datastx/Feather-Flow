@@ -7,10 +7,9 @@ use ff_core::source::SourceFile;
 use ff_core::Project;
 use ff_db::{quote_ident, quote_qualified};
 use serde::Serialize;
-use std::path::Path;
 
 use crate::cli::{FreshnessOutput, GlobalArgs, SourceArgs, SourceCommands, SourceFreshnessArgs};
-use crate::commands::common::{self, FreshnessStatus};
+use crate::commands::common::{self, load_project, FreshnessStatus};
 
 /// Execute the source command
 pub async fn execute(args: &SourceArgs, global: &GlobalArgs) -> Result<()> {
@@ -36,8 +35,7 @@ struct FreshnessResult {
 
 /// Execute freshness check
 async fn execute_freshness(args: &SourceFreshnessArgs, global: &GlobalArgs) -> Result<()> {
-    let project_path = Path::new(&global.project_dir);
-    let project = Project::load(project_path).context("Failed to load project")?;
+    let project = load_project(global)?;
 
     let db = common::create_database_connection(&project.config, global.target.as_deref())?;
 
@@ -194,14 +192,8 @@ async fn execute_freshness(args: &SourceFreshnessArgs, global: &GlobalArgs) -> R
 
 /// Write freshness results to target/sources.json
 fn write_results_to_file(project: &Project, results: &[FreshnessResult]) -> Result<()> {
-    let target_dir = project.target_dir();
-    std::fs::create_dir_all(&target_dir).context("Failed to create target directory")?;
-
-    let sources_path = target_dir.join("sources.json");
-    let json = serde_json::to_string_pretty(results).context("Failed to serialize results")?;
-    std::fs::write(&sources_path, json).context("Failed to write sources.json")?;
-
-    Ok(())
+    let sources_path = project.target_dir().join("sources.json");
+    common::write_json_results(&sources_path, results)
 }
 
 /// Convert period to hours
@@ -247,43 +239,50 @@ fn format_duration(hours: f64) -> String {
 
 /// Print results in table format
 fn print_table(results: &[FreshnessResult]) {
-    // Calculate column widths
-    let source_width = results
-        .iter()
-        .map(|r| r.source.len())
-        .max()
-        .unwrap_or(6)
-        .max(6);
-    let table_width = results
-        .iter()
-        .map(|r| r.table.len())
-        .max()
-        .unwrap_or(5)
-        .max(5);
+    let headers = ["SOURCE", "TABLE", "STATUS", "AGE", "MAX_LOADED"];
 
-    // Print header
-    println!(
-        "{:<source_width$}  {:<table_width$}  {:<8}  {:<10}  {:<12}",
-        "SOURCE",
-        "TABLE",
-        "STATUS",
-        "AGE",
-        "MAX_LOADED",
-        source_width = source_width,
-        table_width = table_width,
-    );
+    // Pre-build rows for width calculation
+    let rows: Vec<Vec<String>> = results
+        .iter()
+        .map(|result| {
+            let status_symbol = match result.status {
+                FreshnessStatus::Pass => "PASS",
+                FreshnessStatus::Warn => "WARN",
+                FreshnessStatus::Error => "ERROR",
+                FreshnessStatus::RuntimeError => "ERR",
+            };
 
-    // Print separator
-    println!(
-        "{:-<source_width$}  {:-<table_width$}  {:-<8}  {:-<10}  {:-<12}",
-        "",
-        "",
-        "",
-        "",
-        "",
-        source_width = source_width,
-        table_width = table_width,
-    );
+            let age_str = result
+                .age_hours
+                .map(format_duration)
+                .unwrap_or_else(|| "-".to_string());
+
+            let loaded_str = result
+                .loaded_at
+                .as_ref()
+                .map(|s| {
+                    // Truncate to first 19 chars (YYYY-MM-DD HH:MM:SS)
+                    if s.len() > 19 {
+                        s[..19].to_string()
+                    } else {
+                        s.clone()
+                    }
+                })
+                .unwrap_or_else(|| "-".to_string());
+
+            vec![
+                result.source.clone(),
+                result.table.clone(),
+                status_symbol.to_string(),
+                age_str,
+                loaded_str,
+            ]
+        })
+        .collect();
+
+    // Calculate widths and print header + separator
+    let widths = common::calculate_column_widths(&headers, &rows);
+    common::print_table_header(&headers, &widths);
 
     // Count results by status
     let mut pass_count = 0;
@@ -291,55 +290,16 @@ fn print_table(results: &[FreshnessResult]) {
     let mut error_count = 0;
     let mut runtime_error_count = 0;
 
-    // Print each result
-    for result in results {
-        let status_symbol = match result.status {
-            FreshnessStatus::Pass => {
-                pass_count += 1;
-                "PASS"
-            }
-            FreshnessStatus::Warn => {
-                warn_count += 1;
-                "WARN"
-            }
-            FreshnessStatus::Error => {
-                error_count += 1;
-                "ERROR"
-            }
-            FreshnessStatus::RuntimeError => {
-                runtime_error_count += 1;
-                "ERR"
-            }
-        };
+    // Print each result row, with interleaved error messages
+    for (result, row) in results.iter().zip(&rows) {
+        match result.status {
+            FreshnessStatus::Pass => pass_count += 1,
+            FreshnessStatus::Warn => warn_count += 1,
+            FreshnessStatus::Error => error_count += 1,
+            FreshnessStatus::RuntimeError => runtime_error_count += 1,
+        }
 
-        let age_str = result
-            .age_hours
-            .map(format_duration)
-            .unwrap_or_else(|| "-".to_string());
-
-        let loaded_str = result
-            .loaded_at
-            .as_ref()
-            .map(|s| {
-                // Truncate to first 19 chars (YYYY-MM-DD HH:MM:SS)
-                if s.len() > 19 {
-                    s[..19].to_string()
-                } else {
-                    s.clone()
-                }
-            })
-            .unwrap_or_else(|| "-".to_string());
-
-        println!(
-            "{:<source_width$}  {:<table_width$}  {:<8}  {:<10}  {}",
-            result.source,
-            result.table,
-            status_symbol,
-            age_str,
-            loaded_str,
-            source_width = source_width,
-            table_width = table_width,
-        );
+        println!("{}", common::format_table_row(row, &widths));
 
         if let Some(err) = &result.error {
             println!("    Error: {}", err);

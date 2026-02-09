@@ -3,19 +3,18 @@
 //! Check model freshness based on SLA configurations defined in schema files.
 
 use anyhow::{Context, Result};
+use ff_core::model::FreshnessThreshold;
 use ff_core::Project;
 use ff_db::{quote_ident, quote_qualified, Database};
 use serde::Serialize;
-use std::path::Path;
 use std::sync::Arc;
 
 use crate::cli::{FreshnessArgs, FreshnessOutput as CliOutput, GlobalArgs};
-use crate::commands::common::{self, FreshnessStatus};
+use crate::commands::common::{self, load_project, FreshnessStatus};
 
 /// Execute the freshness command
 pub async fn execute(args: &FreshnessArgs, global: &GlobalArgs) -> Result<()> {
-    let project_path = Path::new(&global.project_dir);
-    let project = Project::load(project_path).context("Failed to load project")?;
+    let project = load_project(global)?;
 
     let db = common::create_database_connection(&project.config, global.target.as_deref())?;
 
@@ -62,7 +61,7 @@ pub async fn execute(args: &FreshnessArgs, global: &GlobalArgs) -> Result<()> {
 
     // Write JSON file if requested
     if args.write_json {
-        let output_path = project_path.join("target/freshness.json");
+        let output_path = project.root.join("target/freshness.json");
         if let Some(parent) = output_path.parent() {
             std::fs::create_dir_all(parent)
                 .context("Failed to create target directory for freshness output")?;
@@ -161,7 +160,11 @@ async fn check_model_freshness(
         }
     };
 
-    let freshness_config = match model.schema.as_ref().and_then(|s| s.get_freshness()) {
+    let freshness_config = match model
+        .schema
+        .as_ref()
+        .and_then(|s: &ff_core::model::ModelSchema| s.get_freshness())
+    {
         Some(f) => f,
         None => {
             return FreshnessResult {
@@ -202,11 +205,11 @@ async fn check_model_freshness(
                 warn_threshold_seconds: freshness_config
                     .warn_after
                     .as_ref()
-                    .map(|t| t.to_seconds()),
+                    .map(|t: &FreshnessThreshold| t.to_seconds()),
                 error_threshold_seconds: freshness_config
                     .error_after
                     .as_ref()
-                    .map(|t| t.to_seconds()),
+                    .map(|t: &FreshnessThreshold| t.to_seconds()),
                 error: Some(format!("Query failed: {}", e)),
             };
         }
@@ -222,11 +225,14 @@ async fn check_model_freshness(
     };
 
     // Determine status
-    let warn_threshold = freshness_config.warn_after.as_ref().map(|t| t.to_seconds());
+    let warn_threshold = freshness_config
+        .warn_after
+        .as_ref()
+        .map(|t: &FreshnessThreshold| t.to_seconds());
     let error_threshold = freshness_config
         .error_after
         .as_ref()
-        .map(|t| t.to_seconds());
+        .map(|t: &FreshnessThreshold| t.to_seconds());
 
     let status = match age_seconds {
         Some(age) => {
@@ -311,60 +317,66 @@ fn current_timestamp() -> String {
     chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
+/// Return ANSI-colored status text for terminal display.
+fn colored_status(status: &FreshnessStatus) -> &'static str {
+    match status {
+        FreshnessStatus::Pass => "\x1b[32mpass\x1b[0m",
+        FreshnessStatus::Warn => "\x1b[33mwarn\x1b[0m",
+        FreshnessStatus::Error => "\x1b[31merror\x1b[0m",
+        FreshnessStatus::RuntimeError => "\x1b[31mruntime_error\x1b[0m",
+    }
+}
+
+/// Return plain-text status string (used for column-width calculation).
+fn plain_status(status: &FreshnessStatus) -> &'static str {
+    match status {
+        FreshnessStatus::Pass => "pass",
+        FreshnessStatus::Warn => "warn",
+        FreshnessStatus::Error => "error",
+        FreshnessStatus::RuntimeError => "runtime_error",
+    }
+}
+
 /// Print results as a table
 fn print_table(results: &[FreshnessResult]) {
-    // Calculate column widths
-    let model_width = results
+    let headers = ["MODEL", "STATUS", "AGE", "LOADED_AT"];
+
+    // Build plain-text rows for width calculation
+    let rows: Vec<Vec<String>> = results
         .iter()
-        .map(|r| r.model.len())
-        .max()
-        .unwrap_or(5)
-        .max(5);
-    let status_width = 12;
-    let age_width = 12;
+        .map(|r| {
+            vec![
+                r.model.clone(),
+                plain_status(&r.status).to_string(),
+                r.age_human.as_deref().unwrap_or("-").to_string(),
+                r.loaded_at.as_deref().unwrap_or("-").to_string(),
+            ]
+        })
+        .collect();
 
-    // Header
-    println!(
-        "{:<model_width$}  {:<status_width$}  {:<age_width$}  LOADED_AT",
-        "MODEL",
-        "STATUS",
-        "AGE",
-        model_width = model_width,
-        status_width = status_width,
-        age_width = age_width,
-    );
-    println!(
-        "{:-<model_width$}  {:-<status_width$}  {:-<age_width$}  {:-<20}",
-        "",
-        "",
-        "",
-        "",
-        model_width = model_width,
-        status_width = status_width,
-        age_width = age_width,
-    );
+    let widths = common::calculate_column_widths(&headers, &rows);
+    common::print_table_header(&headers, &widths);
 
-    // Rows
+    // Print rows with ANSI-colored status
     for result in results {
-        let status_display = match result.status {
-            FreshnessStatus::Pass => "\x1b[32mpass\x1b[0m",
-            FreshnessStatus::Warn => "\x1b[33mwarn\x1b[0m",
-            FreshnessStatus::Error => "\x1b[31merror\x1b[0m",
-            FreshnessStatus::RuntimeError => "\x1b[31mruntime_error\x1b[0m",
-        };
-
         let age_display = result.age_human.as_deref().unwrap_or("-");
         let loaded_at_display = result.loaded_at.as_deref().unwrap_or("-");
 
+        // ANSI escape codes add invisible bytes, so pad the plain-text width
+        // and then substitute the colored string.
+        let status_colored = colored_status(&result.status);
+        let status_plain_len = plain_status(&result.status).len();
+        let status_padding = widths[1].saturating_sub(status_plain_len);
+
         println!(
-            "{:<model_width$}  {:<status_width$}  {:<age_width$}  {}",
+            "{:<w0$}  {}{}  {:<w2$}  {}",
             result.model,
-            status_display,
+            status_colored,
+            " ".repeat(status_padding),
             age_display,
             loaded_at_display,
-            model_width = model_width,
-            status_width = status_width,
-            age_width = age_width,
+            w0 = widths[0],
+            w2 = widths[2],
         );
 
         if let Some(error) = &result.error {

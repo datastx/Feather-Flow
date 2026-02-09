@@ -9,7 +9,7 @@ use crate::lowering::SchemaCatalog;
 use sqlparser::ast::{Expr, OrderByExpr, Query, SetExpr, SetOperator, SetQuantifier, Value};
 
 /// Lower a Query AST node into a RelOp
-pub fn lower_query(query: &Query, catalog: &SchemaCatalog) -> AnalysisResult<RelOp> {
+pub(crate) fn lower_query(query: &Query, catalog: &SchemaCatalog) -> AnalysisResult<RelOp> {
     // Lower the body (SELECT, UNION, etc.)
     let mut plan = lower_set_expr(&query.body, catalog)?;
 

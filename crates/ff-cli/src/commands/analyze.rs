@@ -1,23 +1,22 @@
 //! `ff analyze` command — run static analysis passes on SQL models
 
 use anyhow::{Context, Result};
-use ff_analysis::ir::schema::RelSchema;
-use ff_analysis::ir::types::{Nullability, SqlType, TypedColumn};
-use ff_analysis::{lower_statement, AnalysisContext, PassManager, SchemaCatalog, Severity};
+use ff_analysis::{
+    lower_statement, parse_sql_type, AnalysisContext, Nullability, PassManager, RelSchema,
+    SchemaCatalog, Severity, SqlType, TypedColumn,
+};
 use ff_core::dag::ModelDag;
 use ff_core::source::build_source_lookup;
-use ff_core::Project;
 use ff_jinja::JinjaEnvironment;
 use ff_sql::{extract_column_lineage, ProjectLineage, SqlParser};
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 
 use crate::cli::{AnalyzeArgs, AnalyzeOutput, AnalyzeSeverity, GlobalArgs};
+use crate::commands::common::load_project;
 
 /// Execute the analyze command
 pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
-    let project_path = Path::new(&global.project_dir);
-    let project = Project::load(project_path).context("Failed to load project")?;
+    let project = load_project(global)?;
 
     let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
         .context("Invalid SQL dialect")?;
@@ -39,7 +38,7 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
                     let sql_type = col
                         .data_type
                         .as_ref()
-                        .map(|dt| ff_analysis::ir::types::parse_sql_type(dt))
+                        .map(|dt| parse_sql_type(dt))
                         .unwrap_or_else(|| SqlType::Unknown("no type declared".to_string()));
                     let nullability = if col
                         .constraints

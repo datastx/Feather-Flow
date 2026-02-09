@@ -1,19 +1,16 @@
 //! Parse command implementation
 
 use anyhow::{Context, Result};
-use ff_core::Project;
 use ff_jinja::JinjaEnvironment;
 use ff_sql::{extract_dependencies, SqlParser};
 use std::collections::HashSet;
-use std::path::Path;
 
 use crate::cli::{GlobalArgs, ParseArgs, ParseOutput};
-use crate::commands::common::filter_models;
+use crate::commands::common::{filter_models, load_project};
 
 /// Execute the parse command
 pub async fn execute(args: &ParseArgs, global: &GlobalArgs) -> Result<()> {
-    let project_path = Path::new(&global.project_dir);
-    let project = Project::load(project_path).context("Failed to load project")?;
+    let project = load_project(global)?;
 
     // Create SQL parser
     let dialect_str = project.config.dialect.to_string();

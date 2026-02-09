@@ -290,7 +290,7 @@ mod tests {
     use crate::ir::expr::{BinOp, TypedExpr};
     use crate::ir::relop::{JoinType, RelOp};
     use crate::ir::schema::RelSchema;
-    use crate::ir::types::{Nullability, SqlType, TypedColumn};
+    use crate::ir::types::{IntBitWidth, Nullability, SqlType, TypedColumn};
     use ff_core::dag::ModelDag;
     use ff_core::Project;
     use ff_sql::ProjectLineage;
@@ -321,12 +321,16 @@ mod tests {
             schema: RelSchema::new(vec![
                 make_col(
                     "order_id",
-                    SqlType::Integer { bits: 32 },
+                    SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
                     Nullability::NotNull,
                 ),
                 make_col(
                     "customer_id",
-                    SqlType::Integer { bits: 32 },
+                    SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
                     Nullability::NotNull,
                 ),
             ]),
@@ -337,7 +341,9 @@ mod tests {
             schema: RelSchema::new(vec![
                 make_col(
                     "customer_id",
-                    SqlType::Integer { bits: 32 },
+                    SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
                     Nullability::NotNull,
                 ),
                 make_col(
@@ -356,14 +362,18 @@ mod tests {
                 left: Box::new(TypedExpr::ColumnRef {
                     table: Some("o".to_string()),
                     column: "customer_id".to_string(),
-                    resolved_type: SqlType::Integer { bits: 32 },
+                    resolved_type: SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
                     nullability: Nullability::NotNull,
                 }),
                 op: BinOp::Eq,
                 right: Box::new(TypedExpr::ColumnRef {
                     table: Some("c".to_string()),
                     column: "customer_id".to_string(),
-                    resolved_type: SqlType::Integer { bits: 32 },
+                    resolved_type: SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
                     nullability: Nullability::NotNull,
                 }),
                 resolved_type: SqlType::Boolean,
@@ -380,7 +390,9 @@ mod tests {
                     TypedExpr::ColumnRef {
                         table: None,
                         column: "order_id".to_string(),
-                        resolved_type: SqlType::Integer { bits: 32 },
+                        resolved_type: SqlType::Integer {
+                            bits: IntBitWidth::I32,
+                        },
                         nullability: Nullability::NotNull,
                     },
                 ),
@@ -397,7 +409,9 @@ mod tests {
             schema: RelSchema::new(vec![
                 make_col(
                     "order_id",
-                    SqlType::Integer { bits: 32 },
+                    SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
                     Nullability::NotNull,
                 ),
                 make_col(
@@ -430,7 +444,9 @@ mod tests {
             alias: None,
             schema: RelSchema::new(vec![make_col(
                 "id",
-                SqlType::Integer { bits: 32 },
+                SqlType::Integer {
+                    bits: IntBitWidth::I32,
+                },
                 Nullability::NotNull,
             )]),
         };
@@ -500,7 +516,9 @@ mod tests {
             alias: None,
             schema: RelSchema::new(vec![make_col(
                 "id",
-                SqlType::Integer { bits: 32 },
+                SqlType::Integer {
+                    bits: IntBitWidth::I32,
+                },
                 Nullability::NotNull,
             )]),
         };
@@ -552,7 +570,9 @@ mod tests {
             alias: None,
             schema: RelSchema::new(vec![make_col(
                 "id",
-                SqlType::Integer { bits: 32 },
+                SqlType::Integer {
+                    bits: IntBitWidth::I32,
+                },
                 Nullability::NotNull,
             )]),
         };
@@ -562,14 +582,18 @@ mod tests {
                 expr: Box::new(TypedExpr::ColumnRef {
                     table: None,
                     column: "id".to_string(),
-                    resolved_type: SqlType::Integer { bits: 32 },
+                    resolved_type: SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
                     nullability: Nullability::NotNull,
                 }),
                 negated: false,
             },
             schema: RelSchema::new(vec![make_col(
                 "id",
-                SqlType::Integer { bits: 32 },
+                SqlType::Integer {
+                    bits: IntBitWidth::I32,
+                },
                 Nullability::NotNull,
             )]),
         };
@@ -592,7 +616,9 @@ mod tests {
             alias: None,
             schema: RelSchema::new(vec![make_col(
                 "id",
-                SqlType::Integer { bits: 32 },
+                SqlType::Integer {
+                    bits: IntBitWidth::I32,
+                },
                 Nullability::NotNull,
             )]),
         };
@@ -601,7 +627,9 @@ mod tests {
             alias: None,
             schema: RelSchema::new(vec![make_col(
                 "val",
-                SqlType::Integer { bits: 32 },
+                SqlType::Integer {
+                    bits: IntBitWidth::I32,
+                },
                 Nullability::NotNull,
             )]),
         };

@@ -3,7 +3,6 @@
 use crate::context::AnalysisContext;
 use crate::ir::expr::TypedExpr;
 use crate::ir::relop::{JoinType, RelOp};
-use crate::ir::types::SqlType;
 use crate::pass::{AnalysisPass, Diagnostic, DiagnosticCode, Severity};
 
 /// Join key analysis pass
@@ -134,7 +133,7 @@ fn check_join_key_types(
         return;
     }
 
-    if !types_join_compatible(left_type, right_type) {
+    if !left_type.is_compatible_with(right_type) {
         let left_desc = describe_join_key(left);
         let right_desc = describe_join_key(right);
 
@@ -153,28 +152,6 @@ fn check_join_key_types(
             hint: Some("Add explicit CASTs to ensure matching types".to_string()),
             pass_name: "join_keys".to_string(),
         });
-    }
-}
-
-/// Check if two types are compatible for join keys
-fn types_join_compatible(a: &SqlType, b: &SqlType) -> bool {
-    match (a, b) {
-        (SqlType::Integer { .. }, SqlType::Integer { .. }) => true,
-        (SqlType::Float { .. }, SqlType::Float { .. }) => true,
-        (SqlType::Integer { .. }, SqlType::Float { .. })
-        | (SqlType::Float { .. }, SqlType::Integer { .. }) => true,
-        (SqlType::Decimal { .. }, SqlType::Integer { .. })
-        | (SqlType::Integer { .. }, SqlType::Decimal { .. }) => true,
-        (SqlType::Decimal { .. }, SqlType::Float { .. })
-        | (SqlType::Float { .. }, SqlType::Decimal { .. }) => true,
-        (SqlType::Decimal { .. }, SqlType::Decimal { .. }) => true,
-        (SqlType::String { .. }, SqlType::String { .. }) => true,
-        (SqlType::Date, SqlType::Date) => true,
-        (SqlType::Timestamp, SqlType::Timestamp) => true,
-        (SqlType::Date, SqlType::Timestamp) | (SqlType::Timestamp, SqlType::Date) => true,
-        (SqlType::Boolean, SqlType::Boolean) => true,
-        // Incompatible: string vs numeric, etc.
-        _ => false,
     }
 }
 
@@ -197,7 +174,7 @@ mod tests {
     use crate::ir::expr::{BinOp, TypedExpr};
     use crate::ir::relop::{JoinType, RelOp};
     use crate::ir::schema::RelSchema;
-    use crate::ir::types::{Nullability, SqlType, TypedColumn};
+    use crate::ir::types::{IntBitWidth, Nullability, SqlType, TypedColumn};
     use ff_core::dag::ModelDag;
     use ff_core::Project;
     use ff_sql::ProjectLineage;
@@ -227,7 +204,9 @@ mod tests {
             alias: Some("o".to_string()),
             schema: RelSchema::new(vec![make_col(
                 "id",
-                SqlType::Integer { bits: 32 },
+                SqlType::Integer {
+                    bits: IntBitWidth::I32,
+                },
                 Nullability::NotNull,
             )]),
         };
@@ -249,7 +228,9 @@ mod tests {
                 left: Box::new(TypedExpr::ColumnRef {
                     table: Some("o".to_string()),
                     column: "id".to_string(),
-                    resolved_type: SqlType::Integer { bits: 32 },
+                    resolved_type: SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
                     nullability: Nullability::NotNull,
                 }),
                 op: BinOp::Eq,
@@ -286,7 +267,9 @@ mod tests {
             alias: None,
             schema: RelSchema::new(vec![make_col(
                 "x",
-                SqlType::Integer { bits: 32 },
+                SqlType::Integer {
+                    bits: IntBitWidth::I32,
+                },
                 Nullability::NotNull,
             )]),
         };
@@ -295,7 +278,9 @@ mod tests {
             alias: None,
             schema: RelSchema::new(vec![make_col(
                 "y",
-                SqlType::Integer { bits: 32 },
+                SqlType::Integer {
+                    bits: IntBitWidth::I32,
+                },
                 Nullability::NotNull,
             )]),
         };
@@ -329,7 +314,9 @@ mod tests {
             alias: None,
             schema: RelSchema::new(vec![make_col(
                 "val",
-                SqlType::Integer { bits: 32 },
+                SqlType::Integer {
+                    bits: IntBitWidth::I32,
+                },
                 Nullability::NotNull,
             )]),
         };
@@ -338,7 +325,9 @@ mod tests {
             alias: None,
             schema: RelSchema::new(vec![make_col(
                 "val",
-                SqlType::Integer { bits: 32 },
+                SqlType::Integer {
+                    bits: IntBitWidth::I32,
+                },
                 Nullability::NotNull,
             )]),
         };
@@ -351,14 +340,18 @@ mod tests {
                 left: Box::new(TypedExpr::ColumnRef {
                     table: Some("a".to_string()),
                     column: "val".to_string(),
-                    resolved_type: SqlType::Integer { bits: 32 },
+                    resolved_type: SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
                     nullability: Nullability::NotNull,
                 }),
                 op: BinOp::Gt,
                 right: Box::new(TypedExpr::ColumnRef {
                     table: Some("b".to_string()),
                     column: "val".to_string(),
-                    resolved_type: SqlType::Integer { bits: 32 },
+                    resolved_type: SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
                     nullability: Nullability::NotNull,
                 }),
                 resolved_type: SqlType::Boolean,
@@ -383,7 +376,9 @@ mod tests {
             alias: None,
             schema: RelSchema::new(vec![make_col(
                 "id",
-                SqlType::Integer { bits: 32 },
+                SqlType::Integer {
+                    bits: IntBitWidth::I32,
+                },
                 Nullability::NotNull,
             )]),
         };
@@ -392,7 +387,9 @@ mod tests {
             alias: None,
             schema: RelSchema::new(vec![make_col(
                 "id",
-                SqlType::Integer { bits: 64 },
+                SqlType::Integer {
+                    bits: IntBitWidth::I64,
+                },
                 Nullability::NotNull,
             )]),
         };
@@ -405,14 +402,18 @@ mod tests {
                 left: Box::new(TypedExpr::ColumnRef {
                     table: Some("a".to_string()),
                     column: "id".to_string(),
-                    resolved_type: SqlType::Integer { bits: 32 },
+                    resolved_type: SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
                     nullability: Nullability::NotNull,
                 }),
                 op: BinOp::Eq,
                 right: Box::new(TypedExpr::ColumnRef {
                     table: Some("b".to_string()),
                     column: "id".to_string(),
-                    resolved_type: SqlType::Integer { bits: 64 },
+                    resolved_type: SqlType::Integer {
+                        bits: IntBitWidth::I64,
+                    },
                     nullability: Nullability::NotNull,
                 }),
                 resolved_type: SqlType::Boolean,

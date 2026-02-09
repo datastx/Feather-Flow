@@ -17,7 +17,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::cli::{CompileArgs, GlobalArgs, OutputFormat};
-use crate::commands::common::{self, RunStatus};
+use crate::commands::common::{self, load_project, RunStatus};
 
 /// Compile result for a single model
 #[derive(Debug, Clone, Serialize)]
@@ -55,13 +55,34 @@ struct CompiledModel {
     query_comment: Option<String>,
 }
 
+/// Context for model compilation (phase 1), grouping shared compilation state.
+struct CompileContext<'a> {
+    jinja: &'a JinjaEnvironment<'a>,
+    parser: &'a SqlParser,
+    known_models: &'a HashSet<String>,
+    external_tables: &'a HashSet<String>,
+    project_root: &'a Path,
+    output_dir: &'a Path,
+    default_materialization: Materialization,
+    comment_ctx: Option<&'a ff_core::query_comment::QueryCommentContext>,
+}
+
+impl std::fmt::Debug for CompileContext<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CompileContext")
+            .field("project_root", &self.project_root)
+            .field("output_dir", &self.output_dir)
+            .field("default_materialization", &self.default_materialization)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Execute the compile command
 pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
     use ff_core::config::Config;
 
     let start_time = Instant::now();
-    let project_path = Path::new(&global.project_dir);
-    let mut project = Project::load(project_path).context("Failed to load project")?;
+    let mut project = load_project(global)?;
     let json_mode = args.output == OutputFormat::Json;
 
     // Resolve target from CLI flag or FF_TARGET env var
@@ -130,19 +151,19 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
     let mut compiled_models: Vec<CompiledModel> = Vec::new();
     let mut materializations: HashMap<String, Materialization> = HashMap::new();
 
+    let compile_ctx = CompileContext {
+        jinja: &jinja,
+        parser: &parser,
+        known_models: &known_models,
+        external_tables: &external_tables,
+        project_root: &project_root,
+        output_dir: &output_dir,
+        default_materialization,
+        comment_ctx: comment_ctx.as_ref(),
+    };
+
     for name in &model_names {
-        match compile_model_phase1(
-            &mut project,
-            name,
-            &jinja,
-            &parser,
-            &known_models,
-            &external_tables,
-            &project_root,
-            &output_dir,
-            default_materialization,
-            comment_ctx.as_ref(),
-        ) {
+        match compile_model_phase1(&mut project, name, &compile_ctx) {
             Ok(compiled) => {
                 dependencies.insert(name.clone(), compiled.dependencies.clone());
                 materializations.insert(name.clone(), compiled.materialization);
@@ -159,7 +180,7 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
                     error: Some(e.to_string()),
                 });
                 if !json_mode {
-                    println!("  ✗ {} - {}", name, e);
+                    println!("  \u{2717} {} - {}", name, e);
                 }
             }
         }
@@ -191,7 +212,7 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
         // Skip ephemeral models - they don't get written as files
         if compiled.materialization == Materialization::Ephemeral {
             if !json_mode {
-                println!("  ✓ {} (ephemeral) [inlined]", compiled.name);
+                println!("  \u{2713} {} (ephemeral) [inlined]", compiled.name);
             }
             success_count += 1;
             compile_results.push(ModelCompileResult {
@@ -239,7 +260,7 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
         if args.parse_only {
             if !json_mode {
                 println!(
-                    "  ✓ {} ({}) [validated]",
+                    "  \u{2713} {} ({}) [validated]",
                     compiled.name, compiled.materialization
                 );
             }
@@ -279,7 +300,10 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
             }
 
             if !json_mode {
-                println!("  ✓ {} ({})", compiled.name, compiled.materialization);
+                println!(
+                    "  \u{2713} {} ({})",
+                    compiled.name, compiled.materialization
+                );
             }
 
             if global.verbose {
@@ -368,34 +392,28 @@ fn merge_vars(
     Ok(vars)
 }
 
-/// Compile a single model (phase 1): render template, parse SQL, extract dependencies
-/// Does not write files - returns compiled model info for phase 2
-#[allow(clippy::too_many_arguments)]
+/// Compile a single model (phase 1): render template, parse SQL, extract dependencies.
+/// Does not write files - returns compiled model info for phase 2.
 fn compile_model_phase1(
     project: &mut Project,
     name: &str,
-    jinja: &JinjaEnvironment,
-    parser: &SqlParser,
-    known_models: &HashSet<String>,
-    external_tables: &HashSet<String>,
-    project_root: &Path,
-    output_dir: &Path,
-    default_materialization: Materialization,
-    comment_ctx: Option<&ff_core::query_comment::QueryCommentContext>,
+    ctx: &CompileContext<'_>,
 ) -> Result<CompiledModel> {
     let model = project
         .get_model_mut(name)
         .context(format!("Model not found: {}", name))?;
 
-    let (rendered, config_values) = jinja
+    let (rendered, config_values) = ctx
+        .jinja
         .render_with_config(&model.raw_sql)
         .context(format!("Failed to render template for model: {}", name))?;
 
-    let statements = parser
+    let statements = ctx
+        .parser
         .parse(&rendered)
         .context(format!("Failed to parse SQL for model: {}", name))?;
 
-    // Reject CTEs and derived tables — each transform must be its own model
+    // Reject CTEs and derived tables -- each transform must be its own model
     ff_sql::validate_no_complex_queries(&statements)
         .map_err(|e| anyhow::anyhow!("{}", e))
         .context(format!("Model '{}' uses forbidden SQL constructs", name))?;
@@ -404,8 +422,8 @@ fn compile_model_phase1(
     let (model_deps, ext_deps, unknown_deps) =
         ff_sql::extractor::categorize_dependencies_with_unknown(
             deps,
-            known_models,
-            external_tables,
+            ctx.known_models,
+            ctx.external_tables,
         );
 
     for unknown in &unknown_deps {
@@ -463,11 +481,14 @@ fn compile_model_phase1(
         }),
     };
 
-    let mat = model.config.materialized.unwrap_or(default_materialization);
-    let output_path = compute_compiled_path(&model.path, project_root, output_dir);
+    let mat = model
+        .config
+        .materialized
+        .unwrap_or(ctx.default_materialization);
+    let output_path = compute_compiled_path(&model.path, ctx.project_root, ctx.output_dir);
 
-    let query_comment = comment_ctx.map(|ctx| {
-        let metadata = ctx.build_metadata(name, &mat.to_string());
+    let query_comment = ctx.comment_ctx.map(|comment_ctx| {
+        let metadata = comment_ctx.build_metadata(name, &mat.to_string());
         ff_core::query_comment::build_query_comment(&metadata)
     });
 

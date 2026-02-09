@@ -1,9 +1,9 @@
 //! Pass infrastructure — composable analysis passes over the IR
 
-pub mod join_keys;
-pub mod nullability;
-pub mod type_inference;
-pub mod unused_columns;
+pub(crate) mod join_keys;
+pub(crate) mod nullability;
+pub(crate) mod type_inference;
+pub(crate) mod unused_columns;
 
 use crate::context::AnalysisContext;
 use crate::ir::relop::RelOp;

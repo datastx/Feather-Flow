@@ -1,13 +1,14 @@
 //! Static documentation generation (markdown, HTML, JSON)
 
 use anyhow::{Context, Result};
-use ff_core::Project;
 use ff_jinja::{get_builtin_macros, get_macro_categories, MacroMetadata};
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+
+use ff_core::Project;
 
 use crate::cli::{DocsArgs, DocsFormat, GlobalArgs};
+use crate::commands::common::load_project;
 
 use super::data::*;
 
@@ -15,12 +16,11 @@ const CHECKMARK: char = '\u{2713}';
 
 /// Execute static documentation generation
 pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
-    let project_path = Path::new(&global.project_dir);
-    let project = Project::load(project_path).context("Failed to load project")?;
+    let project = load_project(global)?;
 
     // Determine output directory
     let output_dir = match &args.output {
-        Some(path) => project_path.join(path),
+        Some(path) => project.root.join(path),
         None => project.target_dir().join("docs"),
     };
 

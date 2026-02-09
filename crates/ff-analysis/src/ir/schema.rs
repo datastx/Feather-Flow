@@ -117,7 +117,7 @@ impl Default for RelSchema {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::types::{Nullability, SqlType};
+    use crate::ir::types::{IntBitWidth, Nullability, SqlType};
 
     fn make_col(name: &str, ty: SqlType, null: Nullability) -> TypedColumn {
         TypedColumn {
@@ -132,7 +132,13 @@ mod tests {
     #[test]
     fn test_find_column() {
         let schema = RelSchema::new(vec![
-            make_col("id", SqlType::Integer { bits: 32 }, Nullability::NotNull),
+            make_col(
+                "id",
+                SqlType::Integer {
+                    bits: IntBitWidth::I32,
+                },
+                Nullability::NotNull,
+            ),
             make_col(
                 "name",
                 SqlType::String { max_length: None },
@@ -149,7 +155,9 @@ mod tests {
     fn test_merge_schemas() {
         let left = RelSchema::new(vec![make_col(
             "a",
-            SqlType::Integer { bits: 32 },
+            SqlType::Integer {
+                bits: IntBitWidth::I32,
+            },
             Nullability::NotNull,
         )]);
         let right = RelSchema::new(vec![make_col(
@@ -167,7 +175,9 @@ mod tests {
     fn test_with_nullability() {
         let schema = RelSchema::new(vec![make_col(
             "id",
-            SqlType::Integer { bits: 32 },
+            SqlType::Integer {
+                bits: IntBitWidth::I32,
+            },
             Nullability::NotNull,
         )]);
         let nullable = schema.with_nullability(Nullability::Nullable);

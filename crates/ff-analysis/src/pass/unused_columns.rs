@@ -247,7 +247,7 @@ mod tests {
     use crate::ir::expr::TypedExpr;
     use crate::ir::relop::RelOp;
     use crate::ir::schema::RelSchema;
-    use crate::ir::types::{Nullability, SqlType, TypedColumn};
+    use crate::ir::types::{IntBitWidth, Nullability, SqlType, TypedColumn};
     use ff_core::dag::ModelDag;
     use ff_core::Project;
     use ff_sql::ProjectLineage;
@@ -277,7 +277,13 @@ mod tests {
                 table_name: "source".to_string(),
                 alias: None,
                 schema: RelSchema::new(vec![
-                    make_col("id", SqlType::Integer { bits: 32 }, Nullability::NotNull),
+                    make_col(
+                        "id",
+                        SqlType::Integer {
+                            bits: IntBitWidth::I32,
+                        },
+                        Nullability::NotNull,
+                    ),
                     make_col(
                         "name",
                         SqlType::String { max_length: None },
@@ -287,7 +293,13 @@ mod tests {
             }),
             columns: vec![("*".to_string(), TypedExpr::Wildcard { table: None })],
             schema: RelSchema::new(vec![
-                make_col("id", SqlType::Integer { bits: 32 }, Nullability::NotNull),
+                make_col(
+                    "id",
+                    SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
+                    Nullability::NotNull,
+                ),
                 make_col(
                     "name",
                     SqlType::String { max_length: None },
@@ -339,13 +351,17 @@ mod tests {
                 TypedExpr::ColumnRef {
                     table: None,
                     column: "id".to_string(),
-                    resolved_type: SqlType::Integer { bits: 32 },
+                    resolved_type: SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
                     nullability: Nullability::NotNull,
                 },
             )],
             schema: RelSchema::new(vec![make_col(
                 "id",
-                SqlType::Integer { bits: 32 },
+                SqlType::Integer {
+                    bits: IntBitWidth::I32,
+                },
                 Nullability::NotNull,
             )]),
         };
@@ -381,7 +397,9 @@ mod tests {
                     TypedExpr::ColumnRef {
                         table: None,
                         column: "id".to_string(),
-                        resolved_type: SqlType::Integer { bits: 32 },
+                        resolved_type: SqlType::Integer {
+                            bits: IntBitWidth::I32,
+                        },
                         nullability: Nullability::NotNull,
                     },
                 ),
@@ -405,7 +423,13 @@ mod tests {
                 ),
             ],
             schema: RelSchema::new(vec![
-                make_col("id", SqlType::Integer { bits: 32 }, Nullability::NotNull),
+                make_col(
+                    "id",
+                    SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
+                    Nullability::NotNull,
+                ),
                 make_col(
                     "name",
                     SqlType::String { max_length: None },
@@ -431,7 +455,9 @@ mod tests {
                     TypedExpr::ColumnRef {
                         table: None,
                         column: "id".to_string(),
-                        resolved_type: SqlType::Integer { bits: 32 },
+                        resolved_type: SqlType::Integer {
+                            bits: IntBitWidth::I32,
+                        },
                         nullability: Nullability::NotNull,
                     },
                 ),
@@ -446,7 +472,13 @@ mod tests {
                 ),
             ],
             schema: RelSchema::new(vec![
-                make_col("id", SqlType::Integer { bits: 32 }, Nullability::NotNull),
+                make_col(
+                    "id",
+                    SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
+                    Nullability::NotNull,
+                ),
                 make_col(
                     "name",
                     SqlType::String { max_length: None },

@@ -2,17 +2,14 @@
 
 use anyhow::{Context, Result};
 use ff_core::seed::{discover_seeds, Seed};
-use ff_core::Project;
 use ff_db::{quote_qualified, CsvLoadOptions, Database};
-use std::path::Path;
 
 use crate::cli::{GlobalArgs, SeedArgs};
-use crate::commands::common;
+use crate::commands::common::{self, load_project};
 
 /// Execute the seed command
 pub async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
-    let project_path = Path::new(&global.project_dir);
-    let project = Project::load(project_path).context("Failed to load project")?;
+    let project = load_project(global)?;
 
     let db = common::create_database_connection(&project.config, global.target.as_deref())?;
 
@@ -99,10 +96,16 @@ pub async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
 
         match result {
             Ok(_) => {
-                let row_count = db
+                let row_count = match db
                     .query_count(&format!("SELECT * FROM {}", quote_qualified(&table_name)))
                     .await
-                    .unwrap_or(0);
+                {
+                    Ok(count) => count,
+                    Err(e) => {
+                        eprintln!("[warn] Failed to count rows for {}: {}", table_name, e);
+                        0
+                    }
+                };
 
                 success_count += 1;
                 total_rows += row_count;

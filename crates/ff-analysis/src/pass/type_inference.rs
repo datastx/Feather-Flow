@@ -7,7 +7,7 @@ use crate::ir::types::SqlType;
 use crate::pass::{AnalysisPass, Diagnostic, DiagnosticCode, Severity};
 
 /// Type inference analysis pass
-pub struct TypeInference;
+pub(crate) struct TypeInference;
 
 impl AnalysisPass for TypeInference {
     fn name(&self) -> &'static str {
@@ -122,7 +122,7 @@ fn walk_relop(model: &str, op: &RelOp, diags: &mut Vec<Diagnostic>) {
             } else {
                 // A002: Type mismatch in UNION columns
                 for (l, r) in left_schema.columns.iter().zip(right_schema.columns.iter()) {
-                    if !types_compatible(&l.sql_type, &r.sql_type) {
+                    if !l.sql_type.is_compatible_with(&r.sql_type) {
                         diags.push(Diagnostic {
                             code: DiagnosticCode::A002,
                             severity: Severity::Warning,
@@ -231,35 +231,6 @@ fn check_aggregate_type(
     }
 }
 
-/// Check if two types are compatible (for UNION operations)
-fn types_compatible(a: &SqlType, b: &SqlType) -> bool {
-    // Unknown is compatible with anything
-    if a.is_unknown() || b.is_unknown() {
-        return true;
-    }
-    // Same type family is compatible
-    matches!(
-        (a, b),
-        (SqlType::Boolean, SqlType::Boolean)
-            | (SqlType::Integer { .. }, SqlType::Integer { .. })
-            | (SqlType::Float { .. }, SqlType::Float { .. })
-            | (SqlType::Integer { .. }, SqlType::Float { .. })
-            | (SqlType::Float { .. }, SqlType::Integer { .. })
-            | (SqlType::Decimal { .. }, SqlType::Decimal { .. })
-            | (SqlType::Decimal { .. }, SqlType::Integer { .. })
-            | (SqlType::Integer { .. }, SqlType::Decimal { .. })
-            | (SqlType::Decimal { .. }, SqlType::Float { .. })
-            | (SqlType::Float { .. }, SqlType::Decimal { .. })
-            | (SqlType::String { .. }, SqlType::String { .. })
-            | (SqlType::Date, SqlType::Date)
-            | (SqlType::Time, SqlType::Time)
-            | (SqlType::Timestamp, SqlType::Timestamp)
-            | (SqlType::Date, SqlType::Timestamp)
-            | (SqlType::Timestamp, SqlType::Date)
-            | (SqlType::Binary, SqlType::Binary)
-    )
-}
-
 /// Check if a cast is potentially lossy
 fn is_lossy_cast(source: &SqlType, target: &SqlType) -> bool {
     matches!(
@@ -286,7 +257,7 @@ mod tests {
     use crate::ir::expr::TypedExpr;
     use crate::ir::relop::{RelOp, SetOpKind};
     use crate::ir::schema::RelSchema;
-    use crate::ir::types::{Nullability, SqlType, TypedColumn};
+    use crate::ir::types::{FloatBitWidth, IntBitWidth, Nullability, SqlType, TypedColumn};
     use ff_core::dag::ModelDag;
     use ff_core::Project;
     use ff_sql::ProjectLineage;
@@ -315,7 +286,13 @@ mod tests {
             table_name: "test_table".to_string(),
             alias: None,
             schema: RelSchema::new(vec![
-                make_col("id", SqlType::Integer { bits: 32 }, Nullability::NotNull),
+                make_col(
+                    "id",
+                    SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
+                    Nullability::NotNull,
+                ),
                 make_col(
                     "data",
                     SqlType::Unknown("no type declared".to_string()),
@@ -340,7 +317,9 @@ mod tests {
             alias: None,
             schema: RelSchema::new(vec![make_col(
                 "val",
-                SqlType::Integer { bits: 32 },
+                SqlType::Integer {
+                    bits: IntBitWidth::I32,
+                },
                 Nullability::NotNull,
             )]),
         };
@@ -359,7 +338,9 @@ mod tests {
             op: SetOpKind::Union,
             schema: RelSchema::new(vec![make_col(
                 "val",
-                SqlType::Integer { bits: 32 },
+                SqlType::Integer {
+                    bits: IntBitWidth::I32,
+                },
                 Nullability::NotNull,
             )]),
         };
@@ -381,8 +362,20 @@ mod tests {
             table_name: "a".to_string(),
             alias: None,
             schema: RelSchema::new(vec![
-                make_col("x", SqlType::Integer { bits: 32 }, Nullability::NotNull),
-                make_col("y", SqlType::Integer { bits: 32 }, Nullability::NotNull),
+                make_col(
+                    "x",
+                    SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
+                    Nullability::NotNull,
+                ),
+                make_col(
+                    "y",
+                    SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
+                    Nullability::NotNull,
+                ),
             ]),
         };
         let right = RelOp::Scan {
@@ -390,7 +383,9 @@ mod tests {
             alias: None,
             schema: RelSchema::new(vec![make_col(
                 "x",
-                SqlType::Integer { bits: 32 },
+                SqlType::Integer {
+                    bits: IntBitWidth::I32,
+                },
                 Nullability::NotNull,
             )]),
         };
@@ -474,16 +469,22 @@ mod tests {
                     expr: Box::new(TypedExpr::ColumnRef {
                         table: None,
                         column: "price".to_string(),
-                        resolved_type: SqlType::Float { bits: 64 },
+                        resolved_type: SqlType::Float {
+                            bits: FloatBitWidth::F64,
+                        },
                         nullability: Nullability::Nullable,
                     }),
-                    target_type: SqlType::Integer { bits: 32 },
+                    target_type: SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
                     nullability: Nullability::Nullable,
                 },
             )],
             schema: RelSchema::new(vec![make_col(
                 "truncated",
-                SqlType::Integer { bits: 32 },
+                SqlType::Integer {
+                    bits: IntBitWidth::I32,
+                },
                 Nullability::Nullable,
             )]),
         };
@@ -505,7 +506,13 @@ mod tests {
             table_name: "clean_table".to_string(),
             alias: None,
             schema: RelSchema::new(vec![
-                make_col("id", SqlType::Integer { bits: 32 }, Nullability::NotNull),
+                make_col(
+                    "id",
+                    SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
+                    Nullability::NotNull,
+                ),
                 make_col(
                     "name",
                     SqlType::String { max_length: None },
@@ -525,7 +532,9 @@ mod tests {
             alias: None,
             schema: RelSchema::new(vec![make_col(
                 "val",
-                SqlType::Integer { bits: 32 },
+                SqlType::Integer {
+                    bits: IntBitWidth::I32,
+                },
                 Nullability::NotNull,
             )]),
         };
@@ -534,7 +543,9 @@ mod tests {
             alias: None,
             schema: RelSchema::new(vec![make_col(
                 "val",
-                SqlType::Integer { bits: 64 },
+                SqlType::Integer {
+                    bits: IntBitWidth::I64,
+                },
                 Nullability::NotNull,
             )]),
         };
@@ -544,7 +555,9 @@ mod tests {
             op: SetOpKind::Union,
             schema: RelSchema::new(vec![make_col(
                 "val",
-                SqlType::Integer { bits: 64 },
+                SqlType::Integer {
+                    bits: IntBitWidth::I64,
+                },
                 Nullability::NotNull,
             )]),
         };

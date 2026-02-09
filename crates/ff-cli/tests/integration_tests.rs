@@ -1920,9 +1920,10 @@ fn test_analysis_lower_sample_project() {
 /// Test the PassManager runs end-to-end on sample project
 #[test]
 fn test_analysis_pass_manager_sample_project() {
-    use ff_analysis::ir::schema::RelSchema;
-    use ff_analysis::ir::types::{Nullability, SqlType, TypedColumn};
-    use ff_analysis::{lower_statement, AnalysisContext, PassManager, RelOp, SchemaCatalog};
+    use ff_analysis::{
+        lower_statement, parse_sql_type, AnalysisContext, Nullability, PassManager, RelOp,
+        RelSchema, SchemaCatalog, SqlType, TypedColumn,
+    };
     use ff_sql::{extract_column_lineage, ProjectLineage};
 
     let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
@@ -1947,7 +1948,7 @@ fn test_analysis_pass_manager_sample_project() {
                     let sql_type = col
                         .data_type
                         .as_ref()
-                        .map(|dt| ff_analysis::ir::types::parse_sql_type(dt))
+                        .map(|dt| parse_sql_type(dt))
                         .unwrap_or_else(|| SqlType::Unknown("no type".to_string()));
                     TypedColumn {
                         name: col.name.clone(),
