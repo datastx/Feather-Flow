@@ -11,6 +11,32 @@ use ff_core::sql_utils::{escape_sql_string, quote_ident, quote_qualified};
 use std::path::Path;
 use std::sync::Mutex;
 
+use ff_core::snapshot::{SCD_ID, SCD_UPDATED_AT, SCD_VALID_FROM, SCD_VALID_TO};
+
+/// Build the MD5-based SCD ID expression from unique key columns.
+///
+/// Concatenates the key values (coalesced to empty string) with `|` separators
+/// and the current timestamp, then hashes via MD5 to produce a deterministic
+/// but time-unique surrogate key.
+///
+/// When `table_alias` is `Some("s")`, columns are prefixed as `s.col`.
+fn build_scd_id_expr(unique_keys: &[String], table_alias: Option<&str>) -> String {
+    let key_concat: Vec<String> = unique_keys
+        .iter()
+        .map(|k| {
+            let col = match table_alias {
+                Some(alias) => format!("{}.{}", alias, quote_ident(k)),
+                None => quote_ident(k),
+            };
+            format!("COALESCE(CAST({} AS VARCHAR), '')", col)
+        })
+        .collect();
+    format!(
+        "MD5({} || '|' || CAST(CURRENT_TIMESTAMP AS VARCHAR))",
+        key_concat.join(" || '|' || ")
+    )
+}
+
 /// DuckDB database backend
 pub struct DuckDbBackend {
     conn: Mutex<Connection>,
@@ -136,6 +162,103 @@ impl DuckDbBackend {
         let count: i64 = conn.query_row(sql, duckdb::params![schema, table], |row| row.get(0))?;
 
         Ok(count > 0)
+    }
+
+    /// Inner snapshot logic called within a transaction by [`execute_snapshot`].
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_snapshot_inner(
+        &self,
+        snapshot_table: &str,
+        source_table: &str,
+        unique_keys: &[String],
+        updated_at_column: Option<&str>,
+        check_cols: Option<&[String]>,
+        invalidate_hard_deletes: bool,
+        snapshot_exists: bool,
+    ) -> DbResult<SnapshotResult> {
+        if !snapshot_exists {
+            let source_schema = self.get_table_schema(source_table).await?;
+            let quoted_snap = quote_qualified(snapshot_table);
+            let quoted_src = quote_qualified(source_table);
+
+            let mut columns: Vec<String> = source_schema
+                .iter()
+                .map(|(name, dtype)| format!("{} {}", quote_ident(name), dtype))
+                .collect();
+
+            columns.push(format!("{} VARCHAR", SCD_ID));
+            columns.push(format!("{} TIMESTAMP", SCD_UPDATED_AT));
+            columns.push(format!("{} TIMESTAMP", SCD_VALID_FROM));
+            columns.push(format!("{} TIMESTAMP", SCD_VALID_TO));
+
+            let create_sql = format!("CREATE TABLE {} ({})", quoted_snap, columns.join(", "));
+            self.execute_sync(&create_sql)?;
+
+            let source_cols: Vec<String> =
+                source_schema.iter().map(|(n, _)| quote_ident(n)).collect();
+
+            let updated_at_expr = if let Some(col) = updated_at_column {
+                format!("CAST({} AS TIMESTAMP)", quote_ident(col))
+            } else {
+                "CURRENT_TIMESTAMP".to_string()
+            };
+
+            let scd_id_expr = build_scd_id_expr(unique_keys, None);
+
+            let insert_sql = format!(
+                "INSERT INTO {} ({}, {}, {}, {}, {}) \
+                 SELECT {}, {}, {}, CURRENT_TIMESTAMP, NULL \
+                 FROM {}",
+                quoted_snap,
+                source_cols.join(", "),
+                SCD_ID,
+                SCD_UPDATED_AT,
+                SCD_VALID_FROM,
+                SCD_VALID_TO,
+                source_cols.join(", "),
+                scd_id_expr,
+                updated_at_expr,
+                quoted_src
+            );
+            self.execute_sync(&insert_sql)?;
+
+            let new_count = self
+                .query_count(&format!("SELECT * FROM {}", quoted_snap))
+                .await?;
+
+            return Ok(SnapshotResult {
+                new_records: new_count,
+                updated_records: 0,
+                deleted_records: 0,
+            });
+        }
+
+        let new_records = self
+            .snapshot_insert_new(snapshot_table, source_table, unique_keys)
+            .await?;
+
+        let updated_records = self
+            .snapshot_update_changed(
+                snapshot_table,
+                source_table,
+                unique_keys,
+                updated_at_column,
+                check_cols,
+            )
+            .await?;
+
+        let deleted_records = if invalidate_hard_deletes {
+            self.snapshot_invalidate_deleted(snapshot_table, source_table, unique_keys)
+                .await?
+        } else {
+            0
+        };
+
+        Ok(SnapshotResult {
+            new_records,
+            updated_records,
+            deleted_records,
+        })
     }
 }
 
@@ -476,92 +599,32 @@ impl DatabaseSnapshot for DuckDbBackend {
 
         let snapshot_exists = self.relation_exists(snapshot_table).await?;
 
-        if !snapshot_exists {
-            let source_schema = self.get_table_schema(source_table).await?;
-            let quoted_snap = quote_qualified(snapshot_table);
-            let quoted_src = quote_qualified(source_table);
+        // Wrap all DML in a transaction for atomicity
+        self.execute_sync("BEGIN TRANSACTION")?;
 
-            let mut columns: Vec<String> = source_schema
-                .iter()
-                .map(|(name, dtype)| format!("{} {}", quote_ident(name), dtype))
-                .collect();
-
-            columns.push("dbt_scd_id VARCHAR".to_string());
-            columns.push("dbt_updated_at TIMESTAMP".to_string());
-            columns.push("dbt_valid_from TIMESTAMP".to_string());
-            columns.push("dbt_valid_to TIMESTAMP".to_string());
-
-            let create_sql = format!("CREATE TABLE {} ({})", quoted_snap, columns.join(", "));
-            self.execute_sync(&create_sql)?;
-
-            let source_cols: Vec<String> =
-                source_schema.iter().map(|(n, _)| quote_ident(n)).collect();
-
-            let updated_at_expr = if let Some(col) = updated_at_column {
-                format!("CAST({} AS TIMESTAMP)", quote_ident(col))
-            } else {
-                "CURRENT_TIMESTAMP".to_string()
-            };
-
-            let key_concat: Vec<String> = unique_keys
-                .iter()
-                .map(|k| format!("COALESCE(CAST({} AS VARCHAR), '')", quote_ident(k)))
-                .collect();
-            let scd_id_expr = format!(
-                "MD5({} || '|' || CAST(CURRENT_TIMESTAMP AS VARCHAR))",
-                key_concat.join(" || '|' || ")
-            );
-
-            let insert_sql = format!(
-                "INSERT INTO {} ({}, dbt_scd_id, dbt_updated_at, dbt_valid_from, dbt_valid_to) \
-                 SELECT {}, {}, {}, CURRENT_TIMESTAMP, NULL \
-                 FROM {}",
-                quoted_snap,
-                source_cols.join(", "),
-                source_cols.join(", "),
-                scd_id_expr,
-                updated_at_expr,
-                quoted_src
-            );
-            self.execute_sync(&insert_sql)?;
-
-            let new_count = self
-                .query_count(&format!("SELECT * FROM {}", quoted_snap))
-                .await?;
-
-            return Ok(SnapshotResult {
-                new_records: new_count,
-                updated_records: 0,
-                deleted_records: 0,
-            });
-        }
-
-        let new_records = self
-            .snapshot_insert_new(snapshot_table, source_table, unique_keys)
-            .await?;
-
-        let updated_records = self
-            .snapshot_update_changed(
+        let result = self
+            .execute_snapshot_inner(
                 snapshot_table,
                 source_table,
                 unique_keys,
                 updated_at_column,
                 check_cols,
+                invalidate_hard_deletes,
+                snapshot_exists,
             )
-            .await?;
+            .await;
 
-        let deleted_records = if invalidate_hard_deletes {
-            self.snapshot_invalidate_deleted(snapshot_table, source_table, unique_keys)
-                .await?
-        } else {
-            0
-        };
+        match &result {
+            Ok(_) => {
+                self.execute_sync("COMMIT")?;
+            }
+            Err(_) => {
+                // Best-effort rollback — ignore errors (connection may be broken)
+                let _ = self.execute_sync("ROLLBACK");
+            }
+        }
 
-        Ok(SnapshotResult {
-            new_records,
-            updated_records,
-            deleted_records,
-        })
+        result
     }
 
     async fn snapshot_insert_new(
@@ -578,14 +641,7 @@ impl DatabaseSnapshot for DuckDbBackend {
         let source_schema = self.get_table_schema(source_table).await?;
         let source_cols: Vec<String> = source_schema.iter().map(|(n, _)| quote_ident(n)).collect();
 
-        let key_concat: Vec<String> = unique_keys
-            .iter()
-            .map(|k| format!("COALESCE(CAST(s.{} AS VARCHAR), '')", quote_ident(k)))
-            .collect();
-        let scd_id_expr = format!(
-            "MD5({} || '|' || CAST(CURRENT_TIMESTAMP AS VARCHAR))",
-            key_concat.join(" || '|' || ")
-        );
+        let scd_id_expr = build_scd_id_expr(unique_keys, Some("s"));
 
         let prefixed_cols: Vec<String> = source_cols.iter().map(|c| format!("s.{}", c)).collect();
         let Some(raw_first_key) = unique_keys.first() else {
@@ -595,30 +651,39 @@ impl DatabaseSnapshot for DuckDbBackend {
         };
         let first_key = quote_ident(raw_first_key);
 
+        let active_snap = format!(
+            "SELECT * FROM {} WHERE {} IS NULL",
+            quoted_snap, SCD_VALID_TO
+        );
+
         let new_records_sql = format!(
             "SELECT s.* FROM {} s \
-             LEFT JOIN (SELECT * FROM {} WHERE dbt_valid_to IS NULL) snap \
+             LEFT JOIN ({}) snap \
                ON {} \
              WHERE snap.{} IS NULL",
-            quoted_src, quoted_snap, join_condition, first_key,
+            quoted_src, active_snap, join_condition, first_key,
         );
 
         let new_count = self.query_count(&new_records_sql).await?;
 
         if new_count > 0 {
             let insert_sql = format!(
-                "INSERT INTO {} ({}, dbt_scd_id, dbt_updated_at, dbt_valid_from, dbt_valid_to) \
+                "INSERT INTO {} ({}, {}, {}, {}, {}) \
                  SELECT {}, {}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL \
                  FROM {} s \
-                 LEFT JOIN (SELECT * FROM {} WHERE dbt_valid_to IS NULL) snap \
+                 LEFT JOIN ({}) snap \
                    ON {} \
                  WHERE snap.{} IS NULL",
                 quoted_snap,
                 source_cols.join(", "),
+                SCD_ID,
+                SCD_UPDATED_AT,
+                SCD_VALID_FROM,
+                SCD_VALID_TO,
                 prefixed_cols.join(", "),
                 scd_id_expr,
                 quoted_src,
-                quoted_snap,
+                active_snap,
                 join_condition,
                 first_key,
             );
@@ -642,7 +707,7 @@ impl DatabaseSnapshot for DuckDbBackend {
         let join_condition = build_join_condition(unique_keys, "s", "snap");
 
         let change_condition = if let Some(updated_at) = updated_at_column {
-            format!("s.{} > snap.dbt_updated_at", quote_ident(updated_at))
+            format!("s.{} > snap.{}", quote_ident(updated_at), SCD_UPDATED_AT)
         } else if let Some(cols) = check_cols {
             let comparisons: Vec<String> = cols
                 .iter()
@@ -656,12 +721,17 @@ impl DatabaseSnapshot for DuckDbBackend {
             return Ok(0);
         };
 
+        let active_snap = format!(
+            "SELECT * FROM {} WHERE {} IS NULL",
+            quoted_snap, SCD_VALID_TO
+        );
+
         let changed_records_sql = format!(
             "SELECT s.* FROM {} s \
-             INNER JOIN (SELECT * FROM {} WHERE dbt_valid_to IS NULL) snap \
+             INNER JOIN ({}) snap \
                ON {} \
              WHERE {}",
-            quoted_src, quoted_snap, join_condition, change_condition,
+            quoted_src, active_snap, join_condition, change_condition,
         );
 
         let changed_count = self.query_count(&changed_records_sql).await?;
@@ -674,14 +744,7 @@ impl DatabaseSnapshot for DuckDbBackend {
         let source_cols: Vec<String> = source_schema.iter().map(|(n, _)| quote_ident(n)).collect();
         let prefixed_cols: Vec<String> = source_cols.iter().map(|c| format!("s.{}", c)).collect();
 
-        let key_concat: Vec<String> = unique_keys
-            .iter()
-            .map(|k| format!("COALESCE(CAST(s.{} AS VARCHAR), '')", quote_ident(k)))
-            .collect();
-        let scd_id_expr = format!(
-            "MD5({} || '|' || CAST(CURRENT_TIMESTAMP AS VARCHAR))",
-            key_concat.join(" || '|' || ")
-        );
+        let scd_id_expr = build_scd_id_expr(unique_keys, Some("s"));
 
         let updated_at_expr = if let Some(col) = updated_at_column {
             format!("s.{}", quote_ident(col))
@@ -691,19 +754,23 @@ impl DatabaseSnapshot for DuckDbBackend {
 
         // Insert new versions before invalidating old ones to capture changing records
         let insert_sql = format!(
-            "INSERT INTO {} ({}, dbt_scd_id, dbt_updated_at, dbt_valid_from, dbt_valid_to) \
+            "INSERT INTO {} ({}, {}, {}, {}, {}) \
              SELECT {}, {}, {}, CURRENT_TIMESTAMP, NULL \
              FROM {} s \
-             INNER JOIN (SELECT * FROM {} WHERE dbt_valid_to IS NULL) snap \
+             INNER JOIN ({}) snap \
                ON {} \
              WHERE {}",
             quoted_snap,
             source_cols.join(", "),
+            SCD_ID,
+            SCD_UPDATED_AT,
+            SCD_VALID_FROM,
+            SCD_VALID_TO,
             prefixed_cols.join(", "),
             scd_id_expr,
             updated_at_expr,
             quoted_src,
-            quoted_snap,
+            active_snap,
             join_condition,
             change_condition,
         );
@@ -712,15 +779,22 @@ impl DatabaseSnapshot for DuckDbBackend {
         let key_match_for_newer = build_join_condition(unique_keys, "old", "newer");
 
         let update_sql = format!(
-            "UPDATE {} AS old SET dbt_valid_to = CURRENT_TIMESTAMP \
-             WHERE old.dbt_valid_to IS NULL \
+            "UPDATE {} AS old SET {} = CURRENT_TIMESTAMP \
+             WHERE old.{} IS NULL \
              AND EXISTS ( \
                  SELECT 1 FROM {} newer \
                  WHERE {} \
-                 AND newer.dbt_valid_from > old.dbt_valid_from \
-                 AND newer.dbt_valid_to IS NULL \
+                 AND newer.{} > old.{} \
+                 AND newer.{} IS NULL \
              )",
-            quoted_snap, quoted_snap, key_match_for_newer,
+            quoted_snap,
+            SCD_VALID_TO,
+            SCD_VALID_TO,
+            quoted_snap,
+            key_match_for_newer,
+            SCD_VALID_FROM,
+            SCD_VALID_FROM,
+            SCD_VALID_TO,
         );
         self.execute_sync(&update_sql)?;
 
@@ -748,8 +822,8 @@ impl DatabaseSnapshot for DuckDbBackend {
         let deleted_records_sql = format!(
             "SELECT snap.* FROM {} snap \
              LEFT JOIN {} s ON {} \
-             WHERE snap.dbt_valid_to IS NULL AND s.{} IS NULL",
-            quoted_snap, quoted_src, join_condition, first_key,
+             WHERE snap.{} IS NULL AND s.{} IS NULL",
+            quoted_snap, quoted_src, join_condition, SCD_VALID_TO, first_key,
         );
 
         let deleted_count = self.query_count(&deleted_records_sql).await?;
@@ -761,13 +835,13 @@ impl DatabaseSnapshot for DuckDbBackend {
         let key_match = build_join_condition(unique_keys, &quoted_snap, "s");
 
         let update_sql = format!(
-            "UPDATE {} SET dbt_valid_to = CURRENT_TIMESTAMP \
-             WHERE dbt_valid_to IS NULL \
+            "UPDATE {} SET {} = CURRENT_TIMESTAMP \
+             WHERE {} IS NULL \
              AND NOT EXISTS ( \
                  SELECT 1 FROM {} s \
                  WHERE {} \
              )",
-            quoted_snap, quoted_src, key_match,
+            quoted_snap, SCD_VALID_TO, SCD_VALID_TO, quoted_src, key_match,
         );
         self.execute_sync(&update_sql)?;
 

@@ -10,6 +10,7 @@ use std::path::Path;
 use uuid::Uuid;
 
 use crate::error::CoreResult;
+use crate::model_name::ModelName;
 
 /// State of a run in progress or completed
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,7 +34,7 @@ pub struct RunState {
     pub failed_models: Vec<FailedModel>,
 
     /// Models that are still pending execution
-    pub pending_models: Vec<String>,
+    pub pending_models: Vec<ModelName>,
 
     /// The selection criteria used for this run
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -61,7 +62,7 @@ pub enum RunStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletedModel {
     /// Model name
-    pub name: String,
+    pub name: ModelName,
 
     /// When the model completed
     pub completed_at: DateTime<Utc>,
@@ -74,7 +75,7 @@ pub struct CompletedModel {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FailedModel {
     /// Model name
-    pub name: String,
+    pub name: ModelName,
 
     /// When the model failed
     pub failed_at: DateTime<Utc>,
@@ -86,7 +87,7 @@ pub struct FailedModel {
 impl RunState {
     /// Create a new run state
     pub fn new(
-        pending_models: Vec<String>,
+        pending_models: Vec<ModelName>,
         selection: Option<String>,
         config_hash: String,
     ) -> Self {
@@ -141,7 +142,7 @@ impl RunState {
 
         // Add to completed
         self.completed_models.push(CompletedModel {
-            name: name.to_string(),
+            name: ModelName::new(name),
             completed_at: Utc::now(),
             duration_ms,
         });
@@ -156,7 +157,7 @@ impl RunState {
 
         // Add to failed
         self.failed_models.push(FailedModel {
-            name: name.to_string(),
+            name: ModelName::new(name),
             failed_at: Utc::now(),
             error: error.to_string(),
         });
@@ -191,7 +192,7 @@ impl RunState {
     }
 
     /// Get models that need to be run (failed + pending)
-    pub fn models_to_run(&self) -> Vec<String> {
+    pub fn models_to_run(&self) -> Vec<ModelName> {
         let mut models = Vec::new();
 
         // Add failed models (for retry)
@@ -206,7 +207,7 @@ impl RunState {
     }
 
     /// Get only the failed models (for --retry-failed)
-    pub fn failed_model_names(&self) -> Vec<String> {
+    pub fn failed_model_names(&self) -> Vec<ModelName> {
         self.failed_models.iter().map(|m| m.name.clone()).collect()
     }
 
@@ -249,7 +250,7 @@ mod tests {
     #[test]
     fn test_run_state_new() {
         let state = RunState::new(
-            vec!["model_a".to_string(), "model_b".to_string()],
+            vec![ModelName::new("model_a"), ModelName::new("model_b")],
             Some("--select model_a model_b".to_string()),
             "abc123".to_string(),
         );
@@ -263,7 +264,7 @@ mod tests {
     #[test]
     fn test_mark_completed() {
         let mut state = RunState::new(
-            vec!["model_a".to_string(), "model_b".to_string()],
+            vec![ModelName::new("model_a"), ModelName::new("model_b")],
             None,
             "abc123".to_string(),
         );
@@ -279,7 +280,7 @@ mod tests {
     #[test]
     fn test_mark_failed() {
         let mut state = RunState::new(
-            vec!["model_a".to_string(), "model_b".to_string()],
+            vec![ModelName::new("model_a"), ModelName::new("model_b")],
             None,
             "abc123".to_string(),
         );
@@ -296,9 +297,9 @@ mod tests {
     fn test_models_to_run() {
         let mut state = RunState::new(
             vec![
-                "model_a".to_string(),
-                "model_b".to_string(),
-                "model_c".to_string(),
+                ModelName::new("model_a"),
+                ModelName::new("model_b"),
+                ModelName::new("model_c"),
             ],
             None,
             "abc123".to_string(),
@@ -309,8 +310,8 @@ mod tests {
 
         let to_run = state.models_to_run();
         assert_eq!(to_run.len(), 2);
-        assert!(to_run.contains(&"model_b".to_string())); // Failed, should retry
-        assert!(to_run.contains(&"model_c".to_string())); // Still pending
+        assert!(to_run.contains(&ModelName::new("model_b"))); // Failed, should retry
+        assert!(to_run.contains(&ModelName::new("model_c"))); // Still pending
     }
 
     #[test]
@@ -319,7 +320,7 @@ mod tests {
         let path = dir.path().join("run_state.json");
 
         let mut state = RunState::new(
-            vec!["model_a".to_string(), "model_b".to_string()],
+            vec![ModelName::new("model_a"), ModelName::new("model_b")],
             Some("--select +model_b".to_string()),
             "abc123".to_string(),
         );
@@ -337,9 +338,9 @@ mod tests {
     fn test_summary() {
         let mut state = RunState::new(
             vec![
-                "model_a".to_string(),
-                "model_b".to_string(),
-                "model_c".to_string(),
+                ModelName::new("model_a"),
+                ModelName::new("model_b"),
+                ModelName::new("model_c"),
             ],
             None,
             "abc123".to_string(),

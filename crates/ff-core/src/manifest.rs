@@ -2,6 +2,7 @@
 
 use crate::config::{IncrementalStrategy, Materialization, OnSchemaChange};
 use crate::model::Model;
+use crate::model_name::ModelName;
 use crate::source::SourceFile;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -17,7 +18,7 @@ pub struct Manifest {
     pub compiled_at: String,
 
     /// All models in the project
-    pub models: HashMap<String, ManifestModel>,
+    pub models: HashMap<ModelName, ManifestModel>,
 
     /// All sources in the project
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -28,7 +29,7 @@ pub struct Manifest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManifestModel {
     /// Model name
-    pub name: String,
+    pub name: ModelName,
 
     /// Path to source SQL file
     pub source_path: String,
@@ -48,7 +49,7 @@ pub struct ManifestModel {
     pub tags: Vec<String>,
 
     /// Dependencies on other models
-    pub depends_on: Vec<String>,
+    pub depends_on: Vec<ModelName>,
 
     /// Dependencies on external tables
     pub external_deps: Vec<String>,
@@ -142,7 +143,7 @@ impl Manifest {
     /// Create a new manifest with pre-populated models (for testing)
     #[cfg(test)]
     pub fn new_with_models(project_name: &str, models: Vec<ManifestModel>) -> Self {
-        let models_map: HashMap<String, ManifestModel> =
+        let models_map: HashMap<ModelName, ManifestModel> =
             models.into_iter().map(|m| (m.name.clone(), m)).collect();
         Self {
             project_name: project_name.to_string(),
@@ -284,13 +285,13 @@ impl Manifest {
         };
 
         let manifest_model = ManifestModel {
-            name: model.name.to_string(),
+            name: model.name.clone(),
             source_path,
             compiled_path,
             materialized,
             schema: model.target_schema(default_schema),
             tags,
-            depends_on: model.depends_on.iter().map(|m| m.to_string()).collect(),
+            depends_on: model.depends_on.iter().cloned().collect(),
             external_deps: model.external_deps.iter().map(|t| t.to_string()).collect(),
             referenced_tables: model.all_dependencies().into_iter().collect(),
             unique_key,
@@ -301,7 +302,7 @@ impl Manifest {
             wap,
         };
 
-        self.models.insert(model.name.to_string(), manifest_model);
+        self.models.insert(model.name.clone(), manifest_model);
     }
 
     /// Save the manifest to a file
@@ -340,7 +341,7 @@ impl Manifest {
     }
 
     /// Build dependency map for DAG construction
-    pub fn dependency_map(&self) -> HashMap<String, Vec<String>> {
+    pub fn dependency_map(&self) -> HashMap<ModelName, Vec<ModelName>> {
         self.models
             .iter()
             .map(|(name, model)| (name.clone(), model.depends_on.clone()))

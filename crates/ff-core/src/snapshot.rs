@@ -9,6 +9,21 @@ use crate::sql_utils::{quote_ident, quote_qualified};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+// ── SCD Type 2 column name constants ──────────────────────────────
+//
+// Single source of truth for the SCD tracking columns added to every
+// snapshot table.  Both `ff-core` snapshot SQL generators and the
+// `ff-db` DuckDB implementation reference these.
+
+/// Surrogate key column (MD5 hash of unique keys + timestamp).
+pub const SCD_ID: &str = "dbt_scd_id";
+/// Tracks when the source row was last updated.
+pub const SCD_UPDATED_AT: &str = "dbt_updated_at";
+/// Timestamp when this snapshot version became active.
+pub const SCD_VALID_FROM: &str = "dbt_valid_from";
+/// Timestamp when this snapshot version was superseded (`NULL` = current).
+pub const SCD_VALID_TO: &str = "dbt_valid_to";
+
 /// Strategy for detecting changes in snapshots
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -185,10 +200,10 @@ impl Snapshot {
             .collect();
 
         // Add SCD Type 2 tracking columns
-        columns.push(format!("    {} VARCHAR", quote_ident("dbt_scd_id")));
-        columns.push(format!("    {} TIMESTAMP", quote_ident("dbt_updated_at")));
-        columns.push(format!("    {} TIMESTAMP", quote_ident("dbt_valid_from")));
-        columns.push(format!("    {} TIMESTAMP", quote_ident("dbt_valid_to")));
+        columns.push(format!("    {} VARCHAR", quote_ident(SCD_ID)));
+        columns.push(format!("    {} TIMESTAMP", quote_ident(SCD_UPDATED_AT)));
+        columns.push(format!("    {} TIMESTAMP", quote_ident(SCD_VALID_FROM)));
+        columns.push(format!("    {} TIMESTAMP", quote_ident(SCD_VALID_TO)));
 
         format!(
             "CREATE TABLE IF NOT EXISTS {} (\n{}\n)",
@@ -202,7 +217,7 @@ impl Snapshot {
         format!(
             "SELECT * FROM {} WHERE {} IS NULL",
             quote_qualified(&self.config.qualified_name()),
-            quote_ident("dbt_valid_to")
+            quote_ident(SCD_VALID_TO)
         )
     }
 
@@ -260,7 +275,7 @@ impl Snapshot {
             SnapshotStrategy::Timestamp => {
                 let updated_at =
                     quote_ident(self.config.updated_at.as_deref().unwrap_or("updated_at"));
-                let dbt_updated_at = quote_ident("dbt_updated_at");
+                let dbt_updated_at = quote_ident(SCD_UPDATED_AT);
                 format!("{src_alias}.{updated_at} > {snap_alias}.{dbt_updated_at}")
             }
             SnapshotStrategy::Check => {
@@ -341,7 +356,7 @@ impl Snapshot {
         format!(
             "MD5({} || '|' || CAST({} AS VARCHAR))",
             key_expr,
-            quote_ident("dbt_valid_from")
+            quote_ident(SCD_VALID_FROM)
         )
     }
 }

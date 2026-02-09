@@ -5,6 +5,7 @@
 
 use crate::manifest::{Manifest, ManifestModel};
 use crate::model::ModelSchema;
+use crate::model_name::ModelName;
 use std::collections::HashMap;
 
 /// Type of breaking change detected
@@ -157,7 +158,7 @@ impl BreakingChangeReport {
 /// Detect breaking changes between previous and current state
 pub fn detect_breaking_changes(
     previous: &Manifest,
-    current_models: &HashMap<String, ManifestModel>,
+    current_models: &HashMap<ModelName, ManifestModel>,
     previous_schemas: &HashMap<String, ModelSchema>,
     current_schemas: &HashMap<String, ModelSchema>,
 ) -> BreakingChangeReport {
@@ -168,8 +169,11 @@ pub fn detect_breaking_changes(
 
     // Check for removed models
     for model_name in previous.models.keys() {
-        if !current_models.contains_key(model_name) {
-            let downstream = downstream_map.get(model_name).cloned().unwrap_or_default();
+        if !current_models.contains_key(model_name.as_str()) {
+            let downstream = downstream_map
+                .get(model_name.as_str())
+                .cloned()
+                .unwrap_or_default();
             report.add_change(
                 BreakingChange::new(model_name, BreakingChangeType::ModelRemoved)
                     .with_downstream(downstream),
@@ -179,8 +183,11 @@ pub fn detect_breaking_changes(
 
     // Check for changes in existing models
     for (model_name, prev_model) in &previous.models {
-        if let Some(curr_model) = current_models.get(model_name) {
-            let downstream = downstream_map.get(model_name).cloned().unwrap_or_default();
+        if let Some(curr_model) = current_models.get(model_name.as_str()) {
+            let downstream = downstream_map
+                .get(model_name.as_str())
+                .cloned()
+                .unwrap_or_default();
 
             // Check materialization change
             if prev_model.materialized != curr_model.materialized {
@@ -214,8 +221,8 @@ pub fn detect_breaking_changes(
 
             // Check for column changes (if we have schema information)
             if let (Some(prev_schema), Some(curr_schema)) = (
-                previous_schemas.get(model_name),
-                current_schemas.get(model_name),
+                previous_schemas.get(model_name.as_str()),
+                current_schemas.get(model_name.as_str()),
             ) {
                 compare_schemas(
                     model_name,
@@ -230,8 +237,8 @@ pub fn detect_breaking_changes(
 
     // Check for new models (informational)
     for model_name in current_models.keys() {
-        if !previous.models.contains_key(model_name) {
-            report.add_new_model(model_name.clone());
+        if !previous.models.contains_key(model_name.as_str()) {
+            report.add_new_model(model_name.to_string());
         }
     }
 
@@ -239,15 +246,17 @@ pub fn detect_breaking_changes(
 }
 
 /// Build a map of model -> models that depend on it
-fn build_downstream_map(models: &HashMap<String, ManifestModel>) -> HashMap<String, Vec<String>> {
+fn build_downstream_map(
+    models: &HashMap<ModelName, ManifestModel>,
+) -> HashMap<String, Vec<String>> {
     let mut downstream: HashMap<String, Vec<String>> = HashMap::new();
 
     for (model_name, model) in models {
         for dep in &model.depends_on {
             downstream
-                .entry(dep.clone())
+                .entry(dep.to_string())
                 .or_default()
-                .push(model_name.clone());
+                .push(model_name.to_string());
         }
     }
 
@@ -320,7 +329,7 @@ fn compare_schemas(
 /// Simple check without full schema comparison
 pub fn detect_breaking_changes_simple(
     previous: &Manifest,
-    current_models: &HashMap<String, ManifestModel>,
+    current_models: &HashMap<ModelName, ManifestModel>,
 ) -> BreakingChangeReport {
     detect_breaking_changes(previous, current_models, &HashMap::new(), &HashMap::new())
 }
@@ -333,10 +342,10 @@ mod tests {
 
     fn make_model(name: &str, deps: Vec<&str>) -> ManifestModel {
         ManifestModel {
-            name: name.to_string(),
+            name: ModelName::new(name),
             source_path: format!("models/{}.sql", name),
             compiled_path: format!("target/compiled/{}.sql", name),
-            depends_on: deps.into_iter().map(String::from).collect(),
+            depends_on: deps.into_iter().map(ModelName::new).collect(),
             external_deps: Vec::new(),
             materialized: Materialization::View,
             schema: None,
@@ -362,10 +371,11 @@ mod tests {
             make_model("model_b", vec!["model_a"]),
         ]);
 
-        let current: HashMap<String, ManifestModel> = vec![make_model("model_b", vec!["model_a"])]
-            .into_iter()
-            .map(|m| (m.name.clone(), m))
-            .collect();
+        let current: HashMap<ModelName, ManifestModel> =
+            vec![make_model("model_b", vec!["model_a"])]
+                .into_iter()
+                .map(|m| (m.name.clone(), m))
+                .collect();
 
         let report = detect_breaking_changes_simple(&previous, &current);
 
@@ -390,7 +400,7 @@ mod tests {
         curr_model.materialized = Materialization::Table;
 
         let previous = make_manifest(vec![prev_model]);
-        let current: HashMap<String, ManifestModel> = vec![curr_model]
+        let current: HashMap<ModelName, ManifestModel> = vec![curr_model]
             .into_iter()
             .map(|m| (m.name.clone(), m))
             .collect();
@@ -408,7 +418,7 @@ mod tests {
     fn test_detect_new_model() {
         let previous = make_manifest(vec![make_model("model_a", vec![])]);
 
-        let current: HashMap<String, ManifestModel> =
+        let current: HashMap<ModelName, ManifestModel> =
             vec![make_model("model_a", vec![]), make_model("model_b", vec![])]
                 .into_iter()
                 .map(|m| (m.name.clone(), m))
@@ -424,7 +434,7 @@ mod tests {
     fn test_detect_column_removal() {
         let previous = make_manifest(vec![make_model("model_a", vec![])]);
 
-        let current: HashMap<String, ManifestModel> = vec![make_model("model_a", vec![])]
+        let current: HashMap<ModelName, ManifestModel> = vec![make_model("model_a", vec![])]
             .into_iter()
             .map(|m| (m.name.clone(), m))
             .collect();
@@ -510,7 +520,7 @@ mod tests {
     fn test_detect_type_change() {
         let previous = make_manifest(vec![make_model("model_a", vec![])]);
 
-        let current: HashMap<String, ManifestModel> = vec![make_model("model_a", vec![])]
+        let current: HashMap<ModelName, ManifestModel> = vec![make_model("model_a", vec![])]
             .into_iter()
             .map(|m| (m.name.clone(), m))
             .collect();
@@ -585,7 +595,7 @@ mod tests {
         let model = make_model("model_a", vec![]);
         let previous = make_manifest(vec![model.clone()]);
 
-        let current: HashMap<String, ManifestModel> = vec![model]
+        let current: HashMap<ModelName, ManifestModel> = vec![model]
             .into_iter()
             .map(|m| (m.name.clone(), m))
             .collect();

@@ -19,6 +19,7 @@ use ff_core::config::Materialization;
 use ff_core::run_state::RunState;
 use ff_core::source::build_source_lookup;
 use ff_core::state::StateFile;
+use ff_core::ModelName;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Instant;
@@ -228,7 +229,14 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
 
     // Create run state for tracking this execution
     let selection_str = args.select.clone().or(args.models.clone());
-    let mut run_state = RunState::new(execution_order.clone(), selection_str, config_hash);
+    let mut run_state = RunState::new(
+        execution_order
+            .iter()
+            .map(|s| ModelName::new(s.clone()))
+            .collect(),
+        selection_str,
+        config_hash,
+    );
 
     // Save initial run state
     if let Err(e) = run_state.save(&run_state_path) {

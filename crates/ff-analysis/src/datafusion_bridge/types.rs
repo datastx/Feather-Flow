@@ -69,6 +69,17 @@ pub fn sql_type_to_arrow(sql_type: &SqlType) -> ArrowDataType {
 }
 
 /// Convert an Arrow DataType back to a Feather-Flow SqlType
+///
+/// Unsigned integer types are widened to the next larger signed type to
+/// guarantee lossless representation (e.g. UInt8 max 255 fits in Int16 but
+/// not Int8). The mapping is:
+///
+/// | Arrow unsigned | SqlType signed |
+/// |----------------|----------------|
+/// | UInt8 (0..255) | Integer I16    |
+/// | UInt16 (0..65535) | Integer I32 |
+/// | UInt32 (0..4B)   | Integer I64  |
+/// | UInt64 (0..18E18) | HugeInt    |
 pub fn arrow_to_sql_type(arrow_type: &ArrowDataType) -> SqlType {
     match arrow_type {
         ArrowDataType::Boolean => SqlType::Boolean,
@@ -84,6 +95,7 @@ pub fn arrow_to_sql_type(arrow_type: &ArrowDataType) -> SqlType {
         ArrowDataType::Int64 => SqlType::Integer {
             bits: IntBitWidth::I64,
         },
+        // Unsigned → next-wider signed: UInt8 max 255 doesn't fit in I8 (max 127)
         ArrowDataType::UInt8 => SqlType::Integer {
             bits: IntBitWidth::I16,
         },
