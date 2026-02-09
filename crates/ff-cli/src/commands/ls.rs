@@ -5,19 +5,16 @@ use ff_core::config::Materialization;
 use ff_core::dag::ModelDag;
 use ff_core::exposure::Exposure;
 use ff_core::selector::Selector;
-use ff_core::Project;
 use ff_jinja::JinjaEnvironment;
 use ff_sql::{extract_dependencies, SqlParser};
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 
 use crate::cli::{GlobalArgs, LsArgs, LsOutput, ResourceType};
-use crate::commands::common;
+use crate::commands::common::{self, load_project};
 
 /// Execute the ls command
 pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
-    let project_path = Path::new(&global.project_dir);
-    let project = Project::load(project_path).context("Failed to load project")?;
+    let project = load_project(global)?;
 
     // Create SQL parser and Jinja environment
     let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
@@ -236,48 +233,44 @@ struct ModelInfo {
 
 /// Print models in table format
 fn print_table(models: &[&ModelInfo], exposures: &[&Exposure], show_exposures: bool) {
-    // Calculate column widths
-    let name_width = models
-        .iter()
-        .map(|m| m.name.len())
-        .max()
-        .unwrap_or(4)
-        .max(4);
-    let type_width = 7;
-    let mat_width = 12;
-    let schema_width = models
-        .iter()
-        .map(|m| m.schema.as_ref().map(|s| s.len()).unwrap_or(1))
-        .max()
-        .unwrap_or(6)
-        .max(6);
+    let headers = ["NAME", "TYPE", "MATERIALIZED", "SCHEMA", "DEPENDS_ON"];
 
-    // Print header
-    println!(
-        "{:<name_width$}  {:<type_width$}  {:<mat_width$}  {:<schema_width$}  DEPENDS_ON",
-        "NAME",
-        "TYPE",
-        "MATERIALIZED",
-        "SCHEMA",
-        name_width = name_width,
-        type_width = type_width,
-        mat_width = mat_width,
-        schema_width = schema_width
-    );
+    // Build rows
+    let rows: Vec<Vec<String>> = models
+        .iter()
+        .map(|model| {
+            let mut deps: Vec<String> = model.model_deps.clone();
+            deps.extend(
+                model
+                    .external_deps
+                    .iter()
+                    .map(|d| format!("{} (external)", d)),
+            );
 
-    // Print separator
-    println!(
-        "{:-<name_width$}  {:-<type_width$}  {:-<mat_width$}  {:-<schema_width$}  {}",
-        "",
-        "",
-        "",
-        "",
-        "-".repeat(40),
-        name_width = name_width,
-        type_width = type_width,
-        mat_width = mat_width,
-        schema_width = schema_width
-    );
+            let deps_str = if deps.is_empty() {
+                "-".to_string()
+            } else {
+                deps.join(", ")
+            };
+
+            let mat_str = model
+                .materialized
+                .map(|m| m.to_string())
+                .unwrap_or_else(|| "-".to_string());
+
+            let schema_str = model.schema.as_deref().unwrap_or("-").to_string();
+
+            vec![
+                model.name.clone(),
+                model.resource_type.clone(),
+                mat_str,
+                schema_str,
+                deps_str,
+            ]
+        })
+        .collect();
+
+    common::print_table(&headers, &rows);
 
     // Count models and sources
     let model_count = models.iter().filter(|m| m.resource_type == "model").count();
@@ -285,43 +278,6 @@ fn print_table(models: &[&ModelInfo], exposures: &[&Exposure], show_exposures: b
         .iter()
         .filter(|m| m.resource_type == "source")
         .count();
-
-    // Print each model/source
-    for model in models {
-        let mut deps: Vec<String> = model.model_deps.clone();
-        deps.extend(
-            model
-                .external_deps
-                .iter()
-                .map(|d| format!("{} (external)", d)),
-        );
-
-        let deps_str = if deps.is_empty() {
-            "-".to_string()
-        } else {
-            deps.join(", ")
-        };
-
-        let mat_str = model
-            .materialized
-            .map(|m| m.to_string())
-            .unwrap_or_else(|| "-".to_string());
-
-        let schema_str = model.schema.as_deref().unwrap_or("-");
-
-        println!(
-            "{:<name_width$}  {:<type_width$}  {:<mat_width$}  {:<schema_width$}  {}",
-            model.name,
-            model.resource_type,
-            mat_str,
-            schema_str,
-            deps_str,
-            name_width = name_width,
-            type_width = type_width,
-            mat_width = mat_width,
-            schema_width = schema_width
-        );
-    }
 
     println!();
     if source_count > 0 {

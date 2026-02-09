@@ -2,14 +2,14 @@
 
 use crate::ir::expr::{BinOp, LiteralValue, TypedExpr, UnOp};
 use crate::ir::schema::RelSchema;
-use crate::ir::types::{Nullability, SqlType};
+use crate::ir::types::{FloatBitWidth, IntBitWidth, Nullability, SqlType};
 use sqlparser::ast::{
     self, BinaryOperator, CastKind, CharacterLength, DataType, Expr, Function, FunctionArg,
     FunctionArgExpr, UnaryOperator, Value,
 };
 
 /// Lower a sqlparser Expr into a TypedExpr, resolving column refs against the given schema
-pub fn lower_expr(expr: &Expr, schema: &RelSchema) -> TypedExpr {
+pub(crate) fn lower_expr(expr: &Expr, schema: &RelSchema) -> TypedExpr {
     match expr {
         Expr::Identifier(ident) => lower_column_ref(None, &ident.value, schema),
 
@@ -269,12 +269,16 @@ fn lower_value(val: &Value) -> TypedExpr {
             if let Ok(i) = n.parse::<i64>() {
                 TypedExpr::Literal {
                     value: LiteralValue::Integer(i),
-                    resolved_type: SqlType::Integer { bits: 64 },
+                    resolved_type: SqlType::Integer {
+                        bits: IntBitWidth::I64,
+                    },
                 }
             } else if let Ok(f) = n.parse::<f64>() {
                 TypedExpr::Literal {
                     value: LiteralValue::Float(f),
-                    resolved_type: SqlType::Float { bits: 64 },
+                    resolved_type: SqlType::Float {
+                        bits: FloatBitWidth::F64,
+                    },
                 }
             } else {
                 TypedExpr::Literal {
@@ -353,7 +357,12 @@ fn extract_function_args(args: &ast::FunctionArguments, schema: &RelSchema) -> V
 /// Infer the return type of a function from its name and arguments
 fn infer_function_type(name: &str, args: &[TypedExpr]) -> (SqlType, Nullability) {
     match name {
-        "COUNT" | "COUNT_STAR" => (SqlType::Integer { bits: 64 }, Nullability::NotNull),
+        "COUNT" | "COUNT_STAR" => (
+            SqlType::Integer {
+                bits: IntBitWidth::I64,
+            },
+            Nullability::NotNull,
+        ),
 
         "SUM" => {
             let arg_type = args
@@ -362,7 +371,12 @@ fn infer_function_type(name: &str, args: &[TypedExpr]) -> (SqlType, Nullability)
                 .unwrap_or(SqlType::Unknown("no arg".to_string()));
             (arg_type, Nullability::Nullable)
         }
-        "AVG" => (SqlType::Float { bits: 64 }, Nullability::Nullable),
+        "AVG" => (
+            SqlType::Float {
+                bits: FloatBitWidth::F64,
+            },
+            Nullability::Nullable,
+        ),
         "MIN" | "MAX" => {
             let arg_type = args
                 .first()
@@ -403,14 +417,22 @@ fn infer_function_type(name: &str, args: &[TypedExpr]) -> (SqlType, Nullability)
                 .first()
                 .map(|a| a.nullability())
                 .unwrap_or(Nullability::Unknown);
-            (SqlType::Integer { bits: 32 }, nullability)
+            (
+                SqlType::Integer {
+                    bits: IntBitWidth::I32,
+                },
+                nullability,
+            )
         }
 
         "NOW" | "CURRENT_TIMESTAMP" => (SqlType::Timestamp, Nullability::NotNull),
         "CURRENT_DATE" => (SqlType::Date, Nullability::NotNull),
-        "DATE_TRUNC" | "DATE_PART" | "EXTRACT" => {
-            (SqlType::Integer { bits: 64 }, Nullability::Nullable)
-        }
+        "DATE_TRUNC" | "DATE_PART" | "EXTRACT" => (
+            SqlType::Integer {
+                bits: IntBitWidth::I64,
+            },
+            Nullability::Nullable,
+        ),
 
         "IF" | "IIF" | "IFNULL" | "NULLIF" => {
             let arg_type = args
@@ -450,7 +472,9 @@ fn infer_binary_type(left: &TypedExpr, op: &BinaryOperator, right: &TypedExpr) -
                 precision: None,
                 scale: None,
             },
-            _ => SqlType::Float { bits: 64 },
+            _ => SqlType::Float {
+                bits: FloatBitWidth::F64,
+            },
         },
 
         BinaryOperator::Modulo => left.resolved_type().clone(),
@@ -534,12 +558,24 @@ fn lower_case(
 pub fn lower_data_type(dt: &DataType) -> SqlType {
     match dt {
         DataType::Boolean => SqlType::Boolean,
-        DataType::TinyInt(_) => SqlType::Integer { bits: 8 },
-        DataType::SmallInt(_) => SqlType::Integer { bits: 16 },
-        DataType::Int(_) | DataType::Integer(_) => SqlType::Integer { bits: 32 },
-        DataType::BigInt(_) => SqlType::Integer { bits: 64 },
-        DataType::Float(_) | DataType::Real => SqlType::Float { bits: 32 },
-        DataType::Double | DataType::DoublePrecision => SqlType::Float { bits: 64 },
+        DataType::TinyInt(_) => SqlType::Integer {
+            bits: IntBitWidth::I8,
+        },
+        DataType::SmallInt(_) => SqlType::Integer {
+            bits: IntBitWidth::I16,
+        },
+        DataType::Int(_) | DataType::Integer(_) => SqlType::Integer {
+            bits: IntBitWidth::I32,
+        },
+        DataType::BigInt(_) => SqlType::Integer {
+            bits: IntBitWidth::I64,
+        },
+        DataType::Float(_) | DataType::Real => SqlType::Float {
+            bits: FloatBitWidth::F32,
+        },
+        DataType::Double | DataType::DoublePrecision => SqlType::Float {
+            bits: FloatBitWidth::F64,
+        },
         DataType::Decimal(info) | DataType::Numeric(info) => {
             let (precision, scale) = match info {
                 ast::ExactNumberInfo::PrecisionAndScale(p, s) => (Some(*p as u16), Some(*s as u16)),
@@ -604,14 +640,29 @@ mod tests {
     fn test_promote_numeric() {
         assert_eq!(
             promote_numeric(
-                &SqlType::Integer { bits: 32 },
-                &SqlType::Integer { bits: 64 }
+                &SqlType::Integer {
+                    bits: IntBitWidth::I32
+                },
+                &SqlType::Integer {
+                    bits: IntBitWidth::I64
+                }
             ),
-            SqlType::Integer { bits: 64 }
+            SqlType::Integer {
+                bits: IntBitWidth::I64
+            }
         );
         assert_eq!(
-            promote_numeric(&SqlType::Integer { bits: 32 }, &SqlType::Float { bits: 64 }),
-            SqlType::Float { bits: 64 }
+            promote_numeric(
+                &SqlType::Integer {
+                    bits: IntBitWidth::I32
+                },
+                &SqlType::Float {
+                    bits: FloatBitWidth::F64
+                }
+            ),
+            SqlType::Float {
+                bits: FloatBitWidth::F64
+            }
         );
     }
 }

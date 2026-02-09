@@ -1,9 +1,9 @@
 //! AST-to-IR lowering — converts sqlparser AST into RelOp IR
 
-pub mod expr;
-pub mod join;
-pub mod query;
-pub mod select;
+pub(crate) mod expr;
+pub(crate) mod join;
+pub(crate) mod query;
+pub(crate) mod select;
 
 use crate::error::{AnalysisError, AnalysisResult};
 use crate::ir::relop::RelOp;
@@ -48,7 +48,7 @@ mod tests {
     use super::*;
     use crate::ir::relop::{JoinType, RelOp};
     use crate::ir::schema::RelSchema;
-    use crate::ir::types::{Nullability, SqlType, TypedColumn};
+    use crate::ir::types::{FloatBitWidth, IntBitWidth, Nullability, SqlType, TypedColumn};
     use sqlparser::dialect::DuckDbDialect;
     use sqlparser::parser::Parser;
 
@@ -85,7 +85,13 @@ mod tests {
         let catalog = catalog_with(vec![(
             "users",
             vec![
-                make_col("id", SqlType::Integer { bits: 32 }, Nullability::NotNull),
+                make_col(
+                    "id",
+                    SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
+                    Nullability::NotNull,
+                ),
                 make_col(
                     "name",
                     SqlType::String { max_length: None },
@@ -117,7 +123,13 @@ mod tests {
         let catalog = catalog_with(vec![(
             "orders",
             vec![
-                make_col("id", SqlType::Integer { bits: 32 }, Nullability::NotNull),
+                make_col(
+                    "id",
+                    SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
+                    Nullability::NotNull,
+                ),
                 make_col(
                     "amount",
                     SqlType::Decimal {
@@ -150,10 +162,18 @@ mod tests {
             (
                 "orders",
                 vec![
-                    make_col("id", SqlType::Integer { bits: 32 }, Nullability::NotNull),
+                    make_col(
+                        "id",
+                        SqlType::Integer {
+                            bits: IntBitWidth::I32,
+                        },
+                        Nullability::NotNull,
+                    ),
                     make_col(
                         "cust_id",
-                        SqlType::Integer { bits: 32 },
+                        SqlType::Integer {
+                            bits: IntBitWidth::I32,
+                        },
                         Nullability::NotNull,
                     ),
                 ],
@@ -161,7 +181,13 @@ mod tests {
             (
                 "customers",
                 vec![
-                    make_col("id", SqlType::Integer { bits: 32 }, Nullability::NotNull),
+                    make_col(
+                        "id",
+                        SqlType::Integer {
+                            bits: IntBitWidth::I32,
+                        },
+                        Nullability::NotNull,
+                    ),
                     make_col(
                         "name",
                         SqlType::String { max_length: None },
@@ -207,7 +233,9 @@ mod tests {
                 "a",
                 vec![make_col(
                     "val",
-                    SqlType::Integer { bits: 32 },
+                    SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
                     Nullability::NotNull,
                 )],
             ),
@@ -215,7 +243,9 @@ mod tests {
                 "b",
                 vec![make_col(
                     "val",
-                    SqlType::Integer { bits: 32 },
+                    SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
                     Nullability::NotNull,
                 )],
             ),
@@ -281,8 +311,20 @@ mod tests {
         let catalog = catalog_with(vec![(
             "items",
             vec![
-                make_col("id", SqlType::Integer { bits: 32 }, Nullability::NotNull),
-                make_col("price", SqlType::Float { bits: 64 }, Nullability::Nullable),
+                make_col(
+                    "id",
+                    SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
+                    Nullability::NotNull,
+                ),
+                make_col(
+                    "price",
+                    SqlType::Float {
+                        bits: FloatBitWidth::F64,
+                    },
+                    Nullability::Nullable,
+                ),
             ],
         )]);
         let sql = "SELECT id, price FROM items ORDER BY price DESC LIMIT 10 OFFSET 5";
@@ -320,8 +362,20 @@ mod tests {
         let catalog = catalog_with(vec![(
             "t",
             vec![
-                make_col("a", SqlType::Integer { bits: 32 }, Nullability::NotNull),
-                make_col("b", SqlType::Integer { bits: 32 }, Nullability::NotNull),
+                make_col(
+                    "a",
+                    SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
+                    Nullability::NotNull,
+                ),
+                make_col(
+                    "b",
+                    SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
+                    Nullability::NotNull,
+                ),
             ],
         )]);
         let ir = parse_and_lower("SELECT * FROM t", &catalog);
@@ -343,7 +397,9 @@ mod tests {
             "t",
             vec![make_col(
                 "val",
-                SqlType::Float { bits: 64 },
+                SqlType::Float {
+                    bits: FloatBitWidth::F64,
+                },
                 Nullability::Nullable,
             )],
         )]);
@@ -366,7 +422,13 @@ mod tests {
         let catalog = catalog_with(vec![(
             "t",
             vec![
-                make_col("id", SqlType::Integer { bits: 32 }, Nullability::NotNull),
+                make_col(
+                    "id",
+                    SqlType::Integer {
+                        bits: IntBitWidth::I32,
+                    },
+                    Nullability::NotNull,
+                ),
                 make_col("active", SqlType::Boolean, Nullability::NotNull),
             ],
         )]);

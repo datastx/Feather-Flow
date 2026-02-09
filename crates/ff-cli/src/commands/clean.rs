@@ -1,16 +1,14 @@
 //! Clean command implementation
 
-use anyhow::{Context, Result};
-use ff_core::Project;
+use anyhow::Result;
 use std::fs;
-use std::path::Path;
 
 use crate::cli::{CleanArgs, GlobalArgs};
+use crate::commands::common::load_project;
 
 /// Execute the clean command
 pub async fn execute(args: &CleanArgs, global: &GlobalArgs) -> Result<()> {
-    let project_path = Path::new(&global.project_dir);
-    let project = Project::load(project_path).context("Failed to load project")?;
+    let project = load_project(global)?;
 
     // Default clean targets if not specified in config
     let clean_targets = if project.config.clean_targets.is_empty() {
@@ -29,7 +27,7 @@ pub async fn execute(args: &CleanArgs, global: &GlobalArgs) -> Result<()> {
     let mut skipped_count = 0;
 
     for target in &clean_targets {
-        let target_path = project_path.join(target);
+        let target_path = project.root.join(target);
 
         if target_path.exists() {
             if args.dry_run {

@@ -2,18 +2,16 @@
 
 use anyhow::{Context, Result};
 use ff_core::source::build_source_lookup;
-use ff_core::Project;
 use ff_jinja::JinjaEnvironment;
 use ff_sql::{extract_column_lineage, ProjectLineage, SqlParser};
 use std::collections::HashSet;
-use std::path::Path;
 
 use crate::cli::{GlobalArgs, LineageArgs, LineageDirection, LineageOutput};
+use crate::commands::common::load_project;
 
 /// Execute the lineage command
 pub async fn execute(args: &LineageArgs, global: &GlobalArgs) -> Result<()> {
-    let project_path = Path::new(&global.project_dir);
-    let project = Project::load(project_path).context("Failed to load project")?;
+    let project = load_project(global)?;
 
     let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
         .context("Invalid SQL dialect")?;

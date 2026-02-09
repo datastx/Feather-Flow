@@ -11,7 +11,7 @@ use crate::lowering::SchemaCatalog;
 use sqlparser::ast::{GroupByExpr, Select, SelectItem, TableAlias, TableFactor, TableWithJoins};
 
 /// Lower a SELECT statement into a RelOp plan
-pub fn lower_select(select: &Select, catalog: &SchemaCatalog) -> AnalysisResult<RelOp> {
+pub(crate) fn lower_select(select: &Select, catalog: &SchemaCatalog) -> AnalysisResult<RelOp> {
     // 1. FROM clause → Scan/Join tree
     let from_plan = lower_from(&select.from, catalog)?;
     let current_schema = from_plan

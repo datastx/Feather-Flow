@@ -7,11 +7,10 @@ use chrono::{DateTime, Utc};
 use ff_core::metric::Metric;
 use ff_core::Project;
 use serde::Serialize;
-use std::path::Path;
 use std::time::Instant;
 
 use crate::cli::{GlobalArgs, MetricArgs, OutputFormat};
-use crate::commands::common;
+use crate::commands::common::{self, load_project};
 
 /// Metric information for JSON output
 #[derive(Debug, Serialize)]
@@ -77,8 +76,7 @@ struct MetricListResults {
 
 /// Execute the metric command
 pub async fn execute(args: &MetricArgs, global: &GlobalArgs) -> Result<()> {
-    let project_path = Path::new(&global.project_dir);
-    let project = Project::load(project_path).context("Failed to load project")?;
+    let project = load_project(global)?;
     let json_mode = args.output == OutputFormat::Json;
 
     if args.list {
@@ -121,60 +119,22 @@ fn list_metrics(project: &Project, json_mode: bool, verbose: bool) -> Result<()>
         };
         println!("{}", serde_json::to_string_pretty(&results)?);
     } else {
-        // Calculate column widths
-        let name_width = project
+        let headers = ["NAME", "MODEL", "CALCULATION", "EXPRESSION"];
+
+        let rows: Vec<Vec<String>> = project
             .metrics
             .iter()
-            .map(|m| m.name.len())
-            .max()
-            .unwrap_or(4)
-            .max(4);
-        let model_width = project
-            .metrics
-            .iter()
-            .map(|m| m.model.len())
-            .max()
-            .unwrap_or(5)
-            .max(5);
-        let calc_width = 15;
+            .map(|metric| {
+                vec![
+                    metric.name.clone(),
+                    metric.model.clone(),
+                    format!("{}", metric.calculation),
+                    metric.expression.clone(),
+                ]
+            })
+            .collect();
 
-        // Print header
-        println!(
-            "{:<name_width$}  {:<model_width$}  {:<calc_width$}  EXPRESSION",
-            "NAME",
-            "MODEL",
-            "CALCULATION",
-            name_width = name_width,
-            model_width = model_width,
-            calc_width = calc_width
-        );
-
-        // Print separator
-        println!(
-            "{:-<name_width$}  {:-<model_width$}  {:-<calc_width$}  {}",
-            "",
-            "",
-            "",
-            "-".repeat(30),
-            name_width = name_width,
-            model_width = model_width,
-            calc_width = calc_width
-        );
-
-        // Print each metric
-        for metric in &project.metrics {
-            let calc_str = format!("{}", metric.calculation);
-            println!(
-                "{:<name_width$}  {:<model_width$}  {:<calc_width$}  {}",
-                metric.name,
-                metric.model,
-                calc_str,
-                metric.expression,
-                name_width = name_width,
-                model_width = model_width,
-                calc_width = calc_width
-            );
-        }
+        common::print_table(&headers, &rows);
 
         println!();
         println!("{} metrics found", project.metrics.len());

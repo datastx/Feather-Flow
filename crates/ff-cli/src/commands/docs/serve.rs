@@ -6,7 +6,6 @@ use axum::http::{header, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
-use ff_core::Project;
 use ff_jinja::JinjaEnvironment;
 use ff_sql::extractor::categorize_dependencies;
 use ff_sql::{extract_dependencies, SqlParser};
@@ -17,7 +16,10 @@ use std::net::SocketAddr;
 use std::path;
 use std::sync::Arc;
 
+use ff_core::Project;
+
 use crate::cli::{DocsServeArgs, GlobalArgs};
+use crate::commands::common::load_project;
 
 use super::data::*;
 
@@ -115,8 +117,7 @@ struct LineageEntry {
 
 /// Execute the docs serve command
 pub async fn execute(args: &DocsServeArgs, global: &GlobalArgs) -> Result<()> {
-    let project_path = path::Path::new(&global.project_dir);
-    let project = Project::load(project_path).context("Failed to load project")?;
+    let project = load_project(global)?;
 
     println!("Building documentation data...");
 

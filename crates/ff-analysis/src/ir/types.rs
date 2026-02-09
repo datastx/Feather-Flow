@@ -2,15 +2,57 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Valid bit widths for integer types
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum IntBitWidth {
+    /// 8-bit (TINYINT)
+    I8,
+    /// 16-bit (SMALLINT)
+    I16,
+    /// 32-bit (INTEGER)
+    I32,
+    /// 64-bit (BIGINT)
+    I64,
+}
+
+impl std::fmt::Display for IntBitWidth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IntBitWidth::I8 => write!(f, "8"),
+            IntBitWidth::I16 => write!(f, "16"),
+            IntBitWidth::I32 => write!(f, "32"),
+            IntBitWidth::I64 => write!(f, "64"),
+        }
+    }
+}
+
+/// Valid bit widths for floating-point types
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum FloatBitWidth {
+    /// 32-bit (FLOAT / REAL)
+    F32,
+    /// 64-bit (DOUBLE)
+    F64,
+}
+
+impl std::fmt::Display for FloatBitWidth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FloatBitWidth::F32 => write!(f, "32"),
+            FloatBitWidth::F64 => write!(f, "64"),
+        }
+    }
+}
+
 /// SQL data types normalized from sqlparser's DataType
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SqlType {
     /// Boolean (BOOL, BOOLEAN)
     Boolean,
     /// Integer types: TINYINT(8), SMALLINT(16), INT(32), BIGINT(64)
-    Integer { bits: u16 },
+    Integer { bits: IntBitWidth },
     /// Floating-point: FLOAT(32), DOUBLE(64)
-    Float { bits: u16 },
+    Float { bits: FloatBitWidth },
     /// Exact numeric with optional precision and scale
     Decimal {
         precision: Option<u16>,
@@ -51,18 +93,59 @@ impl SqlType {
         matches!(self, SqlType::Unknown(_))
     }
 
+    /// Check if two types are compatible (e.g. for UNION columns or join keys).
+    ///
+    /// Numeric types (Integer, Float, Decimal) are mutually compatible,
+    /// String types are compatible with each other, Date/Timestamp are
+    /// compatible, and Unknown is compatible with anything.
+    pub(crate) fn is_compatible_with(&self, other: &SqlType) -> bool {
+        if self.is_unknown() || other.is_unknown() {
+            return true;
+        }
+        matches!(
+            (self, other),
+            (SqlType::Boolean, SqlType::Boolean)
+                | (SqlType::Integer { .. }, SqlType::Integer { .. })
+                | (SqlType::Float { .. }, SqlType::Float { .. })
+                | (SqlType::Integer { .. }, SqlType::Float { .. })
+                | (SqlType::Float { .. }, SqlType::Integer { .. })
+                | (SqlType::Decimal { .. }, SqlType::Decimal { .. })
+                | (SqlType::Decimal { .. }, SqlType::Integer { .. })
+                | (SqlType::Integer { .. }, SqlType::Decimal { .. })
+                | (SqlType::Decimal { .. }, SqlType::Float { .. })
+                | (SqlType::Float { .. }, SqlType::Decimal { .. })
+                | (SqlType::String { .. }, SqlType::String { .. })
+                | (SqlType::Date, SqlType::Date)
+                | (SqlType::Time, SqlType::Time)
+                | (SqlType::Timestamp, SqlType::Timestamp)
+                | (SqlType::Date, SqlType::Timestamp)
+                | (SqlType::Timestamp, SqlType::Date)
+                | (SqlType::Binary, SqlType::Binary)
+        )
+    }
+
     /// Human-readable display name
     pub fn display_name(&self) -> String {
         match self {
             SqlType::Boolean => "BOOLEAN".into(),
-            SqlType::Integer { bits: 8 } => "TINYINT".into(),
-            SqlType::Integer { bits: 16 } => "SMALLINT".into(),
-            SqlType::Integer { bits: 32 } => "INTEGER".into(),
-            SqlType::Integer { bits: 64 } => "BIGINT".into(),
-            SqlType::Integer { bits } => format!("INTEGER({bits})"),
-            SqlType::Float { bits: 32 } => "FLOAT".into(),
-            SqlType::Float { bits: 64 } => "DOUBLE".into(),
-            SqlType::Float { bits } => format!("FLOAT({bits})"),
+            SqlType::Integer {
+                bits: IntBitWidth::I8,
+            } => "TINYINT".into(),
+            SqlType::Integer {
+                bits: IntBitWidth::I16,
+            } => "SMALLINT".into(),
+            SqlType::Integer {
+                bits: IntBitWidth::I32,
+            } => "INTEGER".into(),
+            SqlType::Integer {
+                bits: IntBitWidth::I64,
+            } => "BIGINT".into(),
+            SqlType::Float {
+                bits: FloatBitWidth::F32,
+            } => "FLOAT".into(),
+            SqlType::Float {
+                bits: FloatBitWidth::F64,
+            } => "DOUBLE".into(),
             SqlType::Decimal {
                 precision: Some(p),
                 scale: Some(s),
@@ -150,6 +233,26 @@ pub struct ColumnProvenance {
     pub is_direct: bool,
 }
 
+/// Parse a raw bit-width integer into an IntBitWidth, if valid
+fn parse_int_bit_width(bits: u16) -> Option<IntBitWidth> {
+    match bits {
+        8 => Some(IntBitWidth::I8),
+        16 => Some(IntBitWidth::I16),
+        32 => Some(IntBitWidth::I32),
+        64 => Some(IntBitWidth::I64),
+        _ => None,
+    }
+}
+
+/// Parse a raw bit-width integer into a FloatBitWidth, if valid
+fn parse_float_bit_width(bits: u16) -> Option<FloatBitWidth> {
+    match bits {
+        32 => Some(FloatBitWidth::F32),
+        64 => Some(FloatBitWidth::F64),
+        _ => None,
+    }
+}
+
 /// Parse a SQL type string (from YAML `data_type` or sqlparser) into SqlType
 pub fn parse_sql_type(s: &str) -> SqlType {
     let upper = s.trim().to_uppercase();
@@ -158,14 +261,27 @@ pub fn parse_sql_type(s: &str) -> SqlType {
     match upper {
         "BOOL" | "BOOLEAN" => SqlType::Boolean,
 
-        "TINYINT" | "INT1" => SqlType::Integer { bits: 8 },
-        "SMALLINT" | "INT2" => SqlType::Integer { bits: 16 },
-        "INT" | "INTEGER" | "INT4" => SqlType::Integer { bits: 32 },
-        "BIGINT" | "INT8" | "LONG" => SqlType::Integer { bits: 64 },
-        "HUGEINT" | "INT16" => SqlType::Integer { bits: 128 },
+        "TINYINT" | "INT1" => SqlType::Integer {
+            bits: IntBitWidth::I8,
+        },
+        "SMALLINT" | "INT2" => SqlType::Integer {
+            bits: IntBitWidth::I16,
+        },
+        "INT" | "INTEGER" | "INT4" => SqlType::Integer {
+            bits: IntBitWidth::I32,
+        },
+        "BIGINT" | "INT8" | "LONG" => SqlType::Integer {
+            bits: IntBitWidth::I64,
+        },
+        // HUGEINT (128-bit) not representable in constrained IntBitWidth
+        "HUGEINT" | "INT16" => SqlType::Unknown("HUGEINT".to_string()),
 
-        "FLOAT" | "REAL" | "FLOAT4" => SqlType::Float { bits: 32 },
-        "DOUBLE" | "DOUBLE PRECISION" | "FLOAT8" => SqlType::Float { bits: 64 },
+        "FLOAT" | "REAL" | "FLOAT4" => SqlType::Float {
+            bits: FloatBitWidth::F32,
+        },
+        "DOUBLE" | "DOUBLE PRECISION" | "FLOAT8" => SqlType::Float {
+            bits: FloatBitWidth::F64,
+        },
 
         "DECIMAL" | "NUMERIC" => SqlType::Decimal {
             precision: None,
@@ -217,11 +333,13 @@ fn try_parse_parameterized(s: &str) -> Option<SqlType> {
             })
         }
         "INT" | "INTEGER" => {
-            let bits: u16 = params.trim().parse().ok()?;
+            let raw_bits: u16 = params.trim().parse().ok()?;
+            let bits = parse_int_bit_width(raw_bits)?;
             Some(SqlType::Integer { bits })
         }
         "FLOAT" => {
-            let bits: u16 = params.trim().parse().ok()?;
+            let raw_bits: u16 = params.trim().parse().ok()?;
+            let bits = parse_float_bit_width(raw_bits)?;
             Some(SqlType::Float { bits })
         }
         _ => None,
@@ -235,10 +353,30 @@ mod tests {
     #[test]
     fn test_parse_basic_types() {
         assert_eq!(parse_sql_type("boolean"), SqlType::Boolean);
-        assert_eq!(parse_sql_type("INT"), SqlType::Integer { bits: 32 });
-        assert_eq!(parse_sql_type("bigint"), SqlType::Integer { bits: 64 });
-        assert_eq!(parse_sql_type("FLOAT"), SqlType::Float { bits: 32 });
-        assert_eq!(parse_sql_type("DOUBLE"), SqlType::Float { bits: 64 });
+        assert_eq!(
+            parse_sql_type("INT"),
+            SqlType::Integer {
+                bits: IntBitWidth::I32
+            }
+        );
+        assert_eq!(
+            parse_sql_type("bigint"),
+            SqlType::Integer {
+                bits: IntBitWidth::I64
+            }
+        );
+        assert_eq!(
+            parse_sql_type("FLOAT"),
+            SqlType::Float {
+                bits: FloatBitWidth::F32
+            }
+        );
+        assert_eq!(
+            parse_sql_type("DOUBLE"),
+            SqlType::Float {
+                bits: FloatBitWidth::F64
+            }
+        );
         assert_eq!(
             parse_sql_type("VARCHAR"),
             SqlType::String { max_length: None }
@@ -278,6 +416,12 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_hugeint_is_unknown() {
+        let result = parse_sql_type("HUGEINT");
+        assert!(matches!(result, SqlType::Unknown(_)));
+    }
+
+    #[test]
     fn test_nullability_combine() {
         assert_eq!(
             Nullability::NotNull.combine(Nullability::NotNull),
@@ -299,8 +443,20 @@ mod tests {
 
     #[test]
     fn test_sql_type_display() {
-        assert_eq!(SqlType::Integer { bits: 32 }.display_name(), "INTEGER");
-        assert_eq!(SqlType::Float { bits: 64 }.display_name(), "DOUBLE");
+        assert_eq!(
+            SqlType::Integer {
+                bits: IntBitWidth::I32
+            }
+            .display_name(),
+            "INTEGER"
+        );
+        assert_eq!(
+            SqlType::Float {
+                bits: FloatBitWidth::F64
+            }
+            .display_name(),
+            "DOUBLE"
+        );
         assert_eq!(
             SqlType::String {
                 max_length: Some(100)
@@ -308,5 +464,31 @@ mod tests {
             .display_name(),
             "VARCHAR(100)"
         );
+    }
+
+    #[test]
+    fn test_int_bit_width_display() {
+        assert_eq!(IntBitWidth::I8.to_string(), "8");
+        assert_eq!(IntBitWidth::I16.to_string(), "16");
+        assert_eq!(IntBitWidth::I32.to_string(), "32");
+        assert_eq!(IntBitWidth::I64.to_string(), "64");
+    }
+
+    #[test]
+    fn test_float_bit_width_display() {
+        assert_eq!(FloatBitWidth::F32.to_string(), "32");
+        assert_eq!(FloatBitWidth::F64.to_string(), "64");
+    }
+
+    #[test]
+    fn test_int_bit_width_ordering() {
+        assert!(IntBitWidth::I8 < IntBitWidth::I16);
+        assert!(IntBitWidth::I16 < IntBitWidth::I32);
+        assert!(IntBitWidth::I32 < IntBitWidth::I64);
+    }
+
+    #[test]
+    fn test_float_bit_width_ordering() {
+        assert!(FloatBitWidth::F32 < FloatBitWidth::F64);
     }
 }

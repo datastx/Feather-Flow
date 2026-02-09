@@ -9,7 +9,11 @@ use crate::lowering::SchemaCatalog;
 use sqlparser::ast::{Join, JoinConstraint, JoinOperator};
 
 /// Lower a JOIN clause, updating nullability based on join type
-pub fn lower_join(left: RelOp, join: &Join, catalog: &SchemaCatalog) -> AnalysisResult<RelOp> {
+pub(crate) fn lower_join(
+    left: RelOp,
+    join: &Join,
+    catalog: &SchemaCatalog,
+) -> AnalysisResult<RelOp> {
     let right = crate::lowering::select::lower_table_factor(&join.relation, catalog)?;
 
     let (join_type, condition) = match &join.join_operator {

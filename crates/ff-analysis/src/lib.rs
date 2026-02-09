@@ -14,6 +14,8 @@ pub use error::{AnalysisError, AnalysisResult};
 pub use ir::expr::TypedExpr;
 pub use ir::relop::RelOp;
 pub use ir::schema::RelSchema;
-pub use ir::types::{Nullability, SqlType, TypedColumn};
+pub use ir::types::{
+    parse_sql_type, FloatBitWidth, IntBitWidth, Nullability, SqlType, TypedColumn,
+};
 pub use lowering::{lower_statement, SchemaCatalog};
 pub use pass::{AnalysisPass, DagPass, Diagnostic, DiagnosticCode, PassManager, Severity};

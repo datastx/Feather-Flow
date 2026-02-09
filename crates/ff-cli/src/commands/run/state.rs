@@ -1,7 +1,7 @@
 //! Run state tracking: results, checksums, smart builds, and resume support.
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use ff_core::run_state::RunState;
 use ff_core::state::{compute_checksum, ModelState, ModelStateConfig, StateFile};
 use ff_core::Project;
@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::cli::{GlobalArgs, RunArgs};
-use crate::commands::common::RunStatus;
+use crate::commands::common::{self, CommandResults, RunStatus};
 
 use super::compile::CompiledModel;
 
@@ -25,14 +25,7 @@ pub(crate) struct ModelRunResult {
 }
 
 /// Run results output file format
-#[derive(Debug, Serialize)]
-pub(crate) struct RunResults {
-    pub(crate) timestamp: DateTime<Utc>,
-    pub(crate) elapsed_secs: f64,
-    pub(crate) success_count: usize,
-    pub(crate) failure_count: usize,
-    pub(crate) results: Vec<ModelRunResult>,
-}
+pub(crate) type RunResults = CommandResults<ModelRunResult>;
 
 /// Compute a hash of the project configuration for resume validation
 pub(super) fn compute_config_hash(project: &Project) -> String {
@@ -97,7 +90,17 @@ pub(super) fn compute_smart_skips(
     global: &GlobalArgs,
 ) -> Result<HashSet<String>> {
     let state_path = project.target_dir().join("state.json");
-    let state_file = StateFile::load(&state_path).unwrap_or_default();
+    let state_file = match StateFile::load(&state_path) {
+        Ok(sf) => sf,
+        Err(e) => {
+            eprintln!(
+                "[warn] Failed to load state file at {}, smart build will rebuild all models: {}",
+                state_path.display(),
+                e
+            );
+            StateFile::default()
+        }
+    };
 
     let mut skipped = HashSet::new();
 
@@ -207,14 +210,8 @@ pub(super) fn write_run_results(
         results: run_results.to_vec(),
     };
 
-    let target_dir = project.target_dir();
-    std::fs::create_dir_all(&target_dir).context("Failed to create target directory")?;
-    let results_path = target_dir.join("run_results.json");
-    let results_json =
-        serde_json::to_string_pretty(&results).context("Failed to serialize run results")?;
-    std::fs::write(&results_path, results_json).context("Failed to write run_results.json")?;
-
-    Ok(())
+    let results_path = project.target_dir().join("run_results.json");
+    common::write_json_results(&results_path, &results)
 }
 
 /// Find exposures that depend on any of the models being run.

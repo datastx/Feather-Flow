@@ -18,15 +18,15 @@ use chrono::Utc;
 use ff_core::config::Materialization;
 use ff_core::run_state::RunState;
 use ff_core::state::StateFile;
-use ff_core::Project;
 use std::collections::HashSet;
 use std::path::Path;
 use std::time::Instant;
 
 use crate::cli::{GlobalArgs, OutputFormat, RunArgs};
+use crate::commands::common::load_project;
 
 use compile::{determine_execution_order, load_or_compile_models};
-use execute::execute_models_with_state;
+use execute::{execute_models_with_state, ExecutionContext};
 use hooks::{create_database_connection, create_schemas};
 use state::{
     compute_config_hash, compute_smart_skips, find_affected_exposures, write_run_results,
@@ -36,8 +36,7 @@ use state::{
 /// Execute the run command
 pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     let start_time = Instant::now();
-    let project_path = Path::new(&global.project_dir);
-    let project = Project::load(project_path).context("Failed to load project")?;
+    let project = load_project(global)?;
 
     let json_mode = args.output == OutputFormat::Json;
 
@@ -224,17 +223,17 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         eprintln!("Warning: Failed to save initial run state: {}", e);
     }
 
-    let (run_results, success_count, failure_count, stopped_early) = execute_models_with_state(
-        &db,
-        &compiled_models,
-        &execution_order,
+    let exec_ctx = ExecutionContext {
+        db: &db,
+        compiled_models: &compiled_models,
+        execution_order: &execution_order,
         args,
-        &mut state_file,
-        &mut run_state,
-        &run_state_path,
-        wap_schema.as_deref(),
-    )
-    .await;
+        wap_schema: wap_schema.as_deref(),
+    };
+
+    let (run_results, success_count, failure_count, stopped_early) =
+        execute_models_with_state(&exec_ctx, &mut state_file, &mut run_state, &run_state_path)
+            .await;
 
     // Mark run as completed
     run_state.mark_run_completed();

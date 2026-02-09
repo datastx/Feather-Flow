@@ -1,20 +1,17 @@
 //! Run-operation command implementation - execute standalone SQL operations
 
 use anyhow::{Context, Result};
-use ff_core::Project;
 use ff_jinja::JinjaEnvironment;
 use std::collections::HashMap;
-use std::path::Path;
 use std::time::Instant;
 
 use crate::cli::{GlobalArgs, RunOperationArgs};
-use crate::commands::common;
+use crate::commands::common::{self, load_project};
 
 /// Execute the run-operation command
 pub async fn execute(args: &RunOperationArgs, global: &GlobalArgs) -> Result<()> {
     let start_time = Instant::now();
-    let project_path = Path::new(&global.project_dir);
-    let project = Project::load(project_path).context("Failed to load project")?;
+    let project = load_project(global)?;
 
     // Create Jinja environment with macros
     let macro_paths = project.config.macro_paths_absolute(&project.root);

@@ -1,24 +1,22 @@
 //! Test command implementation
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use ff_core::model::{parse_test_definition, SchemaTest, SingularTest, TestSeverity, TestType};
 use ff_core::source::SourceFile;
-use ff_core::Project;
 use ff_db::{Database, DatabaseCore, DuckDbBackend};
 use ff_jinja::{CustomTestRegistry, JinjaEnvironment};
 use ff_test::{generator::GeneratedTest, TestRunner};
 use futures::stream::{self, StreamExt};
 use serde::Serialize;
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Mutex;
 
 use crate::cli::{GlobalArgs, OutputFormat, TestArgs};
-use crate::commands::common::{self, TestStatus};
+use crate::commands::common::{self, load_project, TestStatus};
 
 /// Test result for JSON output
 #[derive(Debug, Clone, Serialize)]
@@ -44,6 +42,51 @@ struct TestResults {
     warned: usize,
     errors: usize,
     results: Vec<TestResultOutput>,
+}
+
+/// Shared atomic counters for tracking test execution outcomes
+#[derive(Debug)]
+struct TestCounters {
+    passed: Arc<AtomicUsize>,
+    failed: Arc<AtomicUsize>,
+    warned: Arc<AtomicUsize>,
+    errors: Arc<AtomicUsize>,
+    early_stop: Arc<AtomicBool>,
+    test_results: Arc<Mutex<Vec<TestResultOutput>>>,
+}
+
+impl TestCounters {
+    fn new() -> Self {
+        Self {
+            passed: Arc::new(AtomicUsize::new(0)),
+            failed: Arc::new(AtomicUsize::new(0)),
+            warned: Arc::new(AtomicUsize::new(0)),
+            errors: Arc::new(AtomicUsize::new(0)),
+            early_stop: Arc::new(AtomicBool::new(false)),
+            test_results: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+}
+
+/// Shared context for test execution that groups related parameters
+struct TestRunContext<'a> {
+    db: &'a Arc<dyn Database>,
+    model_qualified_names: &'a HashMap<String, String>,
+    singular_tests: &'a [SingularTest],
+    args: &'a TestArgs,
+    failures_dir: &'a Option<Arc<std::path::PathBuf>>,
+    json_mode: bool,
+    custom_registry: &'a Arc<CustomTestRegistry>,
+    macro_paths: &'a [std::path::PathBuf],
+}
+
+impl std::fmt::Debug for TestRunContext<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TestRunContext")
+            .field("json_mode", &self.json_mode)
+            .field("singular_tests_count", &self.singular_tests.len())
+            .finish_non_exhaustive()
+    }
 }
 
 /// Generate tests from source files
@@ -75,8 +118,7 @@ fn generate_source_tests(sources: &[SourceFile]) -> Vec<SchemaTest> {
 pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
     use ff_core::config::Config;
 
-    let project_path = Path::new(&global.project_dir);
-    let project = Project::load(project_path).context("Failed to load project")?;
+    let project = load_project(global)?;
 
     // Resolve target from CLI flag or FF_TARGET env var
     let target = Config::resolve_target(global.target.as_deref());
@@ -221,76 +263,51 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
     // Create target/test_failures directory if --store-failures is set
     let failures_dir = if args.store_failures {
         let dir = project.target_dir().join("test_failures");
-        std::fs::create_dir_all(&dir).ok();
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            eprintln!(
+                "[warn] Failed to create test_failures directory at {}: {}",
+                dir.display(),
+                e
+            );
+        }
         Some(Arc::new(dir))
     } else {
         None
     };
 
-    // Shared counters for execution
-    let passed = Arc::new(AtomicUsize::new(0));
-    let failed = Arc::new(AtomicUsize::new(0));
-    let warned = Arc::new(AtomicUsize::new(0));
-    let errors = Arc::new(AtomicUsize::new(0));
-    let early_stop = Arc::new(AtomicBool::new(false));
-    let output_lock = Arc::new(Mutex::new(()));
-    let test_results: Arc<Mutex<Vec<TestResultOutput>>> = Arc::new(Mutex::new(Vec::new()));
-
     // Wrap custom registry in Arc for sharing
     let custom_registry = Arc::new(custom_test_registry);
+
+    let counters = TestCounters::new();
+    let output_lock = Arc::new(Mutex::new(()));
+
+    let ctx = TestRunContext {
+        db: &db,
+        model_qualified_names: &model_qualified_names,
+        singular_tests: &project.singular_tests,
+        args,
+        failures_dir: &failures_dir,
+        json_mode,
+        custom_registry: &custom_registry,
+        macro_paths: &macro_paths,
+    };
 
     // Run tests based on thread count
     if thread_count > 1 {
         // Parallel execution
-        run_tests_parallel(
-            &db,
-            &tests_to_run,
-            &model_qualified_names,
-            &project.singular_tests,
-            args,
-            &failures_dir,
-            thread_count,
-            &passed,
-            &failed,
-            &warned,
-            &errors,
-            &early_stop,
-            &output_lock,
-            &test_results,
-            json_mode,
-            &custom_registry,
-            &macro_paths,
-        )
-        .await;
+        run_tests_parallel(&ctx, &tests_to_run, &counters, &output_lock, thread_count).await;
     } else {
         // Sequential execution (original behavior)
-        run_tests_sequential(
-            &db,
-            &tests_to_run,
-            &model_qualified_names,
-            &project.singular_tests,
-            args,
-            &failures_dir,
-            &passed,
-            &failed,
-            &warned,
-            &errors,
-            &early_stop,
-            &test_results,
-            json_mode,
-            &custom_registry,
-            &macro_paths,
-        )
-        .await;
+        run_tests_sequential(&ctx, &tests_to_run, &counters).await;
     }
 
-    let final_passed = passed.load(Ordering::SeqCst);
-    let final_failed = failed.load(Ordering::SeqCst);
-    let final_warned = warned.load(Ordering::SeqCst);
-    let final_errors = errors.load(Ordering::SeqCst);
+    let final_passed = counters.passed.load(Ordering::SeqCst);
+    let final_failed = counters.failed.load(Ordering::SeqCst);
+    let final_warned = counters.warned.load(Ordering::SeqCst);
+    let final_errors = counters.errors.load(Ordering::SeqCst);
 
     if json_mode {
-        let results = test_results.lock().await.clone();
+        let results = counters.test_results.lock().await.clone();
         let output = TestResults {
             timestamp: Utc::now(),
             elapsed_secs: start_time.elapsed().as_secs_f64(),
@@ -329,33 +346,21 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
 }
 
 /// Run tests sequentially (original behavior)
-#[allow(clippy::too_many_arguments)]
 async fn run_tests_sequential(
-    db: &Arc<dyn Database>,
+    ctx: &TestRunContext<'_>,
     schema_tests: &[&SchemaTest],
-    model_qualified_names: &HashMap<String, String>,
-    singular_tests: &[SingularTest],
-    args: &TestArgs,
-    failures_dir: &Option<Arc<std::path::PathBuf>>,
-    passed: &Arc<AtomicUsize>,
-    failed: &Arc<AtomicUsize>,
-    warned: &Arc<AtomicUsize>,
-    errors: &Arc<AtomicUsize>,
-    early_stop: &Arc<AtomicBool>,
-    test_results: &Arc<Mutex<Vec<TestResultOutput>>>,
-    json_mode: bool,
-    custom_registry: &Arc<CustomTestRegistry>,
-    macro_paths: &[std::path::PathBuf],
+    counters: &TestCounters,
 ) {
-    let runner = TestRunner::new(db.as_ref());
+    let runner = TestRunner::new(ctx.db.as_ref());
 
     // Run schema tests
     for schema_test in schema_tests {
-        if early_stop.load(Ordering::SeqCst) {
+        if counters.early_stop.load(Ordering::SeqCst) {
             break;
         }
 
-        let qualified_name = model_qualified_names
+        let qualified_name = ctx
+            .model_qualified_names
             .get(&schema_test.model)
             .map(|s| s.as_str())
             .unwrap_or(&schema_test.model);
@@ -364,8 +369,8 @@ async fn run_tests_sequential(
         let generated = generate_test_with_custom_support(
             schema_test,
             qualified_name,
-            custom_registry,
-            macro_paths,
+            ctx.custom_registry,
+            ctx.macro_paths,
         );
         let result = runner.run_test(&generated).await;
 
@@ -373,86 +378,70 @@ async fn run_tests_sequential(
             &result,
             schema_test,
             &generated,
-            db.as_ref(),
-            failures_dir,
-            passed,
-            failed,
-            warned,
-            errors,
-            test_results,
-            json_mode,
+            ctx.db.as_ref(),
+            ctx.failures_dir,
+            counters,
+            ctx.json_mode,
         )
         .await;
 
         // Fail fast if requested (but not for warning-severity tests)
-        if args.fail_fast && !result.passed && schema_test.config.severity == TestSeverity::Error {
-            early_stop.store(true, Ordering::SeqCst);
+        if ctx.args.fail_fast
+            && !result.passed
+            && schema_test.config.severity == TestSeverity::Error
+        {
+            counters.early_stop.store(true, Ordering::SeqCst);
         }
     }
 
     // Run singular tests
-    for singular_test in singular_tests {
-        if early_stop.load(Ordering::SeqCst) {
+    for singular_test in ctx.singular_tests {
+        if counters.early_stop.load(Ordering::SeqCst) {
             break;
         }
 
-        let result = run_singular_test(db.as_ref(), singular_test).await;
+        let result = run_singular_test(ctx.db.as_ref(), singular_test).await;
 
         process_singular_test_result(
             &result,
             singular_test,
-            db.as_ref(),
-            failures_dir,
-            passed,
-            failed,
-            errors,
-            test_results,
-            json_mode,
+            ctx.db.as_ref(),
+            ctx.failures_dir,
+            counters,
+            ctx.json_mode,
         )
         .await;
 
         // Fail fast if requested
-        if args.fail_fast && !result.passed {
-            early_stop.store(true, Ordering::SeqCst);
+        if ctx.args.fail_fast && !result.passed {
+            counters.early_stop.store(true, Ordering::SeqCst);
         }
     }
 }
 
 /// Run tests in parallel
-#[allow(clippy::too_many_arguments)]
 async fn run_tests_parallel(
-    db: &Arc<dyn Database>,
+    ctx: &TestRunContext<'_>,
     schema_tests: &[&SchemaTest],
-    model_qualified_names: &HashMap<String, String>,
-    singular_tests: &[SingularTest],
-    args: &TestArgs,
-    failures_dir: &Option<Arc<std::path::PathBuf>>,
-    thread_count: usize,
-    passed: &Arc<AtomicUsize>,
-    failed: &Arc<AtomicUsize>,
-    warned: &Arc<AtomicUsize>,
-    errors: &Arc<AtomicUsize>,
-    early_stop: &Arc<AtomicBool>,
+    counters: &TestCounters,
     output_lock: &Arc<Mutex<()>>,
-    test_results: &Arc<Mutex<Vec<TestResultOutput>>>,
-    json_mode: bool,
-    custom_registry: &Arc<CustomTestRegistry>,
-    macro_paths: &[std::path::PathBuf],
+    thread_count: usize,
 ) {
     // Pre-generate all test SQL (including custom tests) before parallel execution
     // This is done synchronously since Jinja rendering isn't async
     let generated_tests: Vec<(SchemaTest, String, GeneratedTest)> = schema_tests
         .iter()
         .map(|schema_test| {
-            let qualified_name = model_qualified_names
+            let qualified_name = ctx
+                .model_qualified_names
                 .get(&schema_test.model)
                 .cloned()
                 .unwrap_or_else(|| schema_test.model.clone());
             let generated = generate_test_with_custom_support(
                 schema_test,
                 &qualified_name,
-                custom_registry,
-                macro_paths,
+                ctx.custom_registry,
+                ctx.macro_paths,
             );
             ((*schema_test).clone(), qualified_name, generated)
         })
@@ -462,16 +451,17 @@ async fn run_tests_parallel(
     let schema_test_futures: Vec<_> = generated_tests
         .into_iter()
         .map(|(schema_test, _qualified_name, generated)| {
-            let db = db.clone();
-            let failures_dir = failures_dir.clone();
-            let passed = passed.clone();
-            let failed = failed.clone();
-            let warned = warned.clone();
-            let errors = errors.clone();
-            let early_stop = early_stop.clone();
+            let db = ctx.db.clone();
+            let failures_dir = ctx.failures_dir.clone();
+            let passed = counters.passed.clone();
+            let failed = counters.failed.clone();
+            let warned = counters.warned.clone();
+            let errors = counters.errors.clone();
+            let early_stop = counters.early_stop.clone();
             let output_lock = output_lock.clone();
-            let test_results = test_results.clone();
-            let fail_fast = args.fail_fast;
+            let test_results = counters.test_results.clone();
+            let fail_fast = ctx.args.fail_fast;
+            let json_mode = ctx.json_mode;
 
             async move {
                 if early_stop.load(Ordering::SeqCst) {
@@ -484,17 +474,22 @@ async fn run_tests_parallel(
                 // Lock for output
                 let _lock = output_lock.lock().await;
 
+                let task_counters = TestCounters {
+                    passed,
+                    failed,
+                    warned,
+                    errors,
+                    early_stop: early_stop.clone(),
+                    test_results,
+                };
+
                 process_schema_test_result(
                     &result,
                     &schema_test,
                     &generated,
                     db.as_ref(),
                     &failures_dir,
-                    &passed,
-                    &failed,
-                    &warned,
-                    &errors,
-                    &test_results,
+                    &task_counters,
                     json_mode,
                 )
                 .await;
@@ -515,19 +510,21 @@ async fn run_tests_parallel(
         .await;
 
     // Prepare singular test tasks
-    let singular_test_futures: Vec<_> = singular_tests
+    let singular_test_futures: Vec<_> = ctx
+        .singular_tests
         .iter()
         .map(|singular_test| {
-            let db = db.clone();
+            let db = ctx.db.clone();
             let singular_test = singular_test.clone();
-            let failures_dir = failures_dir.clone();
-            let passed = passed.clone();
-            let failed = failed.clone();
-            let errors = errors.clone();
-            let early_stop = early_stop.clone();
+            let failures_dir = ctx.failures_dir.clone();
+            let passed = counters.passed.clone();
+            let failed = counters.failed.clone();
+            let errors = counters.errors.clone();
+            let early_stop = counters.early_stop.clone();
             let output_lock = output_lock.clone();
-            let test_results = test_results.clone();
-            let fail_fast = args.fail_fast;
+            let test_results = counters.test_results.clone();
+            let fail_fast = ctx.args.fail_fast;
+            let json_mode = ctx.json_mode;
 
             async move {
                 if early_stop.load(Ordering::SeqCst) {
@@ -539,15 +536,21 @@ async fn run_tests_parallel(
                 // Lock for output
                 let _lock = output_lock.lock().await;
 
+                let task_counters = TestCounters {
+                    passed,
+                    failed,
+                    warned: Arc::new(AtomicUsize::new(0)), // singular tests don't use warned
+                    errors,
+                    early_stop: early_stop.clone(),
+                    test_results,
+                };
+
                 process_singular_test_result(
                     &result,
                     &singular_test,
                     db.as_ref(),
                     &failures_dir,
-                    &passed,
-                    &failed,
-                    &errors,
-                    &test_results,
+                    &task_counters,
                     json_mode,
                 )
                 .await;
@@ -568,31 +571,30 @@ async fn run_tests_parallel(
 }
 
 /// Process and print schema test result
-#[allow(clippy::too_many_arguments)]
 async fn process_schema_test_result(
     result: &ff_test::runner::TestResult,
     schema_test: &SchemaTest,
     generated: &GeneratedTest,
     db: &dyn Database,
     failures_dir: &Option<Arc<std::path::PathBuf>>,
-    passed: &Arc<AtomicUsize>,
-    failed: &Arc<AtomicUsize>,
-    warned: &Arc<AtomicUsize>,
-    errors: &Arc<AtomicUsize>,
-    test_results: &Arc<Mutex<Vec<TestResultOutput>>>,
+    counters: &TestCounters,
     json_mode: bool,
 ) {
     let (status, error_msg) = if result.passed {
-        passed.fetch_add(1, Ordering::SeqCst);
+        counters.passed.fetch_add(1, Ordering::SeqCst);
         if !json_mode {
-            println!("  ✓ {} [{}ms]", result.name, result.duration.as_millis());
+            println!(
+                "  \u{2713} {} [{}ms]",
+                result.name,
+                result.duration.as_millis()
+            );
         }
         (TestStatus::Pass.to_string(), None)
     } else if let Some(error) = &result.error {
-        errors.fetch_add(1, Ordering::SeqCst);
+        counters.errors.fetch_add(1, Ordering::SeqCst);
         if !json_mode {
             println!(
-                "  ✗ {} - {} [{}ms]",
+                "  \u{2717} {} - {} [{}ms]",
                 result.name,
                 error,
                 result.duration.as_millis()
@@ -602,10 +604,10 @@ async fn process_schema_test_result(
     } else {
         let is_warning = schema_test.config.severity == TestSeverity::Warn;
         if is_warning {
-            warned.fetch_add(1, Ordering::SeqCst);
+            counters.warned.fetch_add(1, Ordering::SeqCst);
             if !json_mode {
                 println!(
-                    "  ⚠ {} ({} failures, warn) [{}ms]",
+                    "  \u{26a0} {} ({} failures, warn) [{}ms]",
                     result.name,
                     result.failure_count,
                     result.duration.as_millis()
@@ -613,10 +615,10 @@ async fn process_schema_test_result(
             }
             ("warn".to_string(), None)
         } else {
-            failed.fetch_add(1, Ordering::SeqCst);
+            counters.failed.fetch_add(1, Ordering::SeqCst);
             if !json_mode {
                 println!(
-                    "  ✗ {} ({} failures) [{}ms]",
+                    "  \u{2717} {} ({} failures) [{}ms]",
                     result.name,
                     result.failure_count,
                     result.duration.as_millis()
@@ -637,7 +639,7 @@ async fn process_schema_test_result(
         duration_secs: result.duration.as_secs_f64(),
         error: error_msg,
     };
-    test_results.lock().await.push(test_output);
+    counters.test_results.lock().await.push(test_output);
 
     // Show sample failing rows (text mode only)
     if !json_mode && !result.passed && result.error.is_none() && !result.sample_failures.is_empty()
@@ -661,33 +663,29 @@ async fn process_schema_test_result(
 }
 
 /// Process and print singular test result
-#[allow(clippy::too_many_arguments)]
 async fn process_singular_test_result(
     result: &SingularTestResult,
     singular_test: &SingularTest,
     db: &dyn Database,
     failures_dir: &Option<Arc<std::path::PathBuf>>,
-    passed: &Arc<AtomicUsize>,
-    failed: &Arc<AtomicUsize>,
-    errors: &Arc<AtomicUsize>,
-    test_results: &Arc<Mutex<Vec<TestResultOutput>>>,
+    counters: &TestCounters,
     json_mode: bool,
 ) {
     let (status, error_msg) = if result.passed {
-        passed.fetch_add(1, Ordering::SeqCst);
+        counters.passed.fetch_add(1, Ordering::SeqCst);
         if !json_mode {
             println!(
-                "  ✓ {} (singular) [{}ms]",
+                "  \u{2713} {} (singular) [{}ms]",
                 result.name,
                 result.duration.as_millis()
             );
         }
         (TestStatus::Pass.to_string(), None)
     } else if let Some(error) = &result.error {
-        errors.fetch_add(1, Ordering::SeqCst);
+        counters.errors.fetch_add(1, Ordering::SeqCst);
         if !json_mode {
             println!(
-                "  ✗ {} (singular) - {} [{}ms]",
+                "  \u{2717} {} (singular) - {} [{}ms]",
                 result.name,
                 error,
                 result.duration.as_millis()
@@ -695,10 +693,10 @@ async fn process_singular_test_result(
         }
         (TestStatus::Error.to_string(), Some(error.clone()))
     } else {
-        failed.fetch_add(1, Ordering::SeqCst);
+        counters.failed.fetch_add(1, Ordering::SeqCst);
         if !json_mode {
             println!(
-                "  ✗ {} (singular) ({} failures) [{}ms]",
+                "  \u{2717} {} (singular) ({} failures) [{}ms]",
                 result.name,
                 result.failure_count,
                 result.duration.as_millis()
@@ -718,7 +716,7 @@ async fn process_singular_test_result(
         duration_secs: result.duration.as_secs_f64(),
         error: error_msg,
     };
-    test_results.lock().await.push(test_output);
+    counters.test_results.lock().await.push(test_output);
 
     // Show sample failing rows (text mode only)
     if !json_mode && !result.passed && result.error.is_none() && !result.sample_failures.is_empty()
@@ -770,7 +768,16 @@ async fn run_singular_test(db: &dyn Database, test: &SingularTest) -> SingularTe
                 }
             } else {
                 // Test failed - get sample failing rows
-                let sample_failures = db.query_sample_rows(&test.sql, 5).await.unwrap_or_default();
+                let sample_failures = match db.query_sample_rows(&test.sql, 5).await {
+                    Ok(rows) => rows,
+                    Err(e) => {
+                        eprintln!(
+                            "[warn] Failed to fetch sample failing rows for {}: {}",
+                            test.name, e
+                        );
+                        Vec::new()
+                    }
+                };
 
                 SingularTestResult {
                     name: test.name.clone(),

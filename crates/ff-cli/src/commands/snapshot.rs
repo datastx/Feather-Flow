@@ -1,16 +1,15 @@
 //! Snapshot command implementation - SCD Type 2 tracking
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use ff_core::{discover_snapshots, Project, Snapshot, SnapshotStrategy};
 use ff_db::{Database, SnapshotResult};
 use serde::Serialize;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
 use crate::cli::{GlobalArgs, SnapshotArgs};
-use crate::commands::common::{self, RunStatus};
+use crate::commands::common::{self, load_project, CommandResults, RunStatus};
 
 /// Snapshot run result for a single snapshot
 #[derive(Debug, Clone, Serialize)]
@@ -25,20 +24,12 @@ struct SnapshotRunResult {
 }
 
 /// Snapshot results output file format
-#[derive(Debug, Serialize)]
-struct SnapshotResults {
-    timestamp: DateTime<Utc>,
-    elapsed_secs: f64,
-    success_count: usize,
-    failure_count: usize,
-    results: Vec<SnapshotRunResult>,
-}
+type SnapshotResults = CommandResults<SnapshotRunResult>;
 
 /// Execute the snapshot command
 pub async fn execute(args: &SnapshotArgs, global: &GlobalArgs) -> Result<()> {
     let start_time = Instant::now();
-    let project_path = Path::new(&global.project_dir);
-    let project = Project::load(project_path).context("Failed to load project")?;
+    let project = load_project(global)?;
 
     // Get snapshot paths from config
     let snapshot_paths = project.config.snapshot_paths.clone();
@@ -238,12 +229,6 @@ fn write_snapshot_results(
         results: run_results.to_vec(),
     };
 
-    let target_dir = project.target_dir();
-    std::fs::create_dir_all(&target_dir).context("Failed to create target directory")?;
-    let results_path = target_dir.join("snapshot_results.json");
-    let results_json =
-        serde_json::to_string_pretty(&results).context("Failed to serialize snapshot results")?;
-    std::fs::write(&results_path, results_json).context("Failed to write snapshot_results.json")?;
-
-    Ok(())
+    let results_path = project.target_dir().join("snapshot_results.json");
+    common::write_json_results(&results_path, &results)
 }

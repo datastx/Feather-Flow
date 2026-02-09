@@ -4,15 +4,13 @@
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use ff_core::Project;
 use ff_db::{quote_ident, quote_qualified, Database, DuckDbBackend};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 use std::sync::Arc;
 
 use crate::cli::{DiffArgs, GlobalArgs, OutputFormat};
-use crate::commands::common;
+use crate::commands::common::{self, load_project};
 
 /// Difference summary for JSON output
 #[derive(Debug, Serialize)]
@@ -50,8 +48,7 @@ struct RowDifference {
 
 /// Execute the diff command
 pub async fn execute(args: &DiffArgs, global: &GlobalArgs) -> Result<()> {
-    let project_path = Path::new(&global.project_dir);
-    let project = Project::load(project_path).context("Failed to load project")?;
+    let project = load_project(global)?;
     let json_mode = args.output == OutputFormat::Json;
 
     // Verify the model exists

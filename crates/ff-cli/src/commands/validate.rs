@@ -1,6 +1,6 @@
 //! Validate command implementation
 
-use crate::commands::common;
+use crate::commands::common::{self, load_project};
 use anyhow::{Context, Result};
 use ff_core::dag::ModelDag;
 use ff_core::manifest::Manifest;
@@ -101,8 +101,7 @@ impl ValidationContext {
 
 /// Execute the validate command
 pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
-    let project_path = Path::new(&global.project_dir);
-    let project = Project::load(project_path).context("Failed to load project")?;
+    let project = load_project(global)?;
 
     println!("Validating project: {}\n", project.config.name);
 
