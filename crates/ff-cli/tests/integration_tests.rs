@@ -2139,7 +2139,7 @@ fn test_analysis_diagnostic_json_roundtrip() {
         model: "test_model".to_string(),
         column: Some("col1".to_string()),
         hint: Some("Fix it".to_string()),
-        pass_name: "type_inference".to_string(),
+        pass_name: "type_inference".into(),
     };
 
     let json = serde_json::to_string(&diag).unwrap();

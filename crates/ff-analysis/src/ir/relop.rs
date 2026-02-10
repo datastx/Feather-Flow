@@ -166,4 +166,18 @@ impl RelOp {
             RelOp::SetOp { schema, .. } => schema,
         }
     }
+
+    /// Get the effective table label for this operator, if it has a single source.
+    ///
+    /// For `Scan` nodes this is the alias (if present) or the table name.
+    /// For compound operators (Join, SetOp, etc.) there is no single source,
+    /// so `None` is returned.
+    pub fn table_label(&self) -> Option<&str> {
+        match self {
+            RelOp::Scan {
+                table_name, alias, ..
+            } => Some(alias.as_deref().unwrap_or(table_name)),
+            _ => None,
+        }
+    }
 }

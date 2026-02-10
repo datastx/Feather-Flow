@@ -57,7 +57,7 @@ impl DagPass for UnusedColumnDetection {
                         "Enumerate columns explicitly to enable unused column detection"
                             .to_string(),
                     ),
-                    pass_name: "unused_columns".to_string(),
+                    pass_name: "unused_columns".into(),
                 });
                 continue;
             }
@@ -80,7 +80,7 @@ impl DagPass for UnusedColumnDetection {
                         hint: Some(
                             "Consider removing this column to simplify the model".to_string(),
                         ),
-                        pass_name: "unused_columns".to_string(),
+                        pass_name: "unused_columns".into(),
                     });
                 }
             }

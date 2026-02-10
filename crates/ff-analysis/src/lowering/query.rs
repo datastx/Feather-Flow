@@ -74,7 +74,12 @@ fn lower_set_expr(set_expr: &SetExpr, catalog: &SchemaCatalog) -> AnalysisResult
                 (SetOperator::Union, _) => SetOpKind::Union,
                 (SetOperator::Intersect, _) => SetOpKind::Intersect,
                 (SetOperator::Except, _) => SetOpKind::Except,
-                _ => SetOpKind::Except, // fallback for Minus, etc.
+                (op, _) => {
+                    return Err(AnalysisError::UnsupportedConstruct {
+                        model: String::new(),
+                        construct: format!("unsupported set operator: {:?}", op),
+                    })
+                }
             };
             Ok(RelOp::SetOp {
                 left: Box::new(left_plan),

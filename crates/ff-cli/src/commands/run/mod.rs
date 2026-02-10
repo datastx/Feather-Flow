@@ -24,7 +24,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::cli::{GlobalArgs, OutputFormat, RunArgs};
-use crate::commands::common::load_project;
+use crate::commands::common::{self, load_project};
 
 use compile::{determine_execution_order, load_or_compile_models};
 use execute::{execute_models_with_state, ExecutionContext};
@@ -368,29 +368,24 @@ fn run_pre_execution_analysis(
     )?;
     let result = &output.result;
 
-    // Check for schema errors (all mismatches are errors that block execution)
-    for (model_name, plan_result) in &result.model_plans {
-        for mismatch in &plan_result.mismatches {
+    let (_, plan_count, failure_count) = common::report_static_analysis_results(
+        result,
+        |model_name, mismatch| {
             if !json_mode {
-                eprintln!(
-                    "  [error] {model_name}: {mismatch}",
-                    model_name = model_name,
-                    mismatch = mismatch
-                );
+                eprintln!("  [error] {model_name}: {mismatch}");
             }
-        }
-    }
-
+        },
+        |model, err| {
+            if global.verbose {
+                eprintln!("[verbose] Static analysis failed for '{}': {}", model, err);
+            }
+        },
+    );
     if global.verbose {
-        let plan_count = result.model_plans.len();
-        let failure_count = result.failures.len();
         eprintln!(
             "[verbose] Static analysis: {} models planned, {} failures",
             plan_count, failure_count
         );
-        for (model, err) in &result.failures {
-            eprintln!("[verbose] Static analysis failed for '{}': {}", model, err);
-        }
     }
 
     Ok(output.has_errors)

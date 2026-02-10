@@ -49,7 +49,7 @@ impl AnalysisPass for NullabilityPropagation {
                     model: model_name.to_string(),
                     column: Some(col_name.to_string()),
                     hint: Some("Wrap with COALESCE() or add an IS NOT NULL filter".to_string()),
-                    pass_name: "nullability".to_string(),
+                    pass_name: "nullability".into(),
                 });
             }
         }
@@ -74,7 +74,7 @@ impl AnalysisPass for NullabilityPropagation {
                         model: model_name.to_string(),
                         column: Some(col.name.clone()),
                         hint: Some("Add a COALESCE or filter to ensure NOT NULL".to_string()),
-                        pass_name: "nullability".to_string(),
+                        pass_name: "nullability".into(),
                     });
                 }
             }
@@ -192,8 +192,11 @@ fn collect_coalesce_columns(expr: &TypedExpr, guarded: &mut HashSet<String>) {
     match expr {
         TypedExpr::FunctionCall { name, args, .. } if name == "COALESCE" => {
             for arg in args {
-                if let TypedExpr::ColumnRef { column, .. } = arg {
+                if let TypedExpr::ColumnRef { table, column, .. } = arg {
                     guarded.insert(column.clone());
+                    if let Some(t) = table {
+                        guarded.insert(format!("{}.{}", t, column));
+                    }
                 }
             }
         }
@@ -292,7 +295,7 @@ fn check_is_null_on_not_null(
                             model: model.to_string(),
                             column: Some(column.clone()),
                             hint: Some("This check is redundant and can be removed".to_string()),
-                            pass_name: "nullability".to_string(),
+                            pass_name: "nullability".into(),
                         });
                     }
                 }

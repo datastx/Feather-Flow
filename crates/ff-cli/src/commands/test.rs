@@ -518,6 +518,7 @@ async fn run_tests_parallel(
             let failures_dir = ctx.failures_dir.clone();
             let passed = counters.passed.clone();
             let failed = counters.failed.clone();
+            let warned = counters.warned.clone();
             let errors = counters.errors.clone();
             let early_stop = counters.early_stop.clone();
             let output_lock = output_lock.clone();
@@ -538,7 +539,7 @@ async fn run_tests_parallel(
                 let task_counters = TestCounters {
                     passed,
                     failed,
-                    warned: Arc::new(AtomicUsize::new(0)), // singular tests don't use warned
+                    warned,
                     errors,
                     early_stop: early_stop.clone(),
                     test_results,

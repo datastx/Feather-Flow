@@ -204,7 +204,7 @@ fn discover_seeds_recursive(dir: &Path, seeds: &mut Vec<Seed>) {
             match Seed::from_file(path) {
                 Ok(seed) => seeds.push(seed),
                 Err(e) => {
-                    eprintln!("[warn] Failed to load seed file: {}", e);
+                    log::warn!("Failed to load seed file: {}", e);
                 }
             }
         }

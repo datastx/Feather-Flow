@@ -194,7 +194,7 @@ fn compile_all_models(
     let macro_paths = project.config.macro_paths_absolute(&project.root);
     let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
 
-    let external_tables: HashSet<String> = project.config.external_tables.iter().cloned().collect();
+    let external_tables: HashSet<String> = common::build_external_tables_lookup(project);
     let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
 
     let mut compiled_models = HashMap::new();

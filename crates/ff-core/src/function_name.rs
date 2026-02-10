@@ -1,114 +1,13 @@
 //! Strongly-typed function name wrapper.
 
-use serde::{Deserialize, Deserializer, Serialize};
-use std::borrow::Borrow;
-use std::fmt;
-use std::ops::Deref;
+use crate::newtype_string::define_newtype_string;
 
-/// Strongly-typed wrapper for user-defined function names.
-///
-/// Prevents accidental mixing of function names with model names, table names,
-/// or other string types. Guaranteed non-empty after construction.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
-pub struct FunctionName(String);
-
-impl<'de> Deserialize<'de> for FunctionName {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        FunctionName::try_new(s)
-            .ok_or_else(|| serde::de::Error::custom("FunctionName must not be empty"))
-    }
-}
-
-impl FunctionName {
-    /// Create a new `FunctionName`, panicking if the name is empty.
+define_newtype_string! {
+    /// Strongly-typed wrapper for user-defined function names.
     ///
-    /// Prefer [`try_new`](Self::try_new) when handling untrusted input.
-    pub fn new(name: impl Into<String>) -> Self {
-        let s = name.into();
-        assert!(!s.is_empty(), "FunctionName must not be empty");
-        Self(s)
-    }
-
-    /// Try to create a new `FunctionName`, returning `None` if the name is empty.
-    pub fn try_new(name: impl Into<String>) -> Option<Self> {
-        let s = name.into();
-        if s.is_empty() {
-            None
-        } else {
-            Some(Self(s))
-        }
-    }
-
-    /// Return the underlying name as a string slice.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    /// Consume the wrapper and return the inner `String`.
-    pub fn into_inner(self) -> String {
-        self.0
-    }
-}
-
-impl fmt::Display for FunctionName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl AsRef<str> for FunctionName {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl Deref for FunctionName {
-    type Target = str;
-    fn deref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl Borrow<str> for FunctionName {
-    fn borrow(&self) -> &str {
-        &self.0
-    }
-}
-
-impl From<String> for FunctionName {
-    fn from(s: String) -> Self {
-        assert!(!s.is_empty(), "FunctionName must not be empty");
-        Self(s)
-    }
-}
-
-impl From<&str> for FunctionName {
-    fn from(s: &str) -> Self {
-        assert!(!s.is_empty(), "FunctionName must not be empty");
-        Self(s.to_string())
-    }
-}
-
-impl PartialEq<str> for FunctionName {
-    fn eq(&self, other: &str) -> bool {
-        self.0 == other
-    }
-}
-
-impl PartialEq<&str> for FunctionName {
-    fn eq(&self, other: &&str) -> bool {
-        self.0 == *other
-    }
-}
-
-impl PartialEq<String> for FunctionName {
-    fn eq(&self, other: &String) -> bool {
-        self.0 == *other
-    }
+    /// Prevents accidental mixing of function names with model names, table names,
+    /// or other string types. Guaranteed non-empty after construction.
+    pub struct FunctionName;
 }
 
 #[cfg(test)]
@@ -143,15 +42,21 @@ mod tests {
     }
 
     #[test]
-    fn test_function_name_from_string() {
-        let name: FunctionName = "safe_divide".to_string().into();
+    fn test_function_name_try_from_string() {
+        let name: FunctionName = "safe_divide".to_string().try_into().unwrap();
         assert_eq!(name.as_str(), "safe_divide");
     }
 
     #[test]
-    fn test_function_name_from_str() {
-        let name: FunctionName = "safe_divide".into();
+    fn test_function_name_try_from_str() {
+        let name: FunctionName = "safe_divide".try_into().unwrap();
         assert_eq!(name.as_str(), "safe_divide");
+    }
+
+    #[test]
+    fn test_function_name_try_from_empty_fails() {
+        let result: Result<FunctionName, _> = "".try_into();
+        assert!(result.is_err());
     }
 
     #[test]

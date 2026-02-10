@@ -304,7 +304,7 @@ impl FunctionDef {
     }
 
     /// Build the optionally schema-qualified function name.
-    fn qualified_name(&self) -> String {
+    pub fn qualified_name(&self) -> String {
         if let Some(ref schema) = self.config.schema {
             format!("{}.{}", schema, self.name)
         } else {

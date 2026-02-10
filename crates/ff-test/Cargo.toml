@@ -8,6 +8,7 @@ description = "Test generation for Featherflow - schema test SQL generation and 
 [dependencies]
 ff-core = { path = "../ff-core" }
 ff-db = { path = "../ff-db" }
+regex = "1.10"
 thiserror = { workspace = true }
 
 [dev-dependencies]

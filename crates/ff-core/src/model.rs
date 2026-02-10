@@ -203,6 +203,11 @@ impl ModelSchema {
             source: e,
         })?;
         let schema: ModelSchema = serde_yaml::from_str(&content)?;
+        if schema.version != 1 {
+            return Err(CoreError::UnsupportedSchemaVersion {
+                version: schema.version,
+            });
+        }
         Ok(schema)
     }
 
@@ -301,13 +306,16 @@ pub fn parse_test_definition(test_def: &TestDefinition) -> Option<TestType> {
                     let values: Vec<String> = params
                         .values
                         .iter()
-                        .map(|v| match v {
-                            serde_yaml::Value::String(s) => s.clone(),
-                            serde_yaml::Value::Number(n) => n.to_string(),
-                            serde_yaml::Value::Bool(b) => b.to_string(),
-                            _ => v.as_str().unwrap_or("").to_string(),
+                        .filter_map(|v| match v {
+                            serde_yaml::Value::String(s) => Some(s.clone()),
+                            serde_yaml::Value::Number(n) => Some(n.to_string()),
+                            serde_yaml::Value::Bool(b) => Some(b.to_string()),
+                            _ => None, // Skip non-stringifiable values
                         })
                         .collect();
+                    if values.is_empty() {
+                        return None;
+                    }
                     Some(TestType::AcceptedValues {
                         values,
                         quote: params.quote,
@@ -745,11 +753,8 @@ impl Model {
     /// Get the schema for this model, falling back through the precedence chain:
     /// 1. SQL config() function (self.config.schema)
     /// 2. Project default
-    pub fn target_schema(&self, default: Option<&str>) -> Option<String> {
-        self.config
-            .schema
-            .clone()
-            .or_else(|| default.map(String::from))
+    pub fn target_schema<'a>(&'a self, default: Option<&'a str>) -> Option<&'a str> {
+        self.config.schema.as_deref().or(default)
     }
 
     /// Check if WAP is enabled for this model
@@ -1327,7 +1332,7 @@ columns:
             model.materialization(Materialization::View),
             Materialization::Table
         );
-        assert_eq!(model.target_schema(None), Some("sql_schema".to_string()));
+        assert_eq!(model.target_schema(None), Some("sql_schema"));
     }
 
     #[test]
@@ -1368,7 +1373,7 @@ columns:
         assert_eq!(model.target_schema(None), None);
         assert_eq!(
             model.target_schema(Some("default_schema")),
-            Some("default_schema".to_string())
+            Some("default_schema")
         );
     }
 
@@ -1397,7 +1402,7 @@ columns:
         );
         assert_eq!(
             model.target_schema(Some("default_schema")),
-            Some("default_schema".to_string())
+            Some("default_schema")
         );
     }
 
@@ -1921,6 +1926,29 @@ columns:
         assert_eq!(
             schema.deprecation_message,
             Some("Use fct_orders_v2 instead".to_string())
+        );
+    }
+
+    #[test]
+    fn test_unsupported_schema_version() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let yml_path = dir.path().join("test.yml");
+        std::fs::write(
+            &yml_path,
+            "version: 2\ncolumns:\n  - name: id\n    type: INTEGER\n",
+        )
+        .unwrap();
+
+        let result = ModelSchema::load(&yml_path);
+        assert!(result.is_err(), "version 2 should be rejected");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("E018"),
+            "Error should reference E018, got: {err}"
+        );
+        assert!(
+            err.contains("version 2"),
+            "Error should mention version 2, got: {err}"
         );
     }
 

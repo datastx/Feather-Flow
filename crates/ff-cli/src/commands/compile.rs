@@ -616,28 +616,19 @@ fn run_static_analysis(
         }
     }
 
-    // Report failures
-    for (model, err) in &result.failures {
-        if global.verbose {
-            eprintln!("[verbose] Static analysis failed for '{}': {}", model, err);
-        }
-    }
-
-    // Report schema mismatches (all mismatches are errors)
-    for (model_name, plan_result) in &result.model_plans {
-        for mismatch in &plan_result.mismatches {
+    let (_, plan_count, failure_count) = common::report_static_analysis_results(
+        result,
+        |model_name, mismatch| {
             if !json_mode {
-                eprintln!(
-                    "  [error] {model_name}: {mismatch}",
-                    model_name = model_name,
-                    mismatch = mismatch
-                );
+                eprintln!("  [error] {model_name}: {mismatch}");
             }
-        }
-    }
-
-    let plan_count = result.model_plans.len();
-    let failure_count = result.failures.len();
+        },
+        |model, err| {
+            if global.verbose {
+                eprintln!("[verbose] Static analysis failed for '{}': {}", model, err);
+            }
+        },
+    );
     if !json_mode && (plan_count > 0 || failure_count > 0) {
         eprintln!(
             "Static analysis: {} models planned, {} failures",

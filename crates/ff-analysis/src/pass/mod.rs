@@ -10,6 +10,7 @@ pub(crate) mod unused_columns;
 use crate::context::AnalysisContext;
 use crate::ir::relop::RelOp;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 /// Strongly-typed diagnostic codes emitted by analysis passes.
@@ -93,8 +94,13 @@ pub struct Diagnostic {
     pub column: Option<String>,
     /// Optional hint for how to fix
     pub hint: Option<String>,
-    /// Name of the pass that produced this diagnostic
-    pub pass_name: String,
+    /// Name of the pass that produced this diagnostic.
+    ///
+    /// Uses `Cow<'static, str>` because all built-in pass names are string
+    /// literals (`"type_inference"`, `"nullability"`, etc.) and can be
+    /// borrowed at zero cost via `"name".into()`. If a future extension
+    /// needs a dynamic pass name, use `Cow::Owned(name)`.
+    pub pass_name: Cow<'static, str>,
 }
 
 /// Per-model analysis pass trait.
@@ -124,6 +130,14 @@ pub trait DagPass: Send + Sync {
         models: &HashMap<String, RelOp>,
         ctx: &AnalysisContext,
     ) -> Vec<Diagnostic>;
+}
+
+/// Check if a pass should run given an optional filter list
+pub(crate) fn should_run_pass(name: &str, filter: Option<&[String]>) -> bool {
+    match filter {
+        Some(allowed) => allowed.iter().any(|f| f == name),
+        None => true,
+    }
 }
 
 /// Manages and runs analysis passes over the custom `RelOp` IR.
@@ -166,10 +180,8 @@ impl PassManager {
         for name in model_order {
             if let Some(ir) = models.get(name) {
                 for pass in &self.model_passes {
-                    if let Some(filter) = pass_filter {
-                        if !filter.iter().any(|f| f == pass.name()) {
-                            continue;
-                        }
+                    if !should_run_pass(pass.name(), pass_filter) {
+                        continue;
                     }
                     diagnostics.extend(pass.run_model(name, ir, ctx));
                 }
@@ -178,10 +190,8 @@ impl PassManager {
 
         // Run DAG-level passes
         for pass in &self.dag_passes {
-            if let Some(filter) = pass_filter {
-                if !filter.iter().any(|f| f == pass.name()) {
-                    continue;
-                }
+            if !should_run_pass(pass.name(), pass_filter) {
+                continue;
             }
             diagnostics.extend(pass.run_project(models, ctx));
         }
