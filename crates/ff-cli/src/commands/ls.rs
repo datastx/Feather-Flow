@@ -37,12 +37,12 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
         // Render Jinja template to get config
         let (rendered, config_values) = jinja
             .render_with_config(&model.raw_sql)
-            .context(format!("Failed to render template for model: {}", name))?;
+            .with_context(|| format!("Failed to render template for model: {}", name))?;
 
         // Parse SQL to extract dependencies
         let statements = parser
             .parse(&rendered)
-            .context(format!("Failed to parse SQL for model: {}", name))?;
+            .with_context(|| format!("Failed to parse SQL for model: {}", name))?;
 
         // Extract and categorize dependencies
         let deps = extract_dependencies(&statements);

@@ -1,6 +1,6 @@
 //! Strongly-typed table name wrapper.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::borrow::Borrow;
 use std::fmt;
 use std::ops::Deref;
@@ -8,18 +8,27 @@ use std::ops::Deref;
 /// Strongly-typed wrapper for table names (potentially schema-qualified like "schema.table").
 ///
 /// Prevents accidental mixing of table names with model names, column names,
-/// or other string types.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(transparent)]
+/// or other string types. Guaranteed non-empty after construction.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct TableName(String);
 
+impl<'de> Deserialize<'de> for TableName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        TableName::try_new(s).ok_or_else(|| serde::de::Error::custom("TableName must not be empty"))
+    }
+}
+
 impl TableName {
-    /// Create a new `TableName`, panicking in debug builds if the name is empty.
+    /// Create a new `TableName`, panicking if the name is empty.
     ///
     /// Prefer [`try_new`](Self::try_new) when handling untrusted input.
     pub fn new(name: impl Into<String>) -> Self {
         let s = name.into();
-        debug_assert!(!s.is_empty(), "TableName must not be empty");
+        assert!(!s.is_empty(), "TableName must not be empty");
         Self(s)
     }
 
@@ -71,14 +80,14 @@ impl Borrow<str> for TableName {
 
 impl From<String> for TableName {
     fn from(s: String) -> Self {
-        debug_assert!(!s.is_empty(), "TableName must not be empty");
+        assert!(!s.is_empty(), "TableName must not be empty");
         Self(s)
     }
 }
 
 impl From<&str> for TableName {
     fn from(s: &str) -> Self {
-        debug_assert!(!s.is_empty(), "TableName must not be empty");
+        assert!(!s.is_empty(), "TableName must not be empty");
         Self(s.to_string())
     }
 }

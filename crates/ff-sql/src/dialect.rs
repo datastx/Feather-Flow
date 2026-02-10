@@ -34,7 +34,10 @@ pub trait SqlDialect: Send + Sync {
     fn name(&self) -> &'static str;
 }
 
-/// Parse line and column from sqlparser error message
+/// Parse line and column from sqlparser error message.
+///
+/// sqlparser 0.60's `ParserError` is a simple string wrapper with no structured
+/// location data, so we extract "Line: N, Column: M" from the error message text.
 fn parse_location_from_error(msg: &str) -> (usize, usize) {
     // Look for pattern "Line: N, Column: M"
     if let Some(line_idx) = msg.find("Line: ") {

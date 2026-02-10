@@ -80,6 +80,10 @@ pub struct ManifestModel {
     /// Whether this model uses Write-Audit-Publish pattern
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wap: Option<bool>,
+
+    /// SHA-256 checksum of the raw SQL content (for change detection)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sql_checksum: Option<String>,
 }
 
 /// A source entry in the manifest
@@ -300,6 +304,7 @@ impl Manifest {
             pre_hook: model.config.pre_hook.clone(),
             post_hook: model.config.post_hook.clone(),
             wap,
+            sql_checksum: Some(model.sql_checksum()),
         };
 
         self.models.insert(model.name.clone(), manifest_model);

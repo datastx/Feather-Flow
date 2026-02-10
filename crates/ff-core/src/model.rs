@@ -591,7 +591,7 @@ impl std::fmt::Display for DataClassification {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ColumnReference {
     /// Referenced model name
-    pub model: String,
+    pub model: ModelName,
     /// Referenced column name
     pub column: String,
 }
@@ -796,6 +796,14 @@ impl Model {
         self.config
             .on_schema_change
             .unwrap_or(OnSchemaChange::Ignore)
+    }
+
+    /// Compute a SHA-256 checksum of the raw SQL content.
+    pub fn sql_checksum(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(self.raw_sql.as_bytes());
+        format!("{:x}", hasher.finalize())
     }
 
     /// Get the owner for this model from schema metadata

@@ -299,10 +299,10 @@ fn compare_schemas(
         }
     }
 
-    // Check for type changes
+    // Check for type changes (using normalized comparison to avoid false positives)
     for (col_name, prev_type) in &prev_cols {
         if let Some(curr_type) = curr_cols.get(col_name) {
-            if prev_type != curr_type {
+            if !crate::contract::types_compatible(prev_type, curr_type) {
                 report.add_change(
                     BreakingChange::new(
                         model_name,
@@ -357,6 +357,7 @@ mod tests {
             pre_hook: Vec::new(),
             post_hook: Vec::new(),
             wap: None,
+            sql_checksum: None,
         }
     }
 

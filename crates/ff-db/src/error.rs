@@ -41,9 +41,14 @@ impl From<duckdb::Error> for DbError {
     fn from(err: duckdb::Error) -> Self {
         // Classify DuckDB errors by inspecting the error message.
         // duckdb::Error does not expose structured variants, so string
-        // matching is the only reliable approach.
+        // matching is the only reliable approach. We use narrow patterns
+        // to avoid misclassifying function/type/schema errors.
         let msg = err.to_string();
-        if msg.contains("Catalog Error") || msg.contains("not found") {
+        if msg.contains("Table with name")
+            || msg.contains("View with name")
+            || msg.contains("Table or view with name")
+            || (msg.contains("Catalog Error") && msg.contains("Table") && msg.contains("not found"))
+        {
             DbError::TableNotFound(msg)
         } else {
             DbError::ExecutionError(msg)

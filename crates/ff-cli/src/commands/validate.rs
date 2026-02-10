@@ -412,38 +412,40 @@ fn validate_schemas(
 
     // Check references and type compatibility
     for name in models {
-        if let Some(model) = project.get_model(name) {
-            if let Some(schema) = &model.schema {
-                for column in &schema.columns {
-                    if let Some(refs) = &column.references {
-                        if !known_models.contains(&refs.model) {
-                            ctx.warning(
-                                "W004",
-                                format!(
-                                    "Column '{}' references unknown model '{}' in model '{}'",
-                                    column.name, refs.model, name
-                                ),
-                                Some(model.path.with_extension("yml").display().to_string()),
-                            );
-                            schema_issues += 1;
-                        }
-                    }
+        let Some(model) = project.get_model(name) else {
+            continue;
+        };
+        let Some(schema) = &model.schema else {
+            continue;
+        };
+        for column in &schema.columns {
+            if let Some(refs) = &column.references {
+                if !known_models.contains(refs.model.as_str()) {
+                    ctx.warning(
+                        "W004",
+                        format!(
+                            "Column '{}' references unknown model '{}' in model '{}'",
+                            column.name, refs.model, name
+                        ),
+                        Some(model.path.with_extension("yml").display().to_string()),
+                    );
+                    schema_issues += 1;
+                }
+            }
 
-                    for test in &column.tests {
-                        if let Some(warning) = check_test_type_compatibility(
-                            test,
-                            &column.data_type.to_uppercase(),
-                            &column.name,
-                            name,
-                        ) {
-                            ctx.warning(
-                                "W005",
-                                warning,
-                                Some(model.path.with_extension("yml").display().to_string()),
-                            );
-                            schema_issues += 1;
-                        }
-                    }
+            for test in &column.tests {
+                if let Some(warning) = check_test_type_compatibility(
+                    test,
+                    &column.data_type.to_uppercase(),
+                    &column.name,
+                    name,
+                ) {
+                    ctx.warning(
+                        "W005",
+                        warning,
+                        Some(model.path.with_extension("yml").display().to_string()),
+                    );
+                    schema_issues += 1;
                 }
             }
         }
@@ -659,44 +661,45 @@ fn validate_contracts(
     let mut enforced_count = 0;
 
     for name in models {
-        if let Some(model) = project.get_model(name) {
-            // Check if model has a schema with contract
-            if let Some(schema) = &model.schema {
-                if let Some(contract) = &schema.contract {
-                    models_with_contracts += 1;
-                    if contract.enforced {
-                        enforced_count += 1;
-                    }
+        let Some(model) = project.get_model(name) else {
+            continue;
+        };
+        let Some(schema) = &model.schema else {
+            continue;
+        };
+        if let Some(contract) = &schema.contract {
+            models_with_contracts += 1;
+            if contract.enforced {
+                enforced_count += 1;
+            }
 
-                    let file_path = model.path.with_extension("yml").display().to_string();
+            let file_path = model.path.with_extension("yml").display().to_string();
 
-                    // Validate contract structure
-                    if schema.columns.is_empty() {
-                        ctx.warning(
-                            "C006",
-                            format!(
-                                "Model '{}' has contract defined but no columns specified",
-                                name
-                            ),
-                            Some(file_path.clone()),
-                        );
-                        contract_warnings += 1;
-                    }
+            // Validate contract structure
+            if schema.columns.is_empty() {
+                ctx.warning(
+                    "C006",
+                    format!(
+                        "Model '{}' has contract defined but no columns specified",
+                        name
+                    ),
+                    Some(file_path.clone()),
+                );
+                contract_warnings += 1;
+            }
 
-                    // If we have a reference manifest, verify model exists
-                    if let Some(ref manifest) = reference_manifest {
-                        if manifest.get_model(name).is_none() {
-                            ctx.warning(
-                                "C005",
-                                format!(
-                                    "Model '{}' has contract but not found in reference manifest (new model?)",
-                                    name
-                                ),
-                                Some(model.path.display().to_string()),
-                            );
-                            contract_warnings += 1;
-                        }
-                    }
+            // If we have a reference manifest, verify model exists
+            if let Some(ref manifest) = reference_manifest {
+                if manifest.get_model(name).is_none() {
+                    ctx.warning(
+                        "C005",
+                        format!(
+                            "Model '{}' has contract but not found in reference manifest (new model?)",
+                            name
+                        ),
+                        Some(model.path.display().to_string()),
+                    );
+                    contract_warnings += 1;
                 }
             }
         }
@@ -731,59 +734,61 @@ fn validate_governance(project: &Project, models: &[String], ctx: &mut Validatio
     let mut governance_issues = 0;
 
     for name in models {
-        if let Some(model) = project.get_model(name) {
-            if let Some(schema) = &model.schema {
-                let file_path = model.path.with_extension("yml").display().to_string();
+        let Some(model) = project.get_model(name) else {
+            continue;
+        };
+        let Some(schema) = &model.schema else {
+            continue;
+        };
+        let file_path = model.path.with_extension("yml").display().to_string();
 
-                for column in &schema.columns {
-                    // G001: Missing classification (when require_classification is true)
-                    if require_classification && column.classification.is_none() {
-                        ctx.warning(
-                            "G001",
-                            format!(
-                                "Column '{}' in model '{}' has no data classification",
-                                column.name, name
-                            ),
-                            Some(file_path.clone()),
-                        );
-                        governance_issues += 1;
-                    }
+        for column in &schema.columns {
+            // G001: Missing classification (when require_classification is true)
+            if require_classification && column.classification.is_none() {
+                ctx.warning(
+                    "G001",
+                    format!(
+                        "Column '{}' in model '{}' has no data classification",
+                        column.name, name
+                    ),
+                    Some(file_path.clone()),
+                );
+                governance_issues += 1;
+            }
 
-                    // G002: PII column has no description
-                    if column.classification == Some(ff_core::model::DataClassification::Pii)
-                        && column.description.is_none()
-                    {
-                        ctx.warning(
-                            "G002",
-                            format!(
-                                "PII column '{}' in model '{}' has no description",
-                                column.name, name
-                            ),
-                            Some(file_path.clone()),
-                        );
-                        governance_issues += 1;
-                    }
+            // G002: PII column has no description
+            if column.classification == Some(ff_core::model::DataClassification::Pii)
+                && column.description.is_none()
+            {
+                ctx.warning(
+                    "G002",
+                    format!(
+                        "PII column '{}' in model '{}' has no description",
+                        column.name, name
+                    ),
+                    Some(file_path.clone()),
+                );
+                governance_issues += 1;
+            }
 
-                    // G003: PII column missing not_null test
-                    if column.classification == Some(ff_core::model::DataClassification::Pii) {
-                        let has_not_null = column.tests.iter().any(|t| {
-                            matches!(
-                                t,
-                                ff_core::model::TestDefinition::Simple(name) if name == "not_null"
-                            )
-                        });
-                        if !has_not_null {
-                            ctx.warning(
-                                "G003",
-                                format!(
-                                    "PII column '{}' in model '{}' is missing not_null test",
-                                    column.name, name
-                                ),
-                                Some(file_path.clone()),
-                            );
-                            governance_issues += 1;
-                        }
-                    }
+            // G003: PII column missing not_null test
+            if column.classification == Some(ff_core::model::DataClassification::Pii) {
+                let has_not_null = column.tests.iter().any(|t| {
+                    matches!(
+                        t,
+                        ff_core::model::TestDefinition::Simple(name) if name == "not_null"
+                    )
+                });
+                if !has_not_null {
+                    ctx.warning(
+                        "G003",
+                        format!(
+                            "PII column '{}' in model '{}' is missing not_null test",
+                            column.name, name
+                        ),
+                        Some(file_path.clone()),
+                    );
+                    governance_issues += 1;
                 }
             }
         }

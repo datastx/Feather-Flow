@@ -293,7 +293,10 @@ impl DuckDbBackend {
 
         match &result {
             Ok(_) => {
-                run_sql(&conn, "COMMIT")?;
+                if let Err(commit_err) = run_sql(&conn, "COMMIT") {
+                    let _ = run_sql(&conn, "ROLLBACK");
+                    return Err(commit_err);
+                }
             }
             Err(_) => {
                 let _ = run_sql(&conn, "ROLLBACK");
@@ -995,7 +998,10 @@ impl DatabaseSnapshot for DuckDbBackend {
 
         match &result {
             Ok(_) => {
-                run_sql(&conn, "COMMIT")?;
+                if let Err(commit_err) = run_sql(&conn, "COMMIT") {
+                    let _ = run_sql(&conn, "ROLLBACK");
+                    return Err(commit_err);
+                }
             }
             Err(_) => {
                 // Best-effort rollback — ignore errors (connection may be broken)

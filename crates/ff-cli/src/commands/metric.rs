@@ -153,7 +153,7 @@ async fn show_metric(
 ) -> Result<()> {
     let metric = project
         .get_metric(metric_name)
-        .context(format!("Metric not found: {}", metric_name))?;
+        .with_context(|| format!("Metric not found: {}", metric_name))?;
 
     let sql = metric.generate_sql();
 

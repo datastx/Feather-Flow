@@ -127,10 +127,10 @@ fn load_from_manifest(
                     // Fall back to recompiling this model
                     let model = project
                         .get_model(name)
-                        .context(format!("Model '{}' not found during recompilation", name))?;
+                        .with_context(|| format!("Model '{}' not found during recompilation", name))?;
                     let (rendered, _) = jinja
                         .render_with_config(&model.raw_sql)
-                        .context(format!("Failed to render template for model '{}'", name))?;
+                        .with_context(|| format!("Failed to render template for model '{}'", name))?;
                     rendered
                 }
             };
@@ -201,15 +201,15 @@ fn compile_all_models(
     for name in model_names {
         let model = project
             .get_model(name)
-            .context(format!("Model not found: {}", name))?;
+            .with_context(|| format!("Model not found: {}", name))?;
 
         let (rendered, config_values) = jinja
             .render_with_config(&model.raw_sql)
-            .context(format!("Failed to render template for model: {}", name))?;
+            .with_context(|| format!("Failed to render template for model: {}", name))?;
 
         let statements = parser
             .parse(&rendered)
-            .context(format!("Failed to parse SQL for model: {}", name))?;
+            .with_context(|| format!("Failed to parse SQL for model: {}", name))?;
 
         let deps = extract_dependencies(&statements);
         let (model_deps, _) =
@@ -318,7 +318,7 @@ fn load_deferred_manifest(defer_path: &str, global: &GlobalArgs) -> Result<Manif
         eprintln!("[verbose] Loading deferred manifest from: {}", defer_path);
     }
 
-    Manifest::load(path).context(format!(
+    Manifest::load(path).with_context(|| format!(
         "Failed to parse deferred manifest at: {}",
         defer_path
     ))

@@ -19,7 +19,7 @@ use crate::cli::GlobalArgs;
 /// Use `return Err(ExitCode(N).into())` instead of `std::process::exit(N)`
 /// so that RAII destructors run and cleanup happens properly.
 #[derive(Debug)]
-pub struct ExitCode(pub i32);
+pub(crate) struct ExitCode(pub(crate) i32);
 
 impl fmt::Display for ExitCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -71,7 +71,7 @@ impl fmt::Display for TestStatus {
 /// Parse hook SQL strings from captured Jinja config values.
 ///
 /// Handles both single-string and array-of-strings representations.
-pub fn parse_hooks_from_config(
+pub(crate) fn parse_hooks_from_config(
     config_values: &HashMap<String, minijinja::Value>,
     key: &str,
 ) -> Vec<String> {
@@ -99,7 +99,7 @@ pub fn parse_hooks_from_config(
 /// Filter models from the project based on an optional comma-separated list.
 ///
 /// If `models_arg` is `None`, returns all model names.
-pub fn filter_models(project: &Project, models_arg: &Option<String>) -> Vec<String> {
+pub(crate) fn filter_models(project: &Project, models_arg: &Option<String>) -> Vec<String> {
     match models_arg {
         Some(models) => models
             .split(',')
@@ -115,7 +115,7 @@ pub fn filter_models(project: &Project, models_arg: &Option<String>) -> Vec<Stri
 }
 
 /// Build a lookup set of all external tables including sources.
-pub fn build_external_tables_lookup(project: &Project) -> HashSet<String> {
+pub(crate) fn build_external_tables_lookup(project: &Project) -> HashSet<String> {
     let mut external_tables: HashSet<String> =
         project.config.external_tables.iter().cloned().collect();
     let source_tables = build_source_lookup(&project.sources);
@@ -124,7 +124,7 @@ pub fn build_external_tables_lookup(project: &Project) -> HashSet<String> {
 }
 
 /// Parse a materialization string from Jinja config values.
-pub fn parse_materialization(s: &str) -> Materialization {
+pub(crate) fn parse_materialization(s: &str) -> Materialization {
     match s {
         "table" => Materialization::Table,
         "incremental" => Materialization::Incremental,
@@ -134,7 +134,7 @@ pub fn parse_materialization(s: &str) -> Materialization {
 }
 
 /// Parse an incremental strategy string from Jinja config values.
-pub fn parse_incremental_strategy(s: &str) -> IncrementalStrategy {
+pub(crate) fn parse_incremental_strategy(s: &str) -> IncrementalStrategy {
     match s {
         "merge" => IncrementalStrategy::Merge,
         "delete+insert" | "delete_insert" => IncrementalStrategy::DeleteInsert,
@@ -143,7 +143,7 @@ pub fn parse_incremental_strategy(s: &str) -> IncrementalStrategy {
 }
 
 /// Parse an on_schema_change string from Jinja config values.
-pub fn parse_on_schema_change(s: &str) -> OnSchemaChange {
+pub(crate) fn parse_on_schema_change(s: &str) -> OnSchemaChange {
     match s {
         "fail" => OnSchemaChange::Fail,
         "append_new_columns" => OnSchemaChange::AppendNewColumns,
@@ -152,7 +152,7 @@ pub fn parse_on_schema_change(s: &str) -> OnSchemaChange {
 }
 
 /// Parse various timestamp formats into a UTC DateTime.
-pub fn parse_timestamp(s: &str) -> Option<DateTime<Utc>> {
+pub(crate) fn parse_timestamp(s: &str) -> Option<DateTime<Utc>> {
     let formats = [
         "%Y-%m-%d %H:%M:%S%.f",
         "%Y-%m-%d %H:%M:%S",
@@ -211,7 +211,7 @@ impl fmt::Display for FreshnessStatus {
 /// External tables are added with empty schemas.
 ///
 /// Returns `(schema_catalog, yaml_schemas)`.
-pub fn build_schema_catalog(
+pub(crate) fn build_schema_catalog(
     project: &Project,
     external_tables: &HashSet<String>,
 ) -> (
@@ -265,7 +265,7 @@ pub fn build_schema_catalog(
 }
 
 /// Load a project from the directory specified in global CLI arguments.
-pub fn load_project(global: &GlobalArgs) -> Result<Project> {
+pub(crate) fn load_project(global: &GlobalArgs) -> Result<Project> {
     Project::load(&global.project_dir).context("Failed to load project")
 }
 
@@ -274,7 +274,7 @@ pub fn load_project(global: &GlobalArgs) -> Result<Project> {
 /// Converts each scalar `FunctionDef` into a `UserFunctionStub` that can
 /// be registered in the DataFusion `FeatherFlowProvider`. Table functions
 /// are skipped (they require output schema registration in the `SchemaCatalog`).
-pub fn build_user_function_stubs(project: &Project) -> Vec<ff_analysis::UserFunctionStub> {
+pub(crate) fn build_user_function_stubs(project: &Project) -> Vec<ff_analysis::UserFunctionStub> {
     use ff_core::function::FunctionReturn;
 
     let mut stubs = Vec::new();
@@ -309,7 +309,7 @@ pub fn build_user_function_stubs(project: &Project) -> Vec<ff_analysis::UserFunc
 ///
 /// Contains the propagation result from DataFusion plus the set of external
 /// tables used to build the schema catalog.
-pub struct StaticAnalysisOutput {
+pub(crate) struct StaticAnalysisOutput {
     /// The propagation result from DataFusion
     pub result: ff_analysis::PropagationResult,
     /// Whether any schema-mismatch errors were found
@@ -320,7 +320,7 @@ pub struct StaticAnalysisOutput {
 ///
 /// This is the common core used by `compile`, `validate`, and `run` commands.
 /// Callers are responsible for reporting results in their own format.
-pub fn run_static_analysis_pipeline(
+pub(crate) fn run_static_analysis_pipeline(
     project: &Project,
     sql_sources: &HashMap<String, String>,
     topo_order: &[String],
@@ -389,7 +389,7 @@ pub(crate) fn write_json_results<T: Serialize + ?Sized>(path: &Path, data: &T) -
 ///
 /// For each column, returns the maximum width across the header and all
 /// row values so that data aligns when printed with left-padding.
-pub fn calculate_column_widths(headers: &[&str], rows: &[Vec<String>]) -> Vec<usize> {
+pub(crate) fn calculate_column_widths(headers: &[&str], rows: &[Vec<String>]) -> Vec<usize> {
     let mut widths: Vec<usize> = headers.iter().map(|h| h.len()).collect();
     for row in rows {
         for (i, cell) in row.iter().enumerate() {
@@ -418,7 +418,7 @@ pub fn calculate_column_widths(headers: &[&str], rows: &[Vec<String>]) -> Vec<us
 /// // ------  -----
 /// // orders  model
 /// ```
-pub fn print_table(headers: &[&str], rows: &[Vec<String>]) {
+pub(crate) fn print_table(headers: &[&str], rows: &[Vec<String>]) {
     let widths = calculate_column_widths(headers, rows);
 
     // Print header
@@ -449,7 +449,7 @@ pub fn print_table(headers: &[&str], rows: &[Vec<String>]) {
 /// This is useful for commands that need to print rows individually
 /// (e.g. to interleave extra output like error messages between rows).
 /// Use [`calculate_column_widths`] to obtain the `widths` parameter.
-pub fn print_table_header(headers: &[&str], widths: &[usize]) {
+pub(crate) fn print_table_header(headers: &[&str], widths: &[usize]) {
     let header_parts: Vec<String> = headers
         .iter()
         .zip(widths)
@@ -465,7 +465,7 @@ pub fn print_table_header(headers: &[&str], widths: &[usize]) {
 ///
 /// Each cell is left-aligned and padded to the corresponding width.
 /// Columns are separated by two spaces.
-pub fn format_table_row(row: &[String], widths: &[usize]) -> String {
+pub(crate) fn format_table_row(row: &[String], widths: &[usize]) -> String {
     let parts: Vec<String> = row
         .iter()
         .zip(widths)
@@ -479,7 +479,7 @@ pub fn format_table_row(row: &[String], widths: &[usize]) -> String {
 /// Resolves the target via `Config::resolve_target`, gets the database
 /// configuration with `Config::get_database_config`, and creates a
 /// `DuckDbBackend` wrapped in an `Arc<dyn Database>`.
-pub fn create_database_connection(
+pub(crate) fn create_database_connection(
     config: &Config,
     target: Option<&str>,
 ) -> Result<Arc<dyn Database>> {

@@ -1,6 +1,6 @@
 //! Test command implementation
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use ff_core::model::{parse_test_definition, SchemaTest, SingularTest, TestSeverity, TestType};
 use ff_core::source::SourceFile;
@@ -134,7 +134,9 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
 
     // Discover custom test macros
     let mut custom_test_registry = CustomTestRegistry::new();
-    custom_test_registry.discover(&macro_paths);
+    custom_test_registry
+        .discover(&macro_paths)
+        .context("Failed to discover custom test macros")?;
 
     if global.verbose && !custom_test_registry.is_empty() {
         eprintln!(

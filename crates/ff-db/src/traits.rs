@@ -194,7 +194,10 @@ pub trait DatabaseSnapshot: Send + Sync {
         invalidate_hard_deletes: bool,
     ) -> DbResult<SnapshotResult>;
 
-    /// Insert new records into snapshot
+    /// Insert new records into snapshot.
+    ///
+    /// **Warning**: This method runs outside a transaction. For atomic snapshot
+    /// operations, use [`execute_snapshot`](Self::execute_snapshot) instead.
     async fn snapshot_insert_new(
         &self,
         snapshot_table: &str,
@@ -202,7 +205,10 @@ pub trait DatabaseSnapshot: Send + Sync {
         unique_keys: &[String],
     ) -> DbResult<usize>;
 
-    /// Update changed records in snapshot (set valid_to, insert new version)
+    /// Update changed records in snapshot (set valid_to, insert new version).
+    ///
+    /// **Warning**: This method runs outside a transaction. For atomic snapshot
+    /// operations, use [`execute_snapshot`](Self::execute_snapshot) instead.
     async fn snapshot_update_changed(
         &self,
         snapshot_table: &str,
@@ -212,7 +218,10 @@ pub trait DatabaseSnapshot: Send + Sync {
         check_cols: Option<&[String]>,
     ) -> DbResult<usize>;
 
-    /// Handle hard deletes by setting valid_to on records missing from source
+    /// Handle hard deletes by setting valid_to on records missing from source.
+    ///
+    /// **Warning**: This method runs outside a transaction. For atomic snapshot
+    /// operations, use [`execute_snapshot`](Self::execute_snapshot) instead.
     async fn snapshot_invalidate_deleted(
         &self,
         snapshot_table: &str,

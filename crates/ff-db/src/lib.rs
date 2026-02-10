@@ -5,7 +5,7 @@
 
 pub mod duckdb;
 pub mod error;
-pub mod snowflake;
+pub(crate) mod snowflake;
 pub mod traits;
 
 pub use duckdb::DuckDbBackend;

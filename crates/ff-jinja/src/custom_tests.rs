@@ -22,11 +22,13 @@ pub struct CustomTestMacro {
     pub source_file: String,
 }
 
-/// Discover custom test macros from macro files
+/// Discover custom test macros from macro files.
 ///
 /// Scans the given macro paths for files containing macros with the `test_` prefix.
-/// Returns a list of discovered custom test macros.
-pub fn discover_custom_test_macros(macro_paths: &[impl AsRef<Path>]) -> Vec<CustomTestMacro> {
+/// Returns a list of discovered custom test macros, or an error if any I/O operation fails.
+pub fn discover_custom_test_macros(
+    macro_paths: &[impl AsRef<Path>],
+) -> JinjaResult<Vec<CustomTestMacro>> {
     let mut discovered = Vec::new();
 
     for macro_path in macro_paths {
@@ -35,53 +37,42 @@ pub fn discover_custom_test_macros(macro_paths: &[impl AsRef<Path>]) -> Vec<Cust
             continue;
         }
 
-        // Scan all .sql files in the directory
-        match fs::read_dir(path) {
-            Ok(entries) => {
-                for entry_result in entries {
-                    let entry = match entry_result {
-                        Ok(e) => e,
-                        Err(e) => {
-                            eprintln!(
-                                "Warning: failed to read directory entry in {}: {}",
-                                path.display(),
-                                e
-                            );
-                            continue;
-                        }
-                    };
-                    let file_path = entry.path();
-                    if file_path.extension().is_some_and(|e| e == "sql") {
-                        match fs::read_to_string(&file_path) {
-                            Ok(content) => {
-                                let file_macros = extract_test_macros_from_content(
-                                    &content,
-                                    file_path.to_string_lossy().as_ref(),
-                                );
-                                discovered.extend(file_macros);
-                            }
-                            Err(e) => {
-                                eprintln!(
-                                    "Warning: failed to read macro file {}: {}",
-                                    file_path.display(),
-                                    e
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!(
-                    "Warning: failed to read macro directory {}: {}",
+        // Scan top-level .sql files in the directory (non-recursive by design)
+        let entries = fs::read_dir(path).map_err(|e| {
+            JinjaError::Internal(format!(
+                "failed to read macro directory {}: {}",
+                path.display(),
+                e
+            ))
+        })?;
+
+        for entry_result in entries {
+            let entry = entry_result.map_err(|e| {
+                JinjaError::Internal(format!(
+                    "failed to read directory entry in {}: {}",
                     path.display(),
                     e
+                ))
+            })?;
+            let file_path = entry.path();
+            if file_path.extension().is_some_and(|e| e == "sql") {
+                let content = fs::read_to_string(&file_path).map_err(|e| {
+                    JinjaError::Internal(format!(
+                        "failed to read macro file {}: {}",
+                        file_path.display(),
+                        e
+                    ))
+                })?;
+                let file_macros = extract_test_macros_from_content(
+                    &content,
+                    file_path.to_string_lossy().as_ref(),
                 );
+                discovered.extend(file_macros);
             }
         }
     }
 
-    discovered
+    Ok(discovered)
 }
 
 /// Extract test macro names from file content
@@ -231,12 +222,13 @@ impl CustomTestRegistry {
         }
     }
 
-    /// Discover and register custom test macros from paths
-    pub fn discover(&mut self, macro_paths: &[impl AsRef<Path>]) {
-        let discovered = discover_custom_test_macros(macro_paths);
+    /// Discover and register custom test macros from paths.
+    pub fn discover(&mut self, macro_paths: &[impl AsRef<Path>]) -> JinjaResult<()> {
+        let discovered = discover_custom_test_macros(macro_paths)?;
         for macro_info in discovered {
             self.macros.insert(macro_info.name.clone(), macro_info);
         }
+        Ok(())
     }
 
     /// Check if a test type is a registered custom test
@@ -324,7 +316,7 @@ SELECT * FROM {{ model }} WHERE {{ column }} NOT LIKE '%@%.%'
         )
         .unwrap();
 
-        let macros = discover_custom_test_macros(&[&macros_dir]);
+        let macros = discover_custom_test_macros(&[&macros_dir]).unwrap();
         assert_eq!(macros.len(), 1);
         assert_eq!(macros[0].name, "valid_email");
     }
@@ -350,7 +342,7 @@ SELECT * FROM {{ model }} WHERE {{ column }} NOT IN ('active', 'inactive', 'pend
         .unwrap();
 
         let mut registry = CustomTestRegistry::new();
-        registry.discover(&[&macros_dir]);
+        registry.discover(&[&macros_dir]).unwrap();
 
         assert_eq!(registry.len(), 2);
         assert!(registry.is_custom_test("in_range"));

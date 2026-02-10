@@ -180,7 +180,7 @@ pub fn validate_contract(
 /// - Type aliases (INT vs INTEGER)
 /// - Precision/scale for decimals
 /// - Size variations (VARCHAR(50) vs VARCHAR(100))
-fn types_compatible(expected: &str, actual: &str) -> bool {
+pub(crate) fn types_compatible(expected: &str, actual: &str) -> bool {
     let expected_norm = normalize_type(expected);
     let actual_norm = normalize_type(actual);
 

@@ -55,7 +55,7 @@ pub async fn execute(args: &DiffArgs, global: &GlobalArgs) -> Result<()> {
     // Verify the model exists
     let model = project
         .get_model(&args.model)
-        .context(format!("Model not found: {}", args.model))?;
+        .with_context(|| format!("Model not found: {}", args.model))?;
 
     if global.verbose {
         eprintln!("[verbose] Comparing model: {}", args.model);
@@ -224,7 +224,7 @@ async fn get_table_columns(db: &dyn Database, table_name: &str) -> Result<Vec<St
     let schema = db
         .get_table_schema(table_name)
         .await
-        .context(format!("Failed to get schema for table: {}", table_name))?;
+        .with_context(|| format!("Failed to get schema for table: {}", table_name))?;
 
     Ok(schema.into_iter().map(|(name, _)| name).collect())
 }
@@ -260,15 +260,21 @@ async fn find_differences(
         sample_size * 2 // Get more rows for better comparison
     );
 
-    let current_sample = current_db
-        .query_rows(&sample_sql, sample_size * 2)
-        .await
-        .unwrap_or_default();
+    let current_sample = match current_db.query_rows(&sample_sql, sample_size * 2).await {
+        Ok(rows) => rows,
+        Err(e) => {
+            eprintln!("[warn] Failed to query current database for diff: {}", e);
+            Vec::new()
+        }
+    };
 
-    let compare_sample = compare_db
-        .query_rows(&sample_sql, sample_size * 2)
-        .await
-        .unwrap_or_default();
+    let compare_sample = match compare_db.query_rows(&sample_sql, sample_size * 2).await {
+        Ok(rows) => rows,
+        Err(e) => {
+            eprintln!("[warn] Failed to query compare database for diff: {}", e);
+            Vec::new()
+        }
+    };
 
     if global.verbose {
         eprintln!(

@@ -55,7 +55,7 @@ pub async fn execute(args: &RunOperationArgs, global: &GlobalArgs) -> Result<()>
     // Render the macro
     let (sql, _) = jinja
         .render_with_config(&template)
-        .context(format!("Failed to render macro: {}", args.macro_name))?;
+        .with_context(|| format!("Failed to render macro: {}", args.macro_name))?;
 
     let sql = sql.trim();
     if sql.is_empty() {

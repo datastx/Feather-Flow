@@ -37,17 +37,17 @@ pub async fn execute(args: &ParseArgs, global: &GlobalArgs) -> Result<()> {
     for name in &model_names {
         let model = project
             .get_model(name)
-            .context(format!("Model not found: {}", name))?;
+            .with_context(|| format!("Model not found: {}", name))?;
 
         // Render Jinja template
         let rendered = jinja
             .render(&model.raw_sql)
-            .context(format!("Failed to render template for model: {}", name))?;
+            .with_context(|| format!("Failed to render template for model: {}", name))?;
 
         // Parse SQL
         let statements = parser
             .parse(&rendered)
-            .context(format!("Failed to parse SQL for model: {}", name))?;
+            .with_context(|| format!("Failed to parse SQL for model: {}", name))?;
 
         // Extract dependencies
         let deps = extract_dependencies(&statements);

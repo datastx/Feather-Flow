@@ -203,7 +203,7 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     if let Some(ref ws) = wap_schema {
         db.create_schema_if_not_exists(ws)
             .await
-            .context(format!("Failed to create WAP schema: {}", ws))?;
+            .with_context(|| format!("Failed to create WAP schema: {}", ws))?;
     }
 
     // Execute on-run-start hooks (skip if resuming)

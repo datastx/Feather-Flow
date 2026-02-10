@@ -74,6 +74,22 @@ pub enum CoreError {
     #[error("[SRC007] Duplicate table '{table}' in source '{source_name}'")]
     SourceDuplicateTable { table: String, source_name: String },
 
+    /// EXP001: Duplicate exposure name
+    #[error("[EXP001] Duplicate exposure name '{name}' in {path1} and {path2}")]
+    ExposureDuplicateName {
+        name: String,
+        path1: String,
+        path2: String,
+    },
+
+    /// MET001: Duplicate metric name
+    #[error("[MET001] Duplicate metric name '{name}' in {path1} and {path2}")]
+    MetricDuplicateName {
+        name: String,
+        path1: String,
+        path2: String,
+    },
+
     /// E010: Missing schema file for model
     #[error("[E010] Model '{model}' is missing a required schema file ({expected_path}). Every model must have a corresponding YAML file.")]
     MissingSchemaFile {
@@ -93,7 +109,7 @@ pub enum CoreError {
     #[error("[E013] Model directory '{directory}' contains unexpected files: {files}. Each model directory must contain exactly one .sql and one .yml/.yaml file.")]
     ExtraFilesInModelDirectory { directory: String, files: String },
 
-    /// E014: IO error
+    /// E014: IO error (no path context — prefer [`IoWithPath`](Self::IoWithPath) for file operations)
     #[error("[E014] IO error: {0}")]
     Io(#[from] std::io::Error),
 
@@ -101,7 +117,7 @@ pub enum CoreError {
     #[error("[E015] Schema parse error: {0}")]
     YamlParse(#[from] serde_yaml::Error),
 
-    /// E016: IO error with file path context
+    /// E016: IO error with file path context (preferred over E014 for file operations)
     #[error("[E016] Failed to read '{path}': {source}")]
     IoWithPath {
         path: String,

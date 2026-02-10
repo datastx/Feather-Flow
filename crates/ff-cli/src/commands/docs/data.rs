@@ -232,7 +232,7 @@ pub(crate) fn build_model_doc(model: &Model) -> ModelDoc {
                 })
                 .collect();
             let references = col.references.as_ref().map(|r| ColumnRefDoc {
-                model: r.model.clone(),
+                model: r.model.to_string(),
                 column: r.column.clone(),
             });
             columns.push(ColumnDoc {

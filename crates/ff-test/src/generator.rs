@@ -2,6 +2,18 @@
 
 use ff_core::model::{SchemaTest, TestSeverity, TestType};
 use ff_core::sql_utils::{escape_sql_string, quote_ident, quote_qualified};
+use thiserror::Error;
+
+/// Error type for test SQL generation
+#[derive(Error, Debug)]
+pub enum TestGenError {
+    /// Invalid threshold value (NaN or Infinity)
+    #[error("invalid threshold value: {0}")]
+    InvalidThreshold(String),
+}
+
+/// Result type alias for test generation
+pub type TestGenResult<T> = Result<T, TestGenError>;
 
 /// Generate SQL for a unique test
 ///
@@ -85,9 +97,12 @@ pub fn generate_accepted_values_test(
 ///
 /// Returns rows where the column value is less than the threshold.
 /// Returns `Err` if the threshold is NaN or Infinity.
-pub fn generate_min_value_test(table: &str, column: &str, min: f64) -> Result<String, String> {
+pub fn generate_min_value_test(table: &str, column: &str, min: f64) -> TestGenResult<String> {
     if !min.is_finite() {
-        return Err(format!("min_value threshold must be finite, got {}", min));
+        return Err(TestGenError::InvalidThreshold(format!(
+            "min_value must be finite, got {}",
+            min
+        )));
     }
     Ok(format!(
         "SELECT * FROM {} WHERE {} < {}",
@@ -101,9 +116,12 @@ pub fn generate_min_value_test(table: &str, column: &str, min: f64) -> Result<St
 ///
 /// Returns rows where the column value is greater than the threshold.
 /// Returns `Err` if the threshold is NaN or Infinity.
-pub fn generate_max_value_test(table: &str, column: &str, max: f64) -> Result<String, String> {
+pub fn generate_max_value_test(table: &str, column: &str, max: f64) -> TestGenResult<String> {
     if !max.is_finite() {
-        return Err(format!("max_value threshold must be finite, got {}", max));
+        return Err(TestGenError::InvalidThreshold(format!(
+            "max_value must be finite, got {}",
+            max
+        )));
     }
     Ok(format!(
         "SELECT * FROM {} WHERE {} > {}",
