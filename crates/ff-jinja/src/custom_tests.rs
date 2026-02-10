@@ -134,6 +134,15 @@ pub fn generate_custom_test_sql(
     let kwargs_str = if kwargs.is_empty() {
         String::new()
     } else {
+        // Validate kwarg keys are safe identifiers to prevent Jinja injection
+        for k in kwargs.keys() {
+            if !k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                return Err(JinjaError::RenderError(format!(
+                    "invalid kwarg key '{}': must contain only alphanumeric characters and underscores",
+                    k
+                )));
+            }
+        }
         let pairs: Vec<String> = kwargs
             .iter()
             .map(|(k, v)| format!("{}={}", k, json_value_to_jinja(v)))

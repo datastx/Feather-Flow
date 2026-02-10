@@ -71,12 +71,14 @@ impl Borrow<str> for TableName {
 
 impl From<String> for TableName {
     fn from(s: String) -> Self {
+        debug_assert!(!s.is_empty(), "TableName must not be empty");
         Self(s)
     }
 }
 
 impl From<&str> for TableName {
     fn from(s: &str) -> Self {
+        debug_assert!(!s.is_empty(), "TableName must not be empty");
         Self(s.to_string())
     }
 }

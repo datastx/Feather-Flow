@@ -85,9 +85,13 @@ pub(crate) fn make_config_fn(
 
         // Capture all keyword arguments
         for key in kwargs.args() {
-            if let Ok(value) = kwargs.get::<Value>(key) {
-                captured.insert(key.to_string(), value);
-            }
+            let value = kwargs.get::<Value>(key).map_err(|e| {
+                Error::new(
+                    minijinja::ErrorKind::InvalidOperation,
+                    format!("failed to get config kwarg '{}': {}", key, e),
+                )
+            })?;
+            captured.insert(key.to_string(), value);
         }
 
         // Return empty string (config doesn't output anything)

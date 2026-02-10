@@ -15,7 +15,7 @@ pub mod validator;
 
 pub use dialect::{DuckDbDialect, SnowflakeDialect, SqlDialect};
 pub use error::SqlError;
-pub use extractor::extract_dependencies;
+pub use extractor::{categorize_dependencies, extract_dependencies};
 pub use inline::{collect_ephemeral_dependencies, inline_ephemeral_ctes};
 pub use lineage::{
     extract_column_lineage, ColumnLineage, ColumnRef, ExprType, LineageEdge, ModelLineage,

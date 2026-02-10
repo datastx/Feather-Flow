@@ -263,7 +263,14 @@ fn print_table(results: &[FreshnessResult]) {
                 .map(|s| {
                     // Truncate to first 19 chars (YYYY-MM-DD HH:MM:SS)
                     if s.len() > 19 {
-                        s[..19].to_string()
+                        // Find a char-safe boundary to avoid panicking on multi-byte UTF-8
+                        let boundary = s
+                            .char_indices()
+                            .take_while(|&(i, _)| i < 19)
+                            .last()
+                            .map(|(i, c)| i + c.len_utf8())
+                            .unwrap_or(0);
+                        s[..boundary].to_string()
                     } else {
                         s.clone()
                     }

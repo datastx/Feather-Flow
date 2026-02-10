@@ -8,6 +8,19 @@ use crate::cli::InitArgs;
 
 /// Execute the init command
 pub async fn execute(args: &InitArgs) -> Result<()> {
+    // Reject names that could cause path traversal or confusing directory names
+    if args.name.contains('/')
+        || args.name.contains('\\')
+        || args.name.contains("..")
+        || args.name.starts_with('.')
+        || args.name.starts_with('-')
+    {
+        anyhow::bail!(
+            "Invalid project name '{}': must not contain '/', '\\', '..', or start with '.' or '-'",
+            args.name
+        );
+    }
+
     let project_dir = Path::new(&args.name);
 
     if project_dir.exists() {
@@ -38,8 +51,11 @@ pub async fn execute(args: &InitArgs) -> Result<()> {
     }
 
     // Generate featherflow.yml
+    // Escape YAML special characters in interpolated values
+    let safe_name = args.name.replace('"', "\\\"");
+    let safe_db_path = args.database_path.replace('"', "\\\"");
     let config_content = format!(
-        r#"name: {name}
+        r#"name: "{name}"
 version: "1.0.0"
 
 model_paths: ["models"]
@@ -61,8 +77,8 @@ database:
 vars:
   environment: dev
 "#,
-        name = args.name,
-        db_path = args.database_path,
+        name = safe_name,
+        db_path = safe_db_path,
     );
     fs::write(project_dir.join("featherflow.yml"), config_content)
         .context("Failed to write featherflow.yml")?;

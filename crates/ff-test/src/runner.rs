@@ -1,7 +1,7 @@
 //! Test execution
 
 use crate::generator::GeneratedTest;
-use ff_core::model::{SchemaTest, TestType};
+use ff_core::model::{SchemaTest, TestSeverity, TestType};
 use ff_db::Database;
 use std::time::{Duration, Instant};
 
@@ -34,6 +34,9 @@ pub struct TestResult {
 
     /// Error message if execution failed
     pub error: Option<String>,
+
+    /// Test severity (error or warn)
+    pub severity: TestSeverity,
 }
 
 impl TestResult {
@@ -49,6 +52,7 @@ impl TestResult {
             sample_failures: Vec::new(),
             duration,
             error: None,
+            severity: TestSeverity::default(),
         }
     }
 
@@ -69,6 +73,7 @@ impl TestResult {
             sample_failures,
             duration,
             error: None,
+            severity: TestSeverity::default(),
         }
     }
 
@@ -84,6 +89,7 @@ impl TestResult {
             sample_failures: Vec::new(),
             duration,
             error: Some(error),
+            severity: TestSeverity::default(),
         }
     }
 }

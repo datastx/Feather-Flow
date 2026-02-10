@@ -253,17 +253,18 @@ fn analyze_column_name(col: &str, suggestions: &mut ModelSuggestions) {
     }
 }
 
-/// Check if a column name looks like an amount/currency
+/// Check if a column name looks like an amount/currency.
+///
+/// Callers must pass an already-lowered name (i.e. `name.to_lowercase()`).
 fn is_amount_column_name(name: &str) -> bool {
-    let lower = name.to_lowercase();
-    lower.contains("amount")
-        || lower.contains("price")
-        || lower.contains("cost")
-        || lower.contains("total")
-        || lower.contains("revenue")
-        || lower.contains("balance")
-        || lower.ends_with("_usd")
-        || lower.ends_with("_cents")
+    name.contains("amount")
+        || name.contains("price")
+        || name.contains("cost")
+        || name.contains("total")
+        || name.contains("revenue")
+        || name.contains("balance")
+        || name.ends_with("_usd")
+        || name.ends_with("_cents")
 }
 
 /// Extract column name from an expression

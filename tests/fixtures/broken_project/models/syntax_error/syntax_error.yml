@@ -1,5 +1,0 @@
-version: 1
-description: "Model with intentional SQL syntax errors"
-columns:
-  - name: id
-    type: INTEGER

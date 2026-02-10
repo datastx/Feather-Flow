@@ -1,6 +1,6 @@
 //! SELECT clause lowering: FROM → WHERE → GROUP BY → HAVING → projection
 
-use crate::error::AnalysisResult;
+use crate::error::{AnalysisError, AnalysisResult};
 use crate::ir::expr::TypedExpr;
 use crate::ir::relop::RelOp;
 use crate::ir::schema::RelSchema;
@@ -248,12 +248,14 @@ pub(crate) fn lower_table_factor(
             }
             Ok(plan)
         }
-        _ => {
+        other => {
             // Unsupported table factor
-            Ok(RelOp::Scan {
-                table_name: "<unsupported>".to_string(),
-                alias: None,
-                schema: RelSchema::empty(),
+            Err(AnalysisError::UnsupportedConstruct {
+                model: String::new(),
+                construct: format!(
+                    "unsupported TableFactor: {:?}",
+                    std::mem::discriminant(other)
+                ),
             })
         }
     }

@@ -175,9 +175,12 @@ fn generate_sql_for_test_type(
             generate_accepted_values_test(table, column, values, *quote)
         }
         TestType::MinValue { value } => generate_min_value_test(table, column, *value)
-            .unwrap_or_else(|e| format!("-- ERROR: invalid threshold value: {e}")),
+            .unwrap_or_else(|e| {
+                // Return SQL that yields one row so the test FAILS instead of silently passing
+                format!("SELECT 'ERROR: invalid threshold value: {}' AS error", e)
+            }),
         TestType::MaxValue { value } => generate_max_value_test(table, column, *value)
-            .unwrap_or_else(|e| format!("-- ERROR: invalid threshold value: {e}")),
+            .unwrap_or_else(|e| format!("SELECT 'ERROR: invalid threshold value: {}' AS error", e)),
         TestType::Regex { pattern } => generate_regex_test(table, column, pattern),
         TestType::Relationship { to, field } => {
             let ref_column = field.as_deref().unwrap_or(column);
@@ -201,9 +204,28 @@ fn generate_sql_for_test_type(
     }
 }
 
-/// Generate SQL for a schema test
+/// Generate SQL for a schema test.
+///
+/// Applies `TestConfig.where_clause` (wrapping the base query with an additional filter)
+/// and `TestConfig.limit` to cap the number of failing rows returned.
 pub fn generate_test_sql(test: &SchemaTest) -> String {
-    generate_sql_for_test_type(&test.test_type, &test.model, &test.column, None)
+    let base_sql = generate_sql_for_test_type(&test.test_type, &test.model, &test.column, None);
+    apply_test_config(&base_sql, &test.config)
+}
+
+/// Wrap a base test SQL with `TestConfig` options (where_clause, limit).
+fn apply_test_config(base_sql: &str, config: &ff_core::model::TestConfig) -> String {
+    let mut sql = base_sql.to_string();
+    if let Some(ref where_clause) = config.where_clause {
+        sql = format!(
+            "SELECT * FROM ({}) AS _test_base WHERE {}",
+            sql, where_clause
+        );
+    }
+    if let Some(limit) = config.limit {
+        sql = format!("{} LIMIT {}", sql, limit);
+    }
+    sql
 }
 
 /// Test SQL with metadata
@@ -226,7 +248,7 @@ pub struct GeneratedTest {
 }
 
 impl GeneratedTest {
-    /// Create a generated test from a schema test
+    /// Create a generated test from a schema test (applies `TestConfig` options)
     pub fn from_schema_test(test: &SchemaTest) -> Self {
         let sql = generate_test_sql(test);
         let name = format!("{}_{}__{}", test.test_type, test.model, test.column);
@@ -255,7 +277,9 @@ impl GeneratedTest {
 
     /// Create a generated test with a qualified model name (schema.model)
     pub fn from_schema_test_qualified(test: &SchemaTest, qualified_name: &str) -> Self {
-        let sql = generate_sql_for_test_type(&test.test_type, qualified_name, &test.column, None);
+        let base_sql =
+            generate_sql_for_test_type(&test.test_type, qualified_name, &test.column, None);
+        let sql = apply_test_config(&base_sql, &test.config);
         let name = format!("{}_{}__{}", test.test_type, test.model, test.column);
 
         Self {
@@ -276,12 +300,13 @@ impl GeneratedTest {
         qualified_name: &str,
         ref_table_resolver: impl Fn(&str) -> String,
     ) -> Self {
-        let sql = generate_sql_for_test_type(
+        let base_sql = generate_sql_for_test_type(
             &test.test_type,
             qualified_name,
             &test.column,
             Some(&ref_table_resolver),
         );
+        let sql = apply_test_config(&base_sql, &test.config);
         let name = format!("{}_{}__{}", test.test_type, test.model, test.column);
 
         Self {
