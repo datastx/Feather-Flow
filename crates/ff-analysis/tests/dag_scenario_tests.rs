@@ -52,18 +52,17 @@ fn timestamp() -> SqlType {
 
 fn make_ctx() -> AnalysisContext {
     let config: ff_core::config::Config = serde_yaml::from_str("name: test_project").unwrap();
-    let project = Project {
-        root: PathBuf::from("/tmp/test"),
+    let project = Project::new(
+        PathBuf::from("/tmp/test"),
         config,
-        models: HashMap::new(),
-        tests: vec![],
-        singular_tests: vec![],
-        sources: vec![],
-        exposures: vec![],
-        metrics: vec![],
-        functions: vec![],
-        functions_by_name: HashMap::new(),
-    };
+        HashMap::new(),
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+    );
     let dag = ModelDag::build(&HashMap::new()).unwrap();
     AnalysisContext::new(project, dag, HashMap::new(), ProjectLineage::new())
 }

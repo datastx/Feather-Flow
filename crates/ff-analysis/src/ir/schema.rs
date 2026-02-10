@@ -25,8 +25,9 @@ impl RelSchema {
 
     /// Find a column by name (case-insensitive)
     pub fn find_column(&self, name: &str) -> Option<&TypedColumn> {
-        let lower = name.to_lowercase();
-        self.columns.iter().find(|c| c.name.to_lowercase() == lower)
+        self.columns
+            .iter()
+            .find(|c| c.name.eq_ignore_ascii_case(name))
     }
 
     /// Find a column by qualified name (table.column), case-insensitive.
@@ -34,15 +35,12 @@ impl RelSchema {
     /// If `source_table` metadata is available, filters by it first.
     /// Falls back to column-name-only lookup when table info is missing.
     pub fn find_qualified(&self, table: &str, column: &str) -> Option<&TypedColumn> {
-        let lower_table = table.to_lowercase();
-        let lower_col = column.to_lowercase();
-
         // Try to find a column that matches both table and name
         let qualified_match = self.columns.iter().find(|c| {
-            c.name.to_lowercase() == lower_col
+            c.name.eq_ignore_ascii_case(column)
                 && c.source_table
                     .as_ref()
-                    .is_some_and(|t| t.to_lowercase() == lower_table)
+                    .is_some_and(|t| t.eq_ignore_ascii_case(table))
         });
 
         // Fall back to column-name-only if no qualified match
@@ -63,11 +61,8 @@ impl RelSchema {
                 .columns
                 .iter()
                 .map(|c| TypedColumn {
-                    name: c.name.clone(),
-                    source_table: c.source_table.clone(),
-                    sql_type: c.sql_type.clone(),
                     nullability,
-                    provenance: c.provenance.clone(),
+                    ..c.clone()
                 })
                 .collect(),
         }
@@ -82,11 +77,8 @@ impl RelSchema {
                 .columns
                 .iter()
                 .map(|c| TypedColumn {
-                    name: c.name.clone(),
                     source_table: c.source_table.clone().or_else(|| Some(table.to_string())),
-                    sql_type: c.sql_type.clone(),
-                    nullability: c.nullability,
-                    provenance: c.provenance.clone(),
+                    ..c.clone()
                 })
                 .collect(),
         }

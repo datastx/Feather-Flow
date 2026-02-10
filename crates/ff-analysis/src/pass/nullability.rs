@@ -31,8 +31,14 @@ impl AnalysisPass for NullabilityPropagation {
         collect_null_guarded_columns(ir, &mut guarded_columns);
 
         // A010: Nullable column from JOIN used without null guard
-        for col_name in &nullable_from_join {
-            if !guarded_columns.contains(col_name) {
+        for qualified_name in &nullable_from_join {
+            // Extract the bare column name for display and guard lookup
+            let col_name = qualified_name
+                .rsplit_once('.')
+                .map(|(_, col)| col)
+                .unwrap_or(qualified_name);
+            // Check both qualified and unqualified guard sets
+            if !guarded_columns.contains(qualified_name) && !guarded_columns.contains(col_name) {
                 diagnostics.push(Diagnostic {
                     code: DiagnosticCode::A010,
                     severity: Severity::Warning,
@@ -41,7 +47,7 @@ impl AnalysisPass for NullabilityPropagation {
                         col_name
                     ),
                     model: model_name.to_string(),
-                    column: Some(col_name.clone()),
+                    column: Some(col_name.to_string()),
                     hint: Some("Wrap with COALESCE() or add an IS NOT NULL filter".to_string()),
                     pass_name: "nullability".to_string(),
                 });
@@ -51,8 +57,13 @@ impl AnalysisPass for NullabilityPropagation {
         // A011: Column declared NOT NULL in YAML but nullable after JOIN
         if let Some(yaml_schema) = ctx.model_schema(model_name) {
             for col in &yaml_schema.columns {
-                if col.nullability == Nullability::NotNull && nullable_from_join.contains(&col.name)
-                {
+                // Check if this column name appears in the nullable set
+                // (either as a bare name or as a suffix of a qualified key)
+                let is_nullable = nullable_from_join.contains(&col.name)
+                    || nullable_from_join
+                        .iter()
+                        .any(|k| k.rsplit_once('.').map(|(_, c)| c) == Some(&col.name));
+                if col.nullability == Nullability::NotNull && is_nullable {
                     diagnostics.push(Diagnostic {
                         code: DiagnosticCode::A011,
                         severity: Severity::Warning,
@@ -76,7 +87,18 @@ impl AnalysisPass for NullabilityPropagation {
     }
 }
 
-/// Collect column names that become nullable due to outer joins
+/// Build a qualified key for a column: "table.column" if source_table is set, else just "column"
+fn qualified_key(col: &crate::ir::types::TypedColumn) -> String {
+    match &col.source_table {
+        Some(table) => format!("{}.{}", table, col.name),
+        None => col.name.clone(),
+    }
+}
+
+/// Collect column keys that become nullable due to outer joins.
+///
+/// Keys are qualified as "table.column" when `source_table` is available,
+/// preventing collisions when two tables share a column name.
 fn collect_join_nullable_columns(op: &RelOp, nullable: &mut HashSet<String>) {
     match op {
         RelOp::Join {
@@ -92,22 +114,22 @@ fn collect_join_nullable_columns(op: &RelOp, nullable: &mut HashSet<String>) {
                 JoinType::LeftOuter => {
                     // Right side becomes nullable
                     for col in &right.schema().columns {
-                        nullable.insert(col.name.clone());
+                        nullable.insert(qualified_key(col));
                     }
                 }
                 JoinType::RightOuter => {
                     // Left side becomes nullable
                     for col in &left.schema().columns {
-                        nullable.insert(col.name.clone());
+                        nullable.insert(qualified_key(col));
                     }
                 }
                 JoinType::FullOuter => {
                     // Both sides become nullable
                     for col in &left.schema().columns {
-                        nullable.insert(col.name.clone());
+                        nullable.insert(qualified_key(col));
                     }
                     for col in &right.schema().columns {
-                        nullable.insert(col.name.clone());
+                        nullable.insert(qualified_key(col));
                     }
                 }
                 _ => {}

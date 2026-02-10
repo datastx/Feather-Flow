@@ -10,7 +10,6 @@ pub mod traits;
 
 pub use duckdb::DuckDbBackend;
 pub use error::DbError;
-pub use ff_core::sql_utils::{quote_ident, quote_qualified};
 pub use traits::{
     CsvLoadOptions, Database, DatabaseCore, DatabaseCsv, DatabaseFunction, DatabaseIncremental,
     DatabaseSchema, DatabaseSnapshot, SnapshotResult,

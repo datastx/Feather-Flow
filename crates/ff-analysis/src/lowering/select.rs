@@ -309,17 +309,17 @@ fn lower_projection(
             SelectItem::QualifiedWildcard(kind, _) => {
                 let table_name = kind.to_string();
                 let lower_table = table_name.to_lowercase();
+                // If no columns have source_table set, fall back to including all
+                let any_tagged = input_schema
+                    .columns
+                    .iter()
+                    .any(|c| c.source_table.is_some());
                 // Expand table.* — filter by source_table when available
                 for col in &input_schema.columns {
                     let belongs = col
                         .source_table
                         .as_ref()
                         .is_some_and(|t| t.to_lowercase() == lower_table);
-                    // If no columns have source_table set, fall back to including all
-                    let any_tagged = input_schema
-                        .columns
-                        .iter()
-                        .any(|c| c.source_table.is_some());
                     if !any_tagged || belongs {
                         let typed = TypedExpr::ColumnRef {
                             table: Some(table_name.clone()),

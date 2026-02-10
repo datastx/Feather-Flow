@@ -36,18 +36,47 @@ pub fn discover_custom_test_macros(macro_paths: &[impl AsRef<Path>]) -> Vec<Cust
         }
 
         // Scan all .sql files in the directory
-        if let Ok(entries) = fs::read_dir(path) {
-            for entry in entries.flatten() {
-                let file_path = entry.path();
-                if file_path.extension().is_some_and(|e| e == "sql") {
-                    if let Ok(content) = fs::read_to_string(&file_path) {
-                        let file_macros = extract_test_macros_from_content(
-                            &content,
-                            file_path.to_string_lossy().as_ref(),
-                        );
-                        discovered.extend(file_macros);
+        match fs::read_dir(path) {
+            Ok(entries) => {
+                for entry_result in entries {
+                    let entry = match entry_result {
+                        Ok(e) => e,
+                        Err(e) => {
+                            eprintln!(
+                                "Warning: failed to read directory entry in {}: {}",
+                                path.display(),
+                                e
+                            );
+                            continue;
+                        }
+                    };
+                    let file_path = entry.path();
+                    if file_path.extension().is_some_and(|e| e == "sql") {
+                        match fs::read_to_string(&file_path) {
+                            Ok(content) => {
+                                let file_macros = extract_test_macros_from_content(
+                                    &content,
+                                    file_path.to_string_lossy().as_ref(),
+                                );
+                                discovered.extend(file_macros);
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "Warning: failed to read macro file {}: {}",
+                                    file_path.display(),
+                                    e
+                                );
+                            }
+                        }
                     }
                 }
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: failed to read macro directory {}: {}",
+                    path.display(),
+                    e
+                );
             }
         }
     }
@@ -118,11 +147,26 @@ pub fn generate_custom_test_sql(
     let safe_model = model.replace('\\', "\\\\").replace('"', "\\\"");
     let safe_column = column.replace('\\', "\\\\").replace('"', "\\\"");
 
+    // Escape relative_file for safe embedding in the Jinja import string literal.
+    let safe_file = relative_file.replace('\\', "\\\\").replace('"', "\\\"");
+
+    // Validate macro_name contains only safe identifier characters to prevent
+    // Jinja template injection via crafted macro names.
+    if !macro_name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return Err(JinjaError::RenderError(format!(
+            "invalid macro name '{}': must contain only alphanumeric characters and underscores",
+            macro_name
+        )));
+    }
+
     // Create template that imports and calls the macro
     let template = format!(
         r#"{{% from "{}" import {} %}}
 {{{{ {}("{}", "{}"{}) }}}}"#,
-        relative_file, macro_name, macro_name, safe_model, safe_column, kwargs_str
+        safe_file, macro_name, macro_name, safe_model, safe_column, kwargs_str
     );
 
     // Render the template

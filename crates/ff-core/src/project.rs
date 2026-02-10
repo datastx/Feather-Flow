@@ -43,10 +43,49 @@ pub struct Project {
     pub functions: Vec<FunctionDef>,
 
     /// Function lookup by name (O(1) access, index into `functions` vec)
-    pub functions_by_name: HashMap<FunctionName, usize>,
+    functions_by_name: HashMap<FunctionName, usize>,
 }
 
 impl Project {
+    /// Create a new project with the given fields.
+    ///
+    /// Builds the `functions_by_name` index from the `functions` vec automatically.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        root: PathBuf,
+        config: Config,
+        models: HashMap<ModelName, Model>,
+        tests: Vec<SchemaTest>,
+        singular_tests: Vec<SingularTest>,
+        sources: Vec<SourceFile>,
+        exposures: Vec<Exposure>,
+        metrics: Vec<Metric>,
+        functions: Vec<FunctionDef>,
+    ) -> Self {
+        let functions_by_name: HashMap<FunctionName, usize> = functions
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (f.name.clone(), i))
+            .collect();
+        Self {
+            root,
+            config,
+            models,
+            tests,
+            singular_tests,
+            sources,
+            exposures,
+            metrics,
+            functions,
+            functions_by_name,
+        }
+    }
+
+    /// Get the function name index for O(1) lookup
+    pub fn get_function_index(&self) -> &HashMap<FunctionName, usize> {
+        &self.functions_by_name
+    }
+
     /// Load a project from a directory
     pub fn load(path: &Path) -> CoreResult<Self> {
         let root = if path.is_absolute() {
@@ -96,13 +135,8 @@ impl Project {
         // Discover user-defined function definitions
         let function_paths = config.function_paths_absolute(&root);
         let functions = discover_functions(&function_paths)?;
-        let functions_by_name: HashMap<FunctionName, usize> = functions
-            .iter()
-            .enumerate()
-            .map(|(i, f)| (f.name.clone(), i))
-            .collect();
 
-        Ok(Self {
+        Ok(Self::new(
             root,
             config,
             models,
@@ -112,8 +146,7 @@ impl Project {
             exposures,
             metrics,
             functions,
-            functions_by_name,
-        })
+        ))
     }
 
     /// Discover all SQL model files in the project using flat directory-per-model layout
@@ -154,11 +187,22 @@ impl Project {
                     }
                 };
 
-                // Find SQL files in this directory (non-recursive)
-                let sql_files: Vec<PathBuf> = std::fs::read_dir(&path)?
+                // Read directory once and partition into SQL files vs visible non-SQL/YML files
+                let all_visible_files: Vec<PathBuf> = std::fs::read_dir(&path)?
                     .filter_map(|e| e.ok())
                     .map(|e| e.path())
-                    .filter(|p| p.is_file() && p.extension().is_some_and(|e| e == "sql"))
+                    .filter(|p| {
+                        p.is_file()
+                            && !p
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .is_some_and(|n| n.starts_with('.'))
+                    })
+                    .collect();
+
+                let sql_files: Vec<&PathBuf> = all_visible_files
+                    .iter()
+                    .filter(|p| p.extension().is_some_and(|e| e == "sql"))
                     .collect();
 
                 if sql_files.is_empty() {
@@ -178,7 +222,7 @@ impl Project {
                     });
                 }
 
-                let sql_path = &sql_files[0];
+                let sql_path = sql_files[0];
                 let sql_stem = match sql_path.file_stem().and_then(|s| s.to_str()) {
                     Some(stem) if !stem.is_empty() => stem.to_string(),
                     _ => {
@@ -197,19 +241,7 @@ impl Project {
                 }
 
                 // E013: Check for extra files in the model directory
-                let all_files: Vec<PathBuf> = std::fs::read_dir(&path)?
-                    .filter_map(|e| e.ok())
-                    .map(|e| e.path())
-                    .filter(|p| {
-                        p.is_file()
-                            && !p
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .is_some_and(|n| n.starts_with('.'))
-                    })
-                    .collect();
-
-                let extra_files: Vec<String> = all_files
+                let extra_files: Vec<String> = all_visible_files
                     .iter()
                     .filter(|p| {
                         let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");

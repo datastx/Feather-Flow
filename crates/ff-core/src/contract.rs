@@ -147,21 +147,24 @@ pub fn validate_contract(
         .map(|c| c.name.to_lowercase())
         .collect();
 
+    // Save current enforced state and temporarily disable enforcement
+    // so extra-column violations don't fail the contract
+    let saved_enforced = result.enforced;
+    result.enforced = false;
     for (name, _) in actual_columns {
         if !contracted_columns.contains(&name.to_lowercase()) {
-            // Extra columns are informational, don't fail the contract
-            result.violations.push(ContractViolation {
-                model: model_name.to_string(),
-                violation_type: ViolationType::ExtraColumn {
+            result.add_violation(
+                ViolationType::ExtraColumn {
                     column: name.clone(),
                 },
-                message: format!(
+                format!(
                     "Column '{}' found in output but not defined in contract",
                     name
                 ),
-            });
+            );
         }
     }
+    result.enforced = saved_enforced;
 
     result
 }

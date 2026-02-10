@@ -17,7 +17,6 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use ff_core::config::Materialization;
 use ff_core::run_state::RunState;
-use ff_core::source::build_source_lookup;
 use ff_core::state::StateFile;
 use ff_core::ModelName;
 use std::collections::{HashMap, HashSet};
@@ -25,7 +24,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::cli::{GlobalArgs, OutputFormat, RunArgs};
-use crate::commands::common::{build_schema_catalog, load_project};
+use crate::commands::common::load_project;
 
 use compile::{determine_execution_order, load_or_compile_models};
 use execute::{execute_models_with_state, ExecutionContext};
@@ -333,18 +332,11 @@ fn run_pre_execution_analysis(
     global: &GlobalArgs,
     json_mode: bool,
 ) -> Result<bool> {
-    use ff_analysis::propagate_schemas;
-
     if global.verbose {
         eprintln!("[verbose] Running pre-execution static analysis...");
     }
 
-    // Build schema catalog from YAML definitions and external tables
-    let source_tables = build_source_lookup(&project.sources);
-    let mut external_tables: HashSet<String> =
-        project.config.external_tables.iter().cloned().collect();
-    external_tables.extend(source_tables);
-    let (schema_catalog, yaml_schemas) = build_schema_catalog(project, &external_tables);
+    let external_tables = crate::commands::common::build_external_tables_lookup(project);
 
     // Build dependency map and topological order
     let dependencies: HashMap<String, Vec<String>> = compiled_models
@@ -364,31 +356,21 @@ fn run_pre_execution_analysis(
         .map(|(name, model)| (name.clone(), model.sql.clone()))
         .collect();
 
-    // Filter topo order to models we have SQL for
-    let filtered_order: Vec<String> = topo_order
-        .into_iter()
-        .filter(|n| sql_sources.contains_key(n))
-        .collect();
-
-    if filtered_order.is_empty() {
+    if sql_sources.is_empty() {
         return Ok(false);
     }
 
-    // Run schema propagation
-    let user_fn_stubs = crate::commands::common::build_user_function_stubs(project);
-    let result = propagate_schemas(
-        &filtered_order,
+    let output = crate::commands::common::run_static_analysis_pipeline(
+        project,
         &sql_sources,
-        &yaml_schemas,
-        &schema_catalog,
-        &user_fn_stubs,
-    );
+        &topo_order,
+        &external_tables,
+    )?;
+    let result = &output.result;
 
     // Check for schema errors (all mismatches are errors that block execution)
-    let mut has_errors = false;
     for (model_name, plan_result) in &result.model_plans {
         for mismatch in &plan_result.mismatches {
-            has_errors = true;
             if !json_mode {
                 eprintln!(
                     "  [error] {model_name}: {mismatch}",
@@ -411,5 +393,5 @@ fn run_pre_execution_analysis(
         }
     }
 
-    Ok(has_errors)
+    Ok(output.has_errors)
 }

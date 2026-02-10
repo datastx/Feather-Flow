@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use ff_core::model::FreshnessPeriod;
 use ff_core::source::SourceFile;
+use ff_core::sql_utils::{quote_ident, quote_qualified};
 use ff_core::Project;
-use ff_db::{quote_ident, quote_qualified};
 use serde::Serialize;
 
 use crate::cli::{FreshnessOutput, GlobalArgs, SourceArgs, SourceCommands, SourceFreshnessArgs};

@@ -120,6 +120,20 @@ impl ModelDag {
         }
     }
 
+    /// Get models in topological order as `ModelName` values
+    pub fn topological_order_names(&self) -> CoreResult<Vec<ModelName>> {
+        match toposort(&self.graph, None) {
+            Ok(indices) => Ok(indices
+                .into_iter()
+                .map(|idx| self.graph[idx].clone())
+                .collect()),
+            Err(cycle) => {
+                let cycle_str = self.find_cycle_path(cycle.node_id());
+                Err(CoreError::CircularDependency { cycle: cycle_str })
+            }
+        }
+    }
+
     /// Get models in reverse topological order (dependents first)
     pub fn reverse_topological_order(&self) -> CoreResult<Vec<String>> {
         let mut order = self.topological_order()?;

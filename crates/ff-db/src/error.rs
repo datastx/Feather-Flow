@@ -39,6 +39,14 @@ pub type DbResult<T> = Result<T, DbError>;
 
 impl From<duckdb::Error> for DbError {
     fn from(err: duckdb::Error) -> Self {
-        DbError::ExecutionError(err.to_string())
+        // Classify DuckDB errors by inspecting the error message.
+        // duckdb::Error does not expose structured variants, so string
+        // matching is the only reliable approach.
+        let msg = err.to_string();
+        if msg.contains("Catalog Error") || msg.contains("not found") {
+            DbError::TableNotFound(msg)
+        } else {
+            DbError::ExecutionError(msg)
+        }
     }
 }

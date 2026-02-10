@@ -750,12 +750,6 @@ impl Model {
         self.config.wap.unwrap_or(false)
     }
 
-    /// Get the schema for this model (deprecated, use target_schema instead)
-    #[deprecated(note = "Use target_schema instead for clearer naming")]
-    pub fn schema(&self, default: Option<&str>) -> Option<String> {
-        self.target_schema(default)
-    }
-
     /// Get all dependencies (both model and external)
     pub fn all_dependencies(&self) -> HashSet<String> {
         let mut deps: HashSet<String> = self.depends_on.iter().map(|m| m.to_string()).collect();

@@ -578,8 +578,21 @@ pub(crate) fn make_hash_columns_fn(
                     "hash_columns requires an array of column names",
                 )
             })?
-            .filter_map(|v| v.as_str().map(String::from))
-            .collect();
+            .map(|v| {
+                v.as_str().map(String::from).ok_or_else(|| {
+                    Error::new(
+                        minijinja::ErrorKind::InvalidOperation,
+                        format!("hash_columns: expected string element, got {}", v.kind()),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if cols.is_empty() {
+            return Err(Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                "hash_columns requires a non-empty array of column names",
+            ));
+        }
         Ok(hash_columns(&cols))
     }
 }
@@ -596,8 +609,21 @@ pub(crate) fn make_surrogate_key_fn(
                     "surrogate_key requires an array of column names",
                 )
             })?
-            .filter_map(|v| v.as_str().map(String::from))
-            .collect();
+            .map(|v| {
+                v.as_str().map(String::from).ok_or_else(|| {
+                    Error::new(
+                        minijinja::ErrorKind::InvalidOperation,
+                        format!("surrogate_key: expected string element, got {}", v.kind()),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if cols.is_empty() {
+            return Err(Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                "surrogate_key requires a non-empty array of column names",
+            ));
+        }
         Ok(surrogate_key(&cols))
     }
 }
@@ -614,8 +640,24 @@ pub(crate) fn make_coalesce_columns_fn(
                     "coalesce_columns requires an array of column names",
                 )
             })?
-            .filter_map(|v| v.as_str().map(String::from))
-            .collect();
+            .map(|v| {
+                v.as_str().map(String::from).ok_or_else(|| {
+                    Error::new(
+                        minijinja::ErrorKind::InvalidOperation,
+                        format!(
+                            "coalesce_columns: expected string element, got {}",
+                            v.kind()
+                        ),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if cols.is_empty() {
+            return Err(Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                "coalesce_columns requires a non-empty array of column names",
+            ));
+        }
         Ok(coalesce_columns(&cols))
     }
 }

@@ -391,7 +391,8 @@ fn extract_lineage_from_set_expr(set_expr: &SetExpr, lineage: &mut ModelLineage)
             extract_lineage_from_set_expr(left, lineage);
         }
         SetExpr::Query(query) => {
-            let inner = extract_lineage_from_query(query, &lineage.model_name.clone());
+            let model_name = lineage.model_name.clone();
+            let inner = extract_lineage_from_query(query, &model_name);
             lineage.columns.extend(inner.columns);
             lineage.table_aliases.extend(inner.table_aliases);
             lineage.source_tables.extend(inner.source_tables);
