@@ -12,6 +12,32 @@ use crate::source::{discover_sources, SourceFile};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+/// All fields needed to construct a [`Project`].
+///
+/// Avoids a 9-parameter constructor and makes call sites self-documenting
+/// via named fields.
+#[derive(Debug)]
+pub struct ProjectParts {
+    /// Project root directory
+    pub root: PathBuf,
+    /// Project configuration
+    pub config: Config,
+    /// Models discovered in the project
+    pub models: HashMap<ModelName, Model>,
+    /// Schema tests from YAML files
+    pub tests: Vec<SchemaTest>,
+    /// Singular tests (standalone SQL test files)
+    pub singular_tests: Vec<SingularTest>,
+    /// Source definitions
+    pub sources: Vec<SourceFile>,
+    /// Exposure definitions
+    pub exposures: Vec<Exposure>,
+    /// Metric definitions
+    pub metrics: Vec<Metric>,
+    /// User-defined function definitions
+    pub functions: Vec<FunctionDef>,
+}
+
 /// Represents a Featherflow project
 #[derive(Debug)]
 pub struct Project {
@@ -24,7 +50,7 @@ pub struct Project {
     /// Models discovered in the project
     pub models: HashMap<ModelName, Model>,
 
-    /// Schema tests from schema.yml files
+    /// Schema tests from model YAML files
     pub tests: Vec<SchemaTest>,
 
     /// Singular tests (standalone SQL test files)
@@ -47,36 +73,26 @@ pub struct Project {
 }
 
 impl Project {
-    /// Create a new project with the given fields.
+    /// Create a new project from [`ProjectParts`].
     ///
     /// Builds the `functions_by_name` index from the `functions` vec automatically.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        root: PathBuf,
-        config: Config,
-        models: HashMap<ModelName, Model>,
-        tests: Vec<SchemaTest>,
-        singular_tests: Vec<SingularTest>,
-        sources: Vec<SourceFile>,
-        exposures: Vec<Exposure>,
-        metrics: Vec<Metric>,
-        functions: Vec<FunctionDef>,
-    ) -> Self {
-        let functions_by_name: HashMap<FunctionName, usize> = functions
+    pub fn new(parts: ProjectParts) -> Self {
+        let functions_by_name: HashMap<FunctionName, usize> = parts
+            .functions
             .iter()
             .enumerate()
             .map(|(i, f)| (f.name.clone(), i))
             .collect();
         Self {
-            root,
-            config,
-            models,
-            tests,
-            singular_tests,
-            sources,
-            exposures,
-            metrics,
-            functions,
+            root: parts.root,
+            config: parts.config,
+            models: parts.models,
+            tests: parts.tests,
+            singular_tests: parts.singular_tests,
+            sources: parts.sources,
+            exposures: parts.exposures,
+            metrics: parts.metrics,
+            functions: parts.functions,
             functions_by_name,
         }
     }
@@ -104,9 +120,7 @@ impl Project {
 
         // Emit deprecation warning if external_tables is used
         if !config.external_tables.is_empty() {
-            eprintln!(
-                "[warn] 'external_tables' is deprecated. Use source_paths and source files (kind: sources) instead."
-            );
+            log::warn!("'external_tables' is deprecated. Use source_paths and source files (kind: sources) instead.");
         }
 
         let models = Self::discover_models(&root, &config)?;
@@ -136,7 +150,7 @@ impl Project {
         let function_paths = config.function_paths_absolute(&root);
         let functions = discover_functions(&function_paths)?;
 
-        Ok(Self::new(
+        Ok(Self::new(ProjectParts {
             root,
             config,
             models,
@@ -146,7 +160,7 @@ impl Project {
             exposures,
             metrics,
             functions,
-        ))
+        }))
     }
 
     /// Discover all SQL model files in the project using flat directory-per-model layout
@@ -517,9 +531,8 @@ impl Project {
 
     /// Get a function by name (O(1) lookup)
     pub fn get_function(&self, name: &str) -> Option<&FunctionDef> {
-        let fn_name = FunctionName::new(name);
         self.functions_by_name
-            .get(&fn_name)
+            .get(name)
             .map(|&idx| &self.functions[idx])
     }
 }

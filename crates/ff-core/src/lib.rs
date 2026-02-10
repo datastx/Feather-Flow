@@ -48,7 +48,7 @@ pub use model::{
     Model, ModelSchema, SchemaContract,
 };
 pub use model_name::ModelName;
-pub use project::Project;
+pub use project::{Project, ProjectParts};
 pub use query_comment::{QueryCommentContext, QueryCommentMetadata};
 pub use run_state::{CompletedModel, FailedModel, RunState, RunStateSummary, RunStatus};
 pub use seed::{Seed, SeedConfig};

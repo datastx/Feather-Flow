@@ -1198,6 +1198,7 @@ name = "ff-core"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "log",
  "petgraph",
  "serde",
  "serde_json",

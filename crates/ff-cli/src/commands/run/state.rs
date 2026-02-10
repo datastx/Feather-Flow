@@ -185,7 +185,7 @@ pub(crate) fn update_state_for_model(
     let schema_checksum = compute_schema_checksum(name, compiled_models);
     let input_checksums = compute_input_checksums(name, compiled_models);
     let model_state = ModelState::new_with_checksums(
-        name.to_string(),
+        ff_core::ModelName::new(name),
         &compiled.sql,
         row_count,
         state_config,

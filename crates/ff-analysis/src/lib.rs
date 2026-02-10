@@ -10,8 +10,7 @@ pub(crate) mod ir;
 pub(crate) mod lowering;
 pub(crate) mod pass;
 
-#[cfg(test)]
-mod test_utils;
+pub mod test_utils;
 
 pub use context::AnalysisContext;
 pub use error::{AnalysisError, AnalysisResult};
