@@ -3,12 +3,12 @@
 //! This crate provides a relational algebra IR, AST-to-IR lowering,
 //! and composable analysis passes for detecting SQL issues.
 
-pub mod context;
+pub(crate) mod context;
 pub mod datafusion_bridge;
-pub mod error;
-pub mod ir;
-pub mod lowering;
-pub mod pass;
+pub(crate) mod error;
+pub(crate) mod ir;
+pub(crate) mod lowering;
+pub(crate) mod pass;
 
 #[cfg(test)]
 mod test_utils;

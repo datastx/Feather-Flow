@@ -1,6 +1,6 @@
 //! Strongly-typed function name wrapper.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::borrow::Borrow;
 use std::fmt;
 use std::ops::Deref;
@@ -8,18 +8,28 @@ use std::ops::Deref;
 /// Strongly-typed wrapper for user-defined function names.
 ///
 /// Prevents accidental mixing of function names with model names, table names,
-/// or other string types.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(transparent)]
+/// or other string types. Guaranteed non-empty after construction.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct FunctionName(String);
 
+impl<'de> Deserialize<'de> for FunctionName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        FunctionName::try_new(s)
+            .ok_or_else(|| serde::de::Error::custom("FunctionName must not be empty"))
+    }
+}
+
 impl FunctionName {
-    /// Create a new `FunctionName`, panicking in debug builds if the name is empty.
+    /// Create a new `FunctionName`, panicking if the name is empty.
     ///
     /// Prefer [`try_new`](Self::try_new) when handling untrusted input.
     pub fn new(name: impl Into<String>) -> Self {
         let s = name.into();
-        debug_assert!(!s.is_empty(), "FunctionName must not be empty");
+        assert!(!s.is_empty(), "FunctionName must not be empty");
         Self(s)
     }
 
@@ -71,14 +81,14 @@ impl Borrow<str> for FunctionName {
 
 impl From<String> for FunctionName {
     fn from(s: String) -> Self {
-        debug_assert!(!s.is_empty(), "FunctionName must not be empty");
+        assert!(!s.is_empty(), "FunctionName must not be empty");
         Self(s)
     }
 }
 
 impl From<&str> for FunctionName {
     fn from(s: &str) -> Self {
-        debug_assert!(!s.is_empty(), "FunctionName must not be empty");
+        assert!(!s.is_empty(), "FunctionName must not be empty");
         Self(s.to_string())
     }
 }

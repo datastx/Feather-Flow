@@ -21,6 +21,8 @@ pub enum SqlError {
     #[error("[S003] Unsupported SQL statement type: {0}")]
     UnsupportedStatement(String),
 
+    // S004: Reserved/retired — was previously used for an error code that has been removed.
+    // Do not reuse this code to avoid confusion with historical diagnostics.
     /// CTE not allowed (S005)
     #[error("[S005] CTEs are not allowed — each transform must be its own model. Found CTE(s): {}", cte_names.join(", "))]
     CteNotAllowed { cte_names: Vec<String> },

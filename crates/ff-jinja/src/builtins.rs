@@ -15,33 +15,41 @@ use std::sync::OnceLock;
 #[derive(Debug, Clone, Serialize)]
 pub struct MacroParam {
     /// Parameter name
-    pub name: String,
+    pub name: &'static str,
     /// Parameter type (string, integer, array)
-    pub param_type: String,
+    pub param_type: &'static str,
     /// Whether this parameter is required
     pub required: bool,
     /// Description of the parameter
-    pub description: String,
+    pub description: &'static str,
 }
 
 impl MacroParam {
     /// Create a new required parameter
-    pub fn required(name: &str, param_type: &str, description: &str) -> Self {
+    pub fn required(
+        name: &'static str,
+        param_type: &'static str,
+        description: &'static str,
+    ) -> Self {
         Self {
-            name: name.to_string(),
-            param_type: param_type.to_string(),
+            name,
+            param_type,
             required: true,
-            description: description.to_string(),
+            description,
         }
     }
 
     /// Create a new optional parameter
-    pub fn optional(name: &str, param_type: &str, description: &str) -> Self {
+    pub fn optional(
+        name: &'static str,
+        param_type: &'static str,
+        description: &'static str,
+    ) -> Self {
         Self {
-            name: name.to_string(),
-            param_type: param_type.to_string(),
+            name,
+            param_type,
             required: false,
-            description: description.to_string(),
+            description,
         }
     }
 }
@@ -50,36 +58,36 @@ impl MacroParam {
 #[derive(Debug, Clone, Serialize)]
 pub struct MacroMetadata {
     /// Macro name as used in templates
-    pub name: String,
+    pub name: &'static str,
     /// Category of the macro (date, string, math, utility, cross_db)
-    pub category: String,
+    pub category: &'static str,
     /// Brief description of what the macro does
-    pub description: String,
+    pub description: &'static str,
     /// Parameters accepted by the macro
     pub params: Vec<MacroParam>,
     /// Example usage in a template
-    pub example: String,
+    pub example: &'static str,
     /// Expected output from the example
-    pub example_output: String,
+    pub example_output: &'static str,
 }
 
 impl MacroMetadata {
     /// Create new macro metadata
     pub fn new(
-        name: &str,
-        category: &str,
-        description: &str,
+        name: &'static str,
+        category: &'static str,
+        description: &'static str,
         params: Vec<MacroParam>,
-        example: &str,
-        example_output: &str,
+        example: &'static str,
+        example_output: &'static str,
     ) -> Self {
         Self {
-            name: name.to_string(),
-            category: category.to_string(),
-            description: description.to_string(),
+            name,
+            category,
+            description,
             params,
-            example: example.to_string(),
-            example_output: example_output.to_string(),
+            example,
+            example_output,
         }
     }
 }
@@ -302,11 +310,9 @@ pub fn get_macros_by_category(category: &str) -> Vec<MacroMetadata> {
 }
 
 /// Get all available macro categories
-pub fn get_macro_categories() -> Vec<String> {
-    let mut categories: Vec<String> = cached_builtin_macros()
-        .iter()
-        .map(|m| m.category.clone())
-        .collect();
+pub fn get_macro_categories() -> Vec<&'static str> {
+    let mut categories: Vec<&'static str> =
+        cached_builtin_macros().iter().map(|m| m.category).collect();
     categories.sort();
     categories.dedup();
     categories
@@ -805,7 +811,7 @@ mod tests {
             );
             // Verify example uses the macro
             assert!(
-                m.example.contains(&m.name),
+                m.example.contains(m.name),
                 "Example '{}' should contain macro name '{}'",
                 m.example,
                 m.name
@@ -851,11 +857,11 @@ mod tests {
     fn test_get_macro_categories() {
         let categories = get_macro_categories();
         assert_eq!(categories.len(), 5);
-        assert!(categories.contains(&"date".to_string()));
-        assert!(categories.contains(&"string".to_string()));
-        assert!(categories.contains(&"math".to_string()));
-        assert!(categories.contains(&"utility".to_string()));
-        assert!(categories.contains(&"cross_db".to_string()));
+        assert!(categories.contains(&"date"));
+        assert!(categories.contains(&"string"));
+        assert!(categories.contains(&"math"));
+        assert!(categories.contains(&"utility"));
+        assert!(categories.contains(&"cross_db"));
     }
 
     #[test]

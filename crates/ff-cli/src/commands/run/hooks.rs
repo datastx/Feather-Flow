@@ -51,7 +51,7 @@ pub(super) async fn create_schemas(
         }
         db.create_schema_if_not_exists(schema)
             .await
-            .context(format!("Failed to create schema: {}", schema))?;
+            .with_context(|| format!("Failed to create schema: {}", schema))?;
     }
 
     Ok(())

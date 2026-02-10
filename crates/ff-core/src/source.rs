@@ -231,14 +231,9 @@ fn discover_sources_recursive(dir: &Path, sources: &mut Vec<SourceFile>) -> Core
                 continue;
             }
 
-            // Full parse — errors here are real and worth reporting
-            match SourceFile::load(&path) {
-                Ok(source) => sources.push(source),
-                Err(e) => {
-                    eprintln!("[warn] Skipping source file {}: {}", path.display(), e);
-                    continue;
-                }
-            }
+            // Kind probe confirmed this is a sources file — parse errors are real
+            let source = SourceFile::load(&path)?;
+            sources.push(source);
         }
     }
 

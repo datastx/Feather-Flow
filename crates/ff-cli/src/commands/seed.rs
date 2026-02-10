@@ -69,7 +69,7 @@ pub async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
             }
             db.drop_if_exists(&table_name)
                 .await
-                .context(format!("Failed to drop {}", table_name))?;
+                .with_context(|| format!("Failed to drop {}", table_name))?;
         }
 
         let path_str = seed.path.display().to_string();

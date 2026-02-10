@@ -194,7 +194,9 @@ impl Exposure {
 }
 
 /// Discover all exposure files in the given paths
-pub fn discover_exposures(paths: &[impl AsRef<Path>]) -> Vec<Exposure> {
+///
+/// Returns an error if duplicate exposure names are found across files.
+pub fn discover_exposures(paths: &[impl AsRef<Path>]) -> CoreResult<Vec<Exposure>> {
     let mut exposures = Vec::new();
 
     for path in paths {
@@ -226,7 +228,26 @@ pub fn discover_exposures(paths: &[impl AsRef<Path>]) -> Vec<Exposure> {
         }
     }
 
-    exposures
+    // Detect duplicate exposure names
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (idx, exposure) in exposures.iter().enumerate() {
+        if let Some(&prev_idx) = seen.get(&exposure.name) {
+            return Err(CoreError::ExposureDuplicateName {
+                name: exposure.name.clone(),
+                path1: exposures[prev_idx]
+                    .source_path
+                    .clone()
+                    .unwrap_or_else(|| format!("exposure #{}", prev_idx + 1)),
+                path2: exposure
+                    .source_path
+                    .clone()
+                    .unwrap_or_else(|| format!("exposure #{}", idx + 1)),
+            });
+        }
+        seen.insert(exposure.name.clone(), idx);
+    }
+
+    Ok(exposures)
 }
 
 #[cfg(test)]
@@ -478,7 +499,7 @@ name: some_model
         )
         .unwrap();
 
-        let exposures = discover_exposures(&[&exposures_dir]);
+        let exposures = discover_exposures(&[&exposures_dir]).unwrap();
         assert_eq!(exposures.len(), 2);
 
         let names: Vec<&str> = exposures.iter().map(|e| e.name.as_str()).collect();

@@ -232,7 +232,9 @@ struct MetricKindProbe {
 }
 
 /// Discover metrics from a list of paths
-pub fn discover_metrics(paths: &[PathBuf]) -> Vec<Metric> {
+///
+/// Returns an error if duplicate metric names are found across files.
+pub fn discover_metrics(paths: &[PathBuf]) -> CoreResult<Vec<Metric>> {
     let mut metrics = Vec::new();
 
     for path in paths {
@@ -272,7 +274,20 @@ pub fn discover_metrics(paths: &[PathBuf]) -> Vec<Metric> {
         }
     }
 
-    metrics
+    // Detect duplicate metric names
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (idx, metric) in metrics.iter().enumerate() {
+        if let Some(&prev_idx) = seen.get(&metric.name) {
+            return Err(CoreError::MetricDuplicateName {
+                name: metric.name.clone(),
+                path1: metrics[prev_idx].path.display().to_string(),
+                path2: metric.path.display().to_string(),
+            });
+        }
+        seen.insert(metric.name.clone(), idx);
+    }
+
+    Ok(metrics)
 }
 
 #[cfg(test)]
@@ -544,7 +559,7 @@ name: raw_data
         )
         .unwrap();
 
-        let metrics = discover_metrics(std::slice::from_ref(&temp_dir));
+        let metrics = discover_metrics(std::slice::from_ref(&temp_dir)).unwrap();
         assert_eq!(metrics.len(), 2);
     }
 }

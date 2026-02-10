@@ -429,10 +429,14 @@ impl Selector {
             return true;
         }
 
-        // Limitation: We compare structural metadata (deps, materialization, schema, tags)
-        // rather than raw SQL content. Full SQL comparison would require reading source
-        // files from the reference manifest path. This structural comparison catches most
-        // meaningful changes but may miss whitespace-only or comment-only modifications.
+        // Compare SQL content via checksum if available in the manifest
+        if let Some(ref ref_checksum) = reference.sql_checksum {
+            let current_checksum = current.sql_checksum();
+            if current_checksum != *ref_checksum {
+                return true;
+            }
+        }
+
         false
     }
 }

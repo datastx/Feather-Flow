@@ -16,8 +16,8 @@ pub(crate) async fn execute_incremental(
     full_refresh: bool,
     exec_sql: &str,
 ) -> ff_db::error::DbResult<()> {
-    // Check if table exists
-    let exists = db.relation_exists(table_name).await.unwrap_or(false);
+    // Check if table exists — propagate DB errors to avoid silent full refresh
+    let exists = db.relation_exists(table_name).await?;
 
     if !exists || full_refresh {
         // First run or full refresh: create table from full query
@@ -179,7 +179,7 @@ pub(crate) async fn execute_wap(
         Materialization::Incremental => {
             // Copy existing prod table to WAP schema (if it exists and not full refresh)
             if !full_refresh {
-                let exists = db.relation_exists(qualified_name).await.unwrap_or(false);
+                let exists = db.relation_exists(qualified_name).await?;
                 if exists {
                     let copy_sql = format!(
                         "CREATE OR REPLACE TABLE {} AS FROM {}",

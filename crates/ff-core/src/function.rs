@@ -437,12 +437,9 @@ fn discover_functions_recursive(dir: &Path, functions: &mut Vec<FunctionDef>) ->
                 continue;
             }
 
-            match FunctionDef::load(&path) {
-                Ok(func) => functions.push(func),
-                Err(e) => {
-                    eprintln!("[warn] Skipping function file {}: {}", path.display(), e);
-                }
-            }
+            // Kind probe confirmed this is a function file — parse errors are real
+            let func = FunctionDef::load(&path)?;
+            functions.push(func);
         }
     }
 

@@ -35,8 +35,13 @@ pub fn sql_to_plan(sql: &str, provider: &FeatherFlowProvider) -> AnalysisResult<
     }
 
     let planner = SqlToRel::new(provider);
+    // Safety: we checked df_stmts.is_empty() above and returned early
+    let first_stmt = df_stmts
+        .into_iter()
+        .next()
+        .ok_or_else(|| AnalysisError::PlanningError("No statements found in SQL".to_string()))?;
     let plan = planner
-        .statement_to_plan(df_stmts.into_iter().next().unwrap())
+        .statement_to_plan(first_stmt)
         .map_err(|e| AnalysisError::PlanningError(e.to_string()))?;
 
     Ok(plan)

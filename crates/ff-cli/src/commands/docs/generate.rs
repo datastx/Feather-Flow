@@ -1621,10 +1621,7 @@ fn generate_macros_html() -> String {
                 "<div class=\"macro-name\"><code>{}</code></div>\n",
                 macro_info.name
             ));
-            html.push_str(&format!(
-                "<p>{}</p>\n",
-                html_escape(&macro_info.description)
-            ));
+            html.push_str(&format!("<p>{}</p>\n", html_escape(macro_info.description)));
 
             // Parameters
             if !macro_info.params.is_empty() {
@@ -1641,7 +1638,7 @@ fn generate_macros_html() -> String {
                         param.name,
                         param.param_type,
                         required,
-                        html_escape(&param.description)
+                        html_escape(param.description)
                     ));
                 }
                 html.push_str("</tbody></table>\n");
@@ -1651,12 +1648,12 @@ fn generate_macros_html() -> String {
             html.push_str("<span class=\"example-label\">Example:</span>\n");
             html.push_str(&format!(
                 "<pre><code>{}</code></pre>\n",
-                html_escape(&macro_info.example)
+                html_escape(macro_info.example)
             ));
             html.push_str("<span class=\"example-label\">Output:</span>\n");
             html.push_str(&format!(
                 "<pre><code>{}</code></pre>\n",
-                html_escape(&macro_info.example_output)
+                html_escape(macro_info.example_output)
             ));
 
             html.push_str("</div>\n");

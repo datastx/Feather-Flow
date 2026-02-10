@@ -126,11 +126,11 @@ impl Project {
 
         // Discover exposure definitions
         let exposure_paths = config.exposure_paths_absolute(&root);
-        let exposures = discover_exposures(&exposure_paths);
+        let exposures = discover_exposures(&exposure_paths)?;
 
         // Discover metric definitions
         let metric_paths = config.metric_paths_absolute(&root);
-        let metrics = discover_metrics(&metric_paths);
+        let metrics = discover_metrics(&metric_paths)?;
 
         // Discover user-defined function definitions
         let function_paths = config.function_paths_absolute(&root);
@@ -310,13 +310,8 @@ impl Project {
             if path.is_dir() {
                 Self::discover_singular_tests_recursive(&path, tests)?;
             } else if path.extension().is_some_and(|e| e == "sql") {
-                match SingularTest::from_file(path) {
-                    Ok(test) => tests.push(test),
-                    Err(e) => {
-                        // Log warning but continue - don't fail on a single bad test file
-                        eprintln!("[warn] Failed to load test file: {}", e);
-                    }
-                }
+                let test = SingularTest::from_file(path)?;
+                tests.push(test);
             }
         }
 

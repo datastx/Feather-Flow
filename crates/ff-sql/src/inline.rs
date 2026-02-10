@@ -245,10 +245,15 @@ fn collect_ephemeral_recursive<F, G>(
                 );
             }
 
-            // Then add this ephemeral model
+            // Then add this ephemeral model — warn if compiled SQL is missing
             if let Some(sql) = get_compiled_sql(dep) {
                 ephemeral_sql.insert(dep.clone(), sql);
                 order.push(dep.clone());
+            } else {
+                eprintln!(
+                    "[warn] Ephemeral model '{}' has no compiled SQL — it will not be inlined",
+                    dep
+                );
             }
         }
     }

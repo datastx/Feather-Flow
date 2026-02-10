@@ -276,8 +276,11 @@ impl Snapshot {
 
         let change_condition = match self.config.strategy {
             SnapshotStrategy::Timestamp => {
-                let updated_at =
-                    quote_ident(self.config.updated_at.as_deref().unwrap_or("updated_at"));
+                // Timestamp strategy requires updated_at to be set (validated in SnapshotConfig::validate)
+                let updated_at_col = self.config.updated_at.as_deref().expect(
+                    "Timestamp strategy requires updated_at (should be caught by validation)",
+                );
+                let updated_at = quote_ident(updated_at_col);
                 let dbt_updated_at = quote_ident(SCD_UPDATED_AT);
                 format!("{src_alias}.{updated_at} > {snap_alias}.{dbt_updated_at}")
             }

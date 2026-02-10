@@ -1491,6 +1491,7 @@ fn test_load_deferred_manifest() {
             pre_hook: vec![],
             post_hook: vec![],
             wap: None,
+            sql_checksum: None,
         },
     );
     // Save manifest
@@ -1544,6 +1545,7 @@ fn test_defer_dependency_resolution() {
             pre_hook: vec![],
             post_hook: vec![],
             wap: None,
+            sql_checksum: None,
         },
     );
 
@@ -1565,6 +1567,7 @@ fn test_defer_dependency_resolution() {
             pre_hook: vec![],
             post_hook: vec![],
             wap: None,
+            sql_checksum: None,
         },
     );
 
@@ -1614,6 +1617,7 @@ fn test_defer_missing_upstream_detection() {
             pre_hook: vec![],
             post_hook: vec![],
             wap: None,
+            sql_checksum: None,
         },
     );
 
@@ -1655,6 +1659,7 @@ fn test_defer_transitive_dependencies() {
             pre_hook: vec![],
             post_hook: vec![],
             wap: None,
+            sql_checksum: None,
         },
     );
 
@@ -1676,6 +1681,7 @@ fn test_defer_transitive_dependencies() {
             pre_hook: vec![],
             post_hook: vec![],
             wap: None,
+            sql_checksum: None,
         },
     );
 
@@ -1735,6 +1741,7 @@ fn test_defer_slim_ci_scenario() {
                 pre_hook: vec![],
                 post_hook: vec![],
                 wap: None,
+                sql_checksum: None,
             },
         );
     }

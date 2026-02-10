@@ -5,8 +5,8 @@ tables:
   - name: raw_orders
     columns:
       - name: id
-        data_type: INTEGER
+        type: INTEGER
       - name: amount
-        data_type: DECIMAL(10,2)
+        type: DECIMAL(10,2)
       - name: status
-        data_type: VARCHAR
+        type: VARCHAR
