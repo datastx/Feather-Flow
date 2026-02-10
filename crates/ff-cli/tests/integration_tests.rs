@@ -951,7 +951,12 @@ fn test_state_file_serialization() {
         None,
         None,
     );
-    let model_state = ModelState::new("my_model".to_string(), "SELECT 1", Some(100), config);
+    let model_state = ModelState::new(
+        ff_core::ModelName::new("my_model"),
+        "SELECT 1",
+        Some(100),
+        config,
+    );
 
     state.upsert_model(model_state);
 

@@ -1,4 +1,5 @@
 //! Shared test utilities for ff-analysis
+
 #![allow(dead_code)]
 
 use crate::context::AnalysisContext;
@@ -16,7 +17,7 @@ use std::path::PathBuf;
 // ─── Type constructors ──────────────────────────────────────────────────────
 
 /// Create a typed column for testing
-pub(crate) fn make_col(name: &str, ty: SqlType, null: Nullability) -> TypedColumn {
+pub fn make_col(name: &str, ty: SqlType, null: Nullability) -> TypedColumn {
     TypedColumn {
         name: name.to_string(),
         source_table: None,
@@ -27,12 +28,7 @@ pub(crate) fn make_col(name: &str, ty: SqlType, null: Nullability) -> TypedColum
 }
 
 /// Create a typed column with a source table tag
-pub(crate) fn make_col_with_table(
-    name: &str,
-    table: &str,
-    ty: SqlType,
-    null: Nullability,
-) -> TypedColumn {
+pub fn make_col_with_table(name: &str, table: &str, ty: SqlType, null: Nullability) -> TypedColumn {
     TypedColumn {
         name: name.to_string(),
         source_table: Some(table.to_string()),
@@ -43,74 +39,74 @@ pub(crate) fn make_col_with_table(
 }
 
 /// Shorthand for `SqlType::Integer { bits: IntBitWidth::I8 }`
-pub(crate) fn int8() -> SqlType {
+pub fn int8() -> SqlType {
     SqlType::Integer {
         bits: IntBitWidth::I8,
     }
 }
 
 /// Shorthand for `SqlType::Integer { bits: IntBitWidth::I16 }`
-pub(crate) fn int16() -> SqlType {
+pub fn int16() -> SqlType {
     SqlType::Integer {
         bits: IntBitWidth::I16,
     }
 }
 
 /// Shorthand for `SqlType::Integer { bits: IntBitWidth::I32 }`
-pub(crate) fn int32() -> SqlType {
+pub fn int32() -> SqlType {
     SqlType::Integer {
         bits: IntBitWidth::I32,
     }
 }
 
 /// Shorthand for `SqlType::Integer { bits: IntBitWidth::I64 }`
-pub(crate) fn int64() -> SqlType {
+pub fn int64() -> SqlType {
     SqlType::Integer {
         bits: IntBitWidth::I64,
     }
 }
 
 /// Shorthand for `SqlType::Float { bits: FloatBitWidth::F32 }`
-pub(crate) fn float32() -> SqlType {
+pub fn float32() -> SqlType {
     SqlType::Float {
         bits: FloatBitWidth::F32,
     }
 }
 
 /// Shorthand for `SqlType::Float { bits: FloatBitWidth::F64 }`
-pub(crate) fn float64() -> SqlType {
+pub fn float64() -> SqlType {
     SqlType::Float {
         bits: FloatBitWidth::F64,
     }
 }
 
 /// Shorthand for `SqlType::String { max_length: None }`
-pub(crate) fn varchar() -> SqlType {
+pub fn varchar() -> SqlType {
     SqlType::String { max_length: None }
 }
 
 /// Shorthand for `SqlType::Boolean`
-pub(crate) fn boolean() -> SqlType {
+pub fn boolean() -> SqlType {
     SqlType::Boolean
 }
 
 /// Shorthand for `SqlType::Date`
-pub(crate) fn date() -> SqlType {
+pub fn date() -> SqlType {
     SqlType::Date
 }
 
 /// Shorthand for `SqlType::Timestamp`
-pub(crate) fn timestamp() -> SqlType {
+pub fn timestamp() -> SqlType {
     SqlType::Timestamp
 }
 
 /// Shorthand for `SqlType::Uuid`
-pub(crate) fn uuid() -> SqlType {
+pub fn uuid() -> SqlType {
     SqlType::Uuid
 }
 
 /// Shorthand for `SqlType::Decimal { precision, scale }`
-pub(crate) fn decimal(precision: u16, scale: u16) -> SqlType {
+pub fn decimal(precision: u16, scale: u16) -> SqlType {
     SqlType::Decimal {
         precision: Some(precision),
         scale: Some(scale),
@@ -118,14 +114,14 @@ pub(crate) fn decimal(precision: u16, scale: u16) -> SqlType {
 }
 
 /// Shorthand for `SqlType::Unknown(reason)`
-pub(crate) fn unknown(reason: &str) -> SqlType {
+pub fn unknown(reason: &str) -> SqlType {
     SqlType::Unknown(reason.to_string())
 }
 
 // ─── Expression builders ────────────────────────────────────────────────────
 
 /// Create a column reference expression
-pub(crate) fn col_ref(table: Option<&str>, col: &str, ty: SqlType, null: Nullability) -> TypedExpr {
+pub fn col_ref(table: Option<&str>, col: &str, ty: SqlType, null: Nullability) -> TypedExpr {
     TypedExpr::ColumnRef {
         table: table.map(|s| s.to_string()),
         column: col.to_string(),
@@ -135,7 +131,7 @@ pub(crate) fn col_ref(table: Option<&str>, col: &str, ty: SqlType, null: Nullabi
 }
 
 /// Create an integer literal expression
-pub(crate) fn literal_int(v: i64) -> TypedExpr {
+pub fn literal_int(v: i64) -> TypedExpr {
     TypedExpr::Literal {
         value: LiteralValue::Integer(v),
         resolved_type: int64(),
@@ -143,7 +139,7 @@ pub(crate) fn literal_int(v: i64) -> TypedExpr {
 }
 
 /// Create a string literal expression
-pub(crate) fn literal_str(v: &str) -> TypedExpr {
+pub fn literal_str(v: &str) -> TypedExpr {
     TypedExpr::Literal {
         value: LiteralValue::String(v.to_string()),
         resolved_type: varchar(),
@@ -151,7 +147,7 @@ pub(crate) fn literal_str(v: &str) -> TypedExpr {
 }
 
 /// Create a CAST expression
-pub(crate) fn cast_expr(expr: TypedExpr, target: SqlType) -> TypedExpr {
+pub fn cast_expr(expr: TypedExpr, target: SqlType) -> TypedExpr {
     let nullability = expr.nullability();
     TypedExpr::Cast {
         expr: Box::new(expr),
@@ -161,7 +157,7 @@ pub(crate) fn cast_expr(expr: TypedExpr, target: SqlType) -> TypedExpr {
 }
 
 /// Create a binary operation expression
-pub(crate) fn bin_op(left: TypedExpr, op: BinOp, right: TypedExpr) -> TypedExpr {
+pub fn bin_op(left: TypedExpr, op: BinOp, right: TypedExpr) -> TypedExpr {
     let nullability = left.nullability().combine(right.nullability());
     let resolved_type = if op.is_comparison() || op.is_logical() {
         boolean()
@@ -178,7 +174,7 @@ pub(crate) fn bin_op(left: TypedExpr, op: BinOp, right: TypedExpr) -> TypedExpr 
 }
 
 /// Create a function call expression
-pub(crate) fn fn_call(
+pub fn fn_call(
     name: &str,
     args: Vec<TypedExpr>,
     ret_type: SqlType,
@@ -193,7 +189,7 @@ pub(crate) fn fn_call(
 }
 
 /// Create an IS NULL expression
-pub(crate) fn is_null(expr: TypedExpr) -> TypedExpr {
+pub fn is_null(expr: TypedExpr) -> TypedExpr {
     TypedExpr::IsNull {
         expr: Box::new(expr),
         negated: false,
@@ -201,7 +197,7 @@ pub(crate) fn is_null(expr: TypedExpr) -> TypedExpr {
 }
 
 /// Create an IS NOT NULL expression
-pub(crate) fn is_not_null(expr: TypedExpr) -> TypedExpr {
+pub fn is_not_null(expr: TypedExpr) -> TypedExpr {
     TypedExpr::IsNull {
         expr: Box::new(expr),
         negated: true,
@@ -211,7 +207,7 @@ pub(crate) fn is_not_null(expr: TypedExpr) -> TypedExpr {
 // ─── RelOp builders ─────────────────────────────────────────────────────────
 
 /// Create a Scan node
-pub(crate) fn make_scan(table: &str, cols: Vec<TypedColumn>) -> RelOp {
+pub fn make_scan(table: &str, cols: Vec<TypedColumn>) -> RelOp {
     RelOp::Scan {
         table_name: table.to_string(),
         alias: None,
@@ -220,7 +216,7 @@ pub(crate) fn make_scan(table: &str, cols: Vec<TypedColumn>) -> RelOp {
 }
 
 /// Create a Scan node with an alias
-pub(crate) fn make_scan_alias(table: &str, alias: &str, cols: Vec<TypedColumn>) -> RelOp {
+pub fn make_scan_alias(table: &str, alias: &str, cols: Vec<TypedColumn>) -> RelOp {
     RelOp::Scan {
         table_name: table.to_string(),
         alias: Some(alias.to_string()),
@@ -229,7 +225,7 @@ pub(crate) fn make_scan_alias(table: &str, alias: &str, cols: Vec<TypedColumn>) 
 }
 
 /// Create a Project node
-pub(crate) fn make_project(input: RelOp, columns: Vec<(String, TypedExpr)>) -> RelOp {
+pub fn make_project(input: RelOp, columns: Vec<(String, TypedExpr)>) -> RelOp {
     let schema = RelSchema::new(
         columns
             .iter()
@@ -250,7 +246,7 @@ pub(crate) fn make_project(input: RelOp, columns: Vec<(String, TypedExpr)>) -> R
 }
 
 /// Create a Filter node
-pub(crate) fn make_filter(input: RelOp, predicate: TypedExpr) -> RelOp {
+pub fn make_filter(input: RelOp, predicate: TypedExpr) -> RelOp {
     let schema = input.schema().clone();
     RelOp::Filter {
         input: Box::new(input),
@@ -260,7 +256,7 @@ pub(crate) fn make_filter(input: RelOp, predicate: TypedExpr) -> RelOp {
 }
 
 /// Create a Join node
-pub(crate) fn make_join(
+pub fn make_join(
     left: RelOp,
     right: RelOp,
     join_type: JoinType,
@@ -297,7 +293,7 @@ pub(crate) fn make_join(
 }
 
 /// Create an Aggregate node
-pub(crate) fn make_aggregate(
+pub fn make_aggregate(
     input: RelOp,
     group_by: Vec<TypedExpr>,
     aggregates: Vec<(String, TypedExpr)>,
@@ -332,7 +328,7 @@ pub(crate) fn make_aggregate(
 }
 
 /// Create a SetOp node
-pub(crate) fn make_set_op(left: RelOp, right: RelOp, op: SetOpKind) -> RelOp {
+pub fn make_set_op(left: RelOp, right: RelOp, op: SetOpKind) -> RelOp {
     let schema = left.schema().clone();
     RelOp::SetOp {
         left: Box::new(left),
@@ -345,7 +341,7 @@ pub(crate) fn make_set_op(left: RelOp, right: RelOp, op: SetOpKind) -> RelOp {
 // ─── Catalog builders ───────────────────────────────────────────────────────
 
 /// Standard e-commerce test catalog with raw_orders, customers, products, payments
-pub(crate) fn ecommerce_catalog() -> HashMap<String, RelSchema> {
+pub fn ecommerce_catalog() -> HashMap<String, RelSchema> {
     let mut catalog = HashMap::new();
     catalog.insert(
         "raw_orders".to_string(),
@@ -392,42 +388,42 @@ pub(crate) fn ecommerce_catalog() -> HashMap<String, RelSchema> {
 /// Create a minimal in-memory `AnalysisContext` for testing.
 ///
 /// Uses a synthetic `Project` to avoid filesystem dependencies.
-pub(crate) fn make_ctx() -> AnalysisContext {
+pub fn make_ctx() -> AnalysisContext {
     make_ctx_with_schemas(HashMap::new())
 }
 
 /// Create an `AnalysisContext` with YAML schemas
-pub(crate) fn make_ctx_with_schemas(yaml_schemas: HashMap<String, RelSchema>) -> AnalysisContext {
+pub fn make_ctx_with_schemas(yaml_schemas: HashMap<String, RelSchema>) -> AnalysisContext {
     let config: ff_core::config::Config = serde_yaml::from_str("name: test_project").unwrap();
-    let project = Project::new(
-        PathBuf::from("/tmp/test"),
+    let project = Project::new(ff_core::project::ProjectParts {
+        root: PathBuf::from("/tmp/test"),
         config,
-        HashMap::new(),
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-    );
+        models: HashMap::new(),
+        tests: vec![],
+        singular_tests: vec![],
+        sources: vec![],
+        exposures: vec![],
+        metrics: vec![],
+        functions: vec![],
+    });
     let dag = ModelDag::build(&HashMap::new()).unwrap();
     AnalysisContext::new(project, dag, yaml_schemas, ProjectLineage::new())
 }
 
 /// Create an `AnalysisContext` with a dependency map
-pub(crate) fn make_ctx_with_dag(dep_map: &HashMap<String, Vec<String>>) -> AnalysisContext {
+pub fn make_ctx_with_dag(dep_map: &HashMap<String, Vec<String>>) -> AnalysisContext {
     let config: ff_core::config::Config = serde_yaml::from_str("name: test_project").unwrap();
-    let project = Project::new(
-        PathBuf::from("/tmp/test"),
+    let project = Project::new(ff_core::project::ProjectParts {
+        root: PathBuf::from("/tmp/test"),
         config,
-        HashMap::new(),
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-    );
+        models: HashMap::new(),
+        tests: vec![],
+        singular_tests: vec![],
+        sources: vec![],
+        exposures: vec![],
+        metrics: vec![],
+        functions: vec![],
+    });
     let dag = ModelDag::build(dep_map).unwrap();
     AnalysisContext::new(project, dag, HashMap::new(), ProjectLineage::new())
 }
@@ -435,7 +431,7 @@ pub(crate) fn make_ctx_with_dag(dep_map: &HashMap<String, Vec<String>>) -> Analy
 // ─── Diagnostic assertions ──────────────────────────────────────────────────
 
 /// Assert that at least one diagnostic with the given code exists
-pub(crate) fn assert_has_diagnostic(diags: &[Diagnostic], code: DiagnosticCode) {
+pub fn assert_has_diagnostic(diags: &[Diagnostic], code: DiagnosticCode) {
     assert!(
         diags.iter().any(|d| d.code == code),
         "Expected diagnostic {:?} but found: {:?}",
@@ -445,7 +441,7 @@ pub(crate) fn assert_has_diagnostic(diags: &[Diagnostic], code: DiagnosticCode) 
 }
 
 /// Assert that no diagnostic with the given code exists
-pub(crate) fn assert_no_diagnostic(diags: &[Diagnostic], code: DiagnosticCode) {
+pub fn assert_no_diagnostic(diags: &[Diagnostic], code: DiagnosticCode) {
     assert!(
         !diags.iter().any(|d| d.code == code),
         "Did NOT expect diagnostic {:?} but found it in: {:?}",
@@ -459,11 +455,7 @@ pub(crate) fn assert_no_diagnostic(diags: &[Diagnostic], code: DiagnosticCode) {
 }
 
 /// Assert that a diagnostic with the given code references a specific column
-pub(crate) fn assert_diagnostic_on_column(
-    diags: &[Diagnostic],
-    code: DiagnosticCode,
-    column: &str,
-) {
+pub fn assert_diagnostic_on_column(diags: &[Diagnostic], code: DiagnosticCode, column: &str) {
     assert!(
         diags
             .iter()
@@ -480,6 +472,6 @@ pub(crate) fn assert_diagnostic_on_column(
 }
 
 /// Count diagnostics with a given code
-pub(crate) fn count_diagnostics(diags: &[Diagnostic], code: DiagnosticCode) -> usize {
+pub fn count_diagnostics(diags: &[Diagnostic], code: DiagnosticCode) -> usize {
     diags.iter().filter(|d| d.code == code).count()
 }

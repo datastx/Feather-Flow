@@ -124,9 +124,13 @@ pub enum CoreError {
         source: std::io::Error,
     },
 
-    /// JSON serialization/deserialization error
-    #[error("JSON error: {0}")]
+    /// E017: JSON serialization/deserialization error
+    #[error("[E017] JSON error: {0}")]
     Json(#[from] serde_json::Error),
+
+    /// T001: Singular test validation error
+    #[error("[T001] Test '{name}': {message}")]
+    TestValidationError { name: String, message: String },
 
     // Function error types (FN001-FN012)
     /// FN001: Function YAML without matching SQL file

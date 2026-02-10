@@ -284,9 +284,11 @@ pub(crate) fn build_user_function_stubs(project: &Project) -> Vec<ff_analysis::U
         match &f.returns {
             FunctionReturn::Scalar { data_type } => {
                 let sig = f.signature();
-                if let Some(stub) =
-                    ff_analysis::UserFunctionStub::new(sig.name, sig.arg_types, data_type.clone())
-                {
+                if let Some(stub) = ff_analysis::UserFunctionStub::new(
+                    sig.name.to_string(),
+                    sig.arg_types,
+                    data_type.clone(),
+                ) {
                     stubs.push(stub);
                 }
             }

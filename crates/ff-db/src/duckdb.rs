@@ -62,7 +62,33 @@ fn count_rows(conn: &Connection, sql: &str) -> DbResult<usize> {
     let count: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM ({})", sql), [], |row| {
         row.get(0)
     })?;
-    Ok(usize::try_from(count).unwrap_or(0))
+    usize::try_from(count).map_err(|_| {
+        DbError::ExecutionError(format!(
+            "COUNT(*) returned non-representable value: {}",
+            count
+        ))
+    })
+}
+
+/// Execute `body` within a BEGIN / COMMIT transaction, rolling back on error.
+fn with_transaction<F, T>(conn: &Connection, body: F) -> DbResult<T>
+where
+    F: FnOnce(&Connection) -> DbResult<T>,
+{
+    run_sql(conn, "BEGIN TRANSACTION")?;
+    let result = body(conn);
+    match &result {
+        Ok(_) => {
+            if let Err(commit_err) = run_sql(conn, "COMMIT") {
+                let _ = run_sql(conn, "ROLLBACK");
+                return Err(commit_err);
+            }
+        }
+        Err(_) => {
+            let _ = run_sql(conn, "ROLLBACK");
+        }
+    }
+    result
 }
 
 /// Get table column names and types on an already-locked connection.
@@ -261,48 +287,33 @@ impl DuckDbBackend {
         }
 
         let conn = self.lock_conn()?;
-        run_sql(&conn, "BEGIN TRANSACTION")?;
-
-        let result = (|| -> DbResult<()> {
+        with_transaction(&conn, |conn| {
             let temp_name = format!("{}_{}", temp_prefix, unique_id());
             let quoted_target = quote_qualified(target_table);
             let quoted_temp = quote_ident(&temp_name);
 
             let create_temp = format!("CREATE TEMP TABLE {} AS {}", quoted_temp, source_sql);
-            run_sql(&conn, &create_temp)?;
+            run_sql(conn, &create_temp)?;
 
-            let join_clause = build_join_condition(unique_keys, &quoted_target, &quoted_temp);
+            let join_clause = build_join_condition(unique_keys, &quoted_target, &quoted_temp)?;
 
             let delete_sql = format!(
                 "DELETE FROM {} WHERE EXISTS (SELECT 1 FROM {} WHERE {})",
                 quoted_target, quoted_temp, join_clause
             );
-            run_sql(&conn, &delete_sql)?;
+            run_sql(conn, &delete_sql)?;
 
             let insert_sql = format!(
                 "INSERT INTO {} SELECT * FROM {}",
                 quoted_target, quoted_temp
             );
-            run_sql(&conn, &insert_sql)?;
+            run_sql(conn, &insert_sql)?;
 
             let drop_temp = format!("DROP TABLE {}", quoted_temp);
-            run_sql(&conn, &drop_temp)?;
+            run_sql(conn, &drop_temp)?;
 
             Ok(())
-        })();
-
-        match &result {
-            Ok(_) => {
-                if let Err(commit_err) = run_sql(&conn, "COMMIT") {
-                    let _ = run_sql(&conn, "ROLLBACK");
-                    return Err(commit_err);
-                }
-            }
-            Err(_) => {
-                let _ = run_sql(&conn, "ROLLBACK");
-            }
-        }
-        result
+        })
     }
 
     /// Execute SQL synchronously
@@ -512,7 +523,7 @@ impl DatabaseCsv for DuckDbBackend {
         let sql = format!(
             "CREATE OR REPLACE TABLE {} AS SELECT * FROM read_csv_auto('{}')",
             quote_qualified(table),
-            path.replace('\'', "''")
+            escape_sql_string(path)
         );
         self.execute_sync(&sql)?;
         Ok(())
@@ -566,7 +577,7 @@ impl DatabaseCsv for DuckDbBackend {
             quote_qualified(table)
         };
 
-        let escaped_path = path.replace('\'', "''");
+        let escaped_path = escape_sql_string(path);
         let sql = if type_casts.is_empty() {
             format!(
                 "CREATE OR REPLACE TABLE {} AS SELECT * FROM read_csv_auto('{}'{})",
@@ -597,7 +608,7 @@ impl DatabaseCsv for DuckDbBackend {
         let conn = self.lock_conn()?;
         let sql = format!(
             "DESCRIBE SELECT * FROM read_csv_auto('{}')",
-            path.replace('\'', "''")
+            escape_sql_string(path)
         );
 
         let mut stmt = conn.prepare(&sql)?;
@@ -659,7 +670,7 @@ fn snapshot_insert_new_on(
     let quoted_snap = quote_qualified(snapshot_table);
     let quoted_src = quote_qualified(source_table);
 
-    let join_condition = build_join_condition(unique_keys, "s", "snap");
+    let join_condition = build_join_condition(unique_keys, "s", "snap")?;
 
     let source_schema = table_columns(conn, source_table)?;
     let source_cols: Vec<String> = source_schema.iter().map(|(n, _)| quote_ident(n)).collect();
@@ -728,7 +739,7 @@ fn snapshot_update_changed_on(
     let quoted_snap = quote_qualified(snapshot_table);
     let quoted_src = quote_qualified(source_table);
 
-    let join_condition = build_join_condition(unique_keys, "s", "snap");
+    let join_condition = build_join_condition(unique_keys, "s", "snap")?;
 
     let change_condition = if let Some(updated_at) = updated_at_column {
         format!("s.{} > snap.{}", quote_ident(updated_at), SCD_UPDATED_AT)
@@ -800,7 +811,7 @@ fn snapshot_update_changed_on(
     );
     run_sql(conn, &insert_sql)?;
 
-    let key_match_for_newer = build_join_condition(unique_keys, "old", "newer");
+    let key_match_for_newer = build_join_condition(unique_keys, "old", "newer")?;
 
     let update_sql = format!(
         "UPDATE {} AS old SET {} = CURRENT_TIMESTAMP \
@@ -835,7 +846,7 @@ fn snapshot_invalidate_deleted_on(
     let quoted_snap = quote_qualified(snapshot_table);
     let quoted_src = quote_qualified(source_table);
 
-    let join_condition = build_join_condition(unique_keys, "snap", "s");
+    let join_condition = build_join_condition(unique_keys, "snap", "s")?;
 
     let Some(raw_first_key) = unique_keys.first() else {
         return Err(DbError::ExecutionError(
@@ -857,7 +868,7 @@ fn snapshot_invalidate_deleted_on(
         return Ok(0);
     }
 
-    let key_match = build_join_condition(unique_keys, &quoted_snap, "s");
+    let key_match = build_join_condition(unique_keys, &quoted_snap, "s")?;
 
     let update_sql = format!(
         "UPDATE {} SET {} = CURRENT_TIMESTAMP \
@@ -874,7 +885,6 @@ fn snapshot_invalidate_deleted_on(
 }
 
 /// Initial snapshot load: create the snapshot table and copy all source rows.
-#[allow(clippy::too_many_arguments)]
 fn snapshot_initial_load(
     conn: &Connection,
     snapshot_table: &str,
@@ -891,10 +901,10 @@ fn snapshot_initial_load(
         .map(|(name, dtype)| format!("{} {}", quote_ident(name), dtype))
         .collect();
 
-    columns.push(format!("{} VARCHAR", SCD_ID));
-    columns.push(format!("{} TIMESTAMP", SCD_UPDATED_AT));
-    columns.push(format!("{} TIMESTAMP", SCD_VALID_FROM));
-    columns.push(format!("{} TIMESTAMP", SCD_VALID_TO));
+    columns.push(format!("{} VARCHAR", quote_ident(SCD_ID)));
+    columns.push(format!("{} TIMESTAMP", quote_ident(SCD_UPDATED_AT)));
+    columns.push(format!("{} TIMESTAMP", quote_ident(SCD_VALID_FROM)));
+    columns.push(format!("{} TIMESTAMP", quote_ident(SCD_VALID_TO)));
 
     let create_sql = format!("CREATE TABLE {} ({})", quoted_snap, columns.join(", "));
     run_sql(conn, &create_sql)?;
@@ -915,10 +925,10 @@ fn snapshot_initial_load(
          FROM {}",
         quoted_snap,
         source_cols.join(", "),
-        SCD_ID,
-        SCD_UPDATED_AT,
-        SCD_VALID_FROM,
-        SCD_VALID_TO,
+        quote_ident(SCD_ID),
+        quote_ident(SCD_UPDATED_AT),
+        quote_ident(SCD_VALID_FROM),
+        quote_ident(SCD_VALID_TO),
         source_cols.join(", "),
         scd_id_expr,
         updated_at_expr,
@@ -963,53 +973,38 @@ impl DatabaseSnapshot for DuckDbBackend {
 
         let snapshot_exists = relation_exists_on(&conn, snapshot_table)?;
 
-        run_sql(&conn, "BEGIN TRANSACTION")?;
-
-        let result = if !snapshot_exists {
-            snapshot_initial_load(
-                &conn,
-                snapshot_table,
-                source_table,
-                unique_keys,
-                updated_at_column,
-            )
-        } else {
-            let new_records =
-                snapshot_insert_new_on(&conn, snapshot_table, source_table, unique_keys)?;
-            let updated_records = snapshot_update_changed_on(
-                &conn,
-                snapshot_table,
-                source_table,
-                unique_keys,
-                updated_at_column,
-                check_cols,
-            )?;
-            let deleted_records = if invalidate_hard_deletes {
-                snapshot_invalidate_deleted_on(&conn, snapshot_table, source_table, unique_keys)?
+        with_transaction(&conn, |conn| {
+            if !snapshot_exists {
+                snapshot_initial_load(
+                    conn,
+                    snapshot_table,
+                    source_table,
+                    unique_keys,
+                    updated_at_column,
+                )
             } else {
-                0
-            };
-            Ok(SnapshotResult {
-                new_records,
-                updated_records,
-                deleted_records,
-            })
-        };
-
-        match &result {
-            Ok(_) => {
-                if let Err(commit_err) = run_sql(&conn, "COMMIT") {
-                    let _ = run_sql(&conn, "ROLLBACK");
-                    return Err(commit_err);
-                }
+                let new_records =
+                    snapshot_insert_new_on(conn, snapshot_table, source_table, unique_keys)?;
+                let updated_records = snapshot_update_changed_on(
+                    conn,
+                    snapshot_table,
+                    source_table,
+                    unique_keys,
+                    updated_at_column,
+                    check_cols,
+                )?;
+                let deleted_records = if invalidate_hard_deletes {
+                    snapshot_invalidate_deleted_on(conn, snapshot_table, source_table, unique_keys)?
+                } else {
+                    0
+                };
+                Ok(SnapshotResult {
+                    new_records,
+                    updated_records,
+                    deleted_records,
+                })
             }
-            Err(_) => {
-                // Best-effort rollback — ignore errors (connection may be broken)
-                let _ = run_sql(&conn, "ROLLBACK");
-            }
-        }
-
-        result
+        })
     }
 
     async fn snapshot_insert_new(
@@ -1088,14 +1083,20 @@ impl DatabaseFunction for DuckDbBackend {
 /// Build a SQL join condition from a list of key columns with table alias prefixes.
 ///
 /// Produces clauses like `left.key1 = right.key1 AND left.key2 = right.key2`.
-fn build_join_condition(keys: &[String], left_alias: &str, right_alias: &str) -> String {
-    keys.iter()
+fn build_join_condition(keys: &[String], left_alias: &str, right_alias: &str) -> DbResult<String> {
+    if keys.is_empty() {
+        return Err(DbError::ExecutionError(
+            "build_join_condition requires at least one key".to_string(),
+        ));
+    }
+    Ok(keys
+        .iter()
         .map(|k| {
             let qk = quote_ident(k);
             format!("{}.{} = {}.{}", left_alias, qk, right_alias, qk)
         })
         .collect::<Vec<_>>()
-        .join(" AND ")
+        .join(" AND "))
 }
 
 /// Generate a unique identifier for temp table names.

@@ -1,71 +1,15 @@
 //! Multi-model DAG scenario integration tests
 
 use ff_analysis::propagate_schemas;
-use ff_analysis::{
-    AnalysisContext, DiagnosticCode, FloatBitWidth, IntBitWidth, Nullability, PlanPassManager,
-    RelSchema, SchemaMismatch, SqlType, TypedColumn,
+use ff_analysis::test_utils::{
+    decimal, float64, int32, int64, make_col, make_ctx, timestamp, varchar,
 };
-use ff_core::dag::ModelDag;
-use ff_core::Project;
-use ff_sql::ProjectLineage;
+use ff_analysis::{
+    DiagnosticCode, Nullability, PlanPassManager, RelSchema, SchemaMismatch, SqlType,
+};
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 type SchemaCatalog = HashMap<String, RelSchema>;
-
-fn make_col(name: &str, ty: SqlType, null: Nullability) -> TypedColumn {
-    TypedColumn {
-        name: name.to_string(),
-        source_table: None,
-        sql_type: ty,
-        nullability: null,
-        provenance: vec![],
-    }
-}
-
-fn int32() -> SqlType {
-    SqlType::Integer {
-        bits: IntBitWidth::I32,
-    }
-}
-
-fn float64() -> SqlType {
-    SqlType::Float {
-        bits: FloatBitWidth::F64,
-    }
-}
-
-fn varchar() -> SqlType {
-    SqlType::String { max_length: None }
-}
-
-fn decimal(p: u16, s: u16) -> SqlType {
-    SqlType::Decimal {
-        precision: Some(p),
-        scale: Some(s),
-    }
-}
-
-fn timestamp() -> SqlType {
-    SqlType::Timestamp
-}
-
-fn make_ctx() -> AnalysisContext {
-    let config: ff_core::config::Config = serde_yaml::from_str("name: test_project").unwrap();
-    let project = Project::new(
-        PathBuf::from("/tmp/test"),
-        config,
-        HashMap::new(),
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-    );
-    let dag = ModelDag::build(&HashMap::new()).unwrap();
-    AnalysisContext::new(project, dag, HashMap::new(), ProjectLineage::new())
-}
 
 // ── Clean E-Commerce DAG ────────────────────────────────────────────────
 
@@ -121,6 +65,14 @@ fn test_clean_ecommerce_dag() {
 
     let fct = &result.model_plans["fct_orders"];
     assert_eq!(fct.inferred_schema.columns.len(), 4);
+    let mut col_names: Vec<&str> = fct
+        .inferred_schema
+        .columns
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    col_names.sort();
+    assert_eq!(col_names, ["amount", "customer_name", "id", "status"]);
     assert!(fct.mismatches.is_empty());
 }
 
@@ -446,9 +398,25 @@ fn test_mixed_diagnostics() {
     let result = propagate_schemas(&topo, &sql, &yaml, &initial, &[]);
     let model = &result.model_plans["model"];
 
+    // Expect exactly 2 mismatches: MissingFromSql("status") and NullabilityMismatch("name")
+    assert_eq!(
+        model.mismatches.len(),
+        2,
+        "Expected exactly 2 mismatches, got: {:?}",
+        model.mismatches
+    );
     assert!(
-        model.mismatches.len() >= 2,
-        "Should have multiple mismatches, got: {:?}",
+        model.mismatches.iter().any(
+            |m| matches!(m, SchemaMismatch::MissingFromSql { column, .. } if column == "status")
+        ),
+        "Expected MissingFromSql on 'status', got: {:?}",
+        model.mismatches
+    );
+    assert!(
+        model.mismatches.iter().any(
+            |m| matches!(m, SchemaMismatch::NullabilityMismatch { column, .. } if column == "name")
+        ),
+        "Expected NullabilityMismatch on 'name', got: {:?}",
         model.mismatches
     );
 }
@@ -463,13 +431,7 @@ fn test_all_duckdb_types_propagate() {
         RelSchema::new(vec![
             make_col("bool_col", SqlType::Boolean, Nullability::NotNull),
             make_col("int_col", int32(), Nullability::NotNull),
-            make_col(
-                "bigint_col",
-                SqlType::Integer {
-                    bits: IntBitWidth::I64,
-                },
-                Nullability::NotNull,
-            ),
+            make_col("bigint_col", int64(), Nullability::NotNull),
             make_col("float_col", float64(), Nullability::NotNull),
             make_col("decimal_col", decimal(10, 2), Nullability::Nullable),
             make_col("varchar_col", varchar(), Nullability::Nullable),
@@ -491,5 +453,21 @@ fn test_all_duckdb_types_propagate() {
         "All types should propagate: {:?}",
         result.failures
     );
-    assert_eq!(result.model_plans["model"].inferred_schema.columns.len(), 8);
+    let schema = &result.model_plans["model"].inferred_schema;
+    assert_eq!(schema.columns.len(), 8);
+    let mut col_names: Vec<&str> = schema.columns.iter().map(|c| c.name.as_str()).collect();
+    col_names.sort();
+    assert_eq!(
+        col_names,
+        [
+            "bigint_col",
+            "bool_col",
+            "date_col",
+            "decimal_col",
+            "float_col",
+            "int_col",
+            "ts_col",
+            "varchar_col"
+        ]
+    );
 }

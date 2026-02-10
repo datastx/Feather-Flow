@@ -7,7 +7,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::config::{IncrementalStrategy, Materialization, OnSchemaChange};
-use crate::error::CoreResult;
+use crate::error::{CoreError, CoreResult};
+use crate::model_name::ModelName;
 
 /// State file containing all model states
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -16,14 +17,14 @@ pub struct StateFile {
     pub updated_at: DateTime<Utc>,
 
     /// State for each model, keyed by model name
-    pub models: HashMap<String, ModelState>,
+    pub models: HashMap<ModelName, ModelState>,
 }
 
 /// State tracking for a single model
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelState {
     /// Model name
-    pub name: String,
+    pub name: ModelName,
 
     /// Last successful run timestamp
     pub last_run: DateTime<Utc>,
@@ -85,20 +86,39 @@ impl StateFile {
             return Ok(Self::new());
         }
 
-        let content = std::fs::read_to_string(path)?;
+        let content = std::fs::read_to_string(path).map_err(|e| CoreError::IoWithPath {
+            path: path.display().to_string(),
+            source: e,
+        })?;
         let state: StateFile = serde_json::from_str(&content)?;
         Ok(state)
     }
 
-    /// Save state to a file path
+    /// Save state to a file path atomically
+    ///
+    /// Uses write-to-temp-then-rename pattern to prevent corruption
     pub fn save(&self, path: &Path) -> CoreResult<()> {
         // Create parent directories if needed
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+            std::fs::create_dir_all(parent).map_err(|e| CoreError::IoWithPath {
+                path: parent.display().to_string(),
+                source: e,
+            })?;
         }
 
+        let temp_path = path.with_extension("json.tmp");
         let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, json)?;
+        std::fs::write(&temp_path, &json).map_err(|e| CoreError::IoWithPath {
+            path: temp_path.display().to_string(),
+            source: e,
+        })?;
+        std::fs::rename(&temp_path, path).map_err(|e| {
+            let _ = std::fs::remove_file(&temp_path);
+            CoreError::IoWithPath {
+                path: path.display().to_string(),
+                source: e,
+            }
+        })?;
         Ok(())
     }
 
@@ -180,7 +200,7 @@ impl StateFile {
 impl ModelState {
     /// Create a new model state from current run
     pub fn new(
-        name: String,
+        name: ModelName,
         compiled_sql: &str,
         row_count: Option<usize>,
         config: ModelStateConfig,
@@ -198,7 +218,7 @@ impl ModelState {
 
     /// Create a new model state with full checksums for smart builds
     pub fn new_with_checksums(
-        name: String,
+        name: ModelName,
         compiled_sql: &str,
         row_count: Option<usize>,
         config: ModelStateConfig,
@@ -276,7 +296,7 @@ mod tests {
         );
 
         let state = ModelState::new(
-            "my_model".to_string(),
+            ModelName::new("my_model"),
             "SELECT * FROM users",
             Some(100),
             config,
@@ -292,8 +312,12 @@ mod tests {
         let mut state_file = StateFile::new();
 
         let config = ModelStateConfig::new(Materialization::Table, None, None, None, None);
-        let model_state =
-            ModelState::new("my_model".to_string(), "SELECT * FROM users", None, config);
+        let model_state = ModelState::new(
+            ModelName::new("my_model"),
+            "SELECT * FROM users",
+            None,
+            config,
+        );
 
         state_file.upsert_model(model_state);
 
@@ -326,7 +350,7 @@ mod tests {
         inputs.insert("upstream".to_string(), compute_checksum("SELECT 1"));
 
         let model_state = ModelState::new_with_checksums(
-            "my_model".to_string(),
+            ModelName::new("my_model"),
             sql,
             None,
             config,
@@ -348,7 +372,7 @@ mod tests {
         let mut state_file = StateFile::new();
         let config = ModelStateConfig::new(Materialization::Table, None, None, None, None);
         let model_state = ModelState::new_with_checksums(
-            "my_model".to_string(),
+            ModelName::new("my_model"),
             "SELECT * FROM users",
             None,
             config,
@@ -371,7 +395,7 @@ mod tests {
         let config = ModelStateConfig::new(Materialization::Table, None, None, None, None);
         let sql = "SELECT * FROM users";
         let model_state = ModelState::new_with_checksums(
-            "my_model".to_string(),
+            ModelName::new("my_model"),
             sql,
             None,
             config,
@@ -397,7 +421,7 @@ mod tests {
         old_inputs.insert("upstream".to_string(), compute_checksum("SELECT 1"));
 
         let model_state = ModelState::new_with_checksums(
-            "my_model".to_string(),
+            ModelName::new("my_model"),
             sql,
             None,
             config,

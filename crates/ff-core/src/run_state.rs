@@ -92,7 +92,7 @@ impl RunState {
         config_hash: String,
     ) -> Self {
         Self {
-            run_id: Uuid::new_v4().to_string()[..8].to_string(),
+            run_id: Uuid::new_v4().to_string(),
             started_at: Utc::now(),
             last_updated_at: Utc::now(),
             status: RunStatus::Running,
@@ -110,7 +110,11 @@ impl RunState {
             return Ok(None);
         }
 
-        let content = fs::read_to_string(path)?;
+        let content =
+            fs::read_to_string(path).map_err(|e| crate::error::CoreError::IoWithPath {
+                path: path.display().to_string(),
+                source: e,
+            })?;
         let state: RunState = serde_json::from_str(&content)?;
         Ok(Some(state))
     }
@@ -121,16 +125,28 @@ impl RunState {
     pub fn save(&self, path: &Path) -> CoreResult<()> {
         // Create parent directories if needed
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
+            fs::create_dir_all(parent).map_err(|e| crate::error::CoreError::IoWithPath {
+                path: parent.display().to_string(),
+                source: e,
+            })?;
         }
 
         // Write to a temporary file first
         let temp_path = path.with_extension("json.tmp");
         let json = serde_json::to_string_pretty(self)?;
-        fs::write(&temp_path, json)?;
+        fs::write(&temp_path, &json).map_err(|e| crate::error::CoreError::IoWithPath {
+            path: temp_path.display().to_string(),
+            source: e,
+        })?;
 
         // Atomically rename to the target path
-        fs::rename(&temp_path, path)?;
+        fs::rename(&temp_path, path).map_err(|e| {
+            let _ = fs::remove_file(&temp_path);
+            crate::error::CoreError::IoWithPath {
+                path: path.display().to_string(),
+                source: e,
+            }
+        })?;
 
         Ok(())
     }

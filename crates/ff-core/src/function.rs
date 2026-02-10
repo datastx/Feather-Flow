@@ -171,7 +171,7 @@ pub const TABLE_RETURN_TYPE: &str = "RECORD";
 #[derive(Debug, Clone)]
 pub struct FunctionSignature {
     /// Function name
-    pub name: String,
+    pub name: FunctionName,
 
     /// Argument SQL type strings
     pub arg_types: Vec<String>,
@@ -295,7 +295,7 @@ impl FunctionDef {
         };
 
         FunctionSignature {
-            name: self.name.to_string(),
+            name: self.name.clone(),
             arg_types,
             return_type,
             is_table: self.function_type == FunctionType::Table,
@@ -303,15 +303,20 @@ impl FunctionDef {
         }
     }
 
+    /// Build the optionally schema-qualified function name.
+    fn qualified_name(&self) -> String {
+        if let Some(ref schema) = self.config.schema {
+            format!("{}.{}", schema, self.name)
+        } else {
+            self.name.to_string()
+        }
+    }
+
     /// Generate `CREATE OR REPLACE MACRO` SQL from the function definition.
     ///
     /// The `rendered_body` parameter is the SQL body after Jinja rendering.
     pub fn to_create_sql(&self, rendered_body: &str) -> String {
-        let name = if let Some(ref schema) = self.config.schema {
-            format!("{}.{}", schema, self.name)
-        } else {
-            self.name.to_string()
-        };
+        let name = self.qualified_name();
 
         let args_sql = self
             .args
@@ -348,11 +353,7 @@ impl FunctionDef {
 
     /// Generate `DROP MACRO` SQL for this function.
     pub fn to_drop_sql(&self) -> String {
-        let name = if let Some(ref schema) = self.config.schema {
-            format!("{}.{}", schema, self.name)
-        } else {
-            self.name.to_string()
-        };
+        let name = self.qualified_name();
 
         match self.function_type {
             FunctionType::Scalar => format!("DROP MACRO IF EXISTS {}", name),
@@ -422,7 +423,7 @@ fn discover_functions_recursive(dir: &Path, functions: &mut Vec<FunctionDef>) ->
             let content = match std::fs::read_to_string(&path) {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("[warn] Cannot read {}: {}", path.display(), e);
+                    log::warn!("Cannot read {}: {}", path.display(), e);
                     continue;
                 }
             };

@@ -408,7 +408,7 @@ impl SingularTest {
         let name = path
             .file_stem()
             .and_then(|s| s.to_str())
-            .ok_or_else(|| CoreError::ModelParseError {
+            .ok_or_else(|| CoreError::TestValidationError {
                 name: path.display().to_string(),
                 message: "Invalid file name".to_string(),
             })?
@@ -420,7 +420,7 @@ impl SingularTest {
         })?;
 
         if sql.trim().is_empty() {
-            return Err(CoreError::ModelParseError {
+            return Err(CoreError::TestValidationError {
                 name: name.clone(),
                 message: "Test file is empty".to_string(),
             });
@@ -649,6 +649,13 @@ impl Model {
             source: e,
         })?;
 
+        if raw_sql.trim().is_empty() {
+            return Err(CoreError::ModelParseError {
+                name,
+                message: "SQL file is empty".into(),
+            });
+        }
+
         // Look for matching 1:1 schema file (required)
         let yml_path = path.with_extension("yml");
         let yaml_path = path.with_extension("yaml");
@@ -800,10 +807,7 @@ impl Model {
 
     /// Compute a SHA-256 checksum of the raw SQL content.
     pub fn sql_checksum(&self) -> String {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(self.raw_sql.as_bytes());
-        format!("{:x}", hasher.finalize())
+        crate::state::compute_checksum(&self.raw_sql)
     }
 
     /// Get the owner for this model from schema metadata
