@@ -33,7 +33,11 @@ pub async fn execute(args: &RunOperationArgs, global: &GlobalArgs) -> Result<()>
             .iter()
             .map(|(k, v)| {
                 let value_str = match v {
-                    serde_json::Value::String(s) => format!("'{}'", s),
+                    serde_json::Value::String(s) => {
+                        // Escape backslashes and single quotes to prevent Jinja injection
+                        let escaped = s.replace('\\', "\\\\").replace('\'', "\\'");
+                        format!("'{}'", escaped)
+                    }
                     serde_json::Value::Number(n) => n.to_string(),
                     serde_json::Value::Bool(b) => b.to_string(),
                     _ => v.to_string(),

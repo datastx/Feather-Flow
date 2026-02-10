@@ -244,7 +244,15 @@ fn print_table(diagnostics: &[ff_analysis::Diagnostic]) {
 
     for d in diagnostics {
         let msg = if d.message.len() > msg_w {
-            format!("{}...", &d.message[..msg_w - 3])
+            // Find a char-safe boundary to avoid panicking on multi-byte UTF-8
+            let truncate_at = d
+                .message
+                .char_indices()
+                .take_while(|&(i, _)| i <= msg_w - 3)
+                .last()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            format!("{}...", &d.message[..truncate_at])
         } else {
             d.message.clone()
         };

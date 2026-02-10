@@ -112,7 +112,96 @@ fn extract_cell_as_string(row: &duckdb::Row<'_>, idx: usize) -> String {
     "NULL".to_string()
 }
 
+/// Allowlist of known SQL base type tokens for interpolation safety.
+///
+/// These are the base keywords that may appear before parenthesized parameters
+/// (e.g. `VARCHAR(255)`, `DECIMAL(10,2)`). Anything not in this list is rejected
+/// by [`validate_sql_type`].
+const ALLOWED_SQL_TYPES: &[&str] = &[
+    "BIGINT",
+    "BIT",
+    "BLOB",
+    "BOOLEAN",
+    "BOOL",
+    "CHAR",
+    "DATE",
+    "DATETIME",
+    "DECIMAL",
+    "DOUBLE",
+    "FLOAT",
+    "HUGEINT",
+    "INT",
+    "INT1",
+    "INT2",
+    "INT4",
+    "INT8",
+    "INTEGER",
+    "INTERVAL",
+    "JSON",
+    "LONG",
+    "NUMERIC",
+    "REAL",
+    "SHORT",
+    "SIGNED",
+    "SMALLINT",
+    "TEXT",
+    "TIME",
+    "TIMESTAMP",
+    "TIMESTAMPTZ",
+    "TIMESTAMP_S",
+    "TIMESTAMP_MS",
+    "TIMESTAMP_NS",
+    "TINYINT",
+    "UBIGINT",
+    "UINTEGER",
+    "USMALLINT",
+    "UTINYINT",
+    "UUID",
+    "VARCHAR",
+    "STRUCT",
+    "MAP",
+    "LIST",
+    "UNION",
+    "ENUM",
+];
+
+/// Validate that a SQL type string is safe for direct interpolation.
+///
+/// Rejects strings containing semicolons, comments (`--`, `/*`), or whose base
+/// type token is not in the allowlist.
+fn validate_sql_type(type_str: &str) -> DbResult<()> {
+    let s = type_str.trim();
+    if s.is_empty() {
+        return Err(DbError::ExecutionError("empty SQL type string".to_string()));
+    }
+    // Reject obvious injection markers
+    if s.contains(';') || s.contains("--") || s.contains("/*") {
+        return Err(DbError::ExecutionError(format!(
+            "invalid SQL type '{}': contains disallowed characters",
+            s
+        )));
+    }
+    // Extract the base type token (before any parenthesis)
+    let base = s
+        .split(|c: char| c == '(' || c.is_ascii_whitespace())
+        .next()
+        .unwrap_or("")
+        .to_uppercase();
+    if !ALLOWED_SQL_TYPES.contains(&base.as_str()) {
+        return Err(DbError::ExecutionError(format!(
+            "invalid SQL type '{}': base type '{}' is not in the allowlist",
+            s, base
+        )));
+    }
+    Ok(())
+}
+
 /// DuckDB database backend
+///
+/// Uses `std::sync::Mutex` (not `tokio::sync::Mutex`) because the DuckDB
+/// connection is synchronous and the guard is never held across `.await`
+/// points. All database operations acquire the lock, execute synchronously,
+/// and release before any await.
 pub struct DuckDbBackend {
     conn: Mutex<Connection>,
 }
@@ -381,6 +470,7 @@ impl DatabaseSchema for DuckDbBackend {
     async fn add_columns(&self, table: &str, columns: &[(String, String)]) -> DbResult<()> {
         let quoted_table = quote_qualified(table);
         for (name, col_type) in columns {
+            validate_sql_type(col_type)?;
             let sql = format!(
                 "ALTER TABLE {} ADD COLUMN {} {}",
                 quoted_table,
@@ -430,14 +520,15 @@ impl DatabaseCsv for DuckDbBackend {
             .column_types()
             .iter()
             .map(|(col, typ)| {
-                format!(
+                validate_sql_type(typ)?;
+                Ok(format!(
                     "CAST({} AS {}) AS {}",
                     quote_ident(col),
                     typ,
                     quote_ident(col)
-                )
+                ))
             })
-            .collect();
+            .collect::<DbResult<Vec<String>>>()?;
 
         let csv_opts_str = if csv_options.is_empty() {
             String::new()

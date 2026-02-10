@@ -1,6 +1,0 @@
-id,name,email,created_at,tier
-101,Alice Johnson,alice@example.com,2023-06-15,gold
-102,Bob Smith,bob@example.com,2023-08-20,silver
-103,Carol Williams,carol@example.com,2023-09-10,gold
-104,David Brown,david@example.com,2023-11-05,bronze
-105,Eve Davis,eve@example.com,2024-01-02,silver

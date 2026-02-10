@@ -290,9 +290,11 @@ async fn find_differences(
     let mut removed_count = 0;
     let mut changed_count = 0;
 
-    // Build key-based maps to distinguish "new" from "changed"
+    // Build key-based maps to distinguish "new" from "changed".
+    // Limit the split to the number of key columns + 1 to avoid breaking
+    // on commas that appear inside data values beyond the key columns.
     let extract_key = |row_str: &str| -> String {
-        let values: Vec<&str> = row_str.split(", ").collect();
+        let values: Vec<&str> = row_str.splitn(key_columns.len() + 1, ", ").collect();
         key_columns
             .iter()
             .enumerate()

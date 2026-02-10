@@ -342,9 +342,16 @@ impl Config {
         self.vars.get(name)
     }
 
-    /// Check if a table is an external table
+    /// Check if a table is an external table (O(n) linear scan).
+    ///
+    /// For batch lookups consider [`external_tables_as_set`](Self::external_tables_as_set).
     pub fn is_external_table(&self, table: &str) -> bool {
         self.external_tables.iter().any(|t| t == table)
+    }
+
+    /// Return the external tables as a `HashSet` for O(1) lookups in batch scenarios.
+    pub fn external_tables_as_set(&self) -> std::collections::HashSet<&str> {
+        self.external_tables.iter().map(|s| s.as_str()).collect()
     }
 
     /// Resolve relative path strings to absolute paths against a root directory

@@ -1,6 +1,6 @@
 //! Query-level lowering: Query → Sort → Limit → body
 
-use crate::error::AnalysisResult;
+use crate::error::{AnalysisError, AnalysisResult};
 use crate::ir::relop::{RelOp, SetOpKind, SortKey};
 use crate::ir::schema::RelSchema;
 use crate::lowering::expr::lower_expr;
@@ -84,12 +84,11 @@ fn lower_set_expr(set_expr: &SetExpr, catalog: &SchemaCatalog) -> AnalysisResult
             })
         }
         SetExpr::Query(q) => lower_query(q, catalog),
-        _ => {
+        other => {
             // VALUES, TABLE, etc.
-            Ok(RelOp::Scan {
-                table_name: "<unsupported>".to_string(),
-                alias: None,
-                schema: RelSchema::empty(),
+            Err(AnalysisError::UnsupportedConstruct {
+                model: String::new(),
+                construct: format!("unsupported SetExpr: {:?}", std::mem::discriminant(other)),
             })
         }
     }

@@ -392,16 +392,28 @@ fn print_tree(models: &[&ModelInfo]) -> Result<()> {
     println!();
 
     for root in roots {
-        print_tree_node(root.name.as_str(), models, "", true);
+        let mut visited = HashSet::new();
+        print_tree_node(root.name.as_str(), models, "", true, &mut visited);
     }
 
     Ok(())
 }
 
-/// Recursively print a tree node
-fn print_tree_node(name: &str, models: &[&ModelInfo], prefix: &str, is_last: bool) {
+/// Recursively print a tree node with cycle detection
+fn print_tree_node(
+    name: &str,
+    models: &[&ModelInfo],
+    prefix: &str,
+    is_last: bool,
+    visited: &mut HashSet<String>,
+) {
     let connector = if is_last { "└── " } else { "├── " };
     println!("{}{}{}", prefix, connector, name);
+
+    // Guard against cycles: if we've already visited this node, stop recursing
+    if !visited.insert(name.to_string()) {
+        return;
+    }
 
     // Find dependents (models that depend on this one)
     let dependents: Vec<_> = models
@@ -413,7 +425,7 @@ fn print_tree_node(name: &str, models: &[&ModelInfo], prefix: &str, is_last: boo
 
     for (i, dependent) in dependents.iter().enumerate() {
         let is_last_child = i == dependents.len() - 1;
-        print_tree_node(&dependent.name, models, &new_prefix, is_last_child);
+        print_tree_node(&dependent.name, models, &new_prefix, is_last_child, visited);
     }
 }
 

@@ -1,9 +1,0 @@
-version: 1
-description: "Circular dependency test model B"
-columns:
-  - name: id
-    type: INTEGER
-  - name: name
-    type: VARCHAR
-  - name: total_value
-    type: DECIMAL(10,2)

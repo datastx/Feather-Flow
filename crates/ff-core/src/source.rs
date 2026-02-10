@@ -181,6 +181,19 @@ pub fn discover_sources(source_paths: &[PathBuf]) -> CoreResult<Vec<SourceFile>>
         discover_sources_recursive(source_path, &mut sources)?;
     }
 
+    // Detect duplicate source names across files
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (idx, source) in sources.iter().enumerate() {
+        if let Some(&prev_idx) = seen.get(&source.name) {
+            return Err(CoreError::SourceDuplicateName {
+                name: source.name.clone(),
+                path1: format!("source #{}", prev_idx + 1),
+                path2: format!("source #{}", idx + 1),
+            });
+        }
+        seen.insert(source.name.clone(), idx);
+    }
+
     Ok(sources)
 }
 

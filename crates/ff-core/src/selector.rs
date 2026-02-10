@@ -409,9 +409,11 @@ impl Selector {
             return true;
         }
 
-        // Compare materialization
-        if current.config.materialized != Some(reference.materialized) {
-            return true;
+        // Compare materialization (treat None as "unchanged" — only detect actual differences)
+        if let Some(ref current_mat) = current.config.materialized {
+            if current_mat != &reference.materialized {
+                return true;
+            }
         }
 
         // Compare schema

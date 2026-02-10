@@ -71,12 +71,14 @@ impl Borrow<str> for ModelName {
 
 impl From<String> for ModelName {
     fn from(s: String) -> Self {
+        debug_assert!(!s.is_empty(), "ModelName must not be empty");
         Self(s)
     }
 }
 
 impl From<&str> for ModelName {
     fn from(s: &str) -> Self {
+        debug_assert!(!s.is_empty(), "ModelName must not be empty");
         Self(s.to_string())
     }
 }

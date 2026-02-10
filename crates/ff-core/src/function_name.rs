@@ -71,12 +71,14 @@ impl Borrow<str> for FunctionName {
 
 impl From<String> for FunctionName {
     fn from(s: String) -> Self {
+        debug_assert!(!s.is_empty(), "FunctionName must not be empty");
         Self(s)
     }
 }
 
 impl From<&str> for FunctionName {
     fn from(s: &str) -> Self {
+        debug_assert!(!s.is_empty(), "FunctionName must not be empty");
         Self(s.to_string())
     }
 }

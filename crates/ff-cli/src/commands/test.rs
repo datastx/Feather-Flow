@@ -378,7 +378,6 @@ async fn run_tests_sequential(
             &result,
             schema_test,
             &generated,
-            ctx.db.as_ref(),
             ctx.failures_dir,
             counters,
             ctx.json_mode,
@@ -405,7 +404,6 @@ async fn run_tests_sequential(
         process_singular_test_result(
             &result,
             singular_test,
-            ctx.db.as_ref(),
             ctx.failures_dir,
             counters,
             ctx.json_mode,
@@ -487,7 +485,6 @@ async fn run_tests_parallel(
                     &result,
                     &schema_test,
                     &generated,
-                    db.as_ref(),
                     &failures_dir,
                     &task_counters,
                     json_mode,
@@ -548,7 +545,6 @@ async fn run_tests_parallel(
                 process_singular_test_result(
                     &result,
                     &singular_test,
-                    db.as_ref(),
                     &failures_dir,
                     &task_counters,
                     json_mode,
@@ -575,7 +571,6 @@ async fn process_schema_test_result(
     result: &ff_test::runner::TestResult,
     schema_test: &SchemaTest,
     generated: &GeneratedTest,
-    db: &dyn Database,
     failures_dir: &Option<Arc<std::path::PathBuf>>,
     counters: &TestCounters,
     json_mode: bool,
@@ -657,7 +652,7 @@ async fn process_schema_test_result(
 
         // Store failures if requested
         if let Some(ref dir) = failures_dir {
-            store_test_failures(db, &result.name, &generated.sql, dir).await;
+            store_test_failures(&result.name, &generated.sql, dir).await;
         }
     }
 }
@@ -666,7 +661,6 @@ async fn process_schema_test_result(
 async fn process_singular_test_result(
     result: &SingularTestResult,
     singular_test: &SingularTest,
-    db: &dyn Database,
     failures_dir: &Option<Arc<std::path::PathBuf>>,
     counters: &TestCounters,
     json_mode: bool,
@@ -734,7 +728,7 @@ async fn process_singular_test_result(
 
         // Store failures if requested
         if let Some(ref dir) = failures_dir {
-            store_test_failures(db, &result.name, &singular_test.sql, dir).await;
+            store_test_failures(&result.name, &singular_test.sql, dir).await;
         }
     }
 }
@@ -801,12 +795,7 @@ async fn run_singular_test(db: &dyn Database, test: &SingularTest) -> SingularTe
 }
 
 /// Store failing rows to a table in target/test_failures/
-async fn store_test_failures(
-    _db: &dyn Database,
-    test_name: &str,
-    sql: &str,
-    failures_dir: &std::path::Path,
-) {
+async fn store_test_failures(test_name: &str, sql: &str, failures_dir: &std::path::Path) {
     // Create a table name from the test name (sanitize it)
     let table_name = test_name
         .replace(|c: char| !c.is_alphanumeric() && c != '_', "_")

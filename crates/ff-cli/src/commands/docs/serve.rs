@@ -327,7 +327,7 @@ async fn get_model(
         None => (
             StatusCode::NOT_FOUND,
             [(header::CONTENT_TYPE, "application/json")],
-            format!("{{\"error\": \"Model '{}' not found\"}}", name),
+            serde_json::json!({"error": format!("Model '{}' not found", name)}).to_string(),
         ),
     }
 }

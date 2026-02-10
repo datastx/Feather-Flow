@@ -50,8 +50,8 @@ async fn run_single_model(
     wap_schema: Option<&str>,
 ) -> ModelRunResult {
     let qualified_name = match &compiled.schema {
-        Some(s) => format!("{}.{}", s, name),
-        None => name.to_string(),
+        Some(s) => quote_qualified(&format!("{}.{}", s, name)),
+        None => quote_qualified(name),
     };
 
     let model_start = Instant::now();

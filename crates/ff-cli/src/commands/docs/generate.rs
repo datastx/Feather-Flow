@@ -847,7 +847,8 @@ fn generate_html(doc: &ModelDoc) -> String {
         for dep in &doc.depends_on {
             html.push_str(&format!(
                 "<li><code><a href=\"{}.html\">{}</a></code></li>\n",
-                dep, dep
+                url_encode_path(dep),
+                html_escape(dep)
             ));
         }
         for dep in &doc.external_deps {
@@ -895,7 +896,10 @@ fn generate_html(doc: &ModelDoc) -> String {
             for (col_name, ref_info) in refs {
                 html.push_str(&format!(
                     "<li><code>{}</code> references <code><a href=\"{}.html\">{}</a>.{}</code></li>\n",
-                    col_name, ref_info.model, ref_info.model, ref_info.column
+                    html_escape(col_name),
+                    url_encode_path(&ref_info.model),
+                    html_escape(&ref_info.model),
+                    html_escape(&ref_info.column)
                 ));
             }
             html.push_str("</ul>\n");
@@ -1091,7 +1095,8 @@ fn generate_exposure_html(doc: &ExposureDoc) -> String {
         for model in &doc.depends_on {
             html.push_str(&format!(
                 "<li><a href=\"{}.html\">{}</a></li>\n",
-                model, model
+                url_encode_path(model),
+                html_escape(model)
             ));
         }
         html.push_str("</ul>\n");
@@ -1134,7 +1139,8 @@ fn generate_metric_html(doc: &MetricDoc) -> String {
     html.push_str("<div class=\"metadata\">\n");
     html.push_str(&format!(
         "<p><strong>Base Model:</strong> <a href=\"{}.html\">{}</a></p>\n",
-        doc.model, doc.model
+        url_encode_path(&doc.model),
+        html_escape(&doc.model)
     ));
     html.push_str(&format!(
         "<p><strong>Calculation:</strong> <code>{}({})</code></p>\n",
@@ -1273,8 +1279,8 @@ fn generate_index_html(
         };
         html.push_str(&format!(
             "<tr><td><a href=\"{}.html\">{}</a></td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
-            model.name,
-            model.name,
+            url_encode_path(&model.name),
+            html_escape(&model.name),
             html_escape(desc),
             owner,
             has_schema
@@ -1290,8 +1296,8 @@ fn generate_index_html(
             let desc = source.description.as_deref().unwrap_or("-");
             html.push_str(&format!(
                 "<tr><td><a href=\"source_{}.html\">{}</a></td><td>{}</td><td>{}</td></tr>\n",
-                source.name,
-                source.name,
+                url_encode_path(&source.name),
+                html_escape(&source.name),
                 html_escape(desc),
                 source.table_count
             ));
@@ -1311,9 +1317,9 @@ fn generate_index_html(
                 .unwrap_or_else(|| "-".to_string());
             html.push_str(&format!(
                 "<tr><td><a href=\"exposure_{}.html\">{}</a></td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
-                exposure.name,
-                exposure.name,
-                exposure.exposure_type,
+                url_encode_path(&exposure.name),
+                html_escape(&exposure.name),
+                html_escape(&exposure.exposure_type),
                 html_escape(&exposure.owner),
                 url
             ));
@@ -1333,11 +1339,11 @@ fn generate_index_html(
                 .unwrap_or_else(|| "-".to_string());
             html.push_str(&format!(
                 "<tr><td><a href=\"metric_{}.html\">{}</a></td><td><a href=\"{}.html\">{}</a></td><td>{}</td><td>{}</td></tr>\n",
-                metric.name,
-                metric.name,
-                metric.model,
-                metric.model,
-                metric.calculation,
+                url_encode_path(&metric.name),
+                html_escape(&metric.name),
+                url_encode_path(&metric.model),
+                html_escape(&metric.model),
+                html_escape(&metric.calculation),
                 owner
             ));
         }
@@ -1354,6 +1360,24 @@ pub(super) fn html_escape(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+/// Percent-encode a value for safe use in a URL path segment (href attribute).
+///
+/// Encodes everything except unreserved characters (`A-Z`, `a-z`, `0-9`, `-`, `_`, `.`, `~`).
+fn url_encode_path(s: &str) -> String {
+    let mut encoded = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(b as char);
+            }
+            _ => {
+                encoded.push_str(&format!("%{:02X}", b));
+            }
+        }
+    }
+    encoded
 }
 
 /// Generate a DOT file for the model lineage graph
