@@ -93,6 +93,10 @@ pub fn categorize_dependencies_with_unknown(
     let known_models_map: HashMap<String, &String> =
         known_models.iter().map(|s| (s.to_lowercase(), s)).collect();
 
+    // Pre-compute lowercased external table set for case-insensitive matching
+    let external_lower: HashSet<String> =
+        external_tables.iter().map(|t| t.to_lowercase()).collect();
+
     for dep in deps {
         // Normalize the dependency name for comparison
         let dep_normalized = normalize_table_name(&dep);
@@ -101,7 +105,9 @@ pub fn categorize_dependencies_with_unknown(
         // Check for case-insensitive model match
         if let Some(original_name) = known_models_map.get(&dep_lower) {
             model_deps.push((*original_name).clone());
-        } else if external_tables.contains(&dep) || external_tables.contains(&dep_normalized) {
+        } else if external_lower.contains(&dep.to_lowercase())
+            || external_lower.contains(&dep_lower)
+        {
             external_deps.push(dep);
         } else {
             // Unknown tables — not in models or declared external_tables.

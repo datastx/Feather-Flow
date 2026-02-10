@@ -399,18 +399,17 @@ pub(crate) fn make_ctx() -> AnalysisContext {
 /// Create an `AnalysisContext` with YAML schemas
 pub(crate) fn make_ctx_with_schemas(yaml_schemas: HashMap<String, RelSchema>) -> AnalysisContext {
     let config: ff_core::config::Config = serde_yaml::from_str("name: test_project").unwrap();
-    let project = Project {
-        root: PathBuf::from("/tmp/test"),
+    let project = Project::new(
+        PathBuf::from("/tmp/test"),
         config,
-        models: HashMap::new(),
-        tests: vec![],
-        singular_tests: vec![],
-        sources: vec![],
-        exposures: vec![],
-        metrics: vec![],
-        functions: vec![],
-        functions_by_name: HashMap::new(),
-    };
+        HashMap::new(),
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+    );
     let dag = ModelDag::build(&HashMap::new()).unwrap();
     AnalysisContext::new(project, dag, yaml_schemas, ProjectLineage::new())
 }
@@ -418,18 +417,17 @@ pub(crate) fn make_ctx_with_schemas(yaml_schemas: HashMap<String, RelSchema>) ->
 /// Create an `AnalysisContext` with a dependency map
 pub(crate) fn make_ctx_with_dag(dep_map: &HashMap<String, Vec<String>>) -> AnalysisContext {
     let config: ff_core::config::Config = serde_yaml::from_str("name: test_project").unwrap();
-    let project = Project {
-        root: PathBuf::from("/tmp/test"),
+    let project = Project::new(
+        PathBuf::from("/tmp/test"),
         config,
-        models: HashMap::new(),
-        tests: vec![],
-        singular_tests: vec![],
-        sources: vec![],
-        exposures: vec![],
-        metrics: vec![],
-        functions: vec![],
-        functions_by_name: HashMap::new(),
-    };
+        HashMap::new(),
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+    );
     let dag = ModelDag::build(dep_map).unwrap();
     AnalysisContext::new(project, dag, HashMap::new(), ProjectLineage::new())
 }

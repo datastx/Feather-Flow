@@ -4,7 +4,8 @@
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use ff_db::{quote_ident, quote_qualified, Database, DuckDbBackend};
+use ff_core::sql_utils::{quote_ident, quote_qualified};
+use ff_db::{Database, DuckDbBackend};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

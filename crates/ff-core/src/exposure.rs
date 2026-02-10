@@ -142,7 +142,10 @@ impl Exposure {
             });
         }
 
-        let content = std::fs::read_to_string(path)?;
+        let content = std::fs::read_to_string(path).map_err(|e| CoreError::IoWithPath {
+            path: path.display().to_string(),
+            source: e,
+        })?;
         let mut exposure: Exposure =
             serde_yaml::from_str(&content).map_err(|e| CoreError::ConfigParseError {
                 message: format!("Failed to parse exposure file {}: {}", path.display(), e),

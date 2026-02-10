@@ -305,6 +305,54 @@ pub fn build_user_function_stubs(project: &Project) -> Vec<ff_analysis::UserFunc
     stubs
 }
 
+/// Result of a static analysis pipeline run.
+///
+/// Contains the propagation result from DataFusion plus the set of external
+/// tables used to build the schema catalog.
+pub struct StaticAnalysisOutput {
+    /// The propagation result from DataFusion
+    pub result: ff_analysis::PropagationResult,
+    /// Whether any schema-mismatch errors were found
+    pub has_errors: bool,
+}
+
+/// Run the shared static analysis pipeline (schema catalog + propagation).
+///
+/// This is the common core used by `compile`, `validate`, and `run` commands.
+/// Callers are responsible for reporting results in their own format.
+pub fn run_static_analysis_pipeline(
+    project: &Project,
+    sql_sources: &HashMap<String, String>,
+    topo_order: &[String],
+    external_tables: &HashSet<String>,
+) -> Result<StaticAnalysisOutput> {
+    use ff_analysis::propagate_schemas;
+
+    let (schema_catalog, yaml_schemas) = build_schema_catalog(project, external_tables);
+
+    let filtered_order: Vec<String> = topo_order
+        .iter()
+        .filter(|n| sql_sources.contains_key(n.as_str()))
+        .cloned()
+        .collect();
+
+    let user_fn_stubs = build_user_function_stubs(project);
+    let result = propagate_schemas(
+        &filtered_order,
+        sql_sources,
+        &yaml_schemas,
+        &schema_catalog,
+        &user_fn_stubs,
+    );
+
+    let has_errors = result
+        .model_plans
+        .values()
+        .any(|pr| !pr.mismatches.is_empty());
+
+    Ok(StaticAnalysisOutput { result, has_errors })
+}
+
 /// Generic wrapper for command results written to JSON.
 ///
 /// Many commands (run, snapshot, etc.) produce a JSON file with the same

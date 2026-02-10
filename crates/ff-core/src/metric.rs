@@ -158,7 +158,10 @@ impl Metric {
 
     /// Load a metric from a file
     pub fn from_file(path: &Path) -> CoreResult<Self> {
-        let content = std::fs::read_to_string(path)?;
+        let content = std::fs::read_to_string(path).map_err(|e| CoreError::IoWithPath {
+            path: path.display().to_string(),
+            source: e,
+        })?;
         Self::from_yaml(&content, path)
     }
 
@@ -221,6 +224,13 @@ impl Metric {
     }
 }
 
+/// Minimal YAML probe to check the `kind` field without full deserialization
+#[derive(Deserialize)]
+struct MetricKindProbe {
+    #[serde(default)]
+    kind: Option<MetricKind>,
+}
+
 /// Discover metrics from a list of paths
 pub fn discover_metrics(paths: &[PathBuf]) -> Vec<Metric> {
     let mut metrics = Vec::new();
@@ -238,19 +248,24 @@ pub fn discover_metrics(paths: &[PathBuf]) -> Vec<Metric> {
                     .extension()
                     .is_some_and(|ext| ext == "yml" || ext == "yaml")
                 {
-                    // Try to parse as a metric (check kind: metric)
-                    if let Ok(content) = std::fs::read_to_string(&file_path) {
-                        // Quick check if this is a metric file
-                        if content.contains("kind: metric") || content.contains("kind: \"metric\"")
-                        {
-                            match Metric::from_yaml(&content, &file_path) {
-                                Ok(metric) => metrics.push(metric),
-                                Err(_) => {
-                                    // Not a valid metric, skip
-                                    continue;
-                                }
-                            }
-                        }
+                    let content = match std::fs::read_to_string(&file_path) {
+                        Ok(c) => c,
+                        Err(_) => continue,
+                    };
+
+                    // Probe the kind field before full parse
+                    let probe: MetricKindProbe = match serde_yaml::from_str(&content) {
+                        Ok(p) => p,
+                        Err(_) => continue,
+                    };
+
+                    if !matches!(probe.kind, Some(MetricKind::Metric)) {
+                        continue;
+                    }
+
+                    match Metric::from_yaml(&content, &file_path) {
+                        Ok(metric) => metrics.push(metric),
+                        Err(_) => continue,
                     }
                 }
             }

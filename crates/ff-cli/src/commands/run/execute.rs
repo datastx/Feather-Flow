@@ -2,8 +2,9 @@
 
 use ff_core::config::Materialization;
 use ff_core::run_state::RunState;
+use ff_core::sql_utils::quote_qualified;
 use ff_core::state::StateFile;
-use ff_db::{quote_qualified, Database};
+use ff_db::Database;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -614,12 +615,25 @@ async fn execute_models_parallel(
     for result in &final_results {
         if matches!(result.status, RunStatus::Success) {
             if let Some(compiled) = ctx.compiled_models.get(&result.model) {
+                // Query row count (same as sequential path)
+                let qualified_name = match &compiled.schema {
+                    Some(s) => format!("{}.{}", s, result.model),
+                    None => result.model.clone(),
+                };
+                let row_count = ctx
+                    .db
+                    .query_count(&format!(
+                        "SELECT * FROM {}",
+                        quote_qualified(&qualified_name)
+                    ))
+                    .await
+                    .ok();
                 update_state_for_model(
                     state_file,
                     &result.model,
                     compiled,
                     ctx.compiled_models,
-                    None,
+                    row_count,
                 );
             }
         }

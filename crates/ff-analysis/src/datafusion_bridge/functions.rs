@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use arrow::datatypes::DataType;
-use datafusion_common::Result as DFResult;
+use datafusion_common::{DataFusionError, Result as DFResult};
 use datafusion_expr::function::AccumulatorArgs;
 use datafusion_expr::{
     Accumulator, AggregateUDF, ColumnarValue, ScalarUDF, ScalarUDFImpl, Signature, TypeSignature,
@@ -280,8 +280,10 @@ impl ScalarUDFImpl for StubScalarUDF {
         &self,
         _args: datafusion_expr::ScalarFunctionArgs,
     ) -> DFResult<ColumnarValue> {
-        // Stubs are never executed
-        unreachable!("Stub UDF should not be executed")
+        Err(DataFusionError::Internal(format!(
+            "Stub scalar UDF '{}' should not be executed during static analysis",
+            self.name
+        )))
     }
 }
 
@@ -310,7 +312,10 @@ impl datafusion_expr::AggregateUDFImpl for StubAggregateUDF {
     }
 
     fn accumulator(&self, _args: AccumulatorArgs) -> DFResult<Box<dyn Accumulator>> {
-        unreachable!("Stub aggregate should not be executed")
+        Err(DataFusionError::Internal(format!(
+            "Stub aggregate UDF '{}' should not be executed during static analysis",
+            self.name
+        )))
     }
 }
 
@@ -351,7 +356,10 @@ impl ScalarUDFImpl for TypePreservingScalarUDF {
         &self,
         _args: datafusion_expr::ScalarFunctionArgs,
     ) -> DFResult<ColumnarValue> {
-        unreachable!("Stub UDF should not be executed")
+        Err(DataFusionError::Internal(format!(
+            "Type-preserving stub scalar UDF '{}' should not be executed during static analysis",
+            self.name
+        )))
     }
 }
 
@@ -383,6 +391,9 @@ impl datafusion_expr::AggregateUDFImpl for TypePreservingAggregateUDF {
     }
 
     fn accumulator(&self, _args: AccumulatorArgs) -> DFResult<Box<dyn Accumulator>> {
-        unreachable!("Stub aggregate should not be executed")
+        Err(DataFusionError::Internal(format!(
+            "Type-preserving stub aggregate UDF '{}' should not be executed during static analysis",
+            self.name
+        )))
     }
 }

@@ -2,7 +2,8 @@
 
 use ff_core::config::{IncrementalStrategy, Materialization, OnSchemaChange};
 use ff_core::model::ModelSchema;
-use ff_db::{quote_qualified, Database};
+use ff_core::sql_utils::quote_qualified;
+use ff_db::Database;
 use std::sync::Arc;
 
 use super::compile::CompiledModel;

@@ -17,7 +17,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::cli::{CompileArgs, GlobalArgs, OutputFormat};
-use crate::commands::common::{self, build_schema_catalog, load_project, RunStatus};
+use crate::commands::common::{self, load_project, RunStatus};
 
 /// Compile result for a single model
 #[derive(Debug, Clone, Serialize)]
@@ -198,7 +198,6 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
             &project,
             &compiled_models,
             &topo_order,
-            &known_models,
             &external_tables,
             args,
             global,
@@ -298,10 +297,9 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
             });
         } else {
             if let Some(parent) = compiled.output_path.parent() {
-                std::fs::create_dir_all(parent).context(format!(
-                    "Failed to create directory for model: {}",
-                    compiled.name
-                ))?;
+                std::fs::create_dir_all(parent).with_context(|| {
+                    format!("Failed to create directory for model: {}", compiled.name)
+                })?;
             }
 
             // Append query comment to written file, but keep in-memory SQL clean for checksums
@@ -309,10 +307,9 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
                 Some(comment) => ff_core::query_comment::append_query_comment(&final_sql, comment),
                 None => final_sql.clone(),
             };
-            std::fs::write(&compiled.output_path, &sql_to_write).context(format!(
-                "Failed to write compiled SQL for model: {}",
-                compiled.name
-            ))?;
+            std::fs::write(&compiled.output_path, &sql_to_write).with_context(|| {
+                format!("Failed to write compiled SQL for model: {}", compiled.name)
+            })?;
 
             // Also update the model's compiled_sql with the clean version (no comment)
             if let Some(model) = project.get_model_mut(&compiled.name) {
@@ -421,22 +418,22 @@ fn compile_model_phase1(
 ) -> Result<CompileOutput> {
     let model = project
         .get_model_mut(name)
-        .context(format!("Model not found: {}", name))?;
+        .with_context(|| format!("Model not found: {}", name))?;
 
     let (rendered, config_values) = ctx
         .jinja
         .render_with_config(&model.raw_sql)
-        .context(format!("Failed to render template for model: {}", name))?;
+        .with_context(|| format!("Failed to render template for model: {}", name))?;
 
     let statements = ctx
         .parser
         .parse(&rendered)
-        .context(format!("Failed to parse SQL for model: {}", name))?;
+        .with_context(|| format!("Failed to parse SQL for model: {}", name))?;
 
     // Reject CTEs and derived tables -- each transform must be its own model
     ff_sql::validate_no_complex_queries(&statements)
         .map_err(|e| anyhow::anyhow!("{}", e))
-        .context(format!("Model '{}' uses forbidden SQL constructs", name))?;
+        .with_context(|| format!("Model '{}' uses forbidden SQL constructs", name))?;
 
     let deps = extract_dependencies(&statements);
     let (model_deps, ext_deps, unknown_deps) =
@@ -581,41 +578,31 @@ fn compute_compiled_path(
 }
 
 /// Run DataFusion-based static analysis on compiled models
-#[allow(clippy::too_many_arguments)]
 fn run_static_analysis(
     project: &Project,
     compiled_models: &[CompileOutput],
     topo_order: &[String],
-    _known_models: &HashSet<String>,
     external_tables: &HashSet<String>,
     args: &CompileArgs,
     global: &GlobalArgs,
     json_mode: bool,
 ) -> Result<()> {
-    use ff_analysis::propagate_schemas;
-
     if global.verbose {
         eprintln!("[verbose] Running DataFusion static analysis...");
     }
 
-    // Build schema catalog from YAML definitions and external tables
-    let (schema_catalog, yaml_schemas) = build_schema_catalog(project, external_tables);
-
-    // Build SQL sources from compiled models
     let sql_sources: HashMap<String, String> = compiled_models
         .iter()
         .map(|m| (m.name.clone(), m.sql.clone()))
         .collect();
 
-    // Propagate schemas through the DAG
-    let user_fn_stubs = super::common::build_user_function_stubs(project);
-    let result = propagate_schemas(
-        topo_order,
+    let output = super::common::run_static_analysis_pipeline(
+        project,
         &sql_sources,
-        &yaml_schemas,
-        &schema_catalog,
-        &user_fn_stubs,
-    );
+        topo_order,
+        external_tables,
+    )?;
+    let result = &output.result;
 
     // Handle --explain flag
     if let Some(ref explain_model) = args.explain {
@@ -637,10 +624,8 @@ fn run_static_analysis(
     }
 
     // Report schema mismatches (all mismatches are errors)
-    let mut has_errors = false;
     for (model_name, plan_result) in &result.model_plans {
         for mismatch in &plan_result.mismatches {
-            has_errors = true;
             if !json_mode {
                 eprintln!(
                     "  [error] {model_name}: {mismatch}",
@@ -660,7 +645,7 @@ fn run_static_analysis(
         );
     }
 
-    if has_errors && global.verbose {
+    if output.has_errors && global.verbose {
         eprintln!("[verbose] Static analysis found schema errors");
     }
 

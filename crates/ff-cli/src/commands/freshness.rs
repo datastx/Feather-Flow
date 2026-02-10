@@ -4,8 +4,9 @@
 
 use anyhow::{Context, Result};
 use ff_core::model::FreshnessThreshold;
+use ff_core::sql_utils::{quote_ident, quote_qualified};
 use ff_core::Project;
-use ff_db::{quote_ident, quote_qualified, Database};
+use ff_db::Database;
 use serde::Serialize;
 use std::sync::Arc;
 

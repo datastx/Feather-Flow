@@ -1,7 +1,6 @@
 //! Lineage command implementation — column-level lineage across models
 
 use anyhow::{Context, Result};
-use ff_core::source::build_source_lookup;
 use ff_jinja::JinjaEnvironment;
 use ff_sql::{extract_column_lineage, ProjectLineage, SqlParser};
 use std::collections::HashSet;
@@ -19,12 +18,6 @@ pub async fn execute(args: &LineageArgs, global: &GlobalArgs) -> Result<()> {
     let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
 
     let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
-
-    // Build external tables lookup for categorization
-    let mut external_tables: HashSet<String> =
-        project.config.external_tables.iter().cloned().collect();
-    let source_tables = build_source_lookup(&project.sources);
-    external_tables.extend(source_tables);
 
     let mut project_lineage = ProjectLineage::new();
 

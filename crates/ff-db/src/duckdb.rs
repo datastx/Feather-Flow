@@ -165,31 +165,52 @@ impl DuckDbBackend {
         unique_keys: &[String],
         temp_prefix: &str,
     ) -> DbResult<()> {
-        let temp_name = format!("{}_{}", temp_prefix, unique_id());
-        let quoted_target = quote_qualified(target_table);
-        let quoted_temp = quote_ident(&temp_name);
+        if unique_keys.is_empty() {
+            return Err(DbError::ExecutionError(
+                "upsert_via_temp_table requires at least one unique key".to_string(),
+            ));
+        }
 
-        let create_temp = format!("CREATE TEMP TABLE {} AS {}", quoted_temp, source_sql);
-        self.execute_sync(&create_temp)?;
+        let conn = self.lock_conn()?;
+        run_sql(&conn, "BEGIN TRANSACTION")?;
 
-        let join_clause = build_join_condition(unique_keys, &quoted_target, &quoted_temp);
+        let result = (|| -> DbResult<()> {
+            let temp_name = format!("{}_{}", temp_prefix, unique_id());
+            let quoted_target = quote_qualified(target_table);
+            let quoted_temp = quote_ident(&temp_name);
 
-        let delete_sql = format!(
-            "DELETE FROM {} WHERE EXISTS (SELECT 1 FROM {} WHERE {})",
-            quoted_target, quoted_temp, join_clause
-        );
-        self.execute_sync(&delete_sql)?;
+            let create_temp = format!("CREATE TEMP TABLE {} AS {}", quoted_temp, source_sql);
+            run_sql(&conn, &create_temp)?;
 
-        let insert_sql = format!(
-            "INSERT INTO {} SELECT * FROM {}",
-            quoted_target, quoted_temp
-        );
-        self.execute_sync(&insert_sql)?;
+            let join_clause = build_join_condition(unique_keys, &quoted_target, &quoted_temp);
 
-        let drop_temp = format!("DROP TABLE {}", quoted_temp);
-        self.execute_sync(&drop_temp)?;
+            let delete_sql = format!(
+                "DELETE FROM {} WHERE EXISTS (SELECT 1 FROM {} WHERE {})",
+                quoted_target, quoted_temp, join_clause
+            );
+            run_sql(&conn, &delete_sql)?;
 
-        Ok(())
+            let insert_sql = format!(
+                "INSERT INTO {} SELECT * FROM {}",
+                quoted_target, quoted_temp
+            );
+            run_sql(&conn, &insert_sql)?;
+
+            let drop_temp = format!("DROP TABLE {}", quoted_temp);
+            run_sql(&conn, &drop_temp)?;
+
+            Ok(())
+        })();
+
+        match &result {
+            Ok(_) => {
+                run_sql(&conn, "COMMIT")?;
+            }
+            Err(_) => {
+                let _ = run_sql(&conn, "ROLLBACK");
+            }
+        }
+        result
     }
 
     /// Execute SQL synchronously

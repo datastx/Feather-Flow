@@ -14,9 +14,23 @@ use std::ops::Deref;
 pub struct FunctionName(String);
 
 impl FunctionName {
-    /// Create a new `FunctionName` from any type that can be converted into a `String`.
+    /// Create a new `FunctionName`, panicking in debug builds if the name is empty.
+    ///
+    /// Prefer [`try_new`](Self::try_new) when handling untrusted input.
     pub fn new(name: impl Into<String>) -> Self {
-        Self(name.into())
+        let s = name.into();
+        debug_assert!(!s.is_empty(), "FunctionName must not be empty");
+        Self(s)
+    }
+
+    /// Try to create a new `FunctionName`, returning `None` if the name is empty.
+    pub fn try_new(name: impl Into<String>) -> Option<Self> {
+        let s = name.into();
+        if s.is_empty() {
+            None
+        } else {
+            Some(Self(s))
+        }
     }
 
     /// Return the underlying name as a string slice.

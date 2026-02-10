@@ -11,7 +11,7 @@ use crate::functions::{
     make_config_fn, make_is_incremental_fn, make_this_fn, make_var_fn, yaml_to_json, ConfigCapture,
     IncrementalState,
 };
-use minijinja::{path_loader, Environment, Value};
+use minijinja::{Environment, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -57,13 +57,27 @@ impl<'a> JinjaEnvironment<'a> {
         // Register built-in macros
         register_builtins(&mut env);
 
-        // Set up path loader for macros from the first valid macro path
-        // Minijinja's path_loader only supports a single path, so we use the first one
-        for macro_path in macro_paths {
-            if macro_path.exists() && macro_path.is_dir() {
-                env.set_loader(path_loader(macro_path.clone()));
-                break;
-            }
+        // Set up a multi-path loader that searches all configured macro paths.
+        // Minijinja's built-in path_loader only supports a single directory,
+        // so we use a custom closure that iterates over all valid paths.
+        let valid_paths: Vec<PathBuf> = macro_paths
+            .iter()
+            .filter(|p| p.exists() && p.is_dir())
+            .cloned()
+            .collect();
+        if !valid_paths.is_empty() {
+            env.set_loader(move |name: &str| {
+                for base in &valid_paths {
+                    let full = base.join(name);
+                    if full.is_file() {
+                        match std::fs::read_to_string(&full) {
+                            Ok(contents) => return Ok(Some(contents)),
+                            Err(_) => continue,
+                        }
+                    }
+                }
+                Ok(None)
+            });
         }
 
         (env, config_capture)

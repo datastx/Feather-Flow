@@ -97,16 +97,16 @@ pub enum CoreError {
     #[error("[E014] IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// E015: Schema/YAML parse error
+    #[error("[E015] Schema parse error: {0}")]
+    YamlParse(#[from] serde_yaml::Error),
+
     /// E016: IO error with file path context
     #[error("[E016] Failed to read '{path}': {source}")]
     IoWithPath {
         path: String,
         source: std::io::Error,
     },
-
-    /// E015: Schema/YAML parse error
-    #[error("[E015] Schema parse error: {0}")]
-    YamlParse(#[from] serde_yaml::Error),
 
     /// JSON serialization/deserialization error
     #[error("JSON error: {0}")]

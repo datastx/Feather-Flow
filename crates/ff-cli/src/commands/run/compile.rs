@@ -467,11 +467,11 @@ pub(super) fn determine_execution_order(
     };
 
     // Handle --defer: load deferred manifest and validate dependencies
-    if let Some(defer_path) = &args.defer {
+    let deferred_models: HashSet<String> = if let Some(defer_path) = &args.defer {
         let deferred_manifest = load_deferred_manifest(defer_path, global)?;
 
         // Resolve which models can be deferred
-        let deferred_models = resolve_deferred_dependencies(
+        let deferred = resolve_deferred_dependencies(
             &models_after_exclusion,
             compiled_models,
             &deferred_manifest,
@@ -479,23 +479,26 @@ pub(super) fn determine_execution_order(
         )?;
 
         // Log deferred models summary
-        if !deferred_models.is_empty() {
+        if !deferred.is_empty() {
             println!(
                 "Deferring {} model(s) to manifest at: {}",
-                deferred_models.len(),
+                deferred.len(),
                 defer_path
             );
-            for model in &deferred_models {
+            for model in &deferred {
                 println!("  → {}", model);
             }
             println!();
         }
-    }
+        deferred
+    } else {
+        HashSet::new()
+    };
 
     let execution_order: Vec<String> = dag
         .topological_order()?
         .into_iter()
-        .filter(|m| models_after_exclusion.contains(m))
+        .filter(|m| models_after_exclusion.contains(m) && !deferred_models.contains(m))
         .collect();
 
     Ok(execution_order)

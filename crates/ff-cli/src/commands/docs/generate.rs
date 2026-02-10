@@ -823,9 +823,10 @@ fn generate_html(doc: &ModelDoc) -> String {
             }
         }
         if !doc.tags.is_empty() {
+            let escaped_tags: Vec<String> = doc.tags.iter().map(|t| html_escape(t)).collect();
             html.push_str(&format!(
                 "<p><strong>Tags:</strong> {}</p>\n",
-                doc.tags.join(", ")
+                escaped_tags.join(", ")
             ));
         }
         if let Some(mat) = &doc.materialized {
@@ -874,11 +875,11 @@ fn generate_html(doc: &ModelDoc) -> String {
             };
             html.push_str(&format!(
                 "<tr><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
-                col.name,
+                html_escape(&col.name),
                 html_escape(data_type),
                 html_escape(desc),
-                cls,
-                tests
+                html_escape(cls),
+                html_escape(&tests)
             ));
         }
         html.push_str("</tbody></table>\n");
@@ -985,9 +986,10 @@ fn generate_source_html(doc: &SourceDoc) -> String {
         ));
     }
     if !doc.tags.is_empty() {
+        let escaped_tags: Vec<String> = doc.tags.iter().map(|t| html_escape(t)).collect();
         html.push_str(&format!(
             "<p><strong>Tags:</strong> {}</p>\n",
-            doc.tags.join(", ")
+            escaped_tags.join(", ")
         ));
     }
     html.push_str("</div>\n");
@@ -1074,9 +1076,10 @@ fn generate_exposure_html(doc: &ExposureDoc) -> String {
         ));
     }
     if !doc.tags.is_empty() {
+        let escaped_tags: Vec<String> = doc.tags.iter().map(|t| html_escape(t)).collect();
         html.push_str(&format!(
             "<p><strong>Tags:</strong> {}</p>\n",
-            doc.tags.join(", ")
+            escaped_tags.join(", ")
         ));
     }
     html.push_str("</div>\n");
@@ -1151,9 +1154,10 @@ fn generate_metric_html(doc: &MetricDoc) -> String {
         ));
     }
     if !doc.tags.is_empty() {
+        let escaped_tags: Vec<String> = doc.tags.iter().map(|t| html_escape(t)).collect();
         html.push_str(&format!(
             "<p><strong>Tags:</strong> {}</p>\n",
-            doc.tags.join(", ")
+            escaped_tags.join(", ")
         ));
     }
     html.push_str("</div>\n");

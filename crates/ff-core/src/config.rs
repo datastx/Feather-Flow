@@ -347,49 +347,54 @@ impl Config {
         self.external_tables.iter().any(|t| t == table)
     }
 
+    /// Resolve relative path strings to absolute paths against a root directory
+    fn paths_absolute(paths: &[String], root: &Path) -> Vec<PathBuf> {
+        paths.iter().map(|p| root.join(p)).collect()
+    }
+
     /// Get absolute model paths relative to a project root
     pub fn model_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
-        self.model_paths.iter().map(|p| root.join(p)).collect()
+        Self::paths_absolute(&self.model_paths, root)
     }
 
     /// Get absolute seed paths relative to a project root
     pub fn seed_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
-        self.seed_paths.iter().map(|p| root.join(p)).collect()
+        Self::paths_absolute(&self.seed_paths, root)
     }
 
     /// Get absolute macro paths relative to a project root
     pub fn macro_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
-        self.macro_paths.iter().map(|p| root.join(p)).collect()
+        Self::paths_absolute(&self.macro_paths, root)
     }
 
     /// Get absolute source paths relative to a project root
     pub fn source_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
-        self.source_paths.iter().map(|p| root.join(p)).collect()
+        Self::paths_absolute(&self.source_paths, root)
     }
 
     /// Get absolute test paths relative to a project root
     pub fn test_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
-        self.test_paths.iter().map(|p| root.join(p)).collect()
+        Self::paths_absolute(&self.test_paths, root)
     }
 
     /// Get absolute snapshot paths relative to a project root
     pub fn snapshot_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
-        self.snapshot_paths.iter().map(|p| root.join(p)).collect()
+        Self::paths_absolute(&self.snapshot_paths, root)
     }
 
     /// Get absolute exposure paths relative to a project root
     pub fn exposure_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
-        self.exposure_paths.iter().map(|p| root.join(p)).collect()
+        Self::paths_absolute(&self.exposure_paths, root)
     }
 
     /// Get absolute metric paths relative to a project root
     pub fn metric_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
-        self.metric_paths.iter().map(|p| root.join(p)).collect()
+        Self::paths_absolute(&self.metric_paths, root)
     }
 
     /// Get absolute function paths relative to a project root
     pub fn function_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
-        self.function_paths.iter().map(|p| root.join(p)).collect()
+        Self::paths_absolute(&self.function_paths, root)
     }
 
     /// Get absolute target path relative to a project root
@@ -448,12 +453,11 @@ impl Config {
 
     /// Get WAP schema, optionally applying target overrides
     pub fn get_wap_schema(&self, target: Option<&str>) -> Option<String> {
-        if let Some(name) = target {
-            if let Some(target_config) = self.targets.get(name) {
-                if target_config.wap_schema.is_some() {
-                    return target_config.wap_schema.clone();
-                }
-            }
+        if let Some(schema) = target
+            .and_then(|name| self.targets.get(name))
+            .and_then(|tc| tc.wap_schema.clone())
+        {
+            return Some(schema);
         }
         self.wap_schema.clone()
     }

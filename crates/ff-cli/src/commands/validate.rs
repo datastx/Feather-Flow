@@ -1,11 +1,10 @@
 //! Validate command implementation
 
-use crate::commands::common::{self, build_schema_catalog, load_project};
+use crate::commands::common::{self, load_project};
 use anyhow::{Context, Result};
 use ff_core::dag::ModelDag;
 use ff_core::manifest::Manifest;
 use ff_core::model::TestDefinition;
-use ff_core::source::build_source_lookup;
 use ff_core::{ModelName, Project};
 use ff_jinja::JinjaEnvironment;
 use ff_sql::SqlParser;
@@ -113,7 +112,7 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
         .context("Invalid SQL dialect")?;
     let macro_paths = project.config.macro_paths_absolute(&project.root);
     let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
-    let external_tables = build_external_tables_lookup(&project);
+    let external_tables = common::build_external_tables_lookup(&project);
     let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
 
     let dependencies = validate_sql_syntax(
@@ -169,11 +168,6 @@ fn get_models_to_validate(project: &Project, filter: &Option<String>) -> Vec<Str
             .map(String::from)
             .collect()
     }
-}
-
-/// Build external tables lookup including sources
-fn build_external_tables_lookup(project: &Project) -> HashSet<String> {
-    common::build_external_tables_lookup(project)
 }
 
 /// Validate SQL syntax and extract dependencies
@@ -321,16 +315,35 @@ fn validate_dag(dependencies: &HashMap<String, Vec<String>>, ctx: &mut Validatio
     }
 }
 
-/// Validate no duplicate model names
+/// Validate no duplicate model names (case-insensitive for DuckDB compatibility)
 fn validate_duplicates(project: &Project, ctx: &mut ValidationContext) {
     print!("Checking for duplicates... ");
     let model_names: Vec<&ModelName> = project.models.keys().collect();
-    let unique_count = model_names.iter().collect::<HashSet<_>>().len();
-    if model_names.len() == unique_count {
-        println!("✓");
-    } else {
-        ctx.error("E004", "Duplicate model names detected", None);
+
+    // Check case-insensitive duplicates (DuckDB identifiers are case-insensitive)
+    let mut seen: HashMap<String, &ModelName> = HashMap::new();
+    let mut found_dup = false;
+    for name in &model_names {
+        let lower = name.as_ref().to_lowercase();
+        if let Some(existing) = seen.get(&lower) {
+            ctx.error(
+                "E004",
+                format!(
+                    "Duplicate model names (case-insensitive): '{}' and '{}'",
+                    existing, name
+                ),
+                None,
+            );
+            found_dup = true;
+        } else {
+            seen.insert(lower, name);
+        }
+    }
+
+    if found_dup {
         println!("✗");
+    } else {
+        println!("✓");
     }
 }
 
@@ -342,7 +355,7 @@ fn validate_schemas(
     ctx: &mut ValidationContext,
 ) {
     print!("Checking schema files... ");
-    let mut schema_warnings = 0;
+    let mut schema_issues = 0;
 
     // Check orphaned schema references
     let models_with_tests: HashSet<&str> = project.tests.iter().map(|t| t.model.as_str()).collect();
@@ -353,7 +366,7 @@ fn validate_schemas(
                 format!("Schema references unknown model: {}", model_ref),
                 None,
             );
-            schema_warnings += 1;
+            schema_issues += 1;
         }
     }
 
@@ -372,7 +385,7 @@ fn validate_schemas(
                         ),
                         Some(model.path.with_extension("yml").display().to_string()),
                     );
-                    schema_warnings += 1;
+                    schema_issues += 1;
                 }
             }
         }
@@ -392,7 +405,7 @@ fn validate_schemas(
                     ),
                     Some(model.path.display().to_string()),
                 );
-                schema_warnings += 1;
+                schema_issues += 1;
             }
         }
     }
@@ -412,7 +425,7 @@ fn validate_schemas(
                                 ),
                                 Some(model.path.with_extension("yml").display().to_string()),
                             );
-                            schema_warnings += 1;
+                            schema_issues += 1;
                         }
                     }
 
@@ -428,7 +441,7 @@ fn validate_schemas(
                                 warning,
                                 Some(model.path.with_extension("yml").display().to_string()),
                             );
-                            schema_warnings += 1;
+                            schema_issues += 1;
                         }
                     }
                 }
@@ -436,10 +449,10 @@ fn validate_schemas(
         }
     }
 
-    if schema_warnings == 0 {
+    if schema_issues == 0 {
         println!("✓");
     } else {
-        println!("{} warnings", schema_warnings);
+        println!("{} warnings", schema_issues);
     }
 }
 
@@ -526,15 +539,7 @@ fn validate_static_analysis(
     global: &GlobalArgs,
     ctx: &mut ValidationContext,
 ) {
-    use ff_analysis::propagate_schemas;
-
     print!("Running static analysis... ");
-
-    // Build schema catalog from YAML definitions and external tables
-    let source_tables = build_source_lookup(&project.sources);
-    let mut all_external: HashSet<String> = external_tables.clone();
-    all_external.extend(source_tables);
-    let (schema_catalog, yaml_schemas) = build_schema_catalog(project, &all_external);
 
     // Build topological order from dependencies
     let dag = match ModelDag::build(dependencies) {
@@ -566,26 +571,25 @@ fn validate_static_analysis(
         })
         .collect();
 
-    // Filter topo order to only include models we have SQL for
-    let filtered_order: Vec<String> = topo_order
-        .into_iter()
-        .filter(|n| sql_sources.contains_key(n))
-        .collect();
-
-    if filtered_order.is_empty() {
+    if sql_sources.is_empty() {
         println!("(no models to analyze)");
         return;
     }
 
-    // Run schema propagation
-    let user_fn_stubs = super::common::build_user_function_stubs(project);
-    let result = propagate_schemas(
-        &filtered_order,
+    // Use the shared static analysis pipeline
+    let output = match common::run_static_analysis_pipeline(
+        project,
         &sql_sources,
-        &yaml_schemas,
-        &schema_catalog,
-        &user_fn_stubs,
-    );
+        &topo_order,
+        external_tables,
+    ) {
+        Ok(o) => o,
+        Err(e) => {
+            println!("(skipped — {})", e);
+            return;
+        }
+    };
+    let result = &output.result;
 
     let mut issue_count = 0;
 

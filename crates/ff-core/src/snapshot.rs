@@ -222,7 +222,11 @@ impl Snapshot {
     }
 
     /// Generate SQL to detect new records (INSERT)
-    pub fn new_records_sql(&self, source_alias: &str, snapshot_alias: &str) -> String {
+    pub fn new_records_sql(
+        &self,
+        source_alias: &str,
+        snapshot_alias: &str,
+    ) -> Result<String, CoreError> {
         let src_alias = quote_ident(source_alias);
         let snap_alias = quote_ident(snapshot_alias);
         let unique_key_conditions: Vec<String> = self
@@ -235,14 +239,13 @@ impl Snapshot {
             })
             .collect();
 
-        let first_key = quote_ident(
-            self.config
-                .unique_key
-                .first()
-                .expect("unique_key validated non-empty"),
-        );
+        let first_key = quote_ident(self.config.unique_key.first().ok_or_else(|| {
+            CoreError::ConfigInvalid {
+                message: format!("Snapshot '{}' has empty unique_key", self.config.name),
+            }
+        })?);
 
-        format!(
+        Ok(format!(
             "SELECT {source}.* \
              FROM {source} AS {src_alias} \
              LEFT JOIN ({current}) AS {snap_alias} \
@@ -254,7 +257,7 @@ impl Snapshot {
             snap_alias = snap_alias,
             conditions = unique_key_conditions.join(" AND "),
             first_key = first_key,
-        )
+        ))
     }
 
     /// Generate SQL to detect changed records based on strategy
@@ -308,7 +311,11 @@ impl Snapshot {
     }
 
     /// Generate SQL to detect hard deletes (records missing from source)
-    pub fn deleted_records_sql(&self, source_alias: &str, snapshot_alias: &str) -> String {
+    pub fn deleted_records_sql(
+        &self,
+        source_alias: &str,
+        snapshot_alias: &str,
+    ) -> Result<String, CoreError> {
         let src_alias = quote_ident(source_alias);
         let snap_alias = quote_ident(snapshot_alias);
         let unique_key_conditions: Vec<String> = self
@@ -321,14 +328,13 @@ impl Snapshot {
             })
             .collect();
 
-        let first_key = quote_ident(
-            self.config
-                .unique_key
-                .first()
-                .expect("unique_key validated non-empty"),
-        );
+        let first_key = quote_ident(self.config.unique_key.first().ok_or_else(|| {
+            CoreError::ConfigInvalid {
+                message: format!("Snapshot '{}' has empty unique_key", self.config.name),
+            }
+        })?);
 
-        format!(
+        Ok(format!(
             "SELECT {snap_alias}.* \
              FROM ({current}) AS {snap_alias} \
              LEFT JOIN {source} AS {src_alias} \
@@ -340,7 +346,7 @@ impl Snapshot {
             src_alias = src_alias,
             conditions = unique_key_conditions.join(" AND "),
             first_key = first_key,
-        )
+        ))
     }
 
     /// Generate a unique SCD ID for a record

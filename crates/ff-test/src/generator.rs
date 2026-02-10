@@ -84,27 +84,33 @@ pub fn generate_accepted_values_test(
 /// Generate SQL for a min_value test
 ///
 /// Returns rows where the column value is less than the threshold.
-pub fn generate_min_value_test(table: &str, column: &str, min: f64) -> String {
-    assert!(min.is_finite(), "min_value threshold must be finite");
-    format!(
+/// Returns `Err` if the threshold is NaN or Infinity.
+pub fn generate_min_value_test(table: &str, column: &str, min: f64) -> Result<String, String> {
+    if !min.is_finite() {
+        return Err(format!("min_value threshold must be finite, got {}", min));
+    }
+    Ok(format!(
         "SELECT * FROM {} WHERE {} < {}",
         quote_qualified(table),
         quote_ident(column),
         min
-    )
+    ))
 }
 
 /// Generate SQL for a max_value test
 ///
 /// Returns rows where the column value is greater than the threshold.
-pub fn generate_max_value_test(table: &str, column: &str, max: f64) -> String {
-    assert!(max.is_finite(), "max_value threshold must be finite");
-    format!(
+/// Returns `Err` if the threshold is NaN or Infinity.
+pub fn generate_max_value_test(table: &str, column: &str, max: f64) -> Result<String, String> {
+    if !max.is_finite() {
+        return Err(format!("max_value threshold must be finite, got {}", max));
+    }
+    Ok(format!(
         "SELECT * FROM {} WHERE {} > {}",
         quote_qualified(table),
         quote_ident(column),
         max
-    )
+    ))
 }
 
 /// Generate SQL for a regex test
@@ -168,8 +174,10 @@ fn generate_sql_for_test_type(
         TestType::AcceptedValues { values, quote } => {
             generate_accepted_values_test(table, column, values, *quote)
         }
-        TestType::MinValue { value } => generate_min_value_test(table, column, *value),
-        TestType::MaxValue { value } => generate_max_value_test(table, column, *value),
+        TestType::MinValue { value } => generate_min_value_test(table, column, *value)
+            .unwrap_or_else(|e| format!("-- ERROR: invalid threshold value: {e}")),
+        TestType::MaxValue { value } => generate_max_value_test(table, column, *value)
+            .unwrap_or_else(|e| format!("-- ERROR: invalid threshold value: {e}")),
         TestType::Regex { pattern } => generate_regex_test(table, column, pattern),
         TestType::Relationship { to, field } => {
             let ref_column = field.as_deref().unwrap_or(column);
@@ -335,14 +343,14 @@ mod tests {
 
     #[test]
     fn test_generate_min_value_test() {
-        let sql = generate_min_value_test("products", "price", 0.0);
+        let sql = generate_min_value_test("products", "price", 0.0).unwrap();
         assert!(sql.contains(r#""price" < 0"#));
         assert!(sql.contains(r#"FROM "products""#));
     }
 
     #[test]
     fn test_generate_max_value_test() {
-        let sql = generate_max_value_test("products", "discount", 100.0);
+        let sql = generate_max_value_test("products", "discount", 100.0).unwrap();
         assert!(sql.contains(r#""discount" > 100"#));
         assert!(sql.contains(r#"FROM "products""#));
     }

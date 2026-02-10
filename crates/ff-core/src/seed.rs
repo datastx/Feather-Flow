@@ -145,11 +145,12 @@ impl Seed {
 
     /// Get column type overrides
     pub fn column_types(&self) -> &HashMap<String, String> {
-        static EMPTY: std::sync::OnceLock<HashMap<String, String>> = std::sync::OnceLock::new();
+        static EMPTY: std::sync::LazyLock<HashMap<String, String>> =
+            std::sync::LazyLock::new(HashMap::new);
         self.config
             .as_ref()
             .map(|c| &c.column_types)
-            .unwrap_or_else(|| EMPTY.get_or_init(HashMap::new))
+            .unwrap_or(&EMPTY)
     }
 
     /// Check if columns should be quoted
@@ -171,8 +172,7 @@ impl Seed {
 }
 
 /// Discover all seed files in the given paths
-pub fn discover_seeds(_root: &Path, seed_paths: &[PathBuf]) -> Vec<Seed> {
-    // _root reserved for relative path resolution
+pub fn discover_seeds(seed_paths: &[PathBuf]) -> Vec<Seed> {
     let mut seeds = Vec::new();
 
     for seed_path in seed_paths {
@@ -306,7 +306,7 @@ column_types:
         std::fs::write(seeds_dir.join("a.csv"), "id\n1").unwrap();
         std::fs::write(seeds_dir.join("b.csv"), "id\n2").unwrap();
 
-        let seeds = discover_seeds(dir.path(), &[seeds_dir]);
+        let seeds = discover_seeds(&[seeds_dir]);
         assert_eq!(seeds.len(), 2);
         assert_eq!(seeds[0].name, "a");
         assert_eq!(seeds[1].name, "b");

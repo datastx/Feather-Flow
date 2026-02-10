@@ -2,7 +2,8 @@
 
 use anyhow::{Context, Result};
 use ff_core::seed::{discover_seeds, Seed};
-use ff_db::{quote_qualified, CsvLoadOptions, Database};
+use ff_core::sql_utils::quote_qualified;
+use ff_db::{CsvLoadOptions, Database};
 
 use crate::cli::{GlobalArgs, SeedArgs};
 use crate::commands::common::{self, load_project};
@@ -14,7 +15,7 @@ pub async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
     let db = common::create_database_connection(&project.config, global.target.as_deref())?;
 
     let seed_paths = project.config.seed_paths_absolute(&project.root);
-    let all_seeds = discover_seeds(&project.root, &seed_paths);
+    let all_seeds = discover_seeds(&seed_paths);
 
     if all_seeds.is_empty() {
         println!("No seed files found in seed_paths.");

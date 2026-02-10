@@ -184,6 +184,13 @@ pub fn discover_sources(source_paths: &[PathBuf]) -> CoreResult<Vec<SourceFile>>
     Ok(sources)
 }
 
+/// Minimal YAML probe to check the `kind` field without full deserialization
+#[derive(Deserialize)]
+struct SourceKindProbe {
+    #[serde(default)]
+    kind: Option<SourceKind>,
+}
+
 /// Recursively discover source files in a directory
 fn discover_sources_recursive(dir: &Path, sources: &mut Vec<SourceFile>) -> CoreResult<()> {
     for entry in std::fs::read_dir(dir)? {
@@ -193,12 +200,29 @@ fn discover_sources_recursive(dir: &Path, sources: &mut Vec<SourceFile>) -> Core
         if path.is_dir() {
             discover_sources_recursive(&path, sources)?;
         } else if path.extension().is_some_and(|e| e == "yml" || e == "yaml") {
-            // Try to load as source file, skip if not a valid source
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("[warn] Cannot read {}: {}", path.display(), e);
+                    continue;
+                }
+            };
+
+            // Probe the kind field before attempting a full parse
+            let probe: SourceKindProbe = match serde_yaml::from_str(&content) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+
+            if !matches!(probe.kind, Some(SourceKind::Sources)) {
+                continue;
+            }
+
+            // Full parse — errors here are real and worth reporting
             match SourceFile::load(&path) {
                 Ok(source) => sources.push(source),
                 Err(e) => {
-                    // Not a valid source file, skip (could be other YAML)
-                    eprintln!("[warn] Skipping YAML file {}: {}", path.display(), e);
+                    eprintln!("[warn] Skipping source file {}: {}", path.display(), e);
                     continue;
                 }
             }
