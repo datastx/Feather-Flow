@@ -1,6 +1,6 @@
 //! Test SQL generation
 
-use ff_core::model::{SchemaTest, TestType};
+use ff_core::model::{SchemaTest, TestSeverity, TestType};
 use ff_core::sql_utils::{escape_sql_string, quote_ident, quote_qualified};
 
 /// Generate SQL for a unique test
@@ -214,12 +214,17 @@ pub fn generate_test_sql(test: &SchemaTest) -> String {
 }
 
 /// Wrap a base test SQL with `TestConfig` options (where_clause, limit).
+///
+/// The `where_clause` comes from YAML config authored by project developers.
+/// We wrap it in parentheses and reject semicolons as defense-in-depth.
 fn apply_test_config(base_sql: &str, config: &ff_core::model::TestConfig) -> String {
     let mut sql = base_sql.to_string();
     if let Some(ref where_clause) = config.where_clause {
+        // Reject semicolons to prevent multi-statement injection
+        let sanitized = where_clause.replace(';', "");
         sql = format!(
-            "SELECT * FROM ({}) AS _test_base WHERE {}",
-            sql, where_clause
+            "SELECT * FROM ({}) AS _test_base WHERE ({})",
+            sql, sanitized
         );
     }
     if let Some(limit) = config.limit {
@@ -245,6 +250,9 @@ pub struct GeneratedTest {
 
     /// Human-readable test name
     pub name: String,
+
+    /// Test severity propagated from schema test config
+    pub severity: TestSeverity,
 }
 
 impl GeneratedTest {
@@ -259,6 +267,7 @@ impl GeneratedTest {
             test_type: test.test_type.clone(),
             sql,
             name,
+            severity: test.config.severity,
         }
     }
 
@@ -272,6 +281,7 @@ impl GeneratedTest {
             test_type: test.test_type.clone(),
             sql,
             name,
+            severity: test.config.severity,
         }
     }
 
@@ -288,6 +298,7 @@ impl GeneratedTest {
             test_type: test.test_type.clone(),
             sql,
             name,
+            severity: test.config.severity,
         }
     }
 
@@ -315,6 +326,7 @@ impl GeneratedTest {
             test_type: test.test_type.clone(),
             sql,
             name,
+            severity: test.config.severity,
         }
     }
 }

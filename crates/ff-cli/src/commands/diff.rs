@@ -252,7 +252,7 @@ async fn find_differences(
     let quoted_table = quote_qualified(table_name);
 
     // Sample rows from current
-    let sample_current_sql = format!(
+    let sample_sql = format!(
         "SELECT {} FROM {} ORDER BY {} LIMIT {}",
         col_list,
         quoted_table,
@@ -260,15 +260,13 @@ async fn find_differences(
         sample_size * 2 // Get more rows for better comparison
     );
 
-    let sample_compare_sql = sample_current_sql.clone();
-
     let current_sample = current_db
-        .query_sample_rows(&sample_current_sql, sample_size * 2)
+        .query_rows(&sample_sql, sample_size * 2)
         .await
         .unwrap_or_default();
 
     let compare_sample = compare_db
-        .query_sample_rows(&sample_compare_sql, sample_size * 2)
+        .query_rows(&sample_sql, sample_size * 2)
         .await
         .unwrap_or_default();
 
@@ -280,9 +278,14 @@ async fn find_differences(
         );
     }
 
-    // Convert to sets for comparison (using the full row string)
-    let current_set: HashSet<&String> = current_sample.iter().collect();
-    let compare_set: HashSet<&String> = compare_sample.iter().collect();
+    // Convert rows to comparable strings for set operations
+    let row_to_string = |row: &[String]| row.join("\x1F");
+
+    let current_strings: Vec<String> = current_sample.iter().map(|r| row_to_string(r)).collect();
+    let compare_strings: Vec<String> = compare_sample.iter().map(|r| row_to_string(r)).collect();
+
+    let current_set: HashSet<&String> = current_strings.iter().collect();
+    let compare_set: HashSet<&String> = compare_strings.iter().collect();
 
     // Find differences in sample
     let mut sample_diffs = Vec::new();
@@ -290,30 +293,41 @@ async fn find_differences(
     let mut removed_count = 0;
     let mut changed_count = 0;
 
-    // Build key-based maps to distinguish "new" from "changed".
-    // Limit the split to the number of key columns + 1 to avoid breaking
-    // on commas that appear inside data values beyond the key columns.
-    let extract_key = |row_str: &str| -> String {
-        let values: Vec<&str> = row_str.splitn(key_columns.len() + 1, ", ").collect();
+    // Extract key from a structured row (no string splitting needed)
+    let extract_key = |row: &[String]| -> String {
         key_columns
             .iter()
             .enumerate()
-            .filter_map(|(j, k)| values.get(j).map(|v| format!("{}={}", k, v)))
+            .filter_map(|(j, k)| row.get(j).map(|v| format!("{}={}", k, v)))
             .collect::<Vec<_>>()
             .join(", ")
     };
 
-    // Map key → full row string for each side
-    let current_by_key: HashMap<String, &String> =
-        current_sample.iter().map(|r| (extract_key(r), r)).collect();
-    let compare_by_key: HashMap<String, &String> =
-        compare_sample.iter().map(|r| (extract_key(r), r)).collect();
+    // Map key → row index for each side
+    let current_by_key: HashMap<String, usize> = current_sample
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (extract_key(r), i))
+        .collect();
+    let compare_by_key: HashMap<String, usize> = compare_sample
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (extract_key(r), i))
+        .collect();
+
+    // Helper to build column-name → value map from a structured row
+    let row_to_map = |row: &[String]| -> HashMap<String, String> {
+        columns
+            .iter()
+            .enumerate()
+            .filter_map(|(j, c)| row.get(j).map(|v| (c.clone(), v.clone())))
+            .collect()
+    };
 
     // Rows in current but not in compare (new or changed)
-    for row_str in &current_sample {
-        if !compare_set.contains(row_str) {
-            let key_value = extract_key(row_str);
-            let values: Vec<&str> = row_str.split(", ").collect();
+    for (i, row) in current_sample.iter().enumerate() {
+        if !compare_set.contains(&current_strings[i]) {
+            let key_value = extract_key(row);
 
             let is_changed = compare_by_key.contains_key(&key_value);
             if is_changed {
@@ -323,22 +337,11 @@ async fn find_differences(
             }
 
             if sample_diffs.len() < sample_size {
-                let current_values: HashMap<String, String> = columns
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(j, c)| values.get(j).map(|v| (c.clone(), v.to_string())))
-                    .collect();
+                let current_values = row_to_map(row);
 
                 let (diff_type, compare_vals) = if is_changed {
-                    // Include compare-side values for changed rows
-                    let compare_row = compare_by_key[&key_value];
-                    let cmp_values: Vec<&str> = compare_row.split(", ").collect();
-                    let cmp_map: HashMap<String, String> = columns
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(j, c)| cmp_values.get(j).map(|v| (c.clone(), v.to_string())))
-                        .collect();
-                    ("changed".to_string(), cmp_map)
+                    let cmp_row = &compare_sample[compare_by_key[&key_value]];
+                    ("changed".to_string(), row_to_map(cmp_row))
                 } else {
                     ("new".to_string(), HashMap::new())
                 };
@@ -354,9 +357,9 @@ async fn find_differences(
     }
 
     // Rows in compare but not in current (removed)
-    for row_str in &compare_sample {
-        if !current_set.contains(row_str) {
-            let key_value = extract_key(row_str);
+    for (i, row) in compare_sample.iter().enumerate() {
+        if !current_set.contains(&compare_strings[i]) {
+            let key_value = extract_key(row);
 
             // Skip rows that exist in current by key (already counted as "changed" above)
             if current_by_key.contains_key(&key_value) {
@@ -366,19 +369,11 @@ async fn find_differences(
             removed_count += 1;
 
             if sample_diffs.len() < sample_size {
-                let values: Vec<&str> = row_str.split(", ").collect();
-
-                let compare_values: HashMap<String, String> = columns
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(j, c)| values.get(j).map(|v| (c.clone(), v.to_string())))
-                    .collect();
-
                 sample_diffs.push(RowDifference {
                     key: key_value,
                     diff_type: "removed".to_string(),
                     current_values: HashMap::new(),
-                    compare_values,
+                    compare_values: row_to_map(row),
                 });
             }
         }

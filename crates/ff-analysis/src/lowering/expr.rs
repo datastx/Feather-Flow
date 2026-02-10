@@ -421,12 +421,13 @@ fn infer_function_type(name: &str, args: &[TypedExpr]) -> (SqlType, Nullability)
 
         "NOW" | "CURRENT_TIMESTAMP" => (SqlType::Timestamp, Nullability::NotNull),
         "CURRENT_DATE" => (SqlType::Date, Nullability::NotNull),
-        "DATE_TRUNC" | "DATE_PART" | "EXTRACT" => (
+        "DATE_PART" | "EXTRACT" => (
             SqlType::Integer {
                 bits: IntBitWidth::I64,
             },
             Nullability::Nullable,
         ),
+        "DATE_TRUNC" => (SqlType::Timestamp, Nullability::Nullable),
 
         "IF" | "IIF" | "IFNULL" | "NULLIF" => {
             let arg_type = args

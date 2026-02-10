@@ -51,6 +51,10 @@ impl DatabaseCore for SnowflakeBackend {
         Err(not_impl("query_sample_rows"))
     }
 
+    async fn query_rows(&self, _sql: &str, _limit: usize) -> DbResult<Vec<Vec<String>>> {
+        Err(not_impl("query_rows"))
+    }
+
     async fn query_one(&self, _sql: &str) -> DbResult<Option<String>> {
         Err(not_impl("query_one"))
     }
