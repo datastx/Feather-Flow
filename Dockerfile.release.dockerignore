@@ -1,0 +1,8 @@
+target/
+.git/
+.github/
+docs/
+tests/
+testdata/
+*.md
+crates/
