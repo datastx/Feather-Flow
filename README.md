@@ -16,62 +16,50 @@ A lightweight dbt-like CLI tool built in Rust for SQL templating, compilation, a
 
 ## Installation
 
-### Download the binary (Linux)
-
-Download the latest static binary — no dependencies required:
+### Quick install (macOS and Linux)
 
 ```bash
-# Download latest release
-curl -fsSL https://github.com/datastx/Feather-Flow/releases/latest/download/ff-x86_64-linux-musl -o ff
-chmod +x ff
-
-# Verify checksum
-curl -fsSL https://github.com/datastx/Feather-Flow/releases/latest/download/ff-x86_64-linux-musl.sha256 -o ff.sha256
-sha256sum -c ff.sha256
-
-# Install
-sudo mv ff /usr/local/bin/
-ff --version
+curl -fsSL https://raw.githubusercontent.com/datastx/Feather-Flow/main/install.sh | bash
 ```
 
-To install a specific version:
+This detects your OS and architecture, downloads the correct binary from the latest GitHub Release, verifies the SHA256 checksum, and installs to `~/.local/bin`.
+
+**Options:**
 
 ```bash
-VERSION=0.1.1
-curl -fsSL "https://github.com/datastx/Feather-Flow/releases/download/v${VERSION}/ff-x86_64-linux-musl" -o ff
+# Install a specific version
+curl -fsSL https://raw.githubusercontent.com/datastx/Feather-Flow/main/install.sh | FF_VERSION=0.1.0 bash
+
+# Install to a custom directory
+curl -fsSL https://raw.githubusercontent.com/datastx/Feather-Flow/main/install.sh | INSTALL_DIR=/usr/local/bin bash
+```
+
+### Manual download
+
+Pre-built binaries are available on the [Releases](https://github.com/datastx/Feather-Flow/releases) page:
+
+| Platform | Artifact |
+|---|---|
+| Linux x86_64 | `ff-x86_64-linux-gnu` |
+| macOS x86_64 | `ff-x86_64-apple-darwin` |
+| macOS ARM (Apple Silicon) | `ff-aarch64-apple-darwin` |
+
+```bash
+# Example: download latest for Linux x86_64
+curl -fsSL https://github.com/datastx/Feather-Flow/releases/latest/download/ff-x86_64-linux-gnu -o ff
 chmod +x ff
 sudo mv ff /usr/local/bin/
 ```
 
 ### Docker
 
-Pull the official image from GitHub Container Registry:
-
 ```bash
 docker pull ghcr.io/datastx/feather-flow:latest
-```
 
-Run against a local project directory:
-
-```bash
-# Run any ff command by appending it after the image name
+# Run any ff command
 docker run --rm -v "$(pwd)":/workspace -w /workspace ghcr.io/datastx/feather-flow validate
-docker run --rm -v "$(pwd)":/workspace -w /workspace ghcr.io/datastx/feather-flow compile
 docker run --rm -v "$(pwd)":/workspace -w /workspace ghcr.io/datastx/feather-flow run
 docker run --rm -v "$(pwd)":/workspace -w /workspace ghcr.io/datastx/feather-flow test
-```
-
-Pin to a specific version:
-
-```bash
-docker pull ghcr.io/datastx/feather-flow:0.1.1
-docker run --rm -v "$(pwd)":/workspace -w /workspace ghcr.io/datastx/feather-flow:0.1.1 validate
-```
-
-### macOS (from source)
-
-```bash
-cargo install --path crates/ff-cli
 ```
 
 ### From source
@@ -81,6 +69,9 @@ git clone https://github.com/datastx/Feather-Flow.git
 cd Feather-Flow
 make build-release
 # Binary is at target/release/ff
+
+# Or install directly
+cargo install --path crates/ff-cli
 ```
 
 ## Quickstart

@@ -7,7 +7,7 @@ SHELL := /bin/bash
         ff-docs ff-docs-json ff-docs-serve ff-docs-export ff-validate ff-validate-strict ff-sources ff-help \
         dev-cycle dev-validate dev-fresh help run watch test-verbose test-integration \
         test-unit test-quick test-failed fmt-check clippy doc-open update ci-quick ci-full install claude-auto-run \
-        version version-bump-patch version-set version-tag release \
+        version version-bump-patch version-bump-minor version-set version-tag \
         build-linux clean-dist \
         docker-build docker-build-release docker-push docker-login docker-run \
         create-release
@@ -245,7 +245,16 @@ version-bump-patch: ## Bump patch version: 0.1.0 → 0.1.1
 	MINOR=$$(echo $$CURRENT | cut -d. -f2); \
 	PATCH=$$(echo $$CURRENT | cut -d. -f3); \
 	NEW="$$MAJOR.$$MINOR.$$((PATCH + 1))"; \
-	sed -i "s/^version = \"$$CURRENT\"/version = \"$$NEW\"/" Cargo.toml; \
+	sed -i '' "s/^version = \"$$CURRENT\"/version = \"$$NEW\"/" Cargo.toml; \
+	cargo generate-lockfile; \
+	echo "Bumped $$CURRENT → $$NEW"
+
+version-bump-minor: ## Bump minor version: 0.1.0 → 0.2.0
+	@CURRENT=$(VERSION); \
+	MAJOR=$$(echo $$CURRENT | cut -d. -f1); \
+	MINOR=$$(echo $$CURRENT | cut -d. -f2); \
+	NEW="$$MAJOR.$$((MINOR + 1)).0"; \
+	sed -i '' "s/^version = \"$$CURRENT\"/version = \"$$NEW\"/" Cargo.toml; \
 	cargo generate-lockfile; \
 	echo "Bumped $$CURRENT → $$NEW"
 
@@ -254,25 +263,12 @@ version-set: ## Set explicit version (make version-set NEW_VERSION=0.2.0)
 		echo "Error: NEW_VERSION not set. Usage: make version-set NEW_VERSION=0.2.0"; \
 		exit 1; \
 	fi
-	sed -i 's/^version = ".*"/version = "$(NEW_VERSION)"/' Cargo.toml
+	sed -i '' 's/^version = ".*"/version = "$(NEW_VERSION)"/' Cargo.toml
 	cargo generate-lockfile
 	@echo "Version set to $(NEW_VERSION)"
 
 version-tag: ## Create git tag from current Cargo.toml version
 	git tag -a "v$(VERSION)" -m "Release v$(VERSION)"
-
-release: ## Bump patch, commit, tag, and push (triggers release workflow)
-	@echo "==> Bumping patch version..."
-	@$(MAKE) version-bump-patch
-	@NEW_VERSION=$$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/'); \
-	echo "==> Committing v$$NEW_VERSION..."; \
-	git add Cargo.toml Cargo.lock; \
-	git commit -m "release: v$$NEW_VERSION"; \
-	echo "==> Tagging v$$NEW_VERSION..."; \
-	git tag -a "v$$NEW_VERSION" -m "Release v$$NEW_VERSION"; \
-	echo "==> Pushing to origin..."; \
-	git push origin main --follow-tags; \
-	echo "==> Done! Release v$$NEW_VERSION will build in CI."
 
 # =============================================================================
 # Release
