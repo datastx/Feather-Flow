@@ -73,7 +73,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ff-x86_64-linux-gnu
+          name: build-linux-x86_64-gnu
           path: |
             dist/ff-x86_64-linux-gnu
             dist/ff-x86_64-linux-gnu.sha256
@@ -109,11 +109,19 @@ jobs:
       - name: Build release binary
         run: make build-target TARGET=${{ matrix.target }}
 
+      - name: Package artifact
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/ff dist/${{ matrix.asset_name }}
+          shasum -a 256 dist/${{ matrix.asset_name }} > dist/${{ matrix.asset_name }}.sha256
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset_name }}
-          path: target/${{ matrix.target }}/release/ff
+          name: build-${{ matrix.target }}
+          path: |
+            dist/${{ matrix.asset_name }}
+            dist/${{ matrix.asset_name }}.sha256
 
   release:
     name: Create release and push Docker image
