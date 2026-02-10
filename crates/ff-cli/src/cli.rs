@@ -574,7 +574,7 @@ pub struct LineageArgs {
     pub model: Option<String>,
 
     /// Filter to a specific column (requires --model)
-    #[arg(short, long)]
+    #[arg(long)]
     pub column: Option<String>,
 
     /// Direction to trace lineage
