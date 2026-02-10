@@ -574,7 +574,7 @@ pub struct LineageArgs {
     pub model: Option<String>,
 
     /// Filter to a specific column (requires --model)
-    #[arg(short, long)]
+    #[arg(long)]
     pub column: Option<String>,
 
     /// Direction to trace lineage
@@ -716,4 +716,17 @@ pub enum AnalyzeSeverity {
     Warning,
     /// Show errors only
     Error,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn verify_cli_args() {
+        // Validates the entire command tree: short flag conflicts,
+        // duplicate args, and other clap definition errors.
+        Cli::command().debug_assert();
+    }
 }
