@@ -103,6 +103,13 @@ pub trait DatabaseCore: Send + Sync {
     /// Query and return sample rows as formatted strings
     async fn query_sample_rows(&self, sql: &str, limit: usize) -> DbResult<Vec<String>>;
 
+    /// Query and return rows as structured column vectors
+    ///
+    /// Each inner `Vec<String>` represents one row with one entry per column.
+    /// Use this instead of [`Self::query_sample_rows`] when you need to distinguish
+    /// individual column values (e.g. for diff comparisons).
+    async fn query_rows(&self, sql: &str, limit: usize) -> DbResult<Vec<Vec<String>>>;
+
     /// Query and return a single string value from the first row, first column
     async fn query_one(&self, sql: &str) -> DbResult<Option<String>>;
 

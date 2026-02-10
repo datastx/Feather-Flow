@@ -62,7 +62,7 @@ impl ContractValidationResult {
         }
     }
 
-    /// Add a violation
+    /// Add a violation that respects the enforced flag
     pub fn add_violation(&mut self, violation_type: ViolationType, message: impl Into<String>) {
         self.violations.push(ContractViolation {
             model: self.model.clone(),
@@ -73,6 +73,15 @@ impl ContractValidationResult {
         if self.enforced {
             self.passed = false;
         }
+    }
+
+    /// Add a warning violation that never marks the result as failed
+    pub fn add_warning(&mut self, violation_type: ViolationType, message: impl Into<String>) {
+        self.violations.push(ContractViolation {
+            model: self.model.clone(),
+            violation_type,
+            message: message.into(),
+        });
     }
 
     /// Check if there are any violations
@@ -140,20 +149,16 @@ pub fn validate_contract(
         }
     }
 
-    // Optionally check for extra columns (as warnings only)
+    // Check for extra columns (as warnings only — never fail the contract)
     let contracted_columns: std::collections::HashSet<String> = schema
         .columns
         .iter()
         .map(|c| c.name.to_lowercase())
         .collect();
 
-    // Save current enforced state and temporarily disable enforcement
-    // so extra-column violations don't fail the contract
-    let saved_enforced = result.enforced;
-    result.enforced = false;
     for (name, _) in actual_columns {
         if !contracted_columns.contains(&name.to_lowercase()) {
-            result.add_violation(
+            result.add_warning(
                 ViolationType::ExtraColumn {
                     column: name.clone(),
                 },
@@ -164,7 +169,6 @@ pub fn validate_contract(
             );
         }
     }
-    result.enforced = saved_enforced;
 
     result
 }

@@ -367,6 +367,26 @@ impl DatabaseCore for DuckDbBackend {
         Ok(rows)
     }
 
+    async fn query_rows(&self, sql: &str, limit: usize) -> DbResult<Vec<Vec<String>>> {
+        let conn = self.lock_conn()?;
+        let limited_sql = format!("SELECT * FROM ({}) AS subq LIMIT {}", sql, limit);
+
+        let mut stmt = conn.prepare(&limited_sql)?;
+        let mut rows: Vec<Vec<String>> = Vec::new();
+        let mut result_rows = stmt.query([])?;
+        let column_count = result_rows.as_ref().map_or(0, |r| r.column_count());
+
+        while let Some(row) = result_rows.next()? {
+            let mut values: Vec<String> = Vec::with_capacity(column_count);
+            for i in 0..column_count {
+                values.push(extract_cell_as_string(row, i));
+            }
+            rows.push(values);
+        }
+
+        Ok(rows)
+    }
+
     async fn query_one(&self, sql: &str) -> DbResult<Option<String>> {
         let conn = self.lock_conn()?;
 

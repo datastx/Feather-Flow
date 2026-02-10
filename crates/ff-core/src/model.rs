@@ -140,10 +140,14 @@ impl FreshnessThreshold {
 
     /// Convert the threshold to seconds
     pub fn to_seconds(&self) -> u64 {
+        const SECS_PER_MINUTE: u64 = 60;
+        const SECS_PER_HOUR: u64 = 3600;
+        const SECS_PER_DAY: u64 = 86_400;
+
         let period_seconds = match self.period {
-            FreshnessPeriod::Minute => 60,
-            FreshnessPeriod::Hour => 3600,
-            FreshnessPeriod::Day => 86400,
+            FreshnessPeriod::Minute => SECS_PER_MINUTE,
+            FreshnessPeriod::Hour => SECS_PER_HOUR,
+            FreshnessPeriod::Day => SECS_PER_DAY,
         };
         self.count as u64 * period_seconds
     }

@@ -52,7 +52,7 @@ impl TestResult {
             sample_failures: Vec::new(),
             duration,
             error: None,
-            severity: TestSeverity::default(),
+            severity: test.severity,
         }
     }
 
@@ -73,7 +73,7 @@ impl TestResult {
             sample_failures,
             duration,
             error: None,
-            severity: TestSeverity::default(),
+            severity: test.severity,
         }
     }
 
@@ -89,7 +89,7 @@ impl TestResult {
             sample_failures: Vec::new(),
             duration,
             error: Some(error),
-            severity: TestSeverity::default(),
+            severity: test.severity,
         }
     }
 }
