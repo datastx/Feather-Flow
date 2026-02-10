@@ -1,4 +1,5 @@
 //! Snowflake database backend stub
+#![allow(dead_code)]
 
 use crate::error::{DbError, DbResult};
 use crate::traits::{

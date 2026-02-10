@@ -811,7 +811,7 @@ mod tests {
             );
             // Verify example uses the macro
             assert!(
-                m.example.contains(&m.name),
+                m.example.contains(m.name),
                 "Example '{}' should contain macro name '{}'",
                 m.example,
                 m.name
