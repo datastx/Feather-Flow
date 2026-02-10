@@ -26,7 +26,11 @@ pub struct MacroParam {
 
 impl MacroParam {
     /// Create a new required parameter
-    pub fn required(name: &'static str, param_type: &'static str, description: &'static str) -> Self {
+    pub fn required(
+        name: &'static str,
+        param_type: &'static str,
+        description: &'static str,
+    ) -> Self {
         Self {
             name,
             param_type,
@@ -36,7 +40,11 @@ impl MacroParam {
     }
 
     /// Create a new optional parameter
-    pub fn optional(name: &'static str, param_type: &'static str, description: &'static str) -> Self {
+    pub fn optional(
+        name: &'static str,
+        param_type: &'static str,
+        description: &'static str,
+    ) -> Self {
         Self {
             name,
             param_type,
@@ -303,10 +311,8 @@ pub fn get_macros_by_category(category: &str) -> Vec<MacroMetadata> {
 
 /// Get all available macro categories
 pub fn get_macro_categories() -> Vec<&'static str> {
-    let mut categories: Vec<&'static str> = cached_builtin_macros()
-        .iter()
-        .map(|m| m.category)
-        .collect();
+    let mut categories: Vec<&'static str> =
+        cached_builtin_macros().iter().map(|m| m.category).collect();
     categories.sort();
     categories.dedup();
     categories

@@ -125,12 +125,13 @@ fn load_from_manifest(
                 Ok(sql) => sql,
                 Err(_) => {
                     // Fall back to recompiling this model
-                    let model = project
-                        .get_model(name)
-                        .with_context(|| format!("Model '{}' not found during recompilation", name))?;
-                    let (rendered, _) = jinja
-                        .render_with_config(&model.raw_sql)
-                        .with_context(|| format!("Failed to render template for model '{}'", name))?;
+                    let model = project.get_model(name).with_context(|| {
+                        format!("Model '{}' not found during recompilation", name)
+                    })?;
+                    let (rendered, _) =
+                        jinja.render_with_config(&model.raw_sql).with_context(|| {
+                            format!("Failed to render template for model '{}'", name)
+                        })?;
                     rendered
                 }
             };
@@ -318,10 +319,8 @@ fn load_deferred_manifest(defer_path: &str, global: &GlobalArgs) -> Result<Manif
         eprintln!("[verbose] Loading deferred manifest from: {}", defer_path);
     }
 
-    Manifest::load(path).with_context(|| format!(
-        "Failed to parse deferred manifest at: {}",
-        defer_path
-    ))
+    Manifest::load(path)
+        .with_context(|| format!("Failed to parse deferred manifest at: {}", defer_path))
 }
 
 /// Resolve unselected upstream dependencies from deferred manifest.

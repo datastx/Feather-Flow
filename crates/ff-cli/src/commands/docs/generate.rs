@@ -1621,10 +1621,7 @@ fn generate_macros_html() -> String {
                 "<div class=\"macro-name\"><code>{}</code></div>\n",
                 macro_info.name
             ));
-            html.push_str(&format!(
-                "<p>{}</p>\n",
-                html_escape(macro_info.description)
-            ));
+            html.push_str(&format!("<p>{}</p>\n", html_escape(macro_info.description)));
 
             // Parameters
             if !macro_info.params.is_empty() {
