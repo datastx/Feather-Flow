@@ -10,7 +10,9 @@ SHELL := /bin/bash
         version version-bump-patch version-bump-minor version-set version-tag \
         build-linux clean-dist \
         docker-build docker-build-release docker-push docker-login docker-run \
-        create-release
+        create-release \
+        vscode-install vscode-build vscode-build-production vscode-watch vscode-test vscode-clean \
+        vscode-package vscode-publish
 
 # =============================================================================
 # Configuration
@@ -340,6 +342,37 @@ docker-login: ## Authenticate to GHCR (CI sets GITHUB_TOKEN and GITHUB_ACTOR)
 
 docker-run: ## Run ff in Docker (pass CMD="validate" etc.)
 	docker run --rm -v $(PWD):/workspace -w /workspace $(DOCKER_IMAGE):latest $(CMD)
+
+# =============================================================================
+# VS Code Extension
+# =============================================================================
+
+VSCODE_DIR := vscode-featherflow
+
+vscode-install: ## Install VS Code extension dependencies
+	cd $(VSCODE_DIR) && npm install
+
+vscode-build: vscode-install ## Build VS Code extension (dev)
+	cd $(VSCODE_DIR) && node esbuild.js
+
+vscode-build-production: vscode-install ## Build VS Code extension (production, minified)
+	cd $(VSCODE_DIR) && node esbuild.js --production
+
+vscode-watch: vscode-install ## Watch and rebuild VS Code extension on changes
+	cd $(VSCODE_DIR) && node esbuild.js --watch
+
+vscode-test: vscode-install ## Run VS Code extension tests
+	cd $(VSCODE_DIR) && npx vitest run
+
+vscode-package: vscode-build-production ## Package VS Code extension as .vsix
+	mkdir -p $(DIST_DIR)
+	cd $(VSCODE_DIR) && npx vsce package --out ../$(DIST_DIR)/
+
+vscode-publish: vscode-build-production ## Publish VS Code extension to Marketplace (requires VSCE_PAT)
+	cd $(VSCODE_DIR) && npx vsce publish
+
+vscode-clean: ## Remove VS Code extension build artifacts
+	rm -rf $(VSCODE_DIR)/dist $(VSCODE_DIR)/node_modules
 
 # =============================================================================
 # Claude Code

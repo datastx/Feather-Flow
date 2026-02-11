@@ -123,9 +123,37 @@ jobs:
             dist/${{ matrix.asset_name }}
             dist/${{ matrix.asset_name }}.sha256
 
+  build-vscode:
+    name: Build VS Code extension
+    needs: [version-check]
+    if: needs.version-check.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: vscode-featherflow/package-lock.json
+
+      - name: Run tests
+        run: make vscode-test
+
+      - name: Package .vsix
+        run: make vscode-package
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-vscode-extension
+          path: dist/featherflow-*.vsix
+
   release:
     name: Create release and push Docker image
-    needs: [version-check, build-linux, build-macos]
+    needs: [version-check, build-linux, build-macos, build-vscode]
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -165,3 +193,23 @@ jobs:
 
       - name: Push Docker image
         run: make docker-push
+
+  publish-vscode:
+    name: Publish VS Code extension
+    needs: [version-check, release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: vscode-featherflow/package-lock.json
+
+      - name: Publish to VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: make vscode-publish
