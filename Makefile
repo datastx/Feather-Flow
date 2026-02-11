@@ -350,7 +350,7 @@ docker-run: ## Run ff in Docker (pass CMD="validate" etc.)
 VSCODE_DIR := vscode-featherflow
 
 vscode-install: ## Install VS Code extension dependencies
-	cd $(VSCODE_DIR) && npm install
+	cd $(VSCODE_DIR) && npm ci
 
 vscode-build: vscode-install ## Build VS Code extension (dev)
 	cd $(VSCODE_DIR) && node esbuild.js
