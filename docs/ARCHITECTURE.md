@@ -143,7 +143,7 @@ All test SQL returns **failing rows** — a count of 0 means the test passed.
 
 ### `ff-cli` — Command-Line Interface
 
-18 subcommands built with `clap` derive API:
+16 subcommands built with `clap` derive API:
 
 | Command | Description |
 |---------|-------------|
@@ -157,11 +157,9 @@ All test SQL returns **failing rows** — a count of 0 means the test passed.
 | `validate` | Full validation: parse, no-CTE/derived-table check, dependency resolution |
 | `docs` | Generate documentation for all models |
 | `clean` | Remove target directory and compiled artifacts |
-| `source` | Manage external source definitions |
 | `snapshot` | Snapshot table state for SCD Type 2 tracking |
 | `run-operation` | Execute a standalone macro that returns SQL |
-| `freshness` | Check model data freshness |
-| `metric` | Work with semantic layer metrics |
+| `freshness` | Check model and source data freshness |
 | `diff` | Compare model output between two databases |
 | `lineage` | Column-level lineage with table/JSON/DOT output |
 | `analyze` | Run static analysis passes and report diagnostics |

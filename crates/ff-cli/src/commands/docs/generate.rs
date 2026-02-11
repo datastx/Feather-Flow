@@ -156,39 +156,6 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
-    // Generate metric documentation
-    let mut metric_docs: Vec<MetricDoc> = Vec::new();
-    let mut metric_entries: Vec<MetricSummary> = Vec::new();
-
-    for metric in &project.metrics {
-        let doc = build_metric_doc(metric);
-
-        metric_entries.push(MetricSummary {
-            name: metric.name.clone(),
-            model: metric.model.clone(),
-            calculation: format!("{}", metric.calculation),
-            owner: metric.owner.clone(),
-        });
-
-        match args.format {
-            DocsFormat::Markdown => {
-                let md_content = generate_metric_markdown(&doc);
-                let md_path = output_dir.join(format!("metric_{}.md", metric.name));
-                fs::write(&md_path, md_content)?;
-                println!("  {} metric_{}.md", CHECKMARK, metric.name);
-            }
-            DocsFormat::Json => {
-                metric_docs.push(doc);
-            }
-            DocsFormat::Html => {
-                let html_content = generate_metric_html(&doc);
-                let html_path = output_dir.join(format!("metric_{}.html", metric.name));
-                fs::write(&html_path, html_content)?;
-                println!("  {} metric_{}.html", CHECKMARK, metric.name);
-            }
-        }
-    }
-
     // Generate index/output
     match args.format {
         DocsFormat::Markdown => {
@@ -198,7 +165,6 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
                 &index_entries,
                 &source_entries,
                 &exposure_entries,
-                &metric_entries,
             );
             let index_path = output_dir.join("index.md");
             fs::write(&index_path, index_content)?;
@@ -221,24 +187,17 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
                 .map(|d| (d.name.clone(), d))
                 .collect();
 
-            let metrics_map: HashMap<String, MetricDoc> = metric_docs
-                .into_iter()
-                .map(|d| (d.name.clone(), d))
-                .collect();
-
             let json_output = serde_json::json!({
                 "project_name": project.config.name,
                 "models": docs_map,
                 "sources": sources_map,
                 "exposures": exposures_map,
-                "metrics": metrics_map,
                 "summary": {
                     "total_models": models_with_schema + models_without_schema,
                     "models_with_schema": models_with_schema,
                     "models_without_schema": models_without_schema,
                     "total_sources": source_entries.len(),
                     "total_exposures": exposure_entries.len(),
-                    "total_metrics": metric_entries.len(),
                 }
             });
 
@@ -254,7 +213,6 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
                 &index_entries,
                 &source_entries,
                 &exposure_entries,
-                &metric_entries,
             );
             let index_path = output_dir.join("index.html");
             fs::write(&index_path, index_content)?;
@@ -295,17 +253,15 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
 
     let macro_count = get_builtin_macros().len();
     let exposure_count = exposure_entries.len();
-    let metric_count = metric_entries.len();
 
     println!();
     println!(
-        "Generated docs for {} models ({} with schema, {} without), {} sources, {} exposures, {} metrics, {} macros",
+        "Generated docs for {} models ({} with schema, {} without), {} sources, {} exposures, {} macros",
         models_with_schema + models_without_schema,
         models_with_schema,
         models_without_schema,
         source_entries.len(),
         exposure_count,
-        metric_count,
         macro_count
     );
     println!("Output: {}", output_dir.display());
@@ -540,82 +496,12 @@ fn generate_exposure_markdown(doc: &ExposureDoc) -> String {
     md
 }
 
-/// Generate markdown documentation for a metric
-fn generate_metric_markdown(doc: &MetricDoc) -> String {
-    let mut md = String::new();
-
-    // Title
-    md.push_str(&format!("# Metric: {}\n\n", doc.name));
-
-    // Label
-    if let Some(label) = &doc.label {
-        md.push_str(&format!("*{}*\n\n", label));
-    }
-
-    // Description
-    if let Some(desc) = &doc.description {
-        md.push_str(&format!("{}\n\n", desc));
-    }
-
-    // Metadata
-    md.push_str("## Definition\n\n");
-    md.push_str(&format!(
-        "**Base Model**: [{}]({}.md)\n\n",
-        doc.model, doc.model
-    ));
-    md.push_str(&format!(
-        "**Calculation**: `{}({})`\n\n",
-        doc.calculation, doc.expression
-    ));
-
-    if let Some(ts) = &doc.timestamp {
-        md.push_str(&format!("**Timestamp Column**: `{}`\n\n", ts));
-    }
-
-    if let Some(owner) = &doc.owner {
-        md.push_str(&format!("**Owner**: {}\n\n", owner));
-    }
-
-    if !doc.tags.is_empty() {
-        md.push_str(&format!("**Tags**: {}\n\n", doc.tags.join(", ")));
-    }
-
-    // Dimensions
-    if !doc.dimensions.is_empty() {
-        md.push_str("## Dimensions\n\n");
-        md.push_str("Available dimensions for grouping:\n\n");
-        for dim in &doc.dimensions {
-            md.push_str(&format!("- `{}`\n", dim));
-        }
-        md.push('\n');
-    }
-
-    // Filters
-    if !doc.filters.is_empty() {
-        md.push_str("## Filters\n\n");
-        md.push_str("Applied filters:\n\n");
-        for filter in &doc.filters {
-            md.push_str(&format!("- `{}`\n", filter));
-        }
-        md.push('\n');
-    }
-
-    // Generated SQL
-    md.push_str("## Generated SQL\n\n");
-    md.push_str("```sql\n");
-    md.push_str(&doc.sql);
-    md.push_str("\n```\n");
-
-    md
-}
-
 /// Generate markdown index file
 fn generate_index_markdown(
     project_name: &str,
     models: &[ModelSummary],
     sources: &[SourceSummary],
     exposures: &[ExposureSummary],
-    metrics: &[MetricSummary],
 ) -> String {
     let mut md = String::new();
 
@@ -644,13 +530,6 @@ fn generate_index_markdown(
         md.push_str(&format!(
             "**Exposures**: {} (downstream dependencies)\n\n",
             exposures.len()
-        ));
-    }
-
-    if !metrics.is_empty() {
-        md.push_str(&format!(
-            "**Metrics**: {} (semantic layer)\n\n",
-            metrics.len()
         ));
     }
 
@@ -704,21 +583,6 @@ fn generate_index_markdown(
             md.push_str(&format!(
                 "| [{}](exposure_{}.md) | {} | {} | {} |\n",
                 exposure.name, exposure.name, exposure.exposure_type, exposure.owner, url
-            ));
-        }
-        md.push('\n');
-    }
-
-    if !metrics.is_empty() {
-        md.push_str("## Metrics\n\n");
-        md.push_str("| Metric | Base Model | Calculation | Owner |\n");
-        md.push_str("|--------|------------|-------------|-------|\n");
-
-        for metric in metrics {
-            let owner = metric.owner.as_deref().unwrap_or("-");
-            md.push_str(&format!(
-                "| [{}](metric_{}.md) | [{}]({}.md) | {} | {} |\n",
-                metric.name, metric.name, metric.model, metric.model, metric.calculation, owner
             ));
         }
         md.push('\n');
@@ -1106,107 +970,12 @@ fn generate_exposure_html(doc: &ExposureDoc) -> String {
     html
 }
 
-/// Generate HTML documentation for a metric
-fn generate_metric_html(doc: &MetricDoc) -> String {
-    let mut html = String::new();
-
-    html.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
-    html.push_str(&format!(
-        "<meta charset=\"UTF-8\">\n<title>Metric: {}</title>\n",
-        doc.name
-    ));
-    html.push_str(html_styles());
-    html.push_str("</head>\n<body>\n");
-
-    html.push_str("<nav><a href=\"index.html\">\u{2190} Back to Index</a></nav>\n");
-    html.push_str(&format!("<h1>Metric: {}</h1>\n", doc.name));
-
-    // Label
-    if let Some(label) = &doc.label {
-        html.push_str(&format!(
-            "<p class=\"metric-label\"><em>{}</em></p>\n",
-            html_escape(label)
-        ));
-    }
-
-    // Description
-    if let Some(desc) = &doc.description {
-        html.push_str(&format!("<p>{}</p>\n", html_escape(desc)));
-    }
-
-    // Metadata
-    html.push_str("<h2>Definition</h2>\n");
-    html.push_str("<div class=\"metadata\">\n");
-    html.push_str(&format!(
-        "<p><strong>Base Model:</strong> <a href=\"{}.html\">{}</a></p>\n",
-        url_encode_path(&doc.model),
-        html_escape(&doc.model)
-    ));
-    html.push_str(&format!(
-        "<p><strong>Calculation:</strong> <code>{}({})</code></p>\n",
-        doc.calculation,
-        html_escape(&doc.expression)
-    ));
-    if let Some(ts) = &doc.timestamp {
-        html.push_str(&format!(
-            "<p><strong>Timestamp Column:</strong> <code>{}</code></p>\n",
-            html_escape(ts)
-        ));
-    }
-    if let Some(owner) = &doc.owner {
-        html.push_str(&format!(
-            "<p><strong>Owner:</strong> {}</p>\n",
-            html_escape(owner)
-        ));
-    }
-    if !doc.tags.is_empty() {
-        let escaped_tags: Vec<String> = doc.tags.iter().map(|t| html_escape(t)).collect();
-        html.push_str(&format!(
-            "<p><strong>Tags:</strong> {}</p>\n",
-            escaped_tags.join(", ")
-        ));
-    }
-    html.push_str("</div>\n");
-
-    // Dimensions
-    if !doc.dimensions.is_empty() {
-        html.push_str("<h2>Dimensions</h2>\n");
-        html.push_str("<p>Available dimensions for grouping:</p>\n");
-        html.push_str("<ul>\n");
-        for dim in &doc.dimensions {
-            html.push_str(&format!("<li><code>{}</code></li>\n", html_escape(dim)));
-        }
-        html.push_str("</ul>\n");
-    }
-
-    // Filters
-    if !doc.filters.is_empty() {
-        html.push_str("<h2>Filters</h2>\n");
-        html.push_str("<p>Applied filters:</p>\n");
-        html.push_str("<ul>\n");
-        for filter in &doc.filters {
-            html.push_str(&format!("<li><code>{}</code></li>\n", html_escape(filter)));
-        }
-        html.push_str("</ul>\n");
-    }
-
-    // Generated SQL
-    html.push_str("<h2>Generated SQL</h2>\n");
-    html.push_str("<pre><code>");
-    html.push_str(&html_escape(&doc.sql));
-    html.push_str("</code></pre>\n");
-
-    html.push_str("</body>\n</html>\n");
-    html
-}
-
 /// Generate HTML index file
 fn generate_index_html(
     project_name: &str,
     models: &[ModelSummary],
     sources: &[SourceSummary],
     exposures: &[ExposureSummary],
-    metrics: &[MetricSummary],
 ) -> String {
     let mut html = String::new();
 
@@ -1244,13 +1013,6 @@ fn generate_index_html(
         html.push_str(&format!(
             "<p><strong>Exposures:</strong> {} (downstream dependencies)</p>\n",
             exposures.len()
-        ));
-    }
-
-    if !metrics.is_empty() {
-        html.push_str(&format!(
-            "<p><strong>Metrics:</strong> {} (semantic layer)</p>\n",
-            metrics.len()
         ));
     }
 
@@ -1322,29 +1084,6 @@ fn generate_index_html(
                 html_escape(&exposure.exposure_type),
                 html_escape(&exposure.owner),
                 url
-            ));
-        }
-        html.push_str("</tbody></table>\n");
-    }
-
-    if !metrics.is_empty() {
-        html.push_str("<h2>Metrics</h2>\n");
-        html.push_str("<table>\n<thead><tr><th>Metric</th><th>Base Model</th><th>Calculation</th><th>Owner</th></tr></thead>\n<tbody>\n");
-
-        for metric in metrics {
-            let owner = metric
-                .owner
-                .as_ref()
-                .map(|o| html_escape(o))
-                .unwrap_or_else(|| "-".to_string());
-            html.push_str(&format!(
-                "<tr><td><a href=\"metric_{}.html\">{}</a></td><td><a href=\"{}.html\">{}</a></td><td>{}</td><td>{}</td></tr>\n",
-                url_encode_path(&metric.name),
-                html_escape(&metric.name),
-                url_encode_path(&metric.model),
-                html_escape(&metric.model),
-                html_escape(&metric.calculation),
-                owner
             ));
         }
         html.push_str("</tbody></table>\n");

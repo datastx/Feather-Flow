@@ -217,14 +217,6 @@ Options:
   --select <SNAPSHOTS>    Specific snapshots to run
 ```
 
-### `ff source`
-
-Manage external source definitions.
-
-```
-ff source <SUBCOMMAND>
-```
-
 ### `ff run-operation`
 
 Execute a standalone macro that returns SQL.
@@ -236,27 +228,17 @@ Options:
   --args <JSON>           Arguments to pass to the macro as JSON
 ```
 
-### `ff metric`
-
-Work with semantic layer metrics.
-
-```
-ff metric [NAME] [OPTIONS]
-
-Options:
-  --list                  List all metrics
-  --execute               Execute the metric query against the database
-  --output <FORMAT>       Output format: text, json
-```
-
 ### `ff freshness`
 
-Check data freshness for models.
+Check data freshness for models and sources.
 
 ```
 ff freshness [OPTIONS]
 
 Options:
-  --select <SOURCES>      Sources to check
-  --output <FORMAT>       text, json
+  --sources               Check only sources (default: check both)
+  --models                Check only models (default: check both)
+  --select <NAMES>        Filter specific resources by name (comma-separated)
+  --output <FORMAT>       Output format: table, json
+  --write-json            Write results to target/freshness.json
 ```

@@ -14,7 +14,6 @@ pub mod exposure;
 pub mod function;
 pub mod function_name;
 pub mod manifest;
-pub mod metric;
 pub mod model;
 pub mod model_name;
 mod newtype_string;
@@ -43,7 +42,6 @@ pub use function::{
 };
 pub use function_name::FunctionName;
 pub use manifest::Manifest;
-pub use metric::{discover_metrics, Metric, MetricCalculation};
 pub use model::{
     ColumnConstraint, DataClassification, FreshnessConfig, FreshnessPeriod, FreshnessThreshold,
     Model, ModelSchema, SchemaContract,

@@ -66,10 +66,8 @@ User-controlled identifiers interpolated directly into SQL via `format!()`.
 | 4 | `ff-cli/src/commands/diff.rs` | 154 | Unquoted identifiers in SQL |
 | 5 | `ff-cli/src/commands/diff.rs` | 258-263 | Unquoted identifiers in SQL |
 | 6 | `ff-cli/src/commands/freshness.rs` | 222-224 | Unquoted identifiers in SQL |
-| 7 | `ff-cli/src/commands/source.rs` | 122-124 | Unquoted identifiers in SQL |
-| 8 | `ff-cli/src/commands/seed.rs` | 124 | Unquoted table name in SQL |
-| 9 | `ff-cli/src/commands/run.rs` | 1576 | Unquoted qualified_name in SQL |
-| 10 | `ff-cli/src/commands/metric.rs` | 284-286 | Unescaped metric query |
+| 7 | `ff-cli/src/commands/seed.rs` | 124 | Unquoted table name in SQL |
+| 8 | `ff-cli/src/commands/run.rs` | 1576 | Unquoted qualified_name in SQL |
 
 **Fix:** Use parameterized queries for `information_schema` lookups. Use `quote_ident()` for DDL.
 
@@ -120,11 +118,9 @@ User-controlled identifiers interpolated directly into SQL via `format!()`.
 | 5 | `ff-cli/src/commands/diff.rs` | 1 |
 | 6 | `ff-cli/src/commands/seed.rs` | 1 |
 | 7 | `ff-cli/src/commands/snapshot.rs` | 1 |
-| 8 | `ff-cli/src/commands/metric.rs` | 1 |
-| 9 | `ff-cli/src/commands/analyze.rs` | 1 |
-| 10 | `ff-cli/src/commands/source.rs` | 1 |
-| 11 | `ff-cli/src/commands/freshness.rs` | 1 |
-| 12 | `ff-cli/src/commands/run_operation.rs` | 1 |
+| 8 | `ff-cli/src/commands/analyze.rs` | 1 |
+| 9 | `ff-cli/src/commands/freshness.rs` | 1 |
+| 10 | `ff-cli/src/commands/run_operation.rs` | 1 |
 
 **Fix:** Create `ExitCode(pub i32)` error type, handle in `main.rs`.
 
@@ -136,7 +132,6 @@ User-controlled identifiers interpolated directly into SQL via `format!()`.
 |---|------|-------|
 | 1 | `ff-cli/src/commands/run.rs` + `compile.rs` | Duplicate `parse_hooks_from_config` |
 | 2 | `ff-cli/src/commands/compile.rs` + `parse.rs` | Duplicate `filter_models` |
-| 3 | `ff-cli/src/commands/source.rs` + `freshness.rs` | Duplicate `FreshnessStatus` enum |
 | 4 | `ff-jinja/src/environment.rs` | `with_macros` / `with_incremental_context` share init logic |
 | 5 | `ff-test/src/generator.rs` | 3 duplicated `TestType` match blocks |
 | 6 | `ff-db/src/duckdb.rs` | `merge_into` / `delete_insert` near-identical |

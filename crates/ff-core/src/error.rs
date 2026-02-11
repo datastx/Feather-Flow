@@ -82,14 +82,6 @@ pub enum CoreError {
         path2: String,
     },
 
-    /// MET001: Duplicate metric name
-    #[error("[MET001] Duplicate metric name '{name}' in {path1} and {path2}")]
-    MetricDuplicateName {
-        name: String,
-        path1: String,
-        path2: String,
-    },
-
     /// E010: Missing schema file for model
     #[error("[E010] Model '{model}' is missing a required schema file ({expected_path}). Every model must have a corresponding YAML file.")]
     MissingSchemaFile {

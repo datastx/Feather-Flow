@@ -1,7 +1,6 @@
 //! Shared documentation data types and builder functions
 
 use ff_core::exposure::Exposure;
-use ff_core::metric::Metric;
 use ff_core::model::Model;
 use ff_core::source::SourceFile;
 use ff_sql::{extract_column_lineage, suggest_tests, SqlParser};
@@ -172,41 +171,6 @@ pub(crate) struct ExposureSummary {
     pub owner: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-}
-
-/// Metric documentation data for JSON output
-#[derive(Debug, Serialize)]
-pub(crate) struct MetricDoc {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    pub model: String,
-    pub calculation: String,
-    pub expression: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub timestamp: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub dimensions: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub filters: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub tags: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub owner: Option<String>,
-    /// Generated SQL for this metric
-    pub sql: String,
-}
-
-/// Metric summary for index
-#[derive(Debug, Serialize)]
-pub(crate) struct MetricSummary {
-    pub name: String,
-    pub model: String,
-    pub calculation: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub owner: Option<String>,
 }
 
 /// Build documentation data for a model
@@ -421,23 +385,5 @@ pub(crate) fn build_exposure_doc(exposure: &Exposure) -> ExposureDoc {
         url: exposure.url.clone(),
         maturity: format!("{}", exposure.maturity),
         tags: exposure.tags.clone(),
-    }
-}
-
-/// Build documentation data for a metric
-pub(crate) fn build_metric_doc(metric: &Metric) -> MetricDoc {
-    MetricDoc {
-        name: metric.name.clone(),
-        label: metric.label.clone(),
-        description: metric.description.clone(),
-        model: metric.model.clone(),
-        calculation: format!("{}", metric.calculation),
-        expression: metric.expression.clone(),
-        timestamp: metric.timestamp.clone(),
-        dimensions: metric.dimensions.clone(),
-        filters: metric.filters.clone(),
-        tags: metric.tags.clone(),
-        owner: metric.owner.clone(),
-        sql: metric.generate_sql(),
     }
 }
