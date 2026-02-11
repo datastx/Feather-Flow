@@ -1,0 +1,26 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build-extension",
+      "type": "shell",
+      "command": "node esbuild.js",
+      "options": {
+        "cwd": "${workspaceFolder}/vscode-featherflow"
+      },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "watch-extension",
+      "type": "shell",
+      "command": "node esbuild.js --watch",
+      "options": {
+        "cwd": "${workspaceFolder}/vscode-featherflow"
+      },
+      "isBackground": true,
+      "group": "build",
+      "problemMatcher": []
+    }
+  ]
+}
