@@ -79,7 +79,7 @@ pub fn build_query_comment(metadata: &QueryCommentMetadata) -> String {
     let json = match serde_json::to_string(metadata) {
         Ok(j) => j,
         Err(e) => {
-            eprintln!("[warn] Failed to serialize query comment metadata: {}", e);
+            log::warn!("Failed to serialize query comment metadata: {}", e);
             return String::new();
         }
     };

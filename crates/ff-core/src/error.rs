@@ -175,6 +175,10 @@ pub enum CoreError {
     /// FN012: Function deployment error
     #[error("[FN012] Function '{name}': deployment failed: {details}")]
     FunctionDeployError { name: String, details: String },
+
+    /// E018: Unsupported schema version
+    #[error("[E018] Unsupported schema version {version}, only version 1 is supported")]
+    UnsupportedSchemaVersion { version: u32 },
 }
 
 /// Result type alias for CoreError

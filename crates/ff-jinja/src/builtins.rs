@@ -6,6 +6,7 @@
 use ff_core::sql_utils::{escape_sql_string, quote_ident};
 use minijinja::value::Value;
 use minijinja::Error;
+use regex::Regex;
 use serde::Serialize;
 use std::sync::OnceLock;
 
@@ -320,18 +321,48 @@ pub fn get_macro_categories() -> Vec<&'static str> {
 
 // ===== Date/Time Macros =====
 
+/// Regex pattern for validating YYYY-MM-DD date format
+static DATE_FORMAT_RE: OnceLock<Regex> = OnceLock::new();
+
+/// Get the compiled date-format regex (built once, reused)
+fn date_format_regex() -> &'static Regex {
+    DATE_FORMAT_RE.get_or_init(|| Regex::new(r"^\d{4}-\d{2}-\d{2}$").expect("valid regex"))
+}
+
 /// Generate a date spine (range of dates)
 ///
 /// Usage: `{{ date_spine('2024-01-01', '2024-12-31') }}`
-/// Returns SQL that generates a series of dates
-pub(crate) fn date_spine(start_date: &str, end_date: &str) -> String {
+/// Returns SQL that generates a series of dates.
+///
+/// Both `start_date` and `end_date` must be in `YYYY-MM-DD` format.
+pub(crate) fn date_spine(start_date: &str, end_date: &str) -> Result<String, Error> {
+    let re = date_format_regex();
+    if !re.is_match(start_date) {
+        return Err(Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!(
+                "date_spine: start_date '{}' is not in YYYY-MM-DD format",
+                start_date
+            ),
+        ));
+    }
+    if !re.is_match(end_date) {
+        return Err(Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!(
+                "date_spine: end_date '{}' is not in YYYY-MM-DD format",
+                end_date
+            ),
+        ));
+    }
+
     // DuckDB-specific syntax for generating date series
     let escaped_start = escape_sql_string(start_date);
     let escaped_end = escape_sql_string(end_date);
-    format!(
+    Ok(format!(
         "SELECT CAST(unnest AS DATE) AS date_day FROM unnest(generate_series(DATE '{}', DATE '{}', INTERVAL '1 day'))",
         escaped_start, escaped_end
-    )
+    ))
 }
 
 /// Truncate a date to a specific part
@@ -496,8 +527,8 @@ pub(crate) fn not_null(column: &str) -> String {
 // ===== Minijinja Function Wrappers =====
 
 /// Wrapper for date_spine as a minijinja function
-pub(crate) fn make_date_spine_fn() -> impl Fn(&str, &str) -> String + Send + Sync + Clone + 'static
-{
+pub(crate) fn make_date_spine_fn(
+) -> impl Fn(&str, &str) -> Result<String, Error> + Send + Sync + Clone + 'static {
     move |start: &str, end: &str| date_spine(start, end)
 }
 
@@ -674,10 +705,22 @@ mod tests {
 
     #[test]
     fn test_date_spine() {
-        let result = date_spine("2024-01-01", "2024-01-31");
+        let result = date_spine("2024-01-01", "2024-01-31").unwrap();
         assert!(result.contains("generate_series"));
         assert!(result.contains("2024-01-01"));
         assert!(result.contains("2024-01-31"));
+    }
+
+    #[test]
+    fn test_date_spine_rejects_bad_start_date() {
+        let err = date_spine("not-a-date", "2024-01-31").unwrap_err();
+        assert!(err.to_string().contains("YYYY-MM-DD"));
+    }
+
+    #[test]
+    fn test_date_spine_rejects_bad_end_date() {
+        let err = date_spine("2024-01-01", "01/31/2024").unwrap_err();
+        assert!(err.to_string().contains("YYYY-MM-DD"));
     }
 
     #[test]

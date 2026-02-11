@@ -2,7 +2,18 @@
 
 use ff_core::model::{SchemaTest, TestSeverity, TestType};
 use ff_core::sql_utils::{escape_sql_string, quote_ident, quote_qualified};
+use regex::Regex;
+use std::sync::LazyLock;
 use thiserror::Error;
+
+/// Word-boundary regex matching dangerous SQL keywords.
+///
+/// Uses `\b` to avoid false positives on column names like `created_at`
+/// (which contains "CREATE" as a substring) or `updated_at` ("UPDATE").
+static DANGEROUS_KEYWORDS_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(UNION|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE)\b")
+        .expect("hardcoded regex is valid")
+});
 
 /// Error type for test SQL generation
 #[derive(Error, Debug)]
@@ -195,10 +206,18 @@ fn generate_sql_for_test_type(
         TestType::MinValue { value } => generate_min_value_test(table, column, *value)
             .unwrap_or_else(|e| {
                 // Return SQL that yields one row so the test FAILS instead of silently passing
-                format!("SELECT 'ERROR: invalid threshold value: {}' AS error", e)
+                format!(
+                    "SELECT '{}' AS error",
+                    escape_sql_string(&format!("ERROR: invalid threshold value: {}", e))
+                )
             }),
         TestType::MaxValue { value } => generate_max_value_test(table, column, *value)
-            .unwrap_or_else(|e| format!("SELECT 'ERROR: invalid threshold value: {}' AS error", e)),
+            .unwrap_or_else(|e| {
+                format!(
+                    "SELECT '{}' AS error",
+                    escape_sql_string(&format!("ERROR: invalid threshold value: {}", e))
+                )
+            }),
         TestType::Regex { pattern } => generate_regex_test(table, column, pattern),
         TestType::Relationship { to, field } => {
             let ref_column = field.as_deref().unwrap_or(column);
@@ -240,6 +259,11 @@ fn apply_test_config(base_sql: &str, config: &ff_core::model::TestConfig) -> Str
     if let Some(ref where_clause) = config.where_clause {
         // Reject semicolons to prevent multi-statement injection
         let sanitized = where_clause.replace(';', "");
+        // Reject dangerous SQL keywords as defense-in-depth (word-boundary match
+        // to avoid false positives on column names like `created_at` or `updated_at`)
+        if DANGEROUS_KEYWORDS_RE.is_match(&sanitized) {
+            return "SELECT 'ERROR: where_clause contains disallowed keyword' AS error".to_string();
+        }
         sql = format!(
             "SELECT * FROM ({}) AS _test_base WHERE ({})",
             sql, sanitized
@@ -564,5 +588,57 @@ mod tests {
         assert!(generated
             .sql
             .contains(r#"FROM "analytics"."dim_customers" AS ref_tbl"#));
+    }
+
+    #[test]
+    fn test_where_clause_keyword_blocklist_true_positive() {
+        let config = ff_core::model::TestConfig {
+            where_clause: Some("1=1 UNION SELECT * FROM secrets".to_string()),
+            ..Default::default()
+        };
+        let base = "SELECT * FROM users WHERE id IS NULL";
+        let result = apply_test_config(base, &config);
+        assert!(result.contains("ERROR"), "UNION keyword should be blocked");
+    }
+
+    #[test]
+    fn test_where_clause_keyword_blocklist_false_positive_avoided() {
+        // Column names that contain dangerous keywords as substrings
+        // should NOT trigger the blocklist.
+        for clause in &[
+            "created_at > '2024-01-01'", // contains CREATE
+            "updated_at IS NOT NULL",    // contains UPDATE
+            "deleted_flag = false",      // contains DELETE
+        ] {
+            let config = ff_core::model::TestConfig {
+                where_clause: Some(clause.to_string()),
+                ..Default::default()
+            };
+            let base = "SELECT * FROM users WHERE id IS NULL";
+            let result = apply_test_config(base, &config);
+            assert!(
+                !result.contains("ERROR"),
+                "Column name '{}' should NOT trigger keyword blocklist",
+                clause
+            );
+        }
+    }
+
+    #[test]
+    fn test_where_clause_with_standalone_keyword_blocked() {
+        // Standalone keywords (not part of column names) should still be blocked
+        for kw in &["DROP", "ALTER", "INSERT", "DELETE", "CREATE"] {
+            let config = ff_core::model::TestConfig {
+                where_clause: Some(format!("{} TABLE foo", kw)),
+                ..Default::default()
+            };
+            let base = "SELECT * FROM users WHERE id IS NULL";
+            let result = apply_test_config(base, &config);
+            assert!(
+                result.contains("ERROR"),
+                "Standalone keyword '{}' should be blocked",
+                kw
+            );
+        }
     }
 }

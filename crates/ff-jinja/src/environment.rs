@@ -72,7 +72,10 @@ impl<'a> JinjaEnvironment<'a> {
                     if full.is_file() {
                         match std::fs::read_to_string(&full) {
                             Ok(contents) => return Ok(Some(contents)),
-                            Err(_) => continue,
+                            Err(e) => {
+                                log::warn!("Failed to read macro file {}: {}", full.display(), e);
+                                continue;
+                            }
                         }
                     }
                 }

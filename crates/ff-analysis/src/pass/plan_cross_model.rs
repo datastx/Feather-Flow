@@ -34,7 +34,11 @@ impl DagPlanPass for CrossModelConsistency {
     ) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
 
-        for (model_name, result) in models {
+        let mut model_names: Vec<_> = models.keys().collect();
+        model_names.sort();
+
+        for model_name in model_names {
+            let result = &models[model_name];
             for mismatch in &result.mismatches {
                 match mismatch {
                     SchemaMismatch::ExtraInSql { column } => {
@@ -49,7 +53,7 @@ impl DagPlanPass for CrossModelConsistency {
                             hint: Some(format!(
                                 "Add '{column}' to the YAML schema or remove it from SELECT"
                             )),
-                            pass_name: self.name().to_string(),
+                            pass_name: self.name().into(),
                         });
                     }
                     SchemaMismatch::MissingFromSql { column } => {
@@ -62,7 +66,7 @@ impl DagPlanPass for CrossModelConsistency {
                             model: model_name.clone(),
                             column: Some(column.clone()),
                             hint: Some(format!("Add '{column}' to SELECT or remove it from YAML")),
-                            pass_name: self.name().to_string(),
+                            pass_name: self.name().into(),
                         });
                     }
                     SchemaMismatch::TypeMismatch {
@@ -81,27 +85,31 @@ impl DagPlanPass for CrossModelConsistency {
                             hint: Some(format!(
                                 "Update YAML type to '{inferred_type}' or add explicit CAST"
                             )),
-                            pass_name: self.name().to_string(),
+                            pass_name: self.name().into(),
                         });
                     }
                     SchemaMismatch::NullabilityMismatch {
                         column,
-                        yaml_nullable: _,
-                        inferred_nullable: _,
+                        yaml_nullable,
+                        inferred_nullable,
                     } => {
+                        let hint = if !yaml_nullable && *inferred_nullable {
+                            // YAML says NOT NULL but SQL may produce NULL
+                            "Add COALESCE() or WHERE IS NOT NULL guard, or mark the column as nullable in YAML"
+                        } else {
+                            // YAML says nullable but SQL always produces NOT NULL
+                            "Consider marking the column as NOT NULL in YAML to match the SQL"
+                        };
                         diagnostics.push(Diagnostic {
                             code: DiagnosticCode::A041,
                             severity: Severity::Warning,
                             message: format!(
-                                "Column '{column}' declared NOT NULL in YAML but SQL may produce NULL"
+                                "Column '{column}' nullability mismatch: YAML declares nullable={yaml_nullable}, SQL infers nullable={inferred_nullable}"
                             ),
                             model: model_name.clone(),
                             column: Some(column.clone()),
-                            hint: Some(
-                                "Add COALESCE() or WHERE IS NOT NULL guard, or relax YAML constraint"
-                                    .to_string(),
-                            ),
-                            pass_name: self.name().to_string(),
+                            hint: Some(hint.to_string()),
+                            pass_name: self.name().into(),
                         });
                     }
                 }

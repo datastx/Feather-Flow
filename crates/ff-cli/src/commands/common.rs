@@ -23,7 +23,10 @@ pub(crate) struct ExitCode(pub(crate) i32);
 
 impl fmt::Display for ExitCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Empty display — main.rs handles the exit code without printing
+        // Intentionally empty: ExitCode is a control-flow mechanism, not a
+        // user-facing error. If anyhow's Display chain ever reaches this
+        // (e.g. downcast_ref fails in main.rs), we don't want "exit code N"
+        // leaking into stderr.
         write!(f, "")
     }
 }
@@ -353,6 +356,49 @@ pub(crate) fn run_static_analysis_pipeline(
         .any(|pr| !pr.mismatches.is_empty());
 
     Ok(StaticAnalysisOutput { result, has_errors })
+}
+
+/// Report static analysis results: mismatches and failures.
+///
+/// Iterates over mismatch diagnostics and failures from the propagation result.
+/// Returns `(mismatch_count, plan_count, failure_count)`.
+///
+/// The `on_mismatch` callback is called for each schema mismatch with
+/// `(model_name, mismatch_display)`. The `on_failure` callback is called
+/// for each model that failed planning with `(model_name, error_message)`.
+pub(crate) fn report_static_analysis_results(
+    result: &ff_analysis::PropagationResult,
+    mut on_mismatch: impl FnMut(&str, &str),
+    mut on_failure: impl FnMut(&str, &str),
+) -> (usize, usize, usize) {
+    let mut mismatch_count = 0;
+
+    // Sort model names for deterministic output ordering
+    let mut model_names: Vec<&String> = result.model_plans.keys().collect();
+    model_names.sort();
+
+    for model_name in model_names {
+        let plan_result = &result.model_plans[model_name];
+        for mismatch in &plan_result.mismatches {
+            on_mismatch(model_name, &mismatch.to_string());
+            mismatch_count += 1;
+        }
+    }
+
+    // Sort failure keys for deterministic output ordering
+    let mut failure_names: Vec<&String> = result.failures.keys().collect();
+    failure_names.sort();
+
+    for model in failure_names {
+        let err = &result.failures[model];
+        on_failure(model, &err.to_string());
+    }
+
+    (
+        mismatch_count,
+        result.model_plans.len(),
+        result.failures.len(),
+    )
 }
 
 /// Generic wrapper for command results written to JSON.

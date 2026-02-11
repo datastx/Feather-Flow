@@ -17,6 +17,7 @@ pub mod manifest;
 pub mod metric;
 pub mod model;
 pub mod model_name;
+mod newtype_string;
 pub mod project;
 pub mod query_comment;
 pub mod run_state;

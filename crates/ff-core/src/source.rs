@@ -216,7 +216,7 @@ fn discover_sources_recursive(dir: &Path, sources: &mut Vec<SourceFile>) -> Core
             let content = match std::fs::read_to_string(&path) {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("[warn] Cannot read {}: {}", path.display(), e);
+                    log::warn!("Cannot read {}: {}", path.display(), e);
                     continue;
                 }
             };

@@ -43,7 +43,7 @@ fn walk_relop(model: &str, op: &RelOp, diags: &mut Vec<Diagnostic>) {
                         model: model.to_string(),
                         column: Some(col.name.clone()),
                         hint: Some("Add a 'data_type' annotation in the YAML schema".to_string()),
-                        pass_name: "type_inference".to_string(),
+                        pass_name: "type_inference".into(),
                     });
                 }
             }
@@ -117,7 +117,7 @@ fn walk_relop(model: &str, op: &RelOp, diags: &mut Vec<Diagnostic>) {
                     model: model.to_string(),
                     column: None,
                     hint: None,
-                    pass_name: "type_inference".to_string(),
+                    pass_name: "type_inference".into(),
                 });
             } else {
                 // A002: Type mismatch in UNION columns
@@ -136,7 +136,7 @@ fn walk_relop(model: &str, op: &RelOp, diags: &mut Vec<Diagnostic>) {
                             model: model.to_string(),
                             column: Some(l.name.clone()),
                             hint: Some("Add explicit CASTs to ensure matching types".to_string()),
-                            pass_name: "type_inference".to_string(),
+                            pass_name: "type_inference".into(),
                         });
                     }
                 }
@@ -168,9 +168,11 @@ fn check_expr_types(model: &str, context: &str, expr: &TypedExpr, diags: &mut Ve
                     model: model.to_string(),
                     column: Some(context.to_string()),
                     hint: Some("Consider using TRY_CAST for safer conversion".to_string()),
-                    pass_name: "type_inference".to_string(),
+                    pass_name: "type_inference".into(),
                 });
             }
+            // Recurse into the inner expression
+            check_expr_types(model, context, inner, diags);
         }
         TypedExpr::BinaryOp { left, right, .. } => {
             check_expr_types(model, context, left, diags);
@@ -223,7 +225,7 @@ fn check_aggregate_type(
                         model: model.to_string(),
                         column: Some(col_name.to_string()),
                         hint: Some("Ensure the column is numeric, or add a CAST".to_string()),
-                        pass_name: "type_inference".to_string(),
+                        pass_name: "type_inference".into(),
                     });
                 }
             }
@@ -239,6 +241,10 @@ fn is_lossy_cast(source: &SqlType, target: &SqlType) -> bool {
             | (SqlType::Decimal { .. }, SqlType::Integer { .. })
             | (SqlType::String { .. }, SqlType::Integer { .. })
             | (SqlType::String { .. }, SqlType::Float { .. })
+            | (SqlType::String { .. }, SqlType::Decimal { .. })
+            | (SqlType::String { .. }, SqlType::Boolean)
+            | (SqlType::String { .. }, SqlType::Date)
+            | (SqlType::String { .. }, SqlType::Timestamp)
             | (SqlType::Timestamp, SqlType::Date)
     )
 }
@@ -1030,8 +1036,8 @@ mod tests {
             )],
         );
         let diags = TypeInference.run_model("m", &ir, &make_ctx());
-        // The outer cast float64→int32 is lossy; the Cast branch doesn't recurse into inner cast
-        assert_eq!(count_diagnostics(&diags, DiagnosticCode::A005), 1);
+        // Both casts are lossy: varchar→float64 and float64→int32
+        assert_eq!(count_diagnostics(&diags, DiagnosticCode::A005), 2);
     }
 
     #[test]

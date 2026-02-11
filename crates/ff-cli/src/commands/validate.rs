@@ -595,23 +595,18 @@ fn validate_static_analysis(
 
     let mut issue_count = 0;
 
-    // Report failures
-    for (model, err) in &result.failures {
-        if global.verbose {
-            eprintln!("[verbose] Static analysis failed for '{}': {}", model, err);
-        }
-    }
-
-    // Report schema mismatches (all mismatches are errors)
-    for (model_name, plan_result) in &result.model_plans {
-        for mismatch in &plan_result.mismatches {
+    let (mismatch_count, plan_count, failure_count) = common::report_static_analysis_results(
+        result,
+        |model_name, mismatch| {
             ctx.error("SA01", format!("{}: {}", model_name, mismatch), None);
-            issue_count += 1;
-        }
-    }
-
-    let plan_count = result.model_plans.len();
-    let failure_count = result.failures.len();
+        },
+        |model, err| {
+            if global.verbose {
+                eprintln!("[verbose] Static analysis failed for '{}': {}", model, err);
+            }
+        },
+    );
+    issue_count += mismatch_count;
     if issue_count == 0 && failure_count == 0 {
         println!("✓ ({} models analyzed)", plan_count);
     } else if issue_count == 0 {

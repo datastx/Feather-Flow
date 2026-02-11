@@ -135,7 +135,11 @@ impl SqlType {
                 | (SqlType::Timestamp, SqlType::Date)
                 | (SqlType::Binary, SqlType::Binary)
                 | (SqlType::Json, SqlType::Json)
+                | (SqlType::Json, SqlType::String { .. })
+                | (SqlType::String { .. }, SqlType::Json)
                 | (SqlType::Uuid, SqlType::Uuid)
+                | (SqlType::Uuid, SqlType::String { .. })
+                | (SqlType::String { .. }, SqlType::Uuid)
                 | (SqlType::Interval, SqlType::Interval)
         ) || matches!((self, other),
             (SqlType::Array(a), SqlType::Array(b)) if a.is_compatible_with(b)
@@ -438,12 +442,18 @@ fn parse_struct_fields(s: &str) -> Option<SqlType> {
 /// Split a string on a delimiter, but only at the top level (not inside parentheses)
 fn split_top_level(s: &str, delimiter: char) -> Vec<&str> {
     let mut parts = Vec::new();
-    let mut depth = 0;
+    let mut depth: usize = 0;
     let mut start = 0;
     for (i, c) in s.char_indices() {
         match c {
             '(' => depth += 1,
-            ')' => depth -= 1,
+            ')' => {
+                if depth == 0 {
+                    log::warn!("Unbalanced closing parenthesis in type string: {:?}", s);
+                } else {
+                    depth -= 1;
+                }
+            }
             c if c == delimiter && depth == 0 => {
                 parts.push(&s[start..i]);
                 start = i + 1;

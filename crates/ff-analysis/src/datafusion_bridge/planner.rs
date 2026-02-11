@@ -35,7 +35,6 @@ pub fn sql_to_plan(sql: &str, provider: &FeatherFlowProvider) -> AnalysisResult<
     }
 
     let planner = SqlToRel::new(provider);
-    // Safety: we checked df_stmts.is_empty() above and returned early
     let first_stmt = df_stmts
         .into_iter()
         .next()

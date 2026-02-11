@@ -1,113 +1,13 @@
 //! Strongly-typed table name wrapper.
 
-use serde::{Deserialize, Deserializer, Serialize};
-use std::borrow::Borrow;
-use std::fmt;
-use std::ops::Deref;
+use crate::newtype_string::define_newtype_string;
 
-/// Strongly-typed wrapper for table names (potentially schema-qualified like "schema.table").
-///
-/// Prevents accidental mixing of table names with model names, column names,
-/// or other string types. Guaranteed non-empty after construction.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
-pub struct TableName(String);
-
-impl<'de> Deserialize<'de> for TableName {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        TableName::try_new(s).ok_or_else(|| serde::de::Error::custom("TableName must not be empty"))
-    }
-}
-
-impl TableName {
-    /// Create a new `TableName`, panicking if the name is empty.
+define_newtype_string! {
+    /// Strongly-typed wrapper for table names (potentially schema-qualified like "schema.table").
     ///
-    /// Prefer [`try_new`](Self::try_new) when handling untrusted input.
-    pub fn new(name: impl Into<String>) -> Self {
-        let s = name.into();
-        assert!(!s.is_empty(), "TableName must not be empty");
-        Self(s)
-    }
-
-    /// Try to create a new `TableName`, returning `None` if the name is empty.
-    pub fn try_new(name: impl Into<String>) -> Option<Self> {
-        let s = name.into();
-        if s.is_empty() {
-            None
-        } else {
-            Some(Self(s))
-        }
-    }
-
-    /// Return the underlying name as a string slice.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    /// Consume the wrapper and return the inner `String`.
-    pub fn into_inner(self) -> String {
-        self.0
-    }
-}
-
-impl fmt::Display for TableName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl AsRef<str> for TableName {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl Deref for TableName {
-    type Target = str;
-    fn deref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl Borrow<str> for TableName {
-    fn borrow(&self) -> &str {
-        &self.0
-    }
-}
-
-impl From<String> for TableName {
-    fn from(s: String) -> Self {
-        assert!(!s.is_empty(), "TableName must not be empty");
-        Self(s)
-    }
-}
-
-impl From<&str> for TableName {
-    fn from(s: &str) -> Self {
-        assert!(!s.is_empty(), "TableName must not be empty");
-        Self(s.to_string())
-    }
-}
-
-impl PartialEq<str> for TableName {
-    fn eq(&self, other: &str) -> bool {
-        self.0 == other
-    }
-}
-
-impl PartialEq<&str> for TableName {
-    fn eq(&self, other: &&str) -> bool {
-        self.0 == *other
-    }
-}
-
-impl PartialEq<String> for TableName {
-    fn eq(&self, other: &String) -> bool {
-        self.0 == *other
-    }
+    /// Prevents accidental mixing of table names with model names, column names,
+    /// or other string types. Guaranteed non-empty after construction.
+    pub struct TableName;
 }
 
 #[cfg(test)]
@@ -130,7 +30,6 @@ mod tests {
     fn test_table_name_deref() {
         let name = TableName::new("raw.orders");
         assert_eq!(&*name, "raw.orders");
-        // Can call str methods via Deref
         assert!(name.starts_with("raw."));
     }
 
@@ -143,15 +42,21 @@ mod tests {
     }
 
     #[test]
-    fn test_table_name_from_string() {
-        let name: TableName = "raw.orders".to_string().into();
+    fn test_table_name_try_from_string() {
+        let name: TableName = "raw.orders".to_string().try_into().unwrap();
         assert_eq!(name.as_str(), "raw.orders");
     }
 
     #[test]
-    fn test_table_name_from_str() {
-        let name: TableName = "raw.orders".into();
+    fn test_table_name_try_from_str() {
+        let name: TableName = "raw.orders".try_into().unwrap();
         assert_eq!(name.as_str(), "raw.orders");
+    }
+
+    #[test]
+    fn test_table_name_try_from_empty_fails() {
+        let result: Result<TableName, _> = "".try_into();
+        assert!(result.is_err());
     }
 
     #[test]
@@ -199,7 +104,6 @@ mod tests {
         use std::collections::HashMap;
         let mut map: HashMap<TableName, i32> = HashMap::new();
         map.insert(TableName::new("test"), 42);
-        // Can look up by &str thanks to Borrow<str>
         assert_eq!(map.get("test"), Some(&42));
     }
 

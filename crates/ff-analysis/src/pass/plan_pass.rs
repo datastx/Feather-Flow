@@ -82,10 +82,8 @@ impl PlanPassManager {
         for name in model_order {
             if let Some(result) = models.get(name) {
                 for pass in &self.model_passes {
-                    if let Some(filter) = pass_filter {
-                        if !filter.iter().any(|f| f == pass.name()) {
-                            continue;
-                        }
+                    if !super::should_run_pass(pass.name(), pass_filter) {
+                        continue;
                     }
                     diagnostics.extend(pass.run_model(name, &result.plan, ctx));
                 }
@@ -94,10 +92,8 @@ impl PlanPassManager {
 
         // Run DAG-level passes
         for pass in &self.dag_passes {
-            if let Some(filter) = pass_filter {
-                if !filter.iter().any(|f| f == pass.name()) {
-                    continue;
-                }
+            if !super::should_run_pass(pass.name(), pass_filter) {
+                continue;
             }
             diagnostics.extend(pass.run_project(models, ctx));
         }

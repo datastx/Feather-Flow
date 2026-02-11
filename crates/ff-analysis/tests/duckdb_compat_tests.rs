@@ -338,8 +338,9 @@ fn test_compat_uuid_uuid() {
 }
 
 #[test]
-fn test_incompat_uuid_varchar() {
-    assert!(!SqlType::Uuid.is_compatible_with(&varchar()));
+fn test_compat_uuid_varchar() {
+    // UUID is stored as Utf8 in Arrow, so UUID and String are compatible
+    assert!(SqlType::Uuid.is_compatible_with(&varchar()));
 }
 
 #[test]

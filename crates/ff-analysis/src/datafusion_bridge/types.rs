@@ -29,8 +29,8 @@ pub fn sql_type_to_arrow(sql_type: &SqlType) -> ArrowDataType {
         SqlType::Decimal {
             precision, scale, ..
         } => {
-            let p = precision.unwrap_or(38) as u8;
-            let s = scale.unwrap_or(0) as i8;
+            let p = precision.unwrap_or(38).min(38) as u8;
+            let s = scale.unwrap_or(0).min(127) as i8;
             ArrowDataType::Decimal128(p, s)
         }
         SqlType::String { .. } => ArrowDataType::Utf8,
@@ -64,7 +64,10 @@ pub fn sql_type_to_arrow(sql_type: &SqlType) -> ArrowDataType {
             );
             ArrowDataType::Map(entries.into(), false)
         }
-        SqlType::Unknown(_) => ArrowDataType::Utf8, // Default fallback
+        SqlType::Unknown(desc) => {
+            log::debug!("Mapping Unknown type '{}' to Utf8", desc);
+            ArrowDataType::Utf8
+        }
     }
 }
 

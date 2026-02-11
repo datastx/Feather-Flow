@@ -14,14 +14,29 @@ use std::path::Path;
 // Single source of truth for the SCD tracking columns added to every
 // snapshot table.  Both `ff-core` snapshot SQL generators and the
 // `ff-db` DuckDB implementation reference these.
+//
+// The `dbt_` prefix is intentionally retained for compatibility with
+// existing dbt snapshots and tooling.  Teams migrating from dbt can
+// point Featherflow at their current snapshot tables without requiring
+// a column rename migration.  If a future major version introduces a
+// Featherflow-native prefix (e.g. `ff_`), it should be gated behind a
+// configuration flag so the default remains backwards-compatible.
 
 /// Surrogate key column (MD5 hash of unique keys + timestamp).
+///
+/// Uses the `dbt_` prefix for backwards compatibility with dbt snapshot tables.
 pub const SCD_ID: &str = "dbt_scd_id";
 /// Tracks when the source row was last updated.
+///
+/// Uses the `dbt_` prefix for backwards compatibility with dbt snapshot tables.
 pub const SCD_UPDATED_AT: &str = "dbt_updated_at";
 /// Timestamp when this snapshot version became active.
+///
+/// Uses the `dbt_` prefix for backwards compatibility with dbt snapshot tables.
 pub const SCD_VALID_FROM: &str = "dbt_valid_from";
 /// Timestamp when this snapshot version was superseded (`NULL` = current).
+///
+/// Uses the `dbt_` prefix for backwards compatibility with dbt snapshot tables.
 pub const SCD_VALID_TO: &str = "dbt_valid_to";
 
 /// Strategy for detecting changes in snapshots

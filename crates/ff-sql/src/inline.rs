@@ -250,8 +250,8 @@ fn collect_ephemeral_recursive<F, G>(
                 ephemeral_sql.insert(dep.clone(), sql);
                 order.push(dep.clone());
             } else {
-                eprintln!(
-                    "[warn] Ephemeral model '{}' has no compiled SQL — it will not be inlined",
+                log::warn!(
+                    "Ephemeral model '{}' has no compiled SQL — it will not be inlined",
                     dep
                 );
             }

@@ -392,7 +392,7 @@ async fn execute_models_sequential(
             let row_count = match ctx
                 .db
                 .query_count(&format!(
-                    "SELECT * FROM {}",
+                    "SELECT 1 FROM {}",
                     quote_qualified(&qualified_name)
                 ))
                 .await
@@ -623,7 +623,7 @@ async fn execute_models_parallel(
                 let row_count = ctx
                     .db
                     .query_count(&format!(
-                        "SELECT * FROM {}",
+                        "SELECT 1 FROM {}",
                         quote_qualified(&qualified_name)
                     ))
                     .await
@@ -669,6 +669,11 @@ fn compute_execution_levels(
                 if deps_satisfied {
                     current_level.push(name.clone());
                 }
+            } else {
+                log::warn!(
+                    "Model '{}' in execution order but not in compiled models",
+                    name
+                );
             }
         }
 

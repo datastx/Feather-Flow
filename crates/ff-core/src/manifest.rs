@@ -293,7 +293,7 @@ impl Manifest {
             source_path,
             compiled_path,
             materialized,
-            schema: model.target_schema(default_schema),
+            schema: model.target_schema(default_schema).map(String::from),
             tags,
             depends_on: model.depends_on.iter().cloned().collect(),
             external_deps: model.external_deps.iter().map(|t| t.to_string()).collect(),

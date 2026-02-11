@@ -49,7 +49,7 @@ fn walk_for_joins(model: &str, op: &RelOp, diags: &mut Vec<Diagnostic>) {
                         "Ensure this is intentional; cross joins can produce very large result sets"
                             .to_string(),
                     ),
-                    pass_name: "join_keys".to_string(),
+                    pass_name: "join_keys".into(),
                 });
                 return;
             }
@@ -66,7 +66,7 @@ fn walk_for_joins(model: &str, op: &RelOp, diags: &mut Vec<Diagnostic>) {
                             model: model.to_string(),
                             column: None,
                             hint: Some("This may produce a Cartesian product".to_string()),
-                            pass_name: "join_keys".to_string(),
+                            pass_name: "join_keys".into(),
                         });
                     }
                 }
@@ -112,7 +112,7 @@ fn analyze_join_condition(model: &str, expr: &TypedExpr, diags: &mut Vec<Diagnos
                 model: model.to_string(),
                 column: None,
                 hint: Some("Non-equi joins may have performance implications".to_string()),
-                pass_name: "join_keys".to_string(),
+                pass_name: "join_keys".into(),
             });
         }
     }
@@ -150,7 +150,7 @@ fn check_join_key_types(
             model: model.to_string(),
             column: None,
             hint: Some("Add explicit CASTs to ensure matching types".to_string()),
-            pass_name: "join_keys".to_string(),
+            pass_name: "join_keys".into(),
         });
     }
 }

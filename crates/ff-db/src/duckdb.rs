@@ -13,6 +13,32 @@ use std::sync::Mutex;
 
 use ff_core::snapshot::{SCD_ID, SCD_UPDATED_AT, SCD_VALID_FROM, SCD_VALID_TO};
 
+/// Check whether a SQL string contains a semicolon outside of single-quoted literals.
+///
+/// Walks the string tracking quote depth so that values like `'foo;bar'` are
+/// not treated as statement terminators. Escaped quotes (`''`) inside literals
+/// are handled correctly.
+fn contains_unquoted_semicolon(sql: &str) -> bool {
+    let mut in_quote = false;
+    let mut chars = sql.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' if in_quote => {
+                // Two consecutive quotes inside a literal = escaped quote
+                if chars.peek() == Some(&'\'') {
+                    chars.next(); // skip the second quote
+                } else {
+                    in_quote = false;
+                }
+            }
+            '\'' => in_quote = true,
+            ';' if !in_quote => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Build the MD5-based SCD ID expression from unique key columns.
 ///
 /// Concatenates the key values (coalesced to empty string) with `|` separators
@@ -283,6 +309,15 @@ impl DuckDbBackend {
         if unique_keys.is_empty() {
             return Err(DbError::ExecutionError(
                 "upsert_via_temp_table requires at least one unique key".to_string(),
+            ));
+        }
+
+        // Validate source_sql is a single statement to prevent injection.
+        // Only reject unquoted semicolons so that string literals like
+        // WHERE note = 'foo;bar' are not falsely rejected.
+        if contains_unquoted_semicolon(source_sql) {
+            return Err(DbError::ExecutionError(
+                "source_sql must be a single statement".to_string(),
             ));
         }
 

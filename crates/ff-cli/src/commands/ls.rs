@@ -408,12 +408,15 @@ fn print_tree_node(
     visited: &mut HashSet<String>,
 ) {
     let connector = if is_last { "└── " } else { "├── " };
-    println!("{}{}{}", prefix, connector, name);
 
-    // Guard against cycles: if we've already visited this node, stop recursing
+    // Guard against cycles: if we've already visited this node, print it
+    // with a marker and stop recursing to avoid infinite loops.
     if !visited.insert(name.to_string()) {
+        println!("{}{}{} (cycle)", prefix, connector, name);
         return;
     }
+
+    println!("{}{}{}", prefix, connector, name);
 
     // Find dependents (models that depend on this one)
     let dependents: Vec<_> = models
