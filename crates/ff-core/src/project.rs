@@ -5,7 +5,6 @@ use crate::error::{CoreError, CoreResult};
 use crate::exposure::{discover_exposures, Exposure};
 use crate::function::{discover_functions, FunctionDef};
 use crate::function_name::FunctionName;
-use crate::metric::{discover_metrics, Metric};
 use crate::model::{Model, SchemaTest, SingularTest};
 use crate::model_name::ModelName;
 use crate::source::{discover_sources, SourceFile};
@@ -32,8 +31,6 @@ pub struct ProjectParts {
     pub sources: Vec<SourceFile>,
     /// Exposure definitions
     pub exposures: Vec<Exposure>,
-    /// Metric definitions
-    pub metrics: Vec<Metric>,
     /// User-defined function definitions
     pub functions: Vec<FunctionDef>,
 }
@@ -62,9 +59,6 @@ pub struct Project {
     /// Exposure definitions
     pub exposures: Vec<Exposure>,
 
-    /// Metric definitions
-    pub metrics: Vec<Metric>,
-
     /// User-defined function definitions
     pub functions: Vec<FunctionDef>,
 
@@ -91,7 +85,6 @@ impl Project {
             singular_tests: parts.singular_tests,
             sources: parts.sources,
             exposures: parts.exposures,
-            metrics: parts.metrics,
             functions: parts.functions,
             functions_by_name,
         }
@@ -142,10 +135,6 @@ impl Project {
         let exposure_paths = config.exposure_paths_absolute(&root);
         let exposures = discover_exposures(&exposure_paths)?;
 
-        // Discover metric definitions
-        let metric_paths = config.metric_paths_absolute(&root);
-        let metrics = discover_metrics(&metric_paths)?;
-
         // Discover user-defined function definitions
         let function_paths = config.function_paths_absolute(&root);
         let functions = discover_functions(&function_paths)?;
@@ -158,7 +147,6 @@ impl Project {
             singular_tests,
             sources,
             exposures,
-            metrics,
             functions,
         }))
     }
@@ -503,24 +491,6 @@ impl Project {
         self.exposures
             .iter()
             .filter(|e| e.depends_on_model(model_name))
-            .collect()
-    }
-
-    /// Get all metric names
-    pub fn metric_names(&self) -> Vec<&str> {
-        self.metrics.iter().map(|m| m.name.as_str()).collect()
-    }
-
-    /// Get a metric by name
-    pub fn get_metric(&self, name: &str) -> Option<&Metric> {
-        self.metrics.iter().find(|m| m.name == name)
-    }
-
-    /// Get metrics that are based on a specific model
-    pub fn metrics_for_model(&self, model_name: &str) -> Vec<&Metric> {
-        self.metrics
-            .iter()
-            .filter(|m| m.model == model_name)
             .collect()
     }
 

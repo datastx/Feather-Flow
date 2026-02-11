@@ -70,9 +70,6 @@ pub enum Commands {
     /// Remove generated artifacts
     Clean(CleanArgs),
 
-    /// Source-related operations
-    Source(SourceArgs),
-
     /// Execute snapshots (SCD Type 2)
     Snapshot(SnapshotArgs),
 
@@ -81,9 +78,6 @@ pub enum Commands {
 
     /// Check model freshness (SLA monitoring)
     Freshness(FreshnessArgs),
-
-    /// Work with semantic layer metrics
-    Metric(MetricArgs),
 
     /// Compare model output between databases
     Diff(DiffArgs),
@@ -433,45 +427,26 @@ pub struct CleanArgs {
     pub dry_run: bool,
 }
 
-/// Arguments for the source command
-#[derive(Args, Debug)]
-pub struct SourceArgs {
-    /// Source subcommand
-    #[command(subcommand)]
-    pub command: SourceCommands,
-}
-
-/// Source subcommands
-#[derive(Subcommand, Debug)]
-pub enum SourceCommands {
-    /// Check freshness of source data
-    Freshness(SourceFreshnessArgs),
-}
-
-/// Arguments for the source freshness subcommand
-#[derive(Args, Debug)]
-pub struct SourceFreshnessArgs {
-    /// Source names to check (comma-separated, default: all with freshness config)
-    #[arg(short, long)]
-    pub sources: Option<String>,
-
-    /// Output format
-    #[arg(short, long, value_enum, default_value = "table")]
-    pub output: FreshnessOutput,
-}
-
-/// Arguments for the model freshness command
+/// Arguments for the freshness command
 #[derive(Args, Debug)]
 pub struct FreshnessArgs {
-    /// Model names to check (comma-separated, default: all with freshness config)
-    #[arg(short, long)]
-    pub models: Option<String>,
+    /// Check only sources (default: check both)
+    #[arg(long)]
+    pub sources: bool,
+
+    /// Check only models (default: check both)
+    #[arg(long)]
+    pub models: bool,
+
+    /// Filter specific resources by name (comma-separated)
+    #[arg(long)]
+    pub select: Option<String>,
 
     /// Output format
     #[arg(short, long, value_enum, default_value = "table")]
     pub output: FreshnessOutput,
 
-    /// Write results to a JSON file
+    /// Write results to target/freshness.json
     #[arg(long)]
     pub write_json: bool,
 }
@@ -506,25 +481,6 @@ pub struct RunOperationArgs {
     /// Arguments to pass to the macro as JSON
     #[arg(long)]
     pub args: Option<String>,
-}
-
-/// Arguments for the metric command
-#[derive(Args, Debug)]
-pub struct MetricArgs {
-    /// Metric name to show/execute
-    pub name: Option<String>,
-
-    /// List all metrics
-    #[arg(short, long)]
-    pub list: bool,
-
-    /// Execute the metric query against the database
-    #[arg(short, long)]
-    pub execute: bool,
-
-    /// Output format (text or json)
-    #[arg(short, long, value_enum, default_value = "text")]
-    pub output: OutputFormat,
 }
 
 /// Arguments for the init command

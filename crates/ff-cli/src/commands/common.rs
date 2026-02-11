@@ -509,19 +509,6 @@ pub(crate) fn print_table_header(headers: &[&str], widths: &[usize]) {
     println!("{}", sep_parts.join("  "));
 }
 
-/// Format a single table row as a string using pre-computed column widths.
-///
-/// Each cell is left-aligned and padded to the corresponding width.
-/// Columns are separated by two spaces.
-pub(crate) fn format_table_row(row: &[String], widths: &[usize]) -> String {
-    let parts: Vec<String> = row
-        .iter()
-        .zip(widths)
-        .map(|(cell, &w)| format!("{:<width$}", cell, width = w))
-        .collect();
-    parts.join("  ")
-}
-
 /// Create a database connection from a config and optional target override.
 ///
 /// Resolves the target via `Config::resolve_target`, gets the database

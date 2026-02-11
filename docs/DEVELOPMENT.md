@@ -50,13 +50,11 @@ crates/
         lineage.rs
         init.rs
         snapshot.rs
-        source.rs
         freshness.rs
         parse.rs
         analyze.rs
         diff.rs
         run_operation.rs
-        metric.rs
         mod.rs
     tests/
       fixtures/      # Integration test fixtures
