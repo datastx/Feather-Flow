@@ -243,6 +243,75 @@ fn test_analyze_diagnostic_project_json() {
     }
 }
 
+// ── ff analyze (sample_project regression guard) ────────────────────────
+
+fn sample_project_dir() -> &'static str {
+    "tests/fixtures/sample_project"
+}
+
+/// Regression guard: `ff analyze` on the main sample project must produce zero
+/// diagnostics.  After the Phase F IR elimination the project went from 48 false
+/// diagnostics (28 A001 + 20 bogus A010) to zero.  This test locks that in so
+/// any regression is caught immediately.
+#[test]
+fn test_analyze_sample_project_no_regressions() {
+    let output = Command::new(ff_bin())
+        .args([
+            "analyze",
+            "--project-dir",
+            sample_project_dir(),
+            "--output",
+            "json",
+        ])
+        .output()
+        .expect("Failed to run ff analyze on sample_project");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "ff analyze on sample_project should succeed.\nstdout: {}\nstderr: {}",
+        stdout,
+        stderr
+    );
+
+    // Parse the JSON output — should be a valid array
+    let diagnostics: Vec<serde_json::Value> = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("JSON parse failed: {}\nraw stdout: {}", e, stdout));
+
+    // Primary regression guard: zero A001 diagnostics (false "unknown type")
+    let a001_count = diagnostics
+        .iter()
+        .filter(|d| d.get("code").and_then(|c| c.as_str()) == Some("A001"))
+        .count();
+    assert_eq!(
+        a001_count, 0,
+        "Expected zero A001 diagnostics, got {}. Full output:\n{}",
+        a001_count, stdout
+    );
+
+    // No error-severity diagnostics — sample project is clean
+    let error_count = diagnostics
+        .iter()
+        .filter(|d| d.get("severity").and_then(|s| s.as_str()) == Some("error"))
+        .count();
+    assert_eq!(
+        error_count, 0,
+        "Expected zero error-severity diagnostics, got {}. Full output:\n{}",
+        error_count, stdout
+    );
+
+    // Zero total diagnostics — the sample project should be completely clean
+    assert_eq!(
+        diagnostics.len(),
+        0,
+        "Expected zero diagnostics on sample_project, got {}:\n{}",
+        diagnostics.len(),
+        stdout
+    );
+}
+
 // ── ff ls ───────────────────────────────────────────────────────────────
 
 #[test]

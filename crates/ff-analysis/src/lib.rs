@@ -1,29 +1,25 @@
-//! ff-analysis: LLVM-style static analysis for SQL models
+//! ff-analysis: Static analysis for SQL models using DataFusion LogicalPlans
 //!
-//! This crate provides a relational algebra IR, AST-to-IR lowering,
-//! and composable analysis passes for detecting SQL issues.
+//! This crate provides composable analysis passes that operate on DataFusion
+//! LogicalPlans, type/schema definitions shared with the DataFusion bridge,
+//! and schema propagation infrastructure.
 
 pub(crate) mod context;
 pub mod datafusion_bridge;
 pub(crate) mod error;
-pub(crate) mod ir;
-pub(crate) mod lowering;
 pub(crate) mod pass;
+pub mod schema;
+pub mod types;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_utils;
 
 pub use context::AnalysisContext;
 pub use error::{AnalysisError, AnalysisResult};
-pub use ir::expr::TypedExpr;
-pub use ir::relop::RelOp;
-pub use ir::schema::RelSchema;
-pub use ir::types::{
-    parse_sql_type, FloatBitWidth, IntBitWidth, Nullability, SqlType, TypedColumn,
-};
-pub use lowering::{lower_statement, SchemaCatalog};
 pub use pass::plan_pass::{DagPlanPass, PlanPass, PlanPassManager};
-pub use pass::{AnalysisPass, DagPass, Diagnostic, DiagnosticCode, PassManager, Severity};
+pub use pass::{Diagnostic, DiagnosticCode, Severity};
+pub use schema::{RelSchema, SchemaCatalog};
+pub use types::{parse_sql_type, FloatBitWidth, IntBitWidth, Nullability, SqlType, TypedColumn};
 
 // DataFusion bridge re-exports
 pub use datafusion_bridge::lineage::{

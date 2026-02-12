@@ -1,6 +1,6 @@
 //! Conversion between Feather-Flow SqlType and Arrow DataType
 
-use crate::ir::types::{FloatBitWidth, IntBitWidth, SqlType};
+use crate::types::{FloatBitWidth, IntBitWidth, SqlType};
 use arrow::datatypes::{DataType as ArrowDataType, Field, Fields};
 
 /// Convert a Feather-Flow SqlType to an Arrow DataType

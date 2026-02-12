@@ -258,7 +258,36 @@ pub(crate) fn build_schema_catalog(
         yaml_schemas.insert(name.clone(), rel_schema);
     }
 
-    // Add external tables/sources to catalog
+    // Add source tables to catalog — use column definitions if available,
+    // fall back to empty schema for sources without column metadata
+    for source_file in &project.sources {
+        for table in &source_file.tables {
+            if schema_catalog.contains_key(&table.name) {
+                continue;
+            }
+            if table.columns.is_empty() {
+                schema_catalog.insert(table.name.clone(), RelSchema::empty());
+            } else {
+                let columns: Vec<TypedColumn> = table
+                    .columns
+                    .iter()
+                    .map(|col| {
+                        let sql_type = parse_sql_type(&col.data_type);
+                        TypedColumn {
+                            name: col.name.clone(),
+                            source_table: None,
+                            sql_type,
+                            nullability: Nullability::Unknown,
+                            provenance: vec![],
+                        }
+                    })
+                    .collect();
+                schema_catalog.insert(table.name.clone(), RelSchema::new(columns));
+            }
+        }
+    }
+
+    // Add remaining external tables with empty schemas
     for ext in external_tables {
         if !schema_catalog.contains_key(ext) {
             schema_catalog.insert(ext.clone(), RelSchema::empty());

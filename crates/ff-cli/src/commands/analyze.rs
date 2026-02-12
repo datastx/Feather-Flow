@@ -2,12 +2,11 @@
 
 use anyhow::{Context, Result};
 use ff_analysis::{
-    lower_statement, propagate_schemas, AnalysisContext, PassManager, PlanPassManager, RelSchema,
-    SchemaCatalog, Severity,
+    propagate_schemas, AnalysisContext, PlanPassManager, RelSchema, SchemaCatalog, Severity,
 };
 use ff_core::dag::ModelDag;
 use ff_jinja::JinjaEnvironment;
-use ff_sql::{extract_column_lineage, ProjectLineage, SqlParser};
+use ff_sql::{extract_column_lineage, extract_dependencies, ProjectLineage, SqlParser};
 use std::collections::{HashMap, HashSet};
 
 use crate::cli::{AnalyzeArgs, AnalyzeOutput, AnalyzeSeverity, GlobalArgs};
@@ -26,22 +25,37 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
 
     // Build schema catalog from YAML definitions and external tables
     let external_tables = build_external_tables_lookup(&project);
-    let (mut schema_catalog, yaml_schemas) = build_schema_catalog(&project, &external_tables);
+    let (schema_catalog, yaml_schemas) = build_schema_catalog(&project, &external_tables);
 
-    // Build dependency map and DAG
-    let dep_map: HashMap<String, Vec<String>> = project
-        .models
-        .iter()
-        .map(|(name, model)| {
-            let deps: Vec<String> = model
-                .depends_on
-                .iter()
-                .filter(|d| known_models.contains(d.as_str()))
-                .map(|d| d.to_string())
-                .collect();
-            (name.to_string(), deps)
-        })
-        .collect();
+    // Render SQL, extract dependencies and lineage in a single pass
+    let mut dep_map: HashMap<String, Vec<String>> = HashMap::new();
+    let mut project_lineage = ProjectLineage::new();
+    for (name, model) in &project.models {
+        let Ok(rendered) = jinja.render(&model.raw_sql) else {
+            dep_map.insert(name.to_string(), vec![]);
+            continue;
+        };
+        let Ok(stmts) = parser.parse(&rendered) else {
+            dep_map.insert(name.to_string(), vec![]);
+            continue;
+        };
+
+        // Extract dependencies from parsed SQL
+        let raw_deps = extract_dependencies(&stmts);
+        let model_deps: Vec<String> = raw_deps
+            .into_iter()
+            .filter(|d| known_models.contains(d))
+            .collect();
+        dep_map.insert(name.to_string(), model_deps);
+
+        // Extract lineage
+        if let Some(stmt) = stmts.first() {
+            if let Some(lineage) = extract_column_lineage(stmt, name) {
+                project_lineage.add_model_lineage(lineage);
+            }
+        }
+    }
+    project_lineage.resolve_edges(&known_models);
 
     let dag = ModelDag::build(&dep_map).context("Failed to build dependency DAG")?;
     let topo_order = dag
@@ -54,138 +68,96 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
         .as_ref()
         .map(|m| m.split(',').map(|s| s.trim().to_string()).collect());
 
-    // Build lineage
-    let mut project_lineage = ProjectLineage::new();
-    for (name, model) in &project.models {
-        let Ok(rendered) = jinja.render(&model.raw_sql) else {
-            continue;
-        };
-        let Ok(stmts) = parser.parse(&rendered) else {
-            continue;
-        };
-        let Some(stmt) = stmts.first() else {
-            continue;
-        };
-        if let Some(lineage) = extract_column_lineage(stmt, name) {
-            project_lineage.add_model_lineage(lineage);
-        }
-    }
-    project_lineage.resolve_edges(&known_models);
-
-    // Lower each model to IR (topological order)
-    let mut model_irs: HashMap<String, ff_analysis::RelOp> = HashMap::new();
-
-    for name in &topo_order {
-        if let Some(filter) = &model_filter {
-            if !filter.contains(name) {
-                continue;
+    // Build rendered SQL sources for models in scope
+    let order: Vec<String> = topo_order
+        .into_iter()
+        .filter(|n| {
+            if let Some(filter) = &model_filter {
+                filter.contains(n)
+            } else {
+                true
             }
-        }
+        })
+        .filter(|n| project.models.contains_key(n.as_str()))
+        .collect();
 
-        let model = match project.models.get(name.as_str()) {
-            Some(m) => m,
-            None => continue,
-        };
-
-        let rendered = match jinja.render(&model.raw_sql) {
-            Ok(sql) => sql,
-            Err(e) => {
-                if global.verbose {
-                    eprintln!("[verbose] Skipping '{}': render error: {}", name, e);
-                }
-                continue;
-            }
-        };
-
-        let stmts = match parser.parse(&rendered) {
-            Ok(s) => s,
-            Err(e) => {
-                if global.verbose {
-                    eprintln!("[verbose] Skipping '{}': parse error: {}", name, e);
-                }
-                continue;
-            }
-        };
-
-        if let Some(stmt) = stmts.first() {
-            match lower_statement(stmt, &schema_catalog) {
-                Ok(ir) => {
-                    // Add the output schema to catalog for downstream models
-                    schema_catalog.insert(name.clone(), ir.schema().clone());
-                    model_irs.insert(name.clone(), ir);
-                }
+    let sql_sources: HashMap<String, String> = order
+        .iter()
+        .filter_map(|name| {
+            let model = project.models.get(name.as_str())?;
+            match jinja.render(&model.raw_sql) {
+                Ok(sql) => Some((name.clone(), sql)),
                 Err(e) => {
                     if global.verbose {
-                        eprintln!("[verbose] Skipping '{}': lowering error: {}", name, e);
+                        eprintln!("[verbose] Skipping '{}': render error: {}", name, e);
                     }
+                    None
                 }
             }
-        }
-    }
+        })
+        .collect();
 
-    if model_irs.is_empty() {
+    if sql_sources.is_empty() {
         println!("No models to analyze.");
         return Ok(());
     }
 
+    // Filter order to models with rendered SQL
+    let order: Vec<String> = order
+        .into_iter()
+        .filter(|n| sql_sources.contains_key(n))
+        .collect();
+
     // Create analysis context
     let ctx = AnalysisContext::new(project, dag, yaml_schemas, project_lineage);
 
-    // Create pass manager and run passes
-    let pass_manager = PassManager::with_defaults();
+    // Build schema catalog for DataFusion propagation
+    let yaml_string_map: SchemaCatalog = ctx
+        .yaml_schemas()
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.clone()))
+        .collect();
+    let mut plan_catalog: SchemaCatalog = schema_catalog;
+    for ext in &external_tables {
+        if !plan_catalog.contains_key(ext) {
+            plan_catalog.insert(ext.clone(), RelSchema::empty());
+        }
+    }
+
+    let user_fn_stubs = super::common::build_user_function_stubs(ctx.project());
+    let propagation = propagate_schemas(
+        &order,
+        &sql_sources,
+        &yaml_string_map,
+        &plan_catalog,
+        &user_fn_stubs,
+    );
+
+    if propagation.model_plans.is_empty() && propagation.failures.is_empty() {
+        println!("No models to analyze.");
+        return Ok(());
+    }
+
+    // Report planning failures
+    if global.verbose {
+        for (model, err) in &propagation.failures {
+            eprintln!("[verbose] Skipping '{}': planning error: {}", model, err);
+        }
+    }
+
+    // Run analysis passes
     let pass_filter: Option<Vec<String>> = args
         .pass
         .as_ref()
         .map(|p| p.split(',').map(|s| s.trim().to_string()).collect());
 
-    let order: Vec<String> = topo_order
-        .into_iter()
-        .filter(|n| model_irs.contains_key(n))
-        .collect();
-
-    let mut diagnostics = pass_manager.run(&order, &model_irs, &ctx, pass_filter.as_deref());
-
-    // Run DataFusion LogicalPlan-based passes (cross-model consistency)
-    {
-        let sql_sources: HashMap<String, String> = order
-            .iter()
-            .filter_map(|name| {
-                let model = ctx.project().models.get(name.as_str())?;
-                let rendered = jinja.render(&model.raw_sql).ok()?;
-                Some((name.clone(), rendered))
-            })
-            .collect();
-
-        // Rebuild schema catalog from context for DataFusion propagation
-        let yaml_string_map: SchemaCatalog = ctx
-            .yaml_schemas()
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.clone()))
-            .collect();
-        let mut plan_catalog: SchemaCatalog = yaml_string_map.clone();
-        for ext in &external_tables {
-            if !plan_catalog.contains_key(ext) {
-                plan_catalog.insert(ext.clone(), RelSchema::empty());
-            }
-        }
-
-        let user_fn_stubs = super::common::build_user_function_stubs(ctx.project());
-        let propagation = propagate_schemas(
-            &order,
-            &sql_sources,
-            &yaml_string_map,
-            &plan_catalog,
-            &user_fn_stubs,
-        );
-        let plan_pass_manager = PlanPassManager::with_defaults();
-        let plan_diagnostics = plan_pass_manager.run(
-            &order,
-            &propagation.model_plans,
-            &ctx,
-            pass_filter.as_deref(),
-        );
-        diagnostics.extend(plan_diagnostics);
-    }
+    let plan_pass_manager = PlanPassManager::with_defaults();
+    let diagnostics = plan_pass_manager.run(
+        &order,
+        &propagation.model_plans,
+        &ctx,
+        pass_filter.as_deref(),
+    );
 
     // Filter by severity
     let min_severity = match args.severity {

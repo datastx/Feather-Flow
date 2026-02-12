@@ -3,6 +3,7 @@ SELECT
     o.amount,
     o.status,
     c.name AS customer_name,
-    o.created_at
+    o.created_at,
+    c.email
 FROM stg_orders o
 JOIN stg_customers c ON o.customer_id = c.id

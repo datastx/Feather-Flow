@@ -1,9 +1,8 @@
 use super::*;
 use crate::datafusion_bridge::propagation::propagate_schemas;
-use crate::ir::schema::RelSchema;
-use crate::ir::types::Nullability;
-use crate::lowering::SchemaCatalog;
+use crate::schema::{RelSchema, SchemaCatalog};
 use crate::test_utils::*;
+use crate::types::Nullability;
 
 #[test]
 fn test_a040_extra_column_in_sql() {

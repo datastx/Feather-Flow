@@ -11,9 +11,8 @@ use datafusion_expr::LogicalPlan;
 use crate::datafusion_bridge::planner::sql_to_plan;
 use crate::datafusion_bridge::provider::{FeatherFlowProvider, UserFunctionStub};
 use crate::datafusion_bridge::types::arrow_to_sql_type;
-use crate::ir::schema::RelSchema;
-use crate::ir::types::{Nullability, TypedColumn};
-use crate::lowering::SchemaCatalog;
+use crate::schema::{RelSchema, SchemaCatalog};
+use crate::types::{Nullability, TypedColumn};
 
 /// Result of planning a single model via DataFusion.
 ///

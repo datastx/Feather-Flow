@@ -9,7 +9,7 @@ SELECT
     COALESCE(SUM(p.amount), 0) AS payment_total,
     COUNT(p.payment_id) AS payment_count
 FROM stg_orders o
-LEFT JOIN stg_payments p
+INNER JOIN stg_payments p
     ON o.order_id = p.order_id
 GROUP BY
     o.order_id,

@@ -1,6 +1,6 @@
 //! Analysis context — project-wide data available to all passes
 
-use crate::ir::schema::RelSchema;
+use crate::schema::RelSchema;
 use ff_core::dag::ModelDag;
 use ff_core::ModelName;
 use ff_core::Project;

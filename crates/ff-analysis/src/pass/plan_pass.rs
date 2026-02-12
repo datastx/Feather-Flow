@@ -1,8 +1,7 @@
 //! DataFusion LogicalPlan-based pass infrastructure
 //!
-//! New pass traits and manager that operate on DataFusion LogicalPlans
-//! instead of the custom RelOp IR. Coexists with the old pass system
-//! during the migration period.
+//! All analysis passes operate on DataFusion LogicalPlans, providing richer
+//! type information and leveraging DataFusion's planner infrastructure.
 
 use std::collections::HashMap;
 
@@ -46,12 +45,6 @@ pub trait DagPlanPass: Send + Sync {
 }
 
 /// Manages and runs LogicalPlan-based analysis passes.
-///
-/// Successor to [`super::PassManager`]. Operates on DataFusion `LogicalPlan`s
-/// instead of the custom `RelOp` IR, enabling richer type information and
-/// leveraging DataFusion's optimizer infrastructure. Both managers coexist
-/// during the migration period — once all `RelOp`-based passes are ported
-/// here, `PassManager` can be removed.
 pub struct PlanPassManager {
     model_passes: Vec<Box<dyn PlanPass>>,
     dag_passes: Vec<Box<dyn DagPlanPass>>,
@@ -61,8 +54,15 @@ impl PlanPassManager {
     /// Create a PlanPassManager with all built-in LogicalPlan passes
     pub fn with_defaults() -> Self {
         Self {
-            model_passes: vec![],
-            dag_passes: vec![Box::new(super::plan_cross_model::CrossModelConsistency)],
+            model_passes: vec![
+                Box::new(super::plan_type_inference::PlanTypeInference),
+                Box::new(super::plan_nullability::PlanNullability),
+                Box::new(super::plan_join_keys::PlanJoinKeys),
+            ],
+            dag_passes: vec![
+                Box::new(super::plan_unused_columns::PlanUnusedColumns),
+                Box::new(super::plan_cross_model::CrossModelConsistency),
+            ],
         }
     }
 

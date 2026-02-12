@@ -239,7 +239,7 @@ fn make_aggregate(name: &str, input: DataType, ret: DataType) -> Arc<AggregateUD
 /// functions without actually executing them.
 pub fn make_user_scalar_udf(name: &str, arg_types: &[String], return_type: &str) -> Arc<ScalarUDF> {
     use crate::datafusion_bridge::types::sql_type_to_arrow;
-    use crate::ir::types::parse_sql_type;
+    use crate::types::parse_sql_type;
 
     let arrow_args: Vec<DataType> = arg_types
         .iter()

@@ -22,3 +22,9 @@ columns:
     type: VARCHAR
     description: "Customer email address"
     classification: pii
+  - name: signup_date
+    type: DATE
+    description: "Date the customer signed up"
+  - name: customer_tier
+    type: VARCHAR
+    description: "Customer tier (gold, silver, bronze)"

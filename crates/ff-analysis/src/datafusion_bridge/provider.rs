@@ -16,9 +16,8 @@ use datafusion_sql::TableReference;
 
 use crate::datafusion_bridge::functions;
 use crate::datafusion_bridge::types::sql_type_to_arrow;
-use crate::ir::schema::RelSchema;
-use crate::ir::types::Nullability;
-use crate::lowering::SchemaCatalog;
+use crate::schema::{RelSchema, SchemaCatalog};
+use crate::types::Nullability;
 
 /// Metadata for a user-defined function stub to register in the DataFusion context.
 ///
