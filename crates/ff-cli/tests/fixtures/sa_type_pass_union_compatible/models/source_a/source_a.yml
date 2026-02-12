@@ -1,0 +1,6 @@
+version: 1
+name: source_a
+description: "Integer source A"
+columns:
+  - name: id
+    data_type: INTEGER

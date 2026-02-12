@@ -1,0 +1,10 @@
+version: 1
+name: int_enriched
+description: "Enriched orders with customer information"
+columns:
+  - name: id
+    type: INTEGER
+  - name: amount
+    type: "DECIMAL(10,2)"
+  - name: customer_name
+    type: VARCHAR

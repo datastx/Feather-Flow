@@ -148,12 +148,9 @@ impl SourceFile {
     pub fn get_all_table_names(&self) -> Vec<String> {
         let mut names = Vec::new();
         for table in &self.tables {
-            // Add unqualified name
             names.push(table.name.clone());
-            // Add qualified name
             names.push(format!("{}.{}", self.schema, table.name));
 
-            // If identifier differs, add those too
             if let Some(ref ident) = table.identifier {
                 if ident != &table.name {
                     names.push(ident.clone());
@@ -181,7 +178,6 @@ pub fn discover_sources(source_paths: &[PathBuf]) -> CoreResult<Vec<SourceFile>>
         discover_sources_recursive(source_path, &mut sources)?;
     }
 
-    // Detect duplicate source names across files
     let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for (idx, source) in sources.iter().enumerate() {
         if let Some(&prev_idx) = seen.get(&source.name) {

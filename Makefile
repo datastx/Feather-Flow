@@ -6,7 +6,7 @@ SHELL := /bin/bash
         ff-test ff-test-verbose ff-test-fail-fast ff-seed ff-seed-full-refresh \
         ff-docs ff-docs-json ff-docs-serve ff-docs-export ff-validate ff-validate-strict ff-sources ff-help \
         dev-cycle dev-validate dev-fresh help run watch test-verbose test-integration \
-	test-unit test-quick test-failed fmt-check clippy doc-open update ci-quick ci-full install install-cargo claude-auto-run \
+	test-unit test-quick test-failed test-sa test-sa-rust test-sa-all fmt-check clippy doc-open update ci-quick ci-full install install-cargo claude-auto-run \
         version version-bump-patch version-bump-minor version-set version-tag \
         build-linux clean-dist \
         docker-build docker-build-release docker-push docker-login docker-run \
@@ -74,8 +74,9 @@ test: ## Run all tests with summary
 		echo ""; \
 		echo "Failed tests:"; \
 		grep -E "^test .* FAILED" /tmp/test-output.txt || true; \
-	fi; \
-	exit $$EXIT_CODE
+		exit $$EXIT_CODE; \
+	fi
+	@$(MAKE) test-sa-all
 
 test-quick: ## Run tests without output capture (faster feedback)
 	cargo test --workspace --all-features -- --test-threads=4
@@ -91,6 +92,14 @@ test-unit: ## Run unit tests only
 
 test-failed: ## Re-run only previously failed tests
 	cargo test --workspace -- --failed
+
+test-sa: ## Run static analysis CLI integration tests
+	cargo test -p ff-cli --test sa_integration_tests -- --test-threads=1
+
+test-sa-rust: ## Run Rust-level static analysis tests
+	cargo test -p ff-cli --test integration_tests -- test_analysis --test-threads=1
+
+test-sa-all: test-sa test-sa-rust ## Run all static analysis tests
 
 # =============================================================================
 # Code Quality

@@ -16,16 +16,13 @@ use crate::commands::common::{self, load_project};
 pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
     let project = load_project(global)?;
 
-    // Create SQL parser and Jinja environment
     let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
         .context("Invalid SQL dialect")?;
     let jinja = JinjaEnvironment::new(&project.config.vars);
 
-    // Collect known models and external tables
     let external_tables: HashSet<String> = project.config.external_tables.iter().cloned().collect();
     let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
 
-    // Compile all models to get dependencies and config
     let mut model_info: Vec<ModelInfo> = Vec::new();
     let mut dependencies: HashMap<String, Vec<String>> = HashMap::new();
 
@@ -34,29 +31,24 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
             .get_model(name)
             .ok_or_else(|| anyhow::anyhow!("Model '{}' not found in project", name))?;
 
-        // Render Jinja template to get config
         let (rendered, config_values) = jinja
             .render_with_config(&model.raw_sql)
             .with_context(|| format!("Failed to render template for model: {}", name))?;
 
-        // Parse SQL to extract dependencies
         let statements = parser
             .parse(&rendered)
             .with_context(|| format!("Failed to parse SQL for model: {}", name))?;
 
-        // Extract and categorize dependencies
         let deps = extract_dependencies(&statements);
         let (model_deps, ext_deps) =
             ff_sql::extractor::categorize_dependencies(deps, &known_models, &external_tables);
 
-        // Get materialization
         let mat = config_values
             .get("materialized")
             .and_then(|v| v.as_str())
             .map(common::parse_materialization)
             .unwrap_or(project.config.materialization);
 
-        // Get schema
         let schema = config_values
             .get("schema")
             .and_then(|v| v.as_str())
@@ -76,7 +68,6 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
         });
     }
 
-    // Add sources to the list
     for source in &project.sources {
         for table in &source.tables {
             let source_name = format!("{}.{}", source.name, table.name);
@@ -92,7 +83,6 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
-    // Add functions to the list
     for func in &project.functions {
         model_info.push(ModelInfo {
             name: func.name.to_string(),
@@ -105,10 +95,8 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
         });
     }
 
-    // Build DAG for selector support
     let dag = ModelDag::build(&dependencies).context("Failed to build dependency graph")?;
 
-    // Filter models if selector is provided
     let filtered_names: HashSet<String> = if let Some(selector_str) = &args.select {
         let selector = Selector::parse(selector_str).context("Invalid selector")?;
         selector
@@ -120,7 +108,6 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
         model_info.iter().map(|m| m.name.clone()).collect()
     };
 
-    // Apply exclusion filter if provided
     let filtered_names: HashSet<String> = if let Some(exclude) = &args.exclude {
         let excluded: HashSet<String> = exclude
             .split(',')
@@ -135,13 +122,11 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
         filtered_names
     };
 
-    // Filter model_info by name
     let filtered_info: Vec<&ModelInfo> = model_info
         .iter()
         .filter(|m| filtered_names.contains(&m.name))
         .collect();
 
-    // Apply resource type filter if provided
     let filtered_info: Vec<&ModelInfo> = if let Some(resource_type) = &args.resource_type {
         filtered_info
             .into_iter()
@@ -157,17 +142,14 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
         filtered_info
     };
 
-    // Apply owner filter if provided
     let filtered_info: Vec<&ModelInfo> = if let Some(owner_filter) = &args.owner {
         let owner_lower = owner_filter.to_lowercase();
         filtered_info
             .into_iter()
             .filter(|m| {
-                // Only filter models, not sources
                 if m.resource_type != "model" {
                     return true;
                 }
-                // Get the model to check its owner
                 if let Some(model) = project.get_model(&m.name) {
                     if let Some(model_owner) = model.get_owner() {
                         return model_owner.to_lowercase().contains(&owner_lower);
@@ -180,22 +162,18 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
         filtered_info
     };
 
-    // Find affected exposures if requested
     let affected_exposures: Vec<&Exposure> = if args.downstream_exposures {
-        // Get the set of model names that are being listed
         let model_names: HashSet<&str> = filtered_info
             .iter()
             .filter(|m| m.resource_type == "model")
             .map(|m| m.name.as_str())
             .collect();
 
-        // Find exposures that depend on any of these models
         find_affected_exposures(&project.exposures, &model_names)
     } else {
         Vec::new()
     };
 
-    // Output based on format
     match args.output {
         LsOutput::Table => print_table(
             &filtered_info,
@@ -248,7 +226,6 @@ struct ModelInfo {
 fn print_table(models: &[&ModelInfo], exposures: &[&Exposure], show_exposures: bool) {
     let headers = ["NAME", "TYPE", "MATERIALIZED", "SCHEMA", "DEPENDS_ON"];
 
-    // Build rows
     let rows: Vec<Vec<String>> = models
         .iter()
         .map(|model| {
@@ -285,7 +262,6 @@ fn print_table(models: &[&ModelInfo], exposures: &[&Exposure], show_exposures: b
 
     common::print_table(&headers, &rows);
 
-    // Count resources by type
     let model_count = models.iter().filter(|m| m.resource_type == "model").count();
     let source_count = models
         .iter()
@@ -306,7 +282,6 @@ fn print_table(models: &[&ModelInfo], exposures: &[&Exposure], show_exposures: b
     }
     println!("{}", parts.join(", "));
 
-    // Print affected exposures section if requested
     if show_exposures && !exposures.is_empty() {
         println!();
         println!("Downstream Exposures ({} affected):", exposures.len());
@@ -341,7 +316,6 @@ fn print_table(models: &[&ModelInfo], exposures: &[&Exposure], show_exposures: b
 /// Print models in JSON format
 fn print_json(models: &[&ModelInfo], exposures: &[&Exposure], show_exposures: bool) -> Result<()> {
     if show_exposures {
-        // Create a combined output with models and affected exposures
         let exposure_info: Vec<ExposureInfo> = exposures
             .iter()
             .map(|e| ExposureInfo {
@@ -379,7 +353,6 @@ struct ExposureInfo {
 
 /// Print models in tree format
 fn print_tree(models: &[&ModelInfo]) -> Result<()> {
-    // Find root nodes (no dependencies)
     let model_names: HashSet<_> = models.iter().map(|m| &m.name).collect();
     let roots: Vec<_> = models
         .iter()

@@ -372,7 +372,6 @@ pub fn extract_column_lineage(stmt: &Statement, model_name: &str) -> Option<Mode
 fn extract_lineage_from_query(query: &Query, model_name: &str) -> ModelLineage {
     let mut lineage = ModelLineage::new(model_name);
 
-    // Handle the main body of the query
     match query.body.as_ref() {
         SetExpr::Select(select) => {
             extract_lineage_from_select(select, &mut lineage);
@@ -417,12 +416,10 @@ fn extract_lineage_from_set_expr(set_expr: &SetExpr, lineage: &mut ModelLineage)
 
 /// Extract lineage from a SELECT clause
 fn extract_lineage_from_select(select: &Select, lineage: &mut ModelLineage) {
-    // First, extract table aliases from FROM clause
     for table in &select.from {
         extract_table_aliases(table, lineage);
     }
 
-    // Then extract column lineage from projection
     for item in &select.projection {
         match item {
             SelectItem::UnnamedExpr(expr) => {
@@ -435,7 +432,6 @@ fn extract_lineage_from_select(select: &Select, lineage: &mut ModelLineage) {
                 lineage.add_column(col_lineage);
             }
             SelectItem::QualifiedWildcard(kind, _) => {
-                // SELECT table.*
                 let table_name = match kind {
                     SelectItemQualifiedWildcardKind::ObjectName(name) => {
                         object_name_to_string(name)
@@ -450,7 +446,6 @@ fn extract_lineage_from_select(select: &Select, lineage: &mut ModelLineage) {
                 lineage.add_column(col_lineage);
             }
             SelectItem::Wildcard(_) => {
-                // SELECT *
                 let mut col_lineage = ColumnLineage::new("*");
                 col_lineage.expr_type = ExprType::Wildcard;
                 let tables: Vec<&String> = lineage.source_tables.iter().collect();
@@ -494,7 +489,6 @@ fn extract_table_factor_alias(factor: &TableFactor, lineage: &mut ModelLineage) 
                     format!("(subquery:{})", alias.name.value),
                 );
             }
-            // Recursively extract from subquery
             if let SetExpr::Select(select) = subquery.body.as_ref() {
                 extract_lineage_from_select(select, lineage);
             }
@@ -523,12 +517,10 @@ fn object_name_to_string(name: &ObjectName) -> String {
 fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLineage {
     match expr {
         Expr::Identifier(ident) => {
-            // Simple column reference
             let col_ref = ColumnRef::simple(&ident.value);
             ColumnLineage::direct(&ident.value, col_ref)
         }
         Expr::CompoundIdentifier(idents) => {
-            // table.column or schema.table.column
             if idents.len() >= 2 {
                 let col_name = idents.last().map(|i| i.value.clone()).unwrap_or_default();
                 let table_name = idents[..idents.len() - 1]
@@ -537,7 +529,6 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
                     .collect::<Vec<_>>()
                     .join(".");
 
-                // Resolve alias if present
                 let resolved_table = lineage
                     .table_aliases
                     .get(&table_name)
@@ -555,7 +546,6 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
             }
         }
         Expr::Function(func) => {
-            // Function call - extract all column references from arguments
             let func_name = object_name_to_string(&func.name);
 
             let mut sources = HashSet::new();
@@ -566,7 +556,6 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
             col_lineage
         }
         Expr::BinaryOp { left, right, .. } => {
-            // Binary operation - combine sources from both sides
             let left_lineage = extract_lineage_from_expr(left, lineage);
             let right_lineage = extract_lineage_from_expr(right, lineage);
 
@@ -598,7 +587,6 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
         } => {
             let mut sources = HashSet::new();
 
-            // Extract from operand if present
             if let Some(op) = operand {
                 let op_lineage = extract_lineage_from_expr(op, lineage);
                 sources.extend(op_lineage.source_columns);
@@ -622,7 +610,6 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
             col_lineage
         }
         Expr::Subquery(query) => {
-            // For subqueries, extract lineage from the subquery
             let sub_lineage = extract_lineage_from_query(query, "subquery");
             let mut col_lineage = ColumnLineage::new("subquery");
             col_lineage.expr_type = ExprType::Subquery;
@@ -632,10 +619,7 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
             col_lineage
         }
         Expr::Nested(inner) => extract_lineage_from_expr(inner, lineage),
-        Expr::Value(..) | Expr::TypedString { .. } => {
-            // Literal value - no source columns
-            ColumnLineage::literal("literal")
-        }
+        Expr::Value(..) | Expr::TypedString { .. } => ColumnLineage::literal("literal"),
         Expr::IsNull(inner) | Expr::IsNotNull(inner) => {
             let inner_lineage = extract_lineage_from_expr(inner, lineage);
             let mut col_lineage = ColumnLineage::new(&inner_lineage.output_column);
@@ -673,9 +657,27 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
             col_lineage.source_columns = sources;
             col_lineage
         }
-        _ => {
-            // For other expressions, return empty lineage
-            ColumnLineage::new("unknown")
+        _ => ColumnLineage::new("unknown"),
+    }
+}
+
+/// Extract column references from a single function argument expression.
+fn extract_from_arg_expr(
+    arg_expr: &FunctionArgExpr,
+    lineage: &ModelLineage,
+    sources: &mut HashSet<ColumnRef>,
+) {
+    match arg_expr {
+        FunctionArgExpr::Expr(expr) => {
+            let expr_lineage = extract_lineage_from_expr(expr, lineage);
+            sources.extend(expr_lineage.source_columns);
+        }
+        FunctionArgExpr::QualifiedWildcard(name) => {
+            let table_name = object_name_to_string(name);
+            sources.insert(ColumnRef::qualified(&table_name, "*"));
+        }
+        FunctionArgExpr::Wildcard => {
+            sources.insert(ColumnRef::simple("*"));
         }
     }
 }
@@ -689,23 +691,12 @@ fn extract_columns_from_function_args(
     match args {
         sqlparser::ast::FunctionArguments::List(arg_list) => {
             for arg in &arg_list.args {
-                match arg {
-                    FunctionArg::Unnamed(arg_expr)
-                    | FunctionArg::Named { arg: arg_expr, .. }
-                    | FunctionArg::ExprNamed { arg: arg_expr, .. } => match arg_expr {
-                        FunctionArgExpr::Expr(expr) => {
-                            let expr_lineage = extract_lineage_from_expr(expr, lineage);
-                            sources.extend(expr_lineage.source_columns);
-                        }
-                        FunctionArgExpr::QualifiedWildcard(name) => {
-                            let table_name = object_name_to_string(name);
-                            sources.insert(ColumnRef::qualified(&table_name, "*"));
-                        }
-                        FunctionArgExpr::Wildcard => {
-                            sources.insert(ColumnRef::simple("*"));
-                        }
-                    },
-                }
+                let arg_expr = match arg {
+                    FunctionArg::Unnamed(e)
+                    | FunctionArg::Named { arg: e, .. }
+                    | FunctionArg::ExprNamed { arg: e, .. } => e,
+                };
+                extract_from_arg_expr(arg_expr, lineage, sources);
             }
         }
         sqlparser::ast::FunctionArguments::None => {}

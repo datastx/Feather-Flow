@@ -1,0 +1,12 @@
+version: 1
+name: stg
+description: "Staging model selecting all columns including unused ones"
+columns:
+  - name: id
+    data_type: INTEGER
+  - name: name
+    data_type: VARCHAR
+  - name: internal_code
+    data_type: VARCHAR
+  - name: debug_flag
+    data_type: BOOLEAN

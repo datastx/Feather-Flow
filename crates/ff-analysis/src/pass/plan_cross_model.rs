@@ -11,6 +11,75 @@ use crate::datafusion_bridge::propagation::{ModelPlanResult, SchemaMismatch};
 use super::plan_pass::DagPlanPass;
 use super::{Diagnostic, DiagnosticCode, Severity};
 
+/// Convert a single schema mismatch into a diagnostic.
+fn mismatch_to_diagnostic(
+    model_name: &str,
+    mismatch: &SchemaMismatch,
+    pass_name: &str,
+) -> Diagnostic {
+    match mismatch {
+        SchemaMismatch::ExtraInSql { column } => Diagnostic {
+            code: DiagnosticCode::A040,
+            severity: Severity::Warning,
+            message: format!("Column '{column}' is in SQL output but not declared in YAML"),
+            model: model_name.to_string(),
+            column: Some(column.clone()),
+            hint: Some(format!(
+                "Add '{column}' to the YAML schema or remove it from SELECT"
+            )),
+            pass_name: pass_name.to_string().into(),
+        },
+        SchemaMismatch::MissingFromSql { column } => Diagnostic {
+            code: DiagnosticCode::A040,
+            severity: Severity::Error,
+            message: format!("Column '{column}' declared in YAML but missing from SQL output"),
+            model: model_name.to_string(),
+            column: Some(column.clone()),
+            hint: Some(format!("Add '{column}' to SELECT or remove it from YAML")),
+            pass_name: pass_name.to_string().into(),
+        },
+        SchemaMismatch::TypeMismatch {
+            column,
+            yaml_type,
+            inferred_type,
+        } => Diagnostic {
+            code: DiagnosticCode::A040,
+            severity: Severity::Warning,
+            message: format!(
+                "Column '{column}' type mismatch: YAML declares {yaml_type}, SQL infers {inferred_type}"
+            ),
+            model: model_name.to_string(),
+            column: Some(column.clone()),
+            hint: Some(format!(
+                "Update YAML type to '{inferred_type}' or add explicit CAST"
+            )),
+            pass_name: pass_name.to_string().into(),
+        },
+        SchemaMismatch::NullabilityMismatch {
+            column,
+            yaml_nullable,
+            inferred_nullable,
+        } => {
+            let hint = if !yaml_nullable && *inferred_nullable {
+                "Add COALESCE() or WHERE IS NOT NULL guard, or mark the column as nullable in YAML"
+            } else {
+                "Consider marking the column as NOT NULL in YAML to match the SQL"
+            };
+            Diagnostic {
+                code: DiagnosticCode::A041,
+                severity: Severity::Warning,
+                message: format!(
+                    "Column '{column}' nullability mismatch: YAML declares nullable={yaml_nullable}, SQL infers nullable={inferred_nullable}"
+                ),
+                model: model_name.to_string(),
+                column: Some(column.clone()),
+                hint: Some(hint.to_string()),
+                pass_name: pass_name.to_string().into(),
+            }
+        }
+    }
+}
+
 /// Cross-model consistency pass
 ///
 /// Checks that inferred schemas from DataFusion LogicalPlans match the
@@ -40,79 +109,7 @@ impl DagPlanPass for CrossModelConsistency {
         for model_name in model_names {
             let result = &models[model_name];
             for mismatch in &result.mismatches {
-                match mismatch {
-                    SchemaMismatch::ExtraInSql { column } => {
-                        diagnostics.push(Diagnostic {
-                            code: DiagnosticCode::A040,
-                            severity: Severity::Warning,
-                            message: format!(
-                                "Column '{column}' is in SQL output but not declared in YAML"
-                            ),
-                            model: model_name.clone(),
-                            column: Some(column.clone()),
-                            hint: Some(format!(
-                                "Add '{column}' to the YAML schema or remove it from SELECT"
-                            )),
-                            pass_name: self.name().into(),
-                        });
-                    }
-                    SchemaMismatch::MissingFromSql { column } => {
-                        diagnostics.push(Diagnostic {
-                            code: DiagnosticCode::A040,
-                            severity: Severity::Error,
-                            message: format!(
-                                "Column '{column}' declared in YAML but missing from SQL output"
-                            ),
-                            model: model_name.clone(),
-                            column: Some(column.clone()),
-                            hint: Some(format!("Add '{column}' to SELECT or remove it from YAML")),
-                            pass_name: self.name().into(),
-                        });
-                    }
-                    SchemaMismatch::TypeMismatch {
-                        column,
-                        yaml_type,
-                        inferred_type,
-                    } => {
-                        diagnostics.push(Diagnostic {
-                            code: DiagnosticCode::A040,
-                            severity: Severity::Warning,
-                            message: format!(
-                                "Column '{column}' type mismatch: YAML declares {yaml_type}, SQL infers {inferred_type}"
-                            ),
-                            model: model_name.clone(),
-                            column: Some(column.clone()),
-                            hint: Some(format!(
-                                "Update YAML type to '{inferred_type}' or add explicit CAST"
-                            )),
-                            pass_name: self.name().into(),
-                        });
-                    }
-                    SchemaMismatch::NullabilityMismatch {
-                        column,
-                        yaml_nullable,
-                        inferred_nullable,
-                    } => {
-                        let hint = if !yaml_nullable && *inferred_nullable {
-                            // YAML says NOT NULL but SQL may produce NULL
-                            "Add COALESCE() or WHERE IS NOT NULL guard, or mark the column as nullable in YAML"
-                        } else {
-                            // YAML says nullable but SQL always produces NOT NULL
-                            "Consider marking the column as NOT NULL in YAML to match the SQL"
-                        };
-                        diagnostics.push(Diagnostic {
-                            code: DiagnosticCode::A041,
-                            severity: Severity::Warning,
-                            message: format!(
-                                "Column '{column}' nullability mismatch: YAML declares nullable={yaml_nullable}, SQL infers nullable={inferred_nullable}"
-                            ),
-                            model: model_name.clone(),
-                            column: Some(column.clone()),
-                            hint: Some(hint.to_string()),
-                            pass_name: self.name().into(),
-                        });
-                    }
-                }
+                diagnostics.push(mismatch_to_diagnostic(model_name, mismatch, self.name()));
             }
         }
 

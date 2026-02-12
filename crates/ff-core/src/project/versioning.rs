@@ -14,9 +14,7 @@ impl Project {
     pub fn resolve_model_reference(&self, reference: &str) -> (Option<&Model>, Vec<String>) {
         let mut warnings = Vec::new();
 
-        // First try exact match
         if let Some(model) = self.models.get(reference) {
-            // Check for deprecation
             if model.is_deprecated() {
                 let msg = model
                     .get_deprecation_message()
@@ -29,12 +27,10 @@ impl Project {
             return (Some(model), warnings);
         }
 
-        // If no exact match and reference doesn't look versioned, try to find latest version
         let (parsed_base, _) = Model::parse_version(reference);
         if parsed_base.is_none() {
             // Unversioned reference - find all versions and return latest
             if let Some((name, model)) = self.get_latest_version(reference) {
-                // Check for deprecation on resolved model
                 if model.is_deprecated() {
                     let msg = model
                         .get_deprecation_message()
@@ -55,7 +51,6 @@ impl Project {
         let mut candidates: Vec<(&str, &Model, Option<u32>)> = Vec::new();
 
         for (name, model) in &self.models {
-            // Check if this model matches the base name
             let model_base = model.get_base_name();
             if model_base == base_name || name == base_name {
                 candidates.push((name.as_str(), model, model.version));
@@ -85,7 +80,6 @@ impl Project {
             .map(|(name, model)| (name.as_str(), model))
             .collect();
 
-        // Sort by version ascending
         versions.sort_by(|a, b| {
             let va = a.1.version.unwrap_or(0);
             let vb = b.1.version.unwrap_or(0);
