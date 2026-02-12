@@ -47,23 +47,23 @@ struct TestResults {
 /// Shared atomic counters for tracking test execution outcomes
 #[derive(Debug)]
 struct TestCounters {
-    passed: Arc<AtomicUsize>,
-    failed: Arc<AtomicUsize>,
-    warned: Arc<AtomicUsize>,
-    errors: Arc<AtomicUsize>,
-    early_stop: Arc<AtomicBool>,
-    test_results: Arc<Mutex<Vec<TestResultOutput>>>,
+    passed: AtomicUsize,
+    failed: AtomicUsize,
+    warned: AtomicUsize,
+    errors: AtomicUsize,
+    early_stop: AtomicBool,
+    test_results: Mutex<Vec<TestResultOutput>>,
 }
 
 impl TestCounters {
     fn new() -> Self {
         Self {
-            passed: Arc::new(AtomicUsize::new(0)),
-            failed: Arc::new(AtomicUsize::new(0)),
-            warned: Arc::new(AtomicUsize::new(0)),
-            errors: Arc::new(AtomicUsize::new(0)),
-            early_stop: Arc::new(AtomicBool::new(false)),
-            test_results: Arc::new(Mutex::new(Vec::new())),
+            passed: AtomicUsize::new(0),
+            failed: AtomicUsize::new(0),
+            warned: AtomicUsize::new(0),
+            errors: AtomicUsize::new(0),
+            early_stop: AtomicBool::new(false),
+            test_results: Mutex::new(Vec::new()),
         }
     }
 }
@@ -280,7 +280,7 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
     // Wrap custom registry in Arc for sharing
     let custom_registry = Arc::new(custom_test_registry);
 
-    let counters = TestCounters::new();
+    let counters = Arc::new(TestCounters::new());
     let output_lock = Arc::new(Mutex::new(()));
 
     let ctx = TestRunContext {
@@ -351,7 +351,7 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
 async fn run_tests_sequential(
     ctx: &TestRunContext<'_>,
     schema_tests: &[&SchemaTest],
-    counters: &TestCounters,
+    counters: &Arc<TestCounters>,
 ) {
     let runner = TestRunner::new(ctx.db.as_ref());
 
@@ -423,7 +423,7 @@ async fn run_tests_sequential(
 async fn run_tests_parallel(
     ctx: &TestRunContext<'_>,
     schema_tests: &[&SchemaTest],
-    counters: &TestCounters,
+    counters: &Arc<TestCounters>,
     output_lock: &Arc<Mutex<()>>,
     thread_count: usize,
 ) {
@@ -453,18 +453,13 @@ async fn run_tests_parallel(
         .map(|(schema_test, _qualified_name, generated)| {
             let db = ctx.db.clone();
             let failures_dir = ctx.failures_dir.clone();
-            let passed = counters.passed.clone();
-            let failed = counters.failed.clone();
-            let warned = counters.warned.clone();
-            let errors = counters.errors.clone();
-            let early_stop = counters.early_stop.clone();
+            let counters = Arc::clone(counters);
             let output_lock = output_lock.clone();
-            let test_results = counters.test_results.clone();
             let fail_fast = ctx.args.fail_fast;
             let json_mode = ctx.json_mode;
 
             async move {
-                if early_stop.load(Ordering::SeqCst) {
+                if counters.early_stop.load(Ordering::SeqCst) {
                     return;
                 }
 
@@ -474,21 +469,12 @@ async fn run_tests_parallel(
                 // Lock for output
                 let _lock = output_lock.lock().await;
 
-                let task_counters = TestCounters {
-                    passed,
-                    failed,
-                    warned,
-                    errors,
-                    early_stop: early_stop.clone(),
-                    test_results,
-                };
-
                 process_schema_test_result(
                     &result,
                     &schema_test,
                     &generated,
                     &failures_dir,
-                    &task_counters,
+                    &counters,
                     json_mode,
                 )
                 .await;
@@ -496,7 +482,7 @@ async fn run_tests_parallel(
                 // Fail fast if requested (but not for warning-severity tests)
                 if fail_fast && !result.passed && schema_test.config.severity == TestSeverity::Error
                 {
-                    early_stop.store(true, Ordering::SeqCst);
+                    counters.early_stop.store(true, Ordering::SeqCst);
                 }
             }
         })
@@ -516,18 +502,13 @@ async fn run_tests_parallel(
             let db = ctx.db.clone();
             let singular_test = singular_test.clone();
             let failures_dir = ctx.failures_dir.clone();
-            let passed = counters.passed.clone();
-            let failed = counters.failed.clone();
-            let warned = counters.warned.clone();
-            let errors = counters.errors.clone();
-            let early_stop = counters.early_stop.clone();
+            let counters = Arc::clone(counters);
             let output_lock = output_lock.clone();
-            let test_results = counters.test_results.clone();
             let fail_fast = ctx.args.fail_fast;
             let json_mode = ctx.json_mode;
 
             async move {
-                if early_stop.load(Ordering::SeqCst) {
+                if counters.early_stop.load(Ordering::SeqCst) {
                     return;
                 }
 
@@ -536,27 +517,18 @@ async fn run_tests_parallel(
                 // Lock for output
                 let _lock = output_lock.lock().await;
 
-                let task_counters = TestCounters {
-                    passed,
-                    failed,
-                    warned,
-                    errors,
-                    early_stop: early_stop.clone(),
-                    test_results,
-                };
-
                 process_singular_test_result(
                     &result,
                     &singular_test,
                     &failures_dir,
-                    &task_counters,
+                    &counters,
                     json_mode,
                 )
                 .await;
 
                 // Fail fast if requested
                 if fail_fast && !result.passed {
-                    early_stop.store(true, Ordering::SeqCst);
+                    counters.early_stop.store(true, Ordering::SeqCst);
                 }
             }
         })

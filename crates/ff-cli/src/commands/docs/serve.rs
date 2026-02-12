@@ -227,22 +227,7 @@ fn build_app_state(project: &Project) -> Result<AppState> {
                 columns: doc.columns.iter().map(|c| c.name.clone()).collect(),
             });
 
-            // Lineage entries
-            for col_lineage in &doc.column_lineage {
-                for src in &col_lineage.source_columns {
-                    // Parse "table.column" format
-                    let parts: Vec<&str> = src.splitn(2, '.').collect();
-                    if parts.len() == 2 {
-                        lineage_entries.push(LineageEntry {
-                            model: doc.name.clone(),
-                            column: col_lineage.output_column.clone(),
-                            source_model: parts[0].to_string(),
-                            source_column: parts[1].to_string(),
-                            is_direct: col_lineage.is_direct,
-                        });
-                    }
-                }
-            }
+            collect_lineage_entries(&doc, &mut lineage_entries);
 
             // Edges from parsed dependencies
             for dep in &doc.depends_on {
@@ -388,6 +373,24 @@ async fn static_handler(uri: axum::http::Uri) -> impl IntoResponse {
                     .into_response(),
                 None => (StatusCode::NOT_FOUND, "Not found").into_response(),
             }
+        }
+    }
+}
+
+fn collect_lineage_entries(doc: &ModelDoc, entries: &mut Vec<LineageEntry>) {
+    for col_lineage in &doc.column_lineage {
+        for src in &col_lineage.source_columns {
+            let parts: Vec<&str> = src.splitn(2, '.').collect();
+            if parts.len() != 2 {
+                continue;
+            }
+            entries.push(LineageEntry {
+                model: doc.name.clone(),
+                column: col_lineage.output_column.clone(),
+                source_model: parts[0].to_string(),
+                source_column: parts[1].to_string(),
+                is_direct: col_lineage.is_direct,
+            });
         }
     }
 }

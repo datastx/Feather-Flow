@@ -50,7 +50,6 @@ pub(crate) fn lower_select(select: &Select, catalog: &SchemaCatalog) -> Analysis
                 .map(|e| lower_expr(e, &current_schema))
                 .collect();
 
-            // Collect aggregate functions from the projection
             let mut agg_items = Vec::new();
             for item in &select.projection {
                 if let SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. } = item
@@ -65,36 +64,7 @@ pub(crate) fn lower_select(select: &Select, catalog: &SchemaCatalog) -> Analysis
                 schema: RelSchema::empty(),
             });
 
-            // Build output schema from group-by keys + aggregates
-            let mut out_cols = Vec::new();
-            for ge in &group_exprs {
-                if let TypedExpr::ColumnRef {
-                    column,
-                    resolved_type,
-                    nullability,
-                    ..
-                } = ge
-                {
-                    out_cols.push(TypedColumn {
-                        name: column.clone(),
-                        source_table: None,
-                        sql_type: resolved_type.clone(),
-                        nullability: *nullability,
-                        provenance: vec![],
-                    });
-                }
-            }
-            for (name, agg_expr) in &agg_items {
-                out_cols.push(TypedColumn {
-                    name: name.clone(),
-                    source_table: None,
-                    sql_type: agg_expr.resolved_type().clone(),
-                    nullability: agg_expr.nullability(),
-                    provenance: vec![],
-                });
-            }
-
-            let schema = RelSchema::new(out_cols);
+            let schema = build_aggregate_schema(&group_exprs, &agg_items);
             Some(RelOp::Aggregate {
                 input: Box::new(input),
                 group_by: group_exprs,
@@ -311,27 +281,26 @@ fn lower_projection(
             SelectItem::QualifiedWildcard(kind, _) => {
                 let table_name = kind.to_string();
                 let lower_table = table_name.to_lowercase();
-                // If no columns have source_table set, fall back to including all
                 let any_tagged = input_schema
                     .columns
                     .iter()
                     .any(|c| c.source_table.is_some());
-                // Expand table.* — filter by source_table when available
                 for col in &input_schema.columns {
                     let belongs = col
                         .source_table
                         .as_ref()
                         .is_some_and(|t| t.to_lowercase() == lower_table);
-                    if !any_tagged || belongs {
-                        let typed = TypedExpr::ColumnRef {
-                            table: Some(table_name.clone()),
-                            column: col.name.clone(),
-                            resolved_type: col.sql_type.clone(),
-                            nullability: col.nullability,
-                        };
-                        out_cols.push(col.clone());
-                        columns.push((col.name.clone(), typed));
+                    if any_tagged && !belongs {
+                        continue;
                     }
+                    let typed = TypedExpr::ColumnRef {
+                        table: Some(table_name.clone()),
+                        column: col.name.clone(),
+                        resolved_type: col.sql_type.clone(),
+                        nullability: col.nullability,
+                    };
+                    out_cols.push(col.clone());
+                    columns.push((col.name.clone(), typed));
                 }
             }
         }
@@ -381,6 +350,42 @@ fn collect_aggregates(
         }
         _ => {}
     }
+}
+
+/// Build the output schema for an Aggregate node from group-by keys and aggregate expressions
+fn build_aggregate_schema(
+    group_exprs: &[TypedExpr],
+    agg_items: &[(String, TypedExpr)],
+) -> RelSchema {
+    let mut out_cols = Vec::new();
+    for ge in group_exprs {
+        let TypedExpr::ColumnRef {
+            column,
+            resolved_type,
+            nullability,
+            ..
+        } = ge
+        else {
+            continue;
+        };
+        out_cols.push(TypedColumn {
+            name: column.clone(),
+            source_table: None,
+            sql_type: resolved_type.clone(),
+            nullability: *nullability,
+            provenance: vec![],
+        });
+    }
+    for (name, agg_expr) in agg_items {
+        out_cols.push(TypedColumn {
+            name: name.clone(),
+            source_table: None,
+            sql_type: agg_expr.resolved_type().clone(),
+            nullability: agg_expr.nullability(),
+            provenance: vec![],
+        });
+    }
+    RelSchema::new(out_cols)
 }
 
 /// Check if a function name is a known aggregate

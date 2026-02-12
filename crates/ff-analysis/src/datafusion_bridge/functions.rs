@@ -252,6 +252,11 @@ pub fn make_user_scalar_udf(name: &str, arg_types: &[String], return_type: &str)
 
 // --- Stub implementations ---
 
+/// A no-op scalar UDF stub that provides type information for DataFusion planning.
+///
+/// These stubs are never executed; they exist solely so that DataFusion's
+/// `SqlToRel` planner can resolve DuckDB-specific scalar functions and infer
+/// their return types during static analysis.
 #[derive(Debug, Hash, PartialEq, Eq)]
 struct StubScalarUDF {
     name: String,
@@ -287,6 +292,11 @@ impl ScalarUDFImpl for StubScalarUDF {
     }
 }
 
+/// A no-op aggregate UDF stub that provides type information for DataFusion planning.
+///
+/// These stubs are never executed; they exist solely so that DataFusion's
+/// `SqlToRel` planner can resolve DuckDB-specific aggregate functions and infer
+/// their return types during static analysis.
 #[derive(Debug, Hash, PartialEq, Eq)]
 struct StubAggregateUDF {
     name: String,

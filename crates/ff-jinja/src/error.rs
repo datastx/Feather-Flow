@@ -13,8 +13,8 @@ pub enum JinjaError {
     #[error("[J001] Jinja render error: {0}")]
     RenderErrorSource(#[source] minijinja::Error),
 
-    /// Internal error
-    #[error("Internal error: {0}")]
+    /// Internal error (J002)
+    #[error("[J002] internal error: {0}")]
     Internal(String),
 }
 

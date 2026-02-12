@@ -219,42 +219,43 @@ pub(crate) fn build_schema_catalog(
     external_tables: &HashSet<String>,
 ) -> (
     ff_analysis::SchemaCatalog,
-    HashMap<String, ff_analysis::RelSchema>,
+    HashMap<ff_core::ModelName, ff_analysis::RelSchema>,
 ) {
     use ff_analysis::{parse_sql_type, Nullability, RelSchema, TypedColumn};
 
     let mut schema_catalog: ff_analysis::SchemaCatalog = HashMap::new();
-    let mut yaml_schemas: HashMap<String, RelSchema> = HashMap::new();
+    let mut yaml_schemas: HashMap<ff_core::ModelName, RelSchema> = HashMap::new();
 
     for (name, model) in &project.models {
-        if let Some(schema) = &model.schema {
-            let columns: Vec<TypedColumn> = schema
-                .columns
-                .iter()
-                .map(|col| {
-                    let sql_type = parse_sql_type(&col.data_type);
-                    let nullability = if col
-                        .constraints
-                        .iter()
-                        .any(|c| matches!(c, ff_core::ColumnConstraint::NotNull))
-                    {
-                        Nullability::NotNull
-                    } else {
-                        Nullability::Unknown
-                    };
-                    TypedColumn {
-                        name: col.name.clone(),
-                        source_table: None,
-                        sql_type,
-                        nullability,
-                        provenance: vec![],
-                    }
-                })
-                .collect();
-            let rel_schema = RelSchema::new(columns);
-            schema_catalog.insert(name.to_string(), rel_schema.clone());
-            yaml_schemas.insert(name.to_string(), rel_schema);
-        }
+        let Some(schema) = &model.schema else {
+            continue;
+        };
+        let columns: Vec<TypedColumn> = schema
+            .columns
+            .iter()
+            .map(|col| {
+                let sql_type = parse_sql_type(&col.data_type);
+                let has_not_null = col
+                    .constraints
+                    .iter()
+                    .any(|c| matches!(c, ff_core::ColumnConstraint::NotNull));
+                let nullability = if has_not_null {
+                    Nullability::NotNull
+                } else {
+                    Nullability::Unknown
+                };
+                TypedColumn {
+                    name: col.name.clone(),
+                    source_table: None,
+                    sql_type,
+                    nullability,
+                    provenance: vec![],
+                }
+            })
+            .collect();
+        let rel_schema = RelSchema::new(columns);
+        schema_catalog.insert(name.to_string(), rel_schema.clone());
+        yaml_schemas.insert(name.clone(), rel_schema);
     }
 
     // Add external tables/sources to catalog
@@ -341,11 +342,16 @@ pub(crate) fn run_static_analysis_pipeline(
         .cloned()
         .collect();
 
+    let yaml_string_map: HashMap<String, ff_analysis::RelSchema> = yaml_schemas
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.clone()))
+        .collect();
+
     let user_fn_stubs = build_user_function_stubs(project);
     let result = propagate_schemas(
         &filtered_order,
         sql_sources,
-        &yaml_schemas,
+        &yaml_string_map,
         &schema_catalog,
         &user_fn_stubs,
     );

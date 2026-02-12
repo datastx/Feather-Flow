@@ -2,6 +2,7 @@
 
 use crate::ir::schema::RelSchema;
 use ff_core::dag::ModelDag;
+use ff_core::ModelName;
 use ff_core::Project;
 use ff_sql::ProjectLineage;
 use std::collections::{HashMap, HashSet};
@@ -13,11 +14,11 @@ pub struct AnalysisContext {
     /// Model dependency DAG
     pub(crate) dag: ModelDag,
     /// Schemas derived from YAML column definitions
-    pub(crate) yaml_schemas: HashMap<String, RelSchema>,
+    pub(crate) yaml_schemas: HashMap<ModelName, RelSchema>,
     /// Column-level lineage from ff-sql
     pub(crate) lineage: ProjectLineage,
     /// Set of known model names
-    pub(crate) known_models: HashSet<String>,
+    pub(crate) known_models: HashSet<ModelName>,
 }
 
 impl AnalysisContext {
@@ -25,10 +26,10 @@ impl AnalysisContext {
     pub fn new(
         project: Project,
         dag: ModelDag,
-        yaml_schemas: HashMap<String, RelSchema>,
+        yaml_schemas: HashMap<ModelName, RelSchema>,
         lineage: ProjectLineage,
     ) -> Self {
-        let known_models = project.models.keys().map(|k| k.to_string()).collect();
+        let known_models = project.models.keys().cloned().collect();
         Self {
             project,
             dag,
@@ -59,12 +60,12 @@ impl AnalysisContext {
     }
 
     /// Access the set of known model names
-    pub fn known_models(&self) -> &HashSet<String> {
+    pub fn known_models(&self) -> &HashSet<ModelName> {
         &self.known_models
     }
 
     /// Access the YAML-derived schemas map
-    pub fn yaml_schemas(&self) -> &HashMap<String, RelSchema> {
+    pub fn yaml_schemas(&self) -> &HashMap<ModelName, RelSchema> {
         &self.yaml_schemas
     }
 }

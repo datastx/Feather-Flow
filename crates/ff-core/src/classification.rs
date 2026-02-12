@@ -14,16 +14,22 @@ pub fn build_classification_lookup(project: &Project) -> HashMap<String, HashMap
     let mut lookup = HashMap::new();
 
     for (name, model) in &project.models {
-        if let Some(schema) = &model.schema {
-            let mut col_map = HashMap::new();
-            for col in &schema.columns {
-                if let Some(cls) = &col.classification {
-                    col_map.insert(col.name.clone(), cls.to_string());
-                }
-            }
-            if !col_map.is_empty() {
-                lookup.insert(name.to_string(), col_map);
-            }
+        let Some(schema) = &model.schema else {
+            continue;
+        };
+
+        let col_map: HashMap<String, String> = schema
+            .columns
+            .iter()
+            .filter_map(|col| {
+                col.classification
+                    .as_ref()
+                    .map(|cls| (col.name.clone(), cls.to_string()))
+            })
+            .collect();
+
+        if !col_map.is_empty() {
+            lookup.insert(name.to_string(), col_map);
         }
     }
 
@@ -57,41 +63,5 @@ pub fn parse_classification(s: &str) -> Option<DataClassification> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_classification_rank_ordering() {
-        assert!(
-            classification_rank(&DataClassification::Pii)
-                > classification_rank(&DataClassification::Sensitive)
-        );
-        assert!(
-            classification_rank(&DataClassification::Sensitive)
-                > classification_rank(&DataClassification::Internal)
-        );
-        assert!(
-            classification_rank(&DataClassification::Internal)
-                > classification_rank(&DataClassification::Public)
-        );
-    }
-
-    #[test]
-    fn test_parse_classification() {
-        assert_eq!(parse_classification("pii"), Some(DataClassification::Pii));
-        assert_eq!(parse_classification("PII"), Some(DataClassification::Pii));
-        assert_eq!(
-            parse_classification("sensitive"),
-            Some(DataClassification::Sensitive)
-        );
-        assert_eq!(
-            parse_classification("internal"),
-            Some(DataClassification::Internal)
-        );
-        assert_eq!(
-            parse_classification("public"),
-            Some(DataClassification::Public)
-        );
-        assert_eq!(parse_classification("unknown"), None);
-    }
-}
+#[path = "classification_test.rs"]
+mod tests;

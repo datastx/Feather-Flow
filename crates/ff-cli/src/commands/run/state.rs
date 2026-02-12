@@ -135,13 +135,8 @@ pub(super) fn compute_schema_checksum(
         .get(name)
         .and_then(|c| c.model_schema.as_ref())
         .map(|schema| {
-            let yaml = serde_json::to_string(schema).unwrap_or_else(|e| {
-                eprintln!(
-                    "[warn] Failed to serialize schema for model '{}': {}",
-                    name, e
-                );
-                String::new()
-            });
+            let yaml =
+                serde_json::to_string(schema).expect("ModelSchema serialization should never fail");
             compute_checksum(&yaml)
         })
 }

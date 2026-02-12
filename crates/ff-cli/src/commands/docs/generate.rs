@@ -1221,6 +1221,23 @@ fn generate_lineage_dot(project: &Project) -> String {
     dot
 }
 
+/// Format a snake_case category string as title case (e.g. "date_time" -> "Date time").
+fn format_category_title(category: &str) -> String {
+    category
+        .chars()
+        .enumerate()
+        .map(|(i, c)| {
+            if i == 0 {
+                c.to_uppercase().next().unwrap_or(c)
+            } else if c == '_' {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
 /// Generate markdown documentation for built-in macros
 fn generate_macros_markdown() -> String {
     let mut md = String::new();
@@ -1244,20 +1261,7 @@ fn generate_macros_markdown() -> String {
             continue;
         }
 
-        // Format category as title case
-        let category_title = category
-            .chars()
-            .enumerate()
-            .map(|(i, c)| {
-                if i == 0 {
-                    c.to_uppercase().next().unwrap_or(c)
-                } else if c == '_' {
-                    ' '
-                } else {
-                    c
-                }
-            })
-            .collect::<String>();
+        let category_title = format_category_title(category);
 
         md.push_str(&format!("## {} Macros\n\n", category_title));
 
@@ -1334,20 +1338,7 @@ fn generate_macros_html() -> String {
             continue;
         }
 
-        // Format category as title case
-        let category_title = category
-            .chars()
-            .enumerate()
-            .map(|(i, c)| {
-                if i == 0 {
-                    c.to_uppercase().next().unwrap_or(c)
-                } else if c == '_' {
-                    ' '
-                } else {
-                    c
-                }
-            })
-            .collect::<String>();
+        let category_title = format_category_title(category);
 
         html.push_str(&format!(
             "<div class=\"macro-section\">\n<h2>{} Macros</h2>\n",

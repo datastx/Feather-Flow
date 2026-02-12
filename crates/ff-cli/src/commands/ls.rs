@@ -421,7 +421,7 @@ fn print_tree_node(
     // Find dependents (models that depend on this one)
     let dependents: Vec<_> = models
         .iter()
-        .filter(|m| m.model_deps.contains(&name.to_string()))
+        .filter(|m| m.model_deps.iter().any(|d| d == name))
         .collect();
 
     let new_prefix = format!("{}{}   ", prefix, if is_last { " " } else { "│" });

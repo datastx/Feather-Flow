@@ -1955,7 +1955,7 @@ fn test_analysis_pass_manager_sample_project() {
         project.models.keys().map(|k| k.to_string()).collect();
 
     let mut catalog: SchemaCatalog = HashMap::new();
-    let mut yaml_schemas: HashMap<String, RelSchema> = HashMap::new();
+    let mut yaml_schemas: HashMap<ModelName, RelSchema> = HashMap::new();
     let mut model_irs: HashMap<String, RelOp> = HashMap::new();
     let mut project_lineage = ProjectLineage::new();
 
@@ -1978,7 +1978,7 @@ fn test_analysis_pass_manager_sample_project() {
                 .collect();
             let rel_schema = RelSchema::new(columns);
             catalog.insert(name.to_string(), rel_schema.clone());
-            yaml_schemas.insert(name.to_string(), rel_schema);
+            yaml_schemas.insert(name.clone(), rel_schema);
         }
     }
 

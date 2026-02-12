@@ -78,17 +78,7 @@ pub async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
 
         if global.verbose {
             eprintln!("[verbose] Loading {} from {}", table_name, path_str);
-            if let Some(config) = &seed.config {
-                if !config.column_types.is_empty() {
-                    eprintln!(
-                        "[verbose]   Column type overrides: {:?}",
-                        config.column_types
-                    );
-                }
-                if config.delimiter != ',' {
-                    eprintln!("[verbose]   Delimiter: {:?}", config.delimiter);
-                }
-            }
+            log_seed_config(seed);
         }
 
         let result = db
@@ -133,6 +123,21 @@ pub async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn log_seed_config(seed: &Seed) {
+    let Some(config) = &seed.config else {
+        return;
+    };
+    if !config.column_types.is_empty() {
+        eprintln!(
+            "[verbose]   Column type overrides: {:?}",
+            config.column_types
+        );
+    }
+    if config.delimiter != ',' {
+        eprintln!("[verbose]   Delimiter: {:?}", config.delimiter);
+    }
 }
 
 fn build_csv_options(seed: &Seed, default_schema: Option<&str>) -> CsvLoadOptions {

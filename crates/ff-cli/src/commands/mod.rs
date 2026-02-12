@@ -4,7 +4,6 @@ pub(crate) mod analyze;
 pub(crate) mod clean;
 pub(crate) mod common;
 pub(crate) mod compile;
-pub(crate) mod diff;
 pub(crate) mod docs;
 pub(crate) mod freshness;
 pub(crate) mod function;

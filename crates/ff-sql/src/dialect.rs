@@ -39,29 +39,31 @@ pub trait SqlDialect: Send + Sync {
 /// sqlparser 0.60's `ParserError` is a simple string wrapper with no structured
 /// location data, so we extract "Line: N, Column: M" from the error message text.
 fn parse_location_from_error(msg: &str) -> (usize, usize) {
-    // Look for pattern "Line: N, Column: M"
-    if let Some(line_idx) = msg.find("Line: ") {
-        let line_start = line_idx + 6;
-        if let Some(comma_idx) = msg[line_start..].find(',') {
-            if let Ok(line) = msg[line_start..line_start + comma_idx]
-                .trim()
-                .parse::<usize>()
-            {
-                if let Some(col_idx) = msg.find("Column: ") {
-                    let col_start = col_idx + 8;
-                    // Find end of number (could be end of string or non-digit)
-                    let col_end = msg[col_start..]
-                        .find(|c: char| !c.is_ascii_digit())
-                        .map(|i| col_start + i)
-                        .unwrap_or(msg.len());
-                    if let Ok(column) = msg[col_start..col_end].trim().parse::<usize>() {
-                        return (line, column);
-                    }
-                }
-            }
-        }
-    }
-    (0, 0)
+    let Some(line_idx) = msg.find("Line: ") else {
+        return (0, 0);
+    };
+    let line_start = line_idx + 6;
+    let Some(comma_idx) = msg[line_start..].find(',') else {
+        return (0, 0);
+    };
+    let Ok(line) = msg[line_start..line_start + comma_idx]
+        .trim()
+        .parse::<usize>()
+    else {
+        return (0, 0);
+    };
+    let Some(col_idx) = msg.find("Column: ") else {
+        return (0, 0);
+    };
+    let col_start = col_idx + 8;
+    let col_end = msg[col_start..]
+        .find(|c: char| !c.is_ascii_digit())
+        .map(|i| col_start + i)
+        .unwrap_or(msg.len());
+    let Ok(column) = msg[col_start..col_end].trim().parse::<usize>() else {
+        return (0, 0);
+    };
+    (line, column)
 }
 
 /// DuckDB SQL dialect
@@ -133,76 +135,5 @@ impl SqlDialect for SnowflakeDialect {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_duckdb_parse() {
-        let dialect = DuckDbDialect::new();
-        let stmts = dialect.parse("SELECT * FROM users").unwrap();
-        assert_eq!(stmts.len(), 1);
-    }
-
-    #[test]
-    fn test_snowflake_parse() {
-        let dialect = SnowflakeDialect::new();
-        let stmts = dialect.parse("SELECT * FROM users").unwrap();
-        assert_eq!(stmts.len(), 1);
-    }
-
-    #[test]
-    fn test_quote_ident() {
-        let dialect = DuckDbDialect::new();
-        assert_eq!(dialect.quote_ident("user"), "\"user\"");
-        assert_eq!(dialect.quote_ident("user\"name"), "\"user\"\"name\"");
-    }
-
-    #[test]
-    fn test_parse_error_location() {
-        let dialect = DuckDbDialect::new();
-        // Error is on line 2 (the FROM keyword with no columns)
-        let result = dialect.parse("SELECT\nFROM users");
-        assert!(result.is_err());
-        if let Err(crate::error::SqlError::ParseError {
-            line,
-            column,
-            message,
-        }) = result
-        {
-            // The error should have line 2 (FROM is on line 2)
-            assert_eq!(
-                line, 2,
-                "Expected line 2, got line {} (message: {})",
-                line, message
-            );
-            // Column points to where the error is detected (depends on parser implementation)
-            // Just verify it's non-zero
-            assert!(
-                column > 0,
-                "Expected non-zero column, got {} (message: {})",
-                column,
-                message
-            );
-            // Verify the error message contains location info
-            assert!(
-                message.contains("Line: 2"),
-                "Expected 'Line: 2' in message: {}",
-                message
-            );
-        }
-    }
-
-    #[test]
-    fn test_parse_location_extraction() {
-        // Test the helper function
-        let (line, col) =
-            super::parse_location_from_error("Expected: something at Line: 5, Column: 10");
-        assert_eq!(line, 5);
-        assert_eq!(col, 10);
-
-        // Test with no location info
-        let (line, col) = super::parse_location_from_error("Some error without location");
-        assert_eq!(line, 0);
-        assert_eq!(col, 0);
-    }
-}
+#[path = "dialect_test.rs"]
+mod tests;

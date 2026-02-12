@@ -10,6 +10,7 @@ pub(crate) mod ir;
 pub(crate) mod lowering;
 pub(crate) mod pass;
 
+#[cfg(any(test, feature = "test-support"))]
 pub mod test_utils;
 
 pub use context::AnalysisContext;

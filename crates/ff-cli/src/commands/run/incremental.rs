@@ -8,6 +8,24 @@ use std::sync::Arc;
 
 use super::compile::CompiledModel;
 
+/// Parameters for Write-Audit-Publish execution
+pub(super) struct WapParams<'a> {
+    /// Database connection
+    pub(super) db: &'a Arc<dyn Database>,
+    /// Model name
+    pub(super) name: &'a str,
+    /// Fully qualified table name in the production schema
+    pub(super) qualified_name: &'a str,
+    /// Schema used for WAP staging tables
+    pub(super) wap_schema: &'a str,
+    /// Compiled model metadata
+    pub(super) compiled: &'a CompiledModel,
+    /// Whether to drop and recreate regardless of existing state
+    pub(super) full_refresh: bool,
+    /// Rendered SQL with query comment appended
+    pub(super) exec_sql: &'a str,
+}
+
 /// Execute an incremental model with schema change handling
 pub(super) async fn execute_incremental(
     db: &Arc<dyn Database>,
@@ -154,16 +172,17 @@ async fn execute_strategy(
 /// 3. Run schema tests against wap_schema copy
 /// 4. If tests pass: DROP prod + CTAS from wap to prod
 /// 5. If tests fail: keep wap table, return error
-#[allow(clippy::too_many_arguments)]
-pub(super) async fn execute_wap(
-    db: &Arc<dyn Database>,
-    name: &str,
-    qualified_name: &str,
-    wap_schema: &str,
-    compiled: &CompiledModel,
-    full_refresh: bool,
-    exec_sql: &str,
-) -> Result<(), ff_db::error::DbError> {
+pub(super) async fn execute_wap(params: &WapParams<'_>) -> Result<(), ff_db::error::DbError> {
+    let WapParams {
+        db,
+        name,
+        qualified_name,
+        wap_schema,
+        compiled,
+        full_refresh,
+        exec_sql,
+    } = params;
+
     let wap_qualified = format!("{}.{}", wap_schema, name);
     let quoted_wap = quote_qualified(&wap_qualified);
     let quoted_name = quote_qualified(qualified_name);
@@ -178,7 +197,7 @@ pub(super) async fn execute_wap(
         }
         Materialization::Incremental => {
             // Copy existing prod table to WAP schema (if it exists and not full refresh)
-            if !full_refresh {
+            if !*full_refresh {
                 let exists = db.relation_exists(qualified_name).await?;
                 if exists {
                     let copy_sql = format!(
@@ -189,9 +208,14 @@ pub(super) async fn execute_wap(
                 }
             }
             // Apply incremental logic against the WAP copy
-            execute_incremental(db, &wap_qualified, compiled, full_refresh, exec_sql).await?;
+            execute_incremental(db, &wap_qualified, compiled, *full_refresh, exec_sql).await?;
         }
-        _ => unreachable!("WAP only applies to table/incremental"),
+        other => {
+            return Err(ff_db::error::DbError::ExecutionError(format!(
+                "WAP only applies to table/incremental, got {:?}",
+                other
+            )));
+        }
     }
 
     // 3. Run schema tests against WAP copy

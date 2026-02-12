@@ -79,9 +79,6 @@ pub enum Commands {
     /// Check model freshness (SLA monitoring)
     Freshness(FreshnessArgs),
 
-    /// Compare model output between databases
-    Diff(DiffArgs),
-
     /// Show column-level lineage across models
     Lineage(LineageArgs),
 
@@ -495,33 +492,6 @@ pub struct InitArgs {
     pub database_path: String,
 }
 
-/// Arguments for the diff command
-#[derive(Args, Debug)]
-pub struct DiffArgs {
-    /// Model name to compare
-    pub model: String,
-
-    /// Path to the comparison database
-    #[arg(long, required = true)]
-    pub compare_to: String,
-
-    /// Specific columns to compare (comma-separated, default: all)
-    #[arg(long)]
-    pub columns: Option<String>,
-
-    /// Primary key column(s) for matching rows (comma-separated)
-    #[arg(long)]
-    pub key: Option<String>,
-
-    /// Maximum number of sample differences to show
-    #[arg(long, default_value = "10")]
-    pub sample_size: usize,
-
-    /// Output format (text or json)
-    #[arg(short, long, value_enum, default_value = "text")]
-    pub output: OutputFormat,
-}
-
 /// Arguments for the lineage command
 #[derive(Args, Debug)]
 pub struct LineageArgs {
@@ -675,14 +645,5 @@ pub enum AnalyzeSeverity {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use clap::CommandFactory;
-
-    #[test]
-    fn verify_cli_args() {
-        // Validates the entire command tree: short flag conflicts,
-        // duplicate args, and other clap definition errors.
-        Cli::command().debug_assert();
-    }
-}
+#[path = "cli_test.rs"]
+mod tests;
