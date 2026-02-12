@@ -1,5 +1,5 @@
 use super::*;
-use crate::ir::types::{IntBitWidth, SqlType, TypedColumn};
+use crate::types::{IntBitWidth, SqlType, TypedColumn};
 use std::collections::HashMap;
 
 #[test]

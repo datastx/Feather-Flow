@@ -7,7 +7,7 @@ SELECT
     COALESCE(SUM(o.amount), 0) AS lifetime_value,
     MAX(o.order_date) AS last_order_date
 FROM stg_customers c
-LEFT JOIN stg_orders o
+INNER JOIN stg_orders o
     ON c.customer_id = o.customer_id
 GROUP BY
     c.customer_id,

@@ -1,7 +1,6 @@
 use super::*;
-use crate::ir::schema::RelSchema;
-use crate::ir::types::{IntBitWidth, Nullability, SqlType, TypedColumn};
-use crate::lowering::SchemaCatalog;
+use crate::schema::{RelSchema, SchemaCatalog};
+use crate::types::{IntBitWidth, Nullability, SqlType, TypedColumn};
 use std::collections::HashMap;
 
 fn make_catalog() -> SchemaCatalog {

@@ -1,10 +1,9 @@
 use super::*;
 use crate::datafusion_bridge::planner::sql_to_plan;
 use crate::datafusion_bridge::provider::FeatherFlowProvider;
-use crate::ir::schema::RelSchema;
-use crate::ir::types::Nullability;
-use crate::lowering::SchemaCatalog;
+use crate::schema::{RelSchema, SchemaCatalog};
 use crate::test_utils::{int32, make_col, varchar};
+use crate::types::Nullability;
 use std::collections::HashMap;
 
 fn make_catalog() -> SchemaCatalog {

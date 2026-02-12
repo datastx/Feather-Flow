@@ -6,7 +6,7 @@ SHELL := /bin/bash
         ff-test ff-test-verbose ff-test-fail-fast ff-seed ff-seed-full-refresh \
         ff-docs ff-docs-json ff-docs-serve ff-docs-export ff-validate ff-validate-strict ff-sources ff-help \
         dev-cycle dev-validate dev-fresh help run watch test-verbose test-integration \
-        test-unit test-quick test-failed fmt-check clippy doc-open update ci-quick ci-full install claude-auto-run \
+	test-unit test-quick test-failed fmt-check clippy doc-open update ci-quick ci-full install install-cargo claude-auto-run \
         version version-bump-patch version-bump-minor version-set version-tag \
         build-linux clean-dist \
         docker-build docker-build-release docker-push docker-login docker-run \
@@ -23,6 +23,9 @@ VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/'
 
 # Build output
 DIST_DIR := dist
+
+# Cargo
+CARGO_BIN := $(HOME)/.cargo/bin/cargo
 
 # Docker
 DOCKER_REGISTRY := ghcr.io
@@ -276,8 +279,22 @@ version-tag: ## Create git tag from current Cargo.toml version
 # Release
 # =============================================================================
 
-install: ## Install CLI binary
-	cargo install --path crates/ff-cli
+install-cargo: ## Install Rust toolchain via rustup (if cargo missing)
+	@if ! command -v cargo >/dev/null 2>&1; then \
+		echo "cargo not found, installing Rust toolchain with rustup..."; \
+		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y; \
+	fi
+
+install: install-cargo ## Install CLI binary
+	@set -e; \
+	if command -v cargo >/dev/null 2>&1; then \
+		cargo install --path crates/ff-cli; \
+	elif [ -x "$(CARGO_BIN)" ]; then \
+		"$(CARGO_BIN)" install --path crates/ff-cli; \
+	else \
+		echo "cargo not found after rustup install; restart your shell or source $$HOME/.cargo/env"; \
+		exit 1; \
+	fi
 
 build-target: ## Build for target (set TARGET=x86_64-unknown-linux-gnu)
 	@if [ -z "$(TARGET)" ]; then \

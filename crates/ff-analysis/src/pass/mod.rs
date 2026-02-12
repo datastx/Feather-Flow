@@ -1,17 +1,15 @@
-//! Pass infrastructure — composable analysis passes over the IR
+//! Pass infrastructure — composable analysis passes over DataFusion LogicalPlans
 
-pub(crate) mod join_keys;
-pub(crate) mod nullability;
+pub(crate) mod expr_utils;
 pub mod plan_cross_model;
+pub(crate) mod plan_join_keys;
+pub(crate) mod plan_nullability;
 pub mod plan_pass;
-pub(crate) mod type_inference;
-pub(crate) mod unused_columns;
+pub(crate) mod plan_type_inference;
+pub(crate) mod plan_unused_columns;
 
-use crate::context::AnalysisContext;
-use crate::ir::relop::RelOp;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
-use std::collections::HashMap;
 
 /// Strongly-typed diagnostic codes emitted by analysis passes.
 ///
@@ -19,7 +17,7 @@ use std::collections::HashMap;
 /// Using an enum instead of a bare `String` prevents typos and enables exhaustive matching.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DiagnosticCode {
-    /// A001: Unknown type for column
+    /// A001: Unknown type for column (no longer emitted — DataFusion resolves all types)
     A001,
     /// A002: Type mismatch in UNION columns
     A002,
@@ -37,7 +35,7 @@ pub enum DiagnosticCode {
     A012,
     /// A020: Unused column
     A020,
-    /// A021: SELECT * blocks detection
+    /// A021: SELECT * blocks detection (no longer emitted — DataFusion expands *)
     A021,
     /// A030: Join key type mismatch
     A030,
@@ -103,106 +101,10 @@ pub struct Diagnostic {
     pub pass_name: Cow<'static, str>,
 }
 
-/// Per-model analysis pass trait.
-///
-/// The `ctx` parameter provides project-wide metadata (YAML schemas, DAG
-/// structure, lineage) that some passes need — for example, nullability
-/// checks compare against YAML-declared constraints. Passes that don't
-/// need it may ignore it.
-pub trait AnalysisPass: Send + Sync {
-    /// Pass name (used for filtering and display)
-    fn name(&self) -> &'static str;
-    /// Human-readable description
-    fn description(&self) -> &'static str;
-    /// Run the pass on a single model's IR
-    fn run_model(&self, model_name: &str, ir: &RelOp, ctx: &AnalysisContext) -> Vec<Diagnostic>;
-}
-
-/// Cross-model (DAG-level) analysis pass trait
-pub trait DagPass: Send + Sync {
-    /// Pass name
-    fn name(&self) -> &'static str;
-    /// Human-readable description
-    fn description(&self) -> &'static str;
-    /// Run the pass across all models
-    fn run_project(
-        &self,
-        models: &HashMap<String, RelOp>,
-        ctx: &AnalysisContext,
-    ) -> Vec<Diagnostic>;
-}
-
 /// Check if a pass should run given an optional filter list
 pub(crate) fn should_run_pass(name: &str, filter: Option<&[String]>) -> bool {
     match filter {
         Some(allowed) => allowed.iter().any(|f| f == name),
         None => true,
-    }
-}
-
-/// Manages and runs analysis passes over the custom `RelOp` IR.
-///
-/// This is the original pass manager. Once all passes are migrated to
-/// [`plan_pass::PlanPassManager`] (which operates on DataFusion `LogicalPlan`s),
-/// this struct and the `RelOp`-based IR can be removed.
-pub struct PassManager {
-    model_passes: Vec<Box<dyn AnalysisPass>>,
-    dag_passes: Vec<Box<dyn DagPass>>,
-}
-
-impl PassManager {
-    /// Create a PassManager with all built-in passes registered
-    pub fn with_defaults() -> Self {
-        Self {
-            model_passes: vec![
-                Box::new(type_inference::TypeInference),
-                Box::new(nullability::NullabilityPropagation),
-                Box::new(join_keys::JoinKeyAnalysis),
-            ],
-            dag_passes: vec![Box::new(unused_columns::UnusedColumnDetection)],
-        }
-    }
-
-    /// Run all passes on the given models, returning collected diagnostics
-    ///
-    /// Models are processed in the order provided (should be topological).
-    /// Model passes run first on each model, then DAG passes run across all models.
-    pub fn run(
-        &self,
-        model_order: &[String],
-        models: &HashMap<String, RelOp>,
-        ctx: &AnalysisContext,
-        pass_filter: Option<&[String]>,
-    ) -> Vec<Diagnostic> {
-        let mut diagnostics = Vec::new();
-
-        // Run model-level passes
-        for name in model_order {
-            if let Some(ir) = models.get(name) {
-                for pass in &self.model_passes {
-                    if !should_run_pass(pass.name(), pass_filter) {
-                        continue;
-                    }
-                    diagnostics.extend(pass.run_model(name, ir, ctx));
-                }
-            }
-        }
-
-        // Run DAG-level passes
-        for pass in &self.dag_passes {
-            if !should_run_pass(pass.name(), pass_filter) {
-                continue;
-            }
-            diagnostics.extend(pass.run_project(models, ctx));
-        }
-
-        diagnostics
-    }
-
-    /// List all available pass names
-    pub fn pass_names(&self) -> Vec<&'static str> {
-        let mut names: Vec<_> = self.model_passes.iter().map(|p| p.name()).collect();
-        names.extend(self.dag_passes.iter().map(|p| p.name()));
-        names
     }
 }

@@ -47,13 +47,13 @@ fn test_parse_and_extract_dependencies() {
 
     assert!(deps.contains("raw_orders"));
 
-    // Test fct_orders - depends on stg_orders and stg_customers (models)
+    // Test fct_orders - depends on int_orders_enriched and stg_customers (models)
     let fct_orders = project.get_model("fct_orders").unwrap();
     let rendered = jinja.render(&fct_orders.raw_sql).unwrap();
     let stmts = parser.parse(&rendered).unwrap();
     let deps = extract_dependencies(&stmts);
 
-    assert!(deps.contains("stg_orders"));
+    assert!(deps.contains("int_orders_enriched"));
     assert!(deps.contains("stg_customers"));
 }
 
@@ -365,7 +365,7 @@ fn test_source_discovery() {
         .iter()
         .find(|t| t.name == "raw_orders")
         .expect("raw_orders table should exist");
-    assert_eq!(raw_orders_table.columns.len(), 4);
+    assert_eq!(raw_orders_table.columns.len(), 5);
 
     // Check raw_customers table
     let raw_customers_table = ecommerce_source
@@ -373,7 +373,7 @@ fn test_source_discovery() {
         .iter()
         .find(|t| t.name == "raw_customers")
         .expect("raw_customers table should exist");
-    assert_eq!(raw_customers_table.columns.len(), 3);
+    assert_eq!(raw_customers_table.columns.len(), 5);
 
     // Check raw_products table
     let raw_products_table = ecommerce_source
@@ -425,36 +425,36 @@ fn test_source_table_tests() {
         .find(|t| t.name == "raw_orders")
         .expect("raw_orders table should exist");
 
-    // order_id column should have unique and not_null tests
-    let order_id_col = raw_orders_table
+    // id column should have unique and not_null tests
+    let id_col = raw_orders_table
         .columns
         .iter()
-        .find(|c| c.name == "order_id")
-        .expect("order_id column should exist");
+        .find(|c| c.name == "id")
+        .expect("id column should exist");
     assert!(
-        order_id_col
+        id_col
             .tests
             .contains(&TestDefinition::Simple("unique".to_string())),
-        "order_id should have unique test"
+        "id should have unique test"
     );
     assert!(
-        order_id_col
+        id_col
             .tests
             .contains(&TestDefinition::Simple("not_null".to_string())),
-        "order_id should have not_null test"
+        "id should have not_null test"
     );
 
-    // customer_id column should have not_null test
-    let customer_id_col = raw_orders_table
+    // user_id column should have not_null test
+    let user_id_col = raw_orders_table
         .columns
         .iter()
-        .find(|c| c.name == "customer_id")
-        .expect("customer_id column should exist");
+        .find(|c| c.name == "user_id")
+        .expect("user_id column should exist");
     assert!(
-        customer_id_col
+        user_id_col
             .tests
             .contains(&TestDefinition::Simple("not_null".to_string())),
-        "customer_id should have not_null test"
+        "user_id should have not_null test"
     );
 }
 
@@ -1895,57 +1895,13 @@ fn test_ephemeral_inlining_with_existing_cte() {
 // ff-analysis integration tests
 // ============================================================
 
-/// Test analysis lowering on sample project models
+/// Test DataFusion schema propagation on sample project models
 #[test]
-fn test_analysis_lower_sample_project() {
-    use ff_analysis::{lower_statement, SchemaCatalog};
-
-    let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
-    let parser = SqlParser::duckdb();
-    let jinja = JinjaEnvironment::new(&project.config.vars);
-
-    let mut catalog: SchemaCatalog = HashMap::new();
-
-    // Lower each model successfully (in topological order)
-    let model_names = [
-        "stg_orders",
-        "stg_customers",
-        "stg_products",
-        "stg_payments",
-        "int_orders_enriched",
-        "int_customer_metrics",
-        "dim_customers",
-        "dim_products",
-        "fct_orders",
-    ];
-    for name in &model_names {
-        let model = project.get_model(name).unwrap();
-        let rendered = jinja.render(&model.raw_sql).unwrap();
-        let stmts = parser.parse(&rendered).unwrap();
-        let stmt = stmts.first().unwrap();
-        let ir = lower_statement(stmt, &catalog)
-            .unwrap_or_else(|e| panic!("Failed to lower {}: {}", name, e));
-
-        // Output schema should have columns
-        assert!(
-            !ir.schema().is_empty(),
-            "Model '{}' should produce a non-empty schema",
-            name
-        );
-
-        // Register output for downstream models
-        catalog.insert(name.to_string(), ir.schema().clone());
-    }
-}
-
-/// Test the PassManager runs end-to-end on sample project
-#[test]
-fn test_analysis_pass_manager_sample_project() {
+fn test_analysis_propagation_sample_project() {
     use ff_analysis::{
-        lower_statement, parse_sql_type, AnalysisContext, Nullability, PassManager, RelOp,
-        RelSchema, SchemaCatalog, TypedColumn,
+        parse_sql_type, propagate_schemas, Nullability, RelSchema, SchemaCatalog, TypedColumn,
     };
-    use ff_sql::{extract_column_lineage, ProjectLineage};
+    use ff_sql::extract_dependencies;
 
     let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
     let parser = SqlParser::duckdb();
@@ -1954,12 +1910,137 @@ fn test_analysis_pass_manager_sample_project() {
     let known_models: std::collections::HashSet<String> =
         project.models.keys().map(|k| k.to_string()).collect();
 
+    // Build schema catalog from YAML + external tables (sources)
+    let mut catalog: SchemaCatalog = HashMap::new();
+    for (name, model) in &project.models {
+        if let Some(schema) = &model.schema {
+            let columns: Vec<TypedColumn> = schema
+                .columns
+                .iter()
+                .map(|col| {
+                    let sql_type = parse_sql_type(&col.data_type);
+                    TypedColumn {
+                        name: col.name.clone(),
+                        source_table: None,
+                        sql_type,
+                        nullability: Nullability::Unknown,
+                        provenance: vec![],
+                    }
+                })
+                .collect();
+            catalog.insert(name.to_string(), RelSchema::new(columns));
+        }
+    }
+
+    // Add source tables with their column schemas when available
+    for source_file in &project.sources {
+        for table in &source_file.tables {
+            if catalog.contains_key(&table.name) {
+                continue;
+            }
+            if table.columns.is_empty() {
+                catalog.insert(table.name.clone(), RelSchema::empty());
+            } else {
+                let columns: Vec<TypedColumn> = table
+                    .columns
+                    .iter()
+                    .map(|col| TypedColumn {
+                        name: col.name.clone(),
+                        source_table: None,
+                        sql_type: parse_sql_type(&col.data_type),
+                        nullability: Nullability::Unknown,
+                        provenance: vec![],
+                    })
+                    .collect();
+                catalog.insert(table.name.clone(), RelSchema::new(columns));
+            }
+        }
+    }
+    // Add remaining external tables with empty schemas
+    for ext in &project.config.external_tables {
+        if !catalog.contains_key(ext) {
+            catalog.insert(ext.clone(), RelSchema::empty());
+        }
+    }
+
+    // Build dep map by rendering SQL and extracting dependencies
+    let mut dep_map: HashMap<String, Vec<String>> = HashMap::new();
+    let mut sql_sources: HashMap<String, String> = HashMap::new();
+    for (name, model) in &project.models {
+        let Ok(rendered) = jinja.render(&model.raw_sql) else {
+            dep_map.insert(name.to_string(), vec![]);
+            continue;
+        };
+        let Ok(stmts) = parser.parse(&rendered) else {
+            dep_map.insert(name.to_string(), vec![]);
+            continue;
+        };
+        let raw_deps = extract_dependencies(&stmts);
+        let model_deps: Vec<String> = raw_deps
+            .into_iter()
+            .filter(|d| known_models.contains(d))
+            .collect();
+        dep_map.insert(name.to_string(), model_deps);
+        sql_sources.insert(name.to_string(), rendered);
+    }
+
+    let dag = ModelDag::build(&dep_map).unwrap();
+    let topo_order = dag.topological_order().unwrap();
+
+    let yaml_schemas: SchemaCatalog = catalog.clone();
+    let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &catalog, &[]);
+
+    // All models should plan successfully
+    assert!(
+        result.failures.is_empty(),
+        "Expected no planning failures, got: {:?}",
+        result.failures
+    );
+    assert!(
+        !result.model_plans.is_empty(),
+        "Should have planned at least one model"
+    );
+
+    // Each model should have a non-empty inferred schema
+    for (name, plan_result) in &result.model_plans {
+        assert!(
+            !plan_result.inferred_schema.is_empty(),
+            "Model '{}' should produce a non-empty inferred schema",
+            name
+        );
+    }
+}
+
+/// Shared analysis pipeline result used by multiple tests
+struct AnalysisPipeline {
+    propagation: ff_analysis::PropagationResult,
+    ctx: ff_analysis::AnalysisContext,
+    order: Vec<String>,
+}
+
+/// Build the full analysis pipeline for a fixture project.
+///
+/// Loads the project, builds the schema catalog from YAML + sources, renders SQL
+/// to extract deps and lineage, runs schema propagation, and returns everything
+/// needed to run passes.
+fn build_analysis_pipeline(fixture_path: &str) -> AnalysisPipeline {
+    use ff_analysis::{
+        parse_sql_type, propagate_schemas, AnalysisContext, Nullability, RelSchema, SchemaCatalog,
+        TypedColumn,
+    };
+    use ff_sql::{extract_column_lineage, ProjectLineage};
+
+    let project = Project::load(Path::new(fixture_path)).unwrap();
+    let parser = SqlParser::duckdb();
+    let jinja = JinjaEnvironment::new(&project.config.vars);
+
+    let known_models: std::collections::HashSet<String> =
+        project.models.keys().map(|k| k.to_string()).collect();
+
     let mut catalog: SchemaCatalog = HashMap::new();
     let mut yaml_schemas: HashMap<ModelName, RelSchema> = HashMap::new();
-    let mut model_irs: HashMap<String, RelOp> = HashMap::new();
     let mut project_lineage = ProjectLineage::new();
 
-    // Build schema catalog from YAML
     for (name, model) in &project.models {
         if let Some(schema) = &model.schema {
             let columns: Vec<TypedColumn> = schema
@@ -1982,62 +2063,100 @@ fn test_analysis_pass_manager_sample_project() {
         }
     }
 
-    // Build dep map and DAG
-    let dep_map: HashMap<String, Vec<String>> = project
-        .models
-        .iter()
-        .map(|(name, model)| {
-            let deps: Vec<String> = model
-                .depends_on
-                .iter()
-                .filter(|d| known_models.contains(d.as_str()))
-                .map(|d| d.to_string())
-                .collect();
-            (name.to_string(), deps)
-        })
-        .collect();
+    for source_file in &project.sources {
+        for table in &source_file.tables {
+            if catalog.contains_key(&table.name) {
+                continue;
+            }
+            if table.columns.is_empty() {
+                catalog.insert(table.name.clone(), RelSchema::empty());
+            } else {
+                let columns: Vec<TypedColumn> = table
+                    .columns
+                    .iter()
+                    .map(|col| TypedColumn {
+                        name: col.name.clone(),
+                        source_table: None,
+                        sql_type: parse_sql_type(&col.data_type),
+                        nullability: Nullability::Unknown,
+                        provenance: vec![],
+                    })
+                    .collect();
+                catalog.insert(table.name.clone(), RelSchema::new(columns));
+            }
+        }
+    }
 
-    let dag = ModelDag::build(&dep_map).unwrap();
-    let topo_order = dag.topological_order().unwrap();
-
-    // Lower models in topological order
-    for name in &topo_order {
-        let model = project.models.get(name.as_str()).unwrap();
-        let rendered = jinja.render(&model.raw_sql).unwrap();
-        let stmts = parser.parse(&rendered).unwrap();
+    let mut dep_map: HashMap<String, Vec<String>> = HashMap::new();
+    let mut sql_sources: HashMap<String, String> = HashMap::new();
+    for (name, model) in &project.models {
+        let Ok(rendered) = jinja.render(&model.raw_sql) else {
+            dep_map.insert(name.to_string(), vec![]);
+            continue;
+        };
+        let Ok(stmts) = parser.parse(&rendered) else {
+            dep_map.insert(name.to_string(), vec![]);
+            continue;
+        };
+        let raw_deps = ff_sql::extract_dependencies(&stmts);
+        let model_deps: Vec<String> = raw_deps
+            .into_iter()
+            .filter(|d| known_models.contains(d))
+            .collect();
+        dep_map.insert(name.to_string(), model_deps);
         if let Some(stmt) = stmts.first() {
             if let Some(lineage) = extract_column_lineage(stmt, name) {
                 project_lineage.add_model_lineage(lineage);
             }
-            if let Ok(ir) = lower_statement(stmt, &catalog) {
-                catalog.insert(name.to_string(), ir.schema().clone());
-                model_irs.insert(name.to_string(), ir);
-            }
         }
+        sql_sources.insert(name.to_string(), rendered);
     }
     project_lineage.resolve_edges(&known_models);
 
-    assert!(
-        !model_irs.is_empty(),
-        "Should have lowered at least one model"
-    );
+    let dag = ModelDag::build(&dep_map).unwrap();
+    let topo_order = dag.topological_order().unwrap();
 
-    let ctx = AnalysisContext::new(project, dag, yaml_schemas, project_lineage);
-    let pass_manager = PassManager::with_defaults();
+    let yaml_string_map: SchemaCatalog = yaml_schemas
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.clone()))
+        .collect();
+
+    let propagation = propagate_schemas(&topo_order, &sql_sources, &yaml_string_map, &catalog, &[]);
 
     let order: Vec<String> = topo_order
         .into_iter()
-        .filter(|n| model_irs.contains_key(n))
+        .filter(|n| propagation.model_plans.contains_key(n))
         .collect();
 
-    // Run all passes
-    let diagnostics = pass_manager.run(&order, &model_irs, &ctx, None);
+    let ctx = AnalysisContext::new(project, dag, yaml_schemas, project_lineage);
 
-    // Verify the run completed — diagnostics is a valid Vec (may be empty or non-empty
-    // depending on sample project content; we just verify no panics occurred)
-    let _ = diagnostics.len();
+    AnalysisPipeline {
+        propagation,
+        ctx,
+        order,
+    }
+}
 
-    // Verify diagnostic structure
+/// Test PlanPassManager runs end-to-end on sample project
+#[test]
+fn test_analysis_plan_pass_manager_sample_project() {
+    use ff_analysis::PlanPassManager;
+
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+
+    assert!(
+        !pipeline.propagation.model_plans.is_empty(),
+        "Should have planned at least one model"
+    );
+
+    let plan_pass_manager = PlanPassManager::with_defaults();
+    let diagnostics = plan_pass_manager.run(
+        &pipeline.order,
+        &pipeline.propagation.model_plans,
+        &pipeline.ctx,
+        None,
+    );
+
     for d in &diagnostics {
         assert!(
             !d.code.to_string().is_empty(),
@@ -2054,64 +2173,23 @@ fn test_analysis_pass_manager_sample_project() {
 /// Test pass filtering works
 #[test]
 fn test_analysis_pass_filter() {
-    use ff_analysis::{lower_statement, AnalysisContext, PassManager, RelOp, SchemaCatalog};
-    use ff_sql::ProjectLineage;
+    use ff_analysis::PlanPassManager;
 
-    let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
-    let parser = SqlParser::duckdb();
-    let jinja = JinjaEnvironment::new(&project.config.vars);
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let plan_pass_manager = PlanPassManager::with_defaults();
 
-    let mut catalog: SchemaCatalog = HashMap::new();
-    let mut model_irs: HashMap<String, RelOp> = HashMap::new();
+    let filter = vec!["plan_type_inference".to_string()];
+    let diags = plan_pass_manager.run(
+        &pipeline.order,
+        &pipeline.propagation.model_plans,
+        &pipeline.ctx,
+        Some(&filter),
+    );
 
-    let known_models: std::collections::HashSet<String> =
-        project.models.keys().map(|k| k.to_string()).collect();
-
-    let dep_map: HashMap<String, Vec<String>> = project
-        .models
-        .iter()
-        .map(|(name, model)| {
-            let deps: Vec<String> = model
-                .depends_on
-                .iter()
-                .filter(|d| known_models.contains(d.as_str()))
-                .map(|d| d.to_string())
-                .collect();
-            (name.to_string(), deps)
-        })
-        .collect();
-
-    let dag = ModelDag::build(&dep_map).unwrap();
-    let topo_order = dag.topological_order().unwrap();
-
-    for name in &topo_order {
-        let model = project.models.get(name.as_str()).unwrap();
-        let rendered = jinja.render(&model.raw_sql).unwrap();
-        let stmts = parser.parse(&rendered).unwrap();
-        if let Some(stmt) = stmts.first() {
-            if let Ok(ir) = lower_statement(stmt, &catalog) {
-                catalog.insert(name.to_string(), ir.schema().clone());
-                model_irs.insert(name.to_string(), ir);
-            }
-        }
-    }
-
-    let ctx = AnalysisContext::new(project, dag, HashMap::new(), ProjectLineage::new());
-    let pass_manager = PassManager::with_defaults();
-    let order: Vec<String> = topo_order
-        .into_iter()
-        .filter(|n| model_irs.contains_key(n))
-        .collect();
-
-    // Run only type_inference pass
-    let filter = vec!["type_inference".to_string()];
-    let diags = pass_manager.run(&order, &model_irs, &ctx, Some(&filter));
-
-    // All diagnostics should come from type_inference
     for d in &diags {
         assert_eq!(
-            d.pass_name, "type_inference",
-            "With filter, all diagnostics should come from type_inference, got: {}",
+            d.pass_name, "plan_type_inference",
+            "With filter, all diagnostics should come from plan_type_inference, got: {}",
             d.pass_name
         );
     }
@@ -2151,17 +2229,79 @@ fn test_analysis_diagnostic_json_roundtrip() {
     assert_eq!(deserialized.column, Some("col1".to_string()));
 }
 
-/// Test PassManager lists all pass names
+/// Regression guard: full analysis pipeline on sample_project produces zero diagnostics.
+///
+/// After Phase F IR elimination, the sample project went from 48 false diagnostics
+/// (28 A001 + 20 bogus A010) to zero.  This test locks that in so any pass regression
+/// is caught immediately.
+#[test]
+fn test_analysis_sample_project_no_false_diagnostics() {
+    use ff_analysis::{DiagnosticCode, PlanPassManager};
+
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+
+    assert!(
+        pipeline.propagation.failures.is_empty(),
+        "Expected no planning failures, got: {:?}",
+        pipeline.propagation.failures
+    );
+    assert_eq!(
+        pipeline.propagation.model_plans.len(),
+        9,
+        "Expected 9 model plans, got {}",
+        pipeline.propagation.model_plans.len()
+    );
+
+    let plan_pass_manager = PlanPassManager::with_defaults();
+    let diagnostics = plan_pass_manager.run(
+        &pipeline.order,
+        &pipeline.propagation.model_plans,
+        &pipeline.ctx,
+        None,
+    );
+
+    let a001: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == DiagnosticCode::A001)
+        .collect();
+    assert!(
+        a001.is_empty(),
+        "Expected zero A001 diagnostics, got {}:\n{:#?}",
+        a001.len(),
+        a001
+    );
+
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.severity == ff_analysis::Severity::Error)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "Expected zero error-severity diagnostics, got {}:\n{:#?}",
+        errors.len(),
+        errors
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected zero diagnostics on sample_project, got {}:\n{:#?}",
+        diagnostics.len(),
+        diagnostics
+    );
+}
+
+/// Test PlanPassManager lists all pass names
 #[test]
 fn test_analysis_pass_names() {
-    use ff_analysis::PassManager;
+    use ff_analysis::PlanPassManager;
 
-    let pm = PassManager::with_defaults();
+    let pm = PlanPassManager::with_defaults();
     let names = pm.pass_names();
 
-    assert!(names.contains(&"type_inference"));
-    assert!(names.contains(&"nullability"));
-    assert!(names.contains(&"join_keys"));
-    assert!(names.contains(&"unused_columns"));
-    assert_eq!(names.len(), 4);
+    assert!(names.contains(&"plan_type_inference"));
+    assert!(names.contains(&"plan_nullability"));
+    assert!(names.contains(&"plan_join_keys"));
+    assert!(names.contains(&"plan_unused_columns"));
+    assert!(names.contains(&"cross_model_consistency"));
+    assert_eq!(names.len(), 5);
 }
