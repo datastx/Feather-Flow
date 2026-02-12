@@ -1,0 +1,16 @@
+kind: sources
+name: raw_ecommerce
+schema: main
+tables:
+  - name: raw_a
+    columns:
+      - name: id
+        type: INTEGER
+      - name: val
+        type: INTEGER
+  - name: raw_b
+    columns:
+      - name: id
+        type: INTEGER
+      - name: val
+        type: INTEGER

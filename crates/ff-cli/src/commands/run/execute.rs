@@ -8,6 +8,7 @@ use ff_db::Database;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 use tokio::sync::Semaphore;
@@ -51,6 +52,24 @@ impl std::fmt::Debug for ExecutionContext<'_> {
     }
 }
 
+/// Execute the materialization strategy for a non-WAP model.
+async fn execute_materialization(
+    db: &Arc<dyn Database>,
+    qualified_name: &str,
+    compiled: &CompiledModel,
+    full_refresh: bool,
+    exec_sql: &str,
+) -> ff_db::error::DbResult<()> {
+    match compiled.materialization {
+        Materialization::View => db.create_view_as(qualified_name, exec_sql, true).await,
+        Materialization::Table => db.create_table_as(qualified_name, exec_sql, true).await,
+        Materialization::Incremental => {
+            execute_incremental(db, qualified_name, compiled, full_refresh, exec_sql).await
+        }
+        Materialization::Ephemeral => Ok(()),
+    }
+}
+
 /// Execute a single model: pre-hooks -> materialize -> post-hooks -> contract validation.
 ///
 /// Returns a `ModelRunResult` with the outcome. Callers handle state-file updates
@@ -69,7 +88,6 @@ async fn run_single_model(
 
     let model_start = Instant::now();
 
-    // Execute pre-hooks
     if let Err(e) = execute_hooks(db, &compiled.pre_hook, &qualified_name).await {
         let duration = model_start.elapsed();
         println!(
@@ -102,7 +120,6 @@ async fn run_single_model(
         None => compiled.sql.clone(),
     };
 
-    // Determine if this model should use WAP flow
     let is_wap = compiled.wap
         && wap_schema.is_some()
         && matches!(
@@ -133,19 +150,11 @@ async fn run_single_model(
         })
         .await
     } else {
-        match compiled.materialization {
-            Materialization::View => db.create_view_as(&qualified_name, &exec_sql, true).await,
-            Materialization::Table => db.create_table_as(&qualified_name, &exec_sql, true).await,
-            Materialization::Incremental => {
-                execute_incremental(db, &qualified_name, compiled, full_refresh, &exec_sql).await
-            }
-            Materialization::Ephemeral => Ok(()),
-        }
+        execute_materialization(db, &qualified_name, compiled, full_refresh, &exec_sql).await
     };
 
     match result {
         Ok(_) => {
-            // Execute post-hooks
             if let Err(e) = execute_hooks(db, &compiled.post_hook, &qualified_name).await {
                 let duration = model_start.elapsed();
                 println!(
@@ -163,7 +172,6 @@ async fn run_single_model(
                 };
             }
 
-            // Validate schema contract if defined
             if let Err(contract_error) = validate_model_contract(
                 db,
                 name,
@@ -223,12 +231,10 @@ async fn execute_models(
     ctx: &ExecutionContext<'_>,
     state_file: &mut StateFile,
 ) -> (Vec<ModelRunResult>, usize, usize, bool) {
-    // For single thread, use the simple sequential execution
     if ctx.args.threads <= 1 {
         return execute_models_sequential(ctx, state_file).await;
     }
 
-    // Parallel execution using DAG levels
     execute_models_parallel(ctx, state_file).await
 }
 
@@ -242,7 +248,6 @@ pub(super) async fn execute_models_with_state(
     let (run_results, success_count, failure_count, stopped_early) =
         execute_models(ctx, state_file).await;
 
-    // Update run state based on results
     for result in &run_results {
         let duration_ms = (result.duration_secs * 1000.0) as u64;
         if matches!(result.status, RunStatus::Success) {
@@ -255,7 +260,6 @@ pub(super) async fn execute_models_with_state(
         }
     }
 
-    // Save run state after execution
     if let Err(e) = run_state.save(run_state_path) {
         eprintln!("Warning: Failed to save run state: {}", e);
     }
@@ -294,7 +298,6 @@ async fn execute_models_sequential(
     let mut stopped_early = false;
     let mut failed_models: HashSet<String> = HashSet::new();
 
-    // Count non-ephemeral models for progress bar
     let executable_models: Vec<&String> = ctx
         .execution_order
         .iter()
@@ -307,7 +310,6 @@ async fn execute_models_sequential(
         .collect();
     let executable_count = executable_models.len();
 
-    // Create progress bar if not in quiet mode
     let progress = if !ctx.args.quiet && ctx.args.output == OutputFormat::Text {
         let pb = ProgressBar::new(executable_count as u64);
         pb.set_style(
@@ -333,7 +335,6 @@ async fn execute_models_sequential(
             continue;
         };
 
-        // Skip models whose upstream WAP failed
         if failed_models.contains(name) {
             failure_count += 1;
             println!("  - {} (skipped: upstream WAP failure)", name);
@@ -360,14 +361,12 @@ async fn execute_models_sequential(
             continue;
         }
 
-        // Update progress bar
         if let Some(ref pb) = progress {
             pb.set_message(format!("Running: {}", name));
             pb.set_position(executable_idx as u64);
         }
         executable_idx += 1;
 
-        // Run the model (pre-hooks -> materialize -> post-hooks -> contract)
         let model_result = run_single_model(
             ctx.db,
             name,
@@ -388,7 +387,6 @@ async fn execute_models_sequential(
         if is_error {
             failure_count += 1;
 
-            // If WAP model failed, skip all transitive dependents
             if is_wap {
                 let dependents = get_transitive_dependents(name, ctx.compiled_models);
                 for dep in &dependents {
@@ -428,14 +426,12 @@ async fn execute_models_sequential(
                 }
             };
 
-            // Update state for this model (with checksums for smart builds)
             update_state_for_model(state_file, name, compiled, ctx.compiled_models, row_count);
 
             run_results.push(model_result);
         }
     }
 
-    // Finish progress bar
     if let Some(pb) = progress {
         pb.finish_with_message("Complete");
     }
@@ -443,28 +439,67 @@ async fn execute_models_sequential(
     (run_results, success_count, failure_count, stopped_early)
 }
 
+/// Async task body for executing a single model in parallel mode.
+#[allow(clippy::too_many_arguments)]
+async fn execute_model_task(
+    db: Arc<dyn Database>,
+    name: String,
+    compiled: CompiledModel,
+    full_refresh: bool,
+    wap_schema: Option<String>,
+    fail_fast: bool,
+    semaphore: Arc<Semaphore>,
+    success_count: Arc<AtomicUsize>,
+    failure_count: Arc<AtomicUsize>,
+    run_results: Arc<Mutex<Vec<ModelRunResult>>>,
+    stopped: Arc<AtomicBool>,
+    completed: Arc<Mutex<HashSet<String>>>,
+    progress: Option<Arc<ProgressBar>>,
+) {
+    // Semaphore was closed -- treat as cancellation
+    let Ok(_permit) = semaphore.acquire().await else {
+        return;
+    };
+
+    if stopped.load(Ordering::SeqCst) && fail_fast {
+        return;
+    }
+
+    let model_result =
+        run_single_model(&db, &name, &compiled, full_refresh, wap_schema.as_deref()).await;
+
+    let is_error = matches!(model_result.status, RunStatus::Error);
+    if is_error {
+        failure_count.fetch_add(1, Ordering::SeqCst);
+        if fail_fast {
+            stopped.store(true, Ordering::SeqCst);
+            println!("\n  Stopping due to --fail-fast");
+        }
+    } else {
+        success_count.fetch_add(1, Ordering::SeqCst);
+    }
+
+    recover_mutex(&run_results).push(model_result);
+    recover_mutex(&completed).insert(name);
+
+    if let Some(ref pb) = progress {
+        pb.inc(1);
+    }
+}
+
 /// Execute models in parallel using DAG-aware scheduling
 async fn execute_models_parallel(
     ctx: &ExecutionContext<'_>,
     state_file: &mut StateFile,
 ) -> (Vec<ModelRunResult>, usize, usize, bool) {
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-
     let success_count = Arc::new(AtomicUsize::new(0));
     let failure_count = Arc::new(AtomicUsize::new(0));
     let run_results = Arc::new(Mutex::new(Vec::new()));
     let stopped = Arc::new(AtomicBool::new(false));
-
-    // Create a semaphore to limit concurrent execution
     let semaphore = Arc::new(Semaphore::new(ctx.args.threads));
-
-    // Track completed models
     let completed = Arc::new(Mutex::new(HashSet::new()));
-
-    // Group models by their dependency level
     let levels = compute_execution_levels(ctx.execution_order, ctx.compiled_models);
 
-    // Count non-ephemeral models for progress bar
     let executable_count = ctx
         .execution_order
         .iter()
@@ -476,7 +511,6 @@ async fn execute_models_parallel(
         })
         .count();
 
-    // Create progress bar if not in quiet mode
     let progress = if !ctx.args.quiet && ctx.args.output == OutputFormat::Text {
         let pb = ProgressBar::new(executable_count as u64);
         pb.set_style(
@@ -499,16 +533,13 @@ async fn execute_models_parallel(
     );
 
     for level_models in &levels {
-        // Check if we should stop
         if stopped.load(Ordering::SeqCst) {
             break;
         }
 
-        // Spawn tasks for all models in this level
         let mut set = JoinSet::new();
 
         for name in level_models {
-            // Check if we should stop before starting a new model
             if stopped.load(Ordering::SeqCst) && ctx.args.fail_fast {
                 break;
             }
@@ -523,7 +554,6 @@ async fn execute_models_parallel(
                 continue;
             };
 
-            // Skip ephemeral models (they're inlined during compilation)
             if compiled.materialization == Materialization::Ephemeral {
                 success_count.fetch_add(1, Ordering::SeqCst);
                 recover_mutex(&run_results).push(ModelRunResult {
@@ -536,66 +566,24 @@ async fn execute_models_parallel(
                 recover_mutex(&completed).insert(name);
                 continue;
             }
-            // Clone fields needed inside the spawned task
-            let compiled_owned = compiled.clone();
-            let full_refresh = ctx.args.full_refresh;
-            let fail_fast = ctx.args.fail_fast;
-            let wap_schema_owned = ctx.wap_schema.map(String::from);
 
-            let semaphore = Arc::clone(&semaphore);
-            let success_count = Arc::clone(&success_count);
-            let failure_count = Arc::clone(&failure_count);
-            let run_results = Arc::clone(&run_results);
-            let stopped = Arc::clone(&stopped);
-            let completed = Arc::clone(&completed);
-            let progress = progress.clone();
-
-            set.spawn(async move {
-                // Acquire semaphore permit
-                let _permit = match semaphore.acquire().await {
-                    Ok(permit) => permit,
-                    Err(_) => {
-                        // Semaphore was closed -- treat as cancellation
-                        return;
-                    }
-                };
-
-                // Check if we should stop
-                if stopped.load(Ordering::SeqCst) && fail_fast {
-                    return;
-                }
-
-                let model_result = run_single_model(
-                    &db,
-                    &name,
-                    &compiled_owned,
-                    full_refresh,
-                    wap_schema_owned.as_deref(),
-                )
-                .await;
-
-                let is_error = matches!(model_result.status, RunStatus::Error);
-                if is_error {
-                    failure_count.fetch_add(1, Ordering::SeqCst);
-                    if fail_fast {
-                        stopped.store(true, Ordering::SeqCst);
-                        println!("\n  Stopping due to --fail-fast");
-                    }
-                } else {
-                    success_count.fetch_add(1, Ordering::SeqCst);
-                }
-
-                recover_mutex(&run_results).push(model_result);
-                recover_mutex(&completed).insert(name.clone());
-
-                // Update progress bar
-                if let Some(ref pb) = progress {
-                    pb.inc(1);
-                }
-            });
+            set.spawn(execute_model_task(
+                db,
+                name,
+                compiled.clone(),
+                ctx.args.full_refresh,
+                ctx.wap_schema.map(String::from),
+                ctx.args.fail_fast,
+                Arc::clone(&semaphore),
+                Arc::clone(&success_count),
+                Arc::clone(&failure_count),
+                Arc::clone(&run_results),
+                Arc::clone(&stopped),
+                Arc::clone(&completed),
+                progress.clone(),
+            ));
         }
 
-        // Wait for all models in this level to complete
         while let Some(res) = set.join_next().await {
             if let Err(e) = res {
                 eprintln!("[warn] Task join error: {}", e);
@@ -603,7 +591,6 @@ async fn execute_models_parallel(
         }
     }
 
-    // Finish progress bar
     if let Some(pb) = progress {
         pb.finish_with_message("Complete");
     }
@@ -617,7 +604,6 @@ async fn execute_models_parallel(
     for result in &final_results {
         if matches!(result.status, RunStatus::Success) {
             if let Some(compiled) = ctx.compiled_models.get(&result.model) {
-                // Query row count (same as sequential path)
                 let qualified_name = match &compiled.schema {
                     Some(s) => format!("{}.{}", s, result.model),
                     None => result.model.clone(),
@@ -653,6 +639,21 @@ async fn execute_models_parallel(
     (final_results, final_success, final_failure, final_stopped)
 }
 
+/// Check if all dependencies of a model are satisfied (completed or not in the execution set).
+fn deps_satisfied(
+    name: &str,
+    compiled_models: &HashMap<String, CompiledModel>,
+    completed: &HashSet<String>,
+    order_set: &HashSet<String>,
+) -> bool {
+    compiled_models.get(name).is_some_and(|compiled| {
+        compiled
+            .dependencies
+            .iter()
+            .all(|dep| completed.contains(dep) || !order_set.contains(dep))
+    })
+}
+
 /// Compute execution levels - models at the same level have no dependencies on each other
 fn compute_execution_levels(
     execution_order: &[String],
@@ -670,17 +671,9 @@ fn compute_execution_levels(
         let mut current_level = Vec::new();
 
         for name in &remaining {
-            if let Some(compiled) = compiled_models.get(name) {
-                // Check if all dependencies are completed or not in our execution set
-                let deps_satisfied = compiled
-                    .dependencies
-                    .iter()
-                    .all(|dep| completed.contains(dep) || !order_set.contains(dep));
-
-                if deps_satisfied {
-                    current_level.push(name.clone());
-                }
-            } else {
+            if deps_satisfied(name, compiled_models, &completed, &order_set) {
+                current_level.push(name.clone());
+            } else if !compiled_models.contains_key(name) {
                 eprintln!(
                     "[warn] Model '{}' in execution order but not in compiled models",
                     name
@@ -688,7 +681,6 @@ fn compute_execution_levels(
             }
         }
 
-        // Mark current level as completed
         for name in &current_level {
             completed.insert(name.clone());
         }

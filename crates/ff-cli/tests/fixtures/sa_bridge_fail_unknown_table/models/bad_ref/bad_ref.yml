@@ -1,0 +1,6 @@
+version: 1
+name: bad_ref
+description: "References a table that does not exist"
+columns:
+  - name: id
+    data_type: INTEGER

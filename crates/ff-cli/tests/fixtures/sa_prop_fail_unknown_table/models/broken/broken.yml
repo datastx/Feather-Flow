@@ -1,0 +1,6 @@
+version: 1
+name: broken
+description: "Broken model referencing a nonexistent table"
+columns:
+  - name: id
+    data_type: INTEGER

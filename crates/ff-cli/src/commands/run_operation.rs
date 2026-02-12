@@ -13,22 +13,18 @@ pub async fn execute(args: &RunOperationArgs, global: &GlobalArgs) -> Result<()>
     let start_time = Instant::now();
     let project = load_project(global)?;
 
-    // Create Jinja environment with macros
     let macro_paths = project.config.macro_paths_absolute(&project.root);
     let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
 
-    // Parse args JSON if provided
     let macro_args: HashMap<String, serde_json::Value> = if let Some(args_json) = &args.args {
         serde_json::from_str(args_json).context("Invalid JSON in --args")?
     } else {
         HashMap::new()
     };
 
-    // Build the macro call template
     let template = if macro_args.is_empty() {
         format!("{{{{ {}() }}}}", args.macro_name)
     } else {
-        // Build keyword arguments
         let kwargs: Vec<String> = macro_args
             .iter()
             .map(|(k, v)| {
@@ -52,7 +48,6 @@ pub async fn execute(args: &RunOperationArgs, global: &GlobalArgs) -> Result<()>
         eprintln!("[verbose] Rendering macro template: {}", template);
     }
 
-    // Render the macro
     let (sql, _) = jinja
         .render_with_config(&template)
         .with_context(|| format!("Failed to render macro: {}", args.macro_name))?;
@@ -73,7 +68,6 @@ pub async fn execute(args: &RunOperationArgs, global: &GlobalArgs) -> Result<()>
 
     println!("Running operation: {}\n", args.macro_name);
 
-    // Execute the SQL
     let result = db.execute(sql).await;
 
     let duration = start_time.elapsed();

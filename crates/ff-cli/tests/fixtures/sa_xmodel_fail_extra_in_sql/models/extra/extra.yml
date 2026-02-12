@@ -1,0 +1,8 @@
+version: 1
+name: extra
+description: "YAML only declares id and name — bonus is extra in SQL"
+columns:
+  - name: id
+    data_type: INTEGER
+  - name: name
+    data_type: VARCHAR

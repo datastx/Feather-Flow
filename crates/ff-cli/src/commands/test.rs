@@ -120,19 +120,15 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
 
     let project = load_project(global)?;
 
-    // Resolve target from CLI flag or FF_TARGET env var
     let target = Config::resolve_target(global.target.as_deref());
 
     let db = common::create_database_connection(&project.config, global.target.as_deref())?;
 
-    // Get merged vars with target overrides
     let merged_vars = project.config.get_merged_vars(target.as_deref());
 
-    // Get macro paths and set up Jinja environment for custom tests
     let macro_paths = project.config.macro_paths_absolute(&project.root);
     let jinja = JinjaEnvironment::with_macros(&merged_vars, &macro_paths);
 
-    // Discover custom test macros
     let mut custom_test_registry = CustomTestRegistry::new();
     custom_test_registry
         .discover(&macro_paths)
@@ -151,11 +147,9 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
         );
     }
 
-    // Build a map of model name -> qualified name (with schema if specified)
     let mut model_qualified_names: HashMap<String, String> = HashMap::new();
 
     for (name, model) in &project.models {
-        // Get schema from rendered config
         let schema = if let Ok((_, config_values)) = jinja.render_with_config(&model.raw_sql) {
             config_values
                 .get("schema")
@@ -173,7 +167,6 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
         model_qualified_names.insert(name.to_string(), qualified_name);
     }
 
-    // Filter tests based on --models argument
     let model_filter: Option<Vec<String>> = args.models.as_ref().map(|m| {
         m.split(',')
             .map(|s| s.trim().to_string())
@@ -181,10 +174,8 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
             .collect()
     });
 
-    // Generate tests from source files
     let source_tests = generate_source_tests(&project.sources);
 
-    // Combine model tests and source tests
     let all_tests: Vec<SchemaTest> = project
         .tests
         .iter()
@@ -192,11 +183,9 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
         .chain(source_tests.into_iter())
         .collect();
 
-    // Get set of models that have tests defined
     let models_with_tests: std::collections::HashSet<_> =
         all_tests.iter().map(|t| t.model.as_str()).collect();
 
-    // Get tests to run
     let tests_to_run: Vec<&SchemaTest> = all_tests
         .iter()
         .filter(|t| {
@@ -207,7 +196,6 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
         })
         .collect();
 
-    // Report models without tests when filtering by model
     if let Some(filter) = &model_filter {
         let models_without_tests: Vec<&str> = filter
             .iter()
@@ -277,7 +265,6 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
         None
     };
 
-    // Wrap custom registry in Arc for sharing
     let custom_registry = Arc::new(custom_test_registry);
 
     let counters = Arc::new(TestCounters::new());
@@ -294,12 +281,9 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
         macro_paths: &macro_paths,
     };
 
-    // Run tests based on thread count
     if thread_count > 1 {
-        // Parallel execution
         run_tests_parallel(&ctx, &tests_to_run, &counters, &output_lock, thread_count).await;
     } else {
-        // Sequential execution (original behavior)
         run_tests_sequential(&ctx, &tests_to_run, &counters).await;
     }
 
@@ -355,7 +339,6 @@ async fn run_tests_sequential(
 ) {
     let runner = TestRunner::new(ctx.db.as_ref());
 
-    // Run schema tests
     for schema_test in schema_tests {
         if counters.early_stop.load(Ordering::SeqCst) {
             break;
@@ -367,7 +350,6 @@ async fn run_tests_sequential(
             .map(|s| s.as_str())
             .unwrap_or(&schema_test.model);
 
-        // Generate test SQL, handling custom tests specially
         let generated = generate_test_with_custom_support(
             schema_test,
             qualified_name,
@@ -386,7 +368,6 @@ async fn run_tests_sequential(
         )
         .await;
 
-        // Fail fast if requested (but not for warning-severity tests)
         if ctx.args.fail_fast
             && !result.passed
             && schema_test.config.severity == TestSeverity::Error
@@ -395,7 +376,6 @@ async fn run_tests_sequential(
         }
     }
 
-    // Run singular tests
     for singular_test in ctx.singular_tests {
         if counters.early_stop.load(Ordering::SeqCst) {
             break;
@@ -412,7 +392,6 @@ async fn run_tests_sequential(
         )
         .await;
 
-        // Fail fast if requested
         if ctx.args.fail_fast && !result.passed {
             counters.early_stop.store(true, Ordering::SeqCst);
         }
@@ -447,7 +426,6 @@ async fn run_tests_parallel(
         })
         .collect();
 
-    // Prepare schema test tasks
     let schema_test_futures: Vec<_> = generated_tests
         .into_iter()
         .map(|(schema_test, _qualified_name, generated)| {
@@ -466,7 +444,6 @@ async fn run_tests_parallel(
                 let runner = TestRunner::new(db.as_ref());
                 let result = runner.run_test(&generated).await;
 
-                // Lock for output
                 let _lock = output_lock.lock().await;
 
                 process_schema_test_result(
@@ -479,7 +456,6 @@ async fn run_tests_parallel(
                 )
                 .await;
 
-                // Fail fast if requested (but not for warning-severity tests)
                 if fail_fast && !result.passed && schema_test.config.severity == TestSeverity::Error
                 {
                     counters.early_stop.store(true, Ordering::SeqCst);
@@ -488,13 +464,11 @@ async fn run_tests_parallel(
         })
         .collect();
 
-    // Run schema tests in parallel with buffer
     stream::iter(schema_test_futures)
         .buffer_unordered(thread_count)
         .collect::<Vec<_>>()
         .await;
 
-    // Prepare singular test tasks
     let singular_test_futures: Vec<_> = ctx
         .singular_tests
         .iter()
@@ -514,7 +488,6 @@ async fn run_tests_parallel(
 
                 let result = run_singular_test(db.as_ref(), &singular_test).await;
 
-                // Lock for output
                 let _lock = output_lock.lock().await;
 
                 process_singular_test_result(
@@ -526,7 +499,6 @@ async fn run_tests_parallel(
                 )
                 .await;
 
-                // Fail fast if requested
                 if fail_fast && !result.passed {
                     counters.early_stop.store(true, Ordering::SeqCst);
                 }
@@ -534,7 +506,6 @@ async fn run_tests_parallel(
         })
         .collect();
 
-    // Run singular tests in parallel with buffer
     stream::iter(singular_test_futures)
         .buffer_unordered(thread_count)
         .collect::<Vec<_>>()
@@ -598,7 +569,6 @@ async fn process_schema_test_result(
         }
     };
 
-    // Add to results for JSON output
     let test_output = TestResultOutput {
         name: result.name.clone(),
         status,
@@ -611,7 +581,6 @@ async fn process_schema_test_result(
     };
     counters.test_results.lock().await.push(test_output);
 
-    // Show sample failing rows (text mode only)
     if !json_mode && !result.passed && result.error.is_none() && !result.sample_failures.is_empty()
     {
         println!("    Sample failing rows:");
@@ -625,7 +594,6 @@ async fn process_schema_test_result(
             );
         }
 
-        // Store failures if requested
         if let Some(ref dir) = failures_dir {
             store_test_failures(&result.name, &generated.sql, dir).await;
         }
@@ -674,7 +642,6 @@ async fn process_singular_test_result(
         (TestStatus::Fail.to_string(), None)
     };
 
-    // Add to results for JSON output
     let test_output = TestResultOutput {
         name: result.name.clone(),
         status,
@@ -687,7 +654,6 @@ async fn process_singular_test_result(
     };
     counters.test_results.lock().await.push(test_output);
 
-    // Show sample failing rows (text mode only)
     if !json_mode && !result.passed && result.error.is_none() && !result.sample_failures.is_empty()
     {
         println!("    Sample failing rows:");
@@ -701,7 +667,6 @@ async fn process_singular_test_result(
             );
         }
 
-        // Store failures if requested
         if let Some(ref dir) = failures_dir {
             store_test_failures(&result.name, &singular_test.sql, dir).await;
         }
@@ -723,7 +688,6 @@ struct SingularTestResult {
 async fn run_singular_test(db: &dyn Database, test: &SingularTest) -> SingularTestResult {
     let start = Instant::now();
 
-    // Execute the SQL and check if it returns any rows
     match db.query_count(&test.sql).await {
         Ok(count) => {
             if count == 0 {
@@ -736,7 +700,6 @@ async fn run_singular_test(db: &dyn Database, test: &SingularTest) -> SingularTe
                     duration: start.elapsed(),
                 }
             } else {
-                // Test failed - get sample failing rows
                 let sample_failures = match db.query_sample_rows(&test.sql, 5).await {
                     Ok(rows) => rows,
                     Err(e) => {
@@ -771,12 +734,10 @@ async fn run_singular_test(db: &dyn Database, test: &SingularTest) -> SingularTe
 
 /// Store failing rows to a table in target/test_failures/
 async fn store_test_failures(test_name: &str, sql: &str, failures_dir: &std::path::Path) {
-    // Create a table name from the test name (sanitize it)
     let table_name = test_name
         .replace(|c: char| !c.is_alphanumeric() && c != '_', "_")
         .to_lowercase();
 
-    // Create a DuckDB file for the failures
     let db_path = failures_dir.join(format!("{}.duckdb", table_name));
 
     let db_path_str = match db_path.to_str() {
@@ -791,7 +752,6 @@ async fn store_test_failures(test_name: &str, sql: &str, failures_dir: &std::pat
     };
     match DuckDbBackend::new(db_path_str) {
         Ok(failures_db) => {
-            // Create table with failing rows
             let create_sql = format!("CREATE TABLE IF NOT EXISTS failures AS {}", sql);
             if let Err(e) = failures_db.execute(&create_sql).await {
                 eprintln!(
@@ -809,6 +769,39 @@ async fn store_test_failures(test_name: &str, sql: &str, failures_dir: &std::pat
     }
 }
 
+/// Render a custom test macro, returning the generated SQL.
+fn render_custom_test_macro(
+    macro_info: &ff_jinja::CustomTestMacro,
+    qualified_name: &str,
+    column: &str,
+    name: &str,
+    kwargs: &std::collections::HashMap<String, serde_json::Value>,
+    macro_paths: &[std::path::PathBuf],
+) -> String {
+    let mut env = minijinja::Environment::new();
+    for macro_path in macro_paths {
+        if macro_path.exists() && macro_path.is_dir() {
+            env.set_loader(minijinja::path_loader(macro_path.clone()));
+            break;
+        }
+    }
+
+    match ff_jinja::generate_custom_test_sql(
+        &env,
+        &macro_info.source_file,
+        &macro_info.macro_name,
+        qualified_name,
+        column,
+        kwargs,
+    ) {
+        Ok(sql) => sql,
+        Err(e) => format!(
+            "-- Error rendering custom test '{}': {}\nSELECT 1 WHERE FALSE",
+            name, e
+        ),
+    }
+}
+
 /// Generate test SQL with support for custom test macros
 ///
 /// For built-in test types, uses the standard generator.
@@ -821,38 +814,17 @@ fn generate_test_with_custom_support(
 ) -> GeneratedTest {
     match &schema_test.test_type {
         TestType::Custom { name, kwargs } => {
-            // Look up the custom test macro
             if let Some(macro_info) = custom_registry.get(name) {
-                // Create a minijinja Environment with the macro paths loaded
-                let mut env = minijinja::Environment::new();
-                for macro_path in macro_paths {
-                    if macro_path.exists() && macro_path.is_dir() {
-                        env.set_loader(minijinja::path_loader(macro_path.clone()));
-                        break;
-                    }
-                }
-
-                // Try to render the custom test SQL
-                match ff_jinja::generate_custom_test_sql(
-                    &env,
-                    &macro_info.source_file,
-                    &macro_info.macro_name,
+                let sql = render_custom_test_macro(
+                    macro_info,
                     qualified_name,
                     &schema_test.column,
+                    name,
                     kwargs,
-                ) {
-                    Ok(sql) => GeneratedTest::with_custom_sql(schema_test, sql),
-                    Err(e) => {
-                        // Return a test that will fail with the error message
-                        let error_sql = format!(
-                            "-- Error rendering custom test '{}': {}\nSELECT 1 WHERE FALSE",
-                            name, e
-                        );
-                        GeneratedTest::with_custom_sql(schema_test, error_sql)
-                    }
-                }
+                    macro_paths,
+                );
+                GeneratedTest::with_custom_sql(schema_test, sql)
             } else {
-                // Custom test not found - return a placeholder that shows an error
                 let error_sql = format!(
                     "-- Custom test '{}' not found in registered macros\nSELECT 1 AS error_custom_test_not_found",
                     name
@@ -860,9 +832,6 @@ fn generate_test_with_custom_support(
                 GeneratedTest::with_custom_sql(schema_test, error_sql)
             }
         }
-        _ => {
-            // Built-in test types use the standard generator
-            GeneratedTest::from_schema_test_qualified(schema_test, qualified_name)
-        }
+        _ => GeneratedTest::from_schema_test_qualified(schema_test, qualified_name),
     }
 }

@@ -23,7 +23,6 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
 
     let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
 
-    // Build schema catalog from YAML definitions and external tables
     let external_tables = build_external_tables_lookup(&project);
     let (schema_catalog, yaml_schemas) = build_schema_catalog(&project, &external_tables);
 
@@ -40,7 +39,6 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
             continue;
         };
 
-        // Extract dependencies from parsed SQL
         let raw_deps = extract_dependencies(&stmts);
         let model_deps: Vec<String> = raw_deps
             .into_iter()
@@ -48,7 +46,6 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
             .collect();
         dep_map.insert(name.to_string(), model_deps);
 
-        // Extract lineage
         if let Some(stmt) = stmts.first() {
             if let Some(lineage) = extract_column_lineage(stmt, name) {
                 project_lineage.add_model_lineage(lineage);
@@ -62,13 +59,11 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
         .topological_order()
         .context("Failed to get topological order")?;
 
-    // Determine which models to analyze
     let model_filter: Option<HashSet<String>> = args
         .models
         .as_ref()
         .map(|m| m.split(',').map(|s| s.trim().to_string()).collect());
 
-    // Build rendered SQL sources for models in scope
     let order: Vec<String> = topo_order
         .into_iter()
         .filter(|n| {
@@ -102,16 +97,13 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
         return Ok(());
     }
 
-    // Filter order to models with rendered SQL
     let order: Vec<String> = order
         .into_iter()
         .filter(|n| sql_sources.contains_key(n))
         .collect();
 
-    // Create analysis context
     let ctx = AnalysisContext::new(project, dag, yaml_schemas, project_lineage);
 
-    // Build schema catalog for DataFusion propagation
     let yaml_string_map: SchemaCatalog = ctx
         .yaml_schemas()
         .iter()
@@ -138,14 +130,12 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
         return Ok(());
     }
 
-    // Report planning failures
     if global.verbose {
         for (model, err) in &propagation.failures {
             eprintln!("[verbose] Skipping '{}': planning error: {}", model, err);
         }
     }
 
-    // Run analysis passes
     let pass_filter: Option<Vec<String>> = args
         .pass
         .as_ref()
@@ -159,7 +149,6 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
         pass_filter.as_deref(),
     );
 
-    // Filter by severity
     let min_severity = match args.severity {
         AnalyzeSeverity::Info => Severity::Info,
         AnalyzeSeverity::Warning => Severity::Warning,
@@ -171,13 +160,11 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
         .filter(|d| d.severity >= min_severity)
         .collect();
 
-    // Output
     match args.output {
         AnalyzeOutput::Json => print_json(&filtered)?,
         AnalyzeOutput::Table => print_table(&filtered),
     }
 
-    // Exit code 1 if any Error-severity diagnostics
     let has_errors = filtered.iter().any(|d| d.severity == Severity::Error);
     if has_errors {
         return Err(crate::commands::common::ExitCode(1).into());
@@ -193,7 +180,6 @@ fn print_table(diagnostics: &[ff_analysis::Diagnostic]) {
         return;
     }
 
-    // Column widths
     let model_w = diagnostics
         .iter()
         .map(|d| d.model.len())
@@ -250,7 +236,6 @@ fn print_table(diagnostics: &[ff_analysis::Diagnostic]) {
         );
     }
 
-    // Summary
     let errors = diagnostics
         .iter()
         .filter(|d| d.severity == Severity::Error)

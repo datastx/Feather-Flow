@@ -1,0 +1,14 @@
+kind: sources
+name: raw_ecommerce
+schema: main
+tables:
+  - name: raw_data
+    columns:
+      - name: id
+        type: INT
+      - name: name
+        type: VARCHAR
+      - name: ts
+        type: TIMESTAMP
+      - name: amount
+        type: DECIMAL(10,2)

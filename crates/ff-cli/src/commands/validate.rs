@@ -185,73 +185,74 @@ fn validate_sql_syntax(
     let mut dependencies: HashMap<String, Vec<String>> = HashMap::new();
 
     for name in models {
-        if let Some(model) = project.get_model(name) {
-            let rendered = match jinja.render(&model.raw_sql) {
-                Ok(sql) => sql,
-                Err(e) => {
-                    let err_str = e.to_string();
-                    let code = if is_macro_import_error(&err_str) {
-                        "M003"
-                    } else {
-                        "E001"
-                    };
-                    let msg = if code == "M003" {
-                        format!("Macro import error: {}", e)
-                    } else {
-                        format!("Jinja render error: {}", e)
-                    };
-                    ctx.error(code, msg, Some(model.path.display().to_string()));
-                    sql_errors += 1;
-                    continue;
-                }
-            };
+        let Some(model) = project.get_model(name) else {
+            continue;
+        };
 
-            match parser.parse(&rendered) {
-                Ok(stmts) => {
-                    // Reject CTEs and derived tables — each transform must be its own model
-                    if let Err(e) = ff_sql::validate_no_complex_queries(&stmts) {
-                        let code = match &e {
-                            ff_sql::SqlError::CteNotAllowed { .. } => "S005",
-                            ff_sql::SqlError::DerivedTableNotAllowed => "S006",
-                            ff_sql::SqlError::SelectStarNotAllowed => "S009",
-                            _ => "S004",
-                        };
-                        ctx.error(code, e.to_string(), Some(model.path.display().to_string()));
-                        sql_errors += 1;
-                        continue;
-                    }
-
-                    let deps = ff_sql::extract_dependencies(&stmts);
-                    let (model_deps, _, unknown_deps) =
-                        ff_sql::extractor::categorize_dependencies_with_unknown(
-                            deps,
-                            known_models,
-                            external_tables,
-                        );
-
-                    for unknown in &unknown_deps {
-                        ctx.warning(
-                            "W003",
-                            format!(
-                                "Unknown dependency '{}' in model '{}'. Not defined as a model or source.",
-                                unknown, name
-                            ),
-                            Some(model.path.display().to_string()),
-                        );
-                    }
-
-                    dependencies.insert(name.clone(), model_deps);
-                }
-                Err(e) => {
-                    ctx.error(
-                        "E002",
-                        format!("SQL parse error: {}", e),
-                        Some(model.path.display().to_string()),
-                    );
-                    sql_errors += 1;
-                }
+        let rendered = match jinja.render(&model.raw_sql) {
+            Ok(sql) => sql,
+            Err(e) => {
+                let err_str = e.to_string();
+                let code = if is_macro_import_error(&err_str) {
+                    "M003"
+                } else {
+                    "E001"
+                };
+                let msg = if code == "M003" {
+                    format!("Macro import error: {}", e)
+                } else {
+                    format!("Jinja render error: {}", e)
+                };
+                ctx.error(code, msg, Some(model.path.display().to_string()));
+                sql_errors += 1;
+                continue;
             }
+        };
+
+        let stmts = match parser.parse(&rendered) {
+            Ok(stmts) => stmts,
+            Err(e) => {
+                ctx.error(
+                    "E002",
+                    format!("SQL parse error: {}", e),
+                    Some(model.path.display().to_string()),
+                );
+                sql_errors += 1;
+                continue;
+            }
+        };
+
+        if let Err(e) = ff_sql::validate_no_complex_queries(&stmts) {
+            let code = match &e {
+                ff_sql::SqlError::CteNotAllowed { .. } => "S005",
+                ff_sql::SqlError::DerivedTableNotAllowed => "S006",
+                ff_sql::SqlError::SelectStarNotAllowed => "S009",
+                _ => "S004",
+            };
+            ctx.error(code, e.to_string(), Some(model.path.display().to_string()));
+            sql_errors += 1;
+            continue;
         }
+
+        let deps = ff_sql::extract_dependencies(&stmts);
+        let (model_deps, _, unknown_deps) = ff_sql::extractor::categorize_dependencies_with_unknown(
+            deps,
+            known_models,
+            external_tables,
+        );
+
+        for unknown in &unknown_deps {
+            ctx.warning(
+                "W003",
+                format!(
+                    "Unknown dependency '{}' in model '{}'. Not defined as a model or source.",
+                    unknown, name
+                ),
+                Some(model.path.display().to_string()),
+            );
+        }
+
+        dependencies.insert(name.clone(), model_deps);
     }
 
     if sql_errors == 0 {
@@ -718,6 +719,65 @@ fn validate_contracts(
     Ok(())
 }
 
+/// Check a single column for governance violations (G001/G002/G003).
+fn check_column_governance(
+    column: &ff_core::model::SchemaColumnDef,
+    model_name: &str,
+    file_path: &str,
+    require_classification: bool,
+    ctx: &mut ValidationContext,
+) -> usize {
+    let mut issues = 0;
+
+    if require_classification && column.classification.is_none() {
+        ctx.warning(
+            "G001",
+            format!(
+                "Column '{}' in model '{}' has no data classification",
+                column.name, model_name
+            ),
+            Some(file_path.to_string()),
+        );
+        issues += 1;
+    }
+
+    if column.classification == Some(ff_core::model::DataClassification::Pii)
+        && column.description.is_none()
+    {
+        ctx.warning(
+            "G002",
+            format!(
+                "PII column '{}' in model '{}' has no description",
+                column.name, model_name
+            ),
+            Some(file_path.to_string()),
+        );
+        issues += 1;
+    }
+
+    if column.classification == Some(ff_core::model::DataClassification::Pii) {
+        let has_not_null = column.tests.iter().any(|t| {
+            matches!(
+                t,
+                ff_core::model::TestDefinition::Simple(name) if name == "not_null"
+            )
+        });
+        if !has_not_null {
+            ctx.warning(
+                "G003",
+                format!(
+                    "PII column '{}' in model '{}' is missing not_null test",
+                    column.name, model_name
+                ),
+                Some(file_path.to_string()),
+            );
+            issues += 1;
+        }
+    }
+
+    issues
+}
+
 /// Validate data governance rules
 ///
 /// Checks:
@@ -739,54 +799,8 @@ fn validate_governance(project: &Project, models: &[String], ctx: &mut Validatio
         let file_path = model.path.with_extension("yml").display().to_string();
 
         for column in &schema.columns {
-            // G001: Missing classification (when require_classification is true)
-            if require_classification && column.classification.is_none() {
-                ctx.warning(
-                    "G001",
-                    format!(
-                        "Column '{}' in model '{}' has no data classification",
-                        column.name, name
-                    ),
-                    Some(file_path.clone()),
-                );
-                governance_issues += 1;
-            }
-
-            // G002: PII column has no description
-            if column.classification == Some(ff_core::model::DataClassification::Pii)
-                && column.description.is_none()
-            {
-                ctx.warning(
-                    "G002",
-                    format!(
-                        "PII column '{}' in model '{}' has no description",
-                        column.name, name
-                    ),
-                    Some(file_path.clone()),
-                );
-                governance_issues += 1;
-            }
-
-            // G003: PII column missing not_null test
-            if column.classification == Some(ff_core::model::DataClassification::Pii) {
-                let has_not_null = column.tests.iter().any(|t| {
-                    matches!(
-                        t,
-                        ff_core::model::TestDefinition::Simple(name) if name == "not_null"
-                    )
-                });
-                if !has_not_null {
-                    ctx.warning(
-                        "G003",
-                        format!(
-                            "PII column '{}' in model '{}' is missing not_null test",
-                            column.name, name
-                        ),
-                        Some(file_path.clone()),
-                    );
-                    governance_issues += 1;
-                }
-            }
+            governance_issues +=
+                check_column_governance(column, name, &file_path, require_classification, ctx);
         }
     }
 

@@ -1,0 +1,11 @@
+name: sa_duckdb_pass_syntax
+version: "1.0.0"
+model_paths: ["models"]
+source_paths: ["sources"]
+target_path: "target"
+materialization: view
+schema: analytics
+dialect: duckdb
+database:
+  type: duckdb
+  path: "target/dev.duckdb"

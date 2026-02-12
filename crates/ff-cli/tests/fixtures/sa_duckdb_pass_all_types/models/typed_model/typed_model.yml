@@ -1,0 +1,26 @@
+version: 1
+name: typed_model
+description: "Comprehensive type coverage for DuckDB types"
+columns:
+  - name: tiny
+    data_type: TINYINT
+  - name: small
+    data_type: SMALLINT
+  - name: med
+    data_type: INTEGER
+  - name: big
+    data_type: BIGINT
+  - name: f
+    data_type: FLOAT
+  - name: d
+    data_type: DOUBLE
+  - name: dec
+    data_type: DECIMAL(10,2)
+  - name: s
+    data_type: VARCHAR
+  - name: b
+    data_type: BOOLEAN
+  - name: dt
+    data_type: DATE
+  - name: ts
+    data_type: TIMESTAMP

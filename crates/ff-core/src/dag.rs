@@ -51,12 +51,10 @@ impl ModelDag {
     pub fn build(dependencies: &HashMap<String, Vec<String>>) -> CoreResult<Self> {
         let mut dag = Self::new();
 
-        // First add all models as nodes
         for model in dependencies.keys() {
             dag.add_model(model);
         }
 
-        // Then add edges for dependencies
         for (model, deps) in dependencies {
             for dep in deps {
                 // Only add edge if the dependency is also a model (not external)
@@ -66,7 +64,6 @@ impl ModelDag {
             }
         }
 
-        // Validate no cycles
         dag.validate()?;
 
         Ok(dag)
@@ -77,7 +74,6 @@ impl ModelDag {
         match toposort(&self.graph, None) {
             Ok(_) => Ok(()),
             Err(cycle) => {
-                // Find the cycle path
                 let cycle_str = self.find_cycle_path(cycle.node_id());
                 Err(CoreError::CircularDependency { cycle: cycle_str })
             }
@@ -257,7 +253,6 @@ impl ModelDag {
             selected.extend(self.descendants(&model_name));
         }
 
-        // Return in topological order
         let order = self.topological_order()?;
         let selected_set: std::collections::HashSet<_> = selected.into_iter().collect();
         Ok(order

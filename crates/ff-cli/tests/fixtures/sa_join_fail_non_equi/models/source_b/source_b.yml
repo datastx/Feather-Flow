@@ -1,0 +1,8 @@
+version: 1
+name: source_b
+description: "Source B with val"
+columns:
+  - name: id
+    data_type: INTEGER
+  - name: val
+    data_type: INTEGER
