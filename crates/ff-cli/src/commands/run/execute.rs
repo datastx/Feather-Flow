@@ -99,7 +99,15 @@ async fn run_single_model(
 
     let result = if is_wap {
         let Some(ws) = wap_schema else {
-            unreachable!("is_wap is only true when wap_schema.is_some()")
+            // Defensive: is_wap guard above checks is_some(), but avoid panic in production
+            let duration = model_start.elapsed();
+            return ModelRunResult {
+                model: name.to_string(),
+                status: RunStatus::Error,
+                materialization: compiled.materialization.to_string(),
+                duration_secs: duration.as_secs_f64(),
+                error: Some("WAP schema unexpectedly missing".to_string()),
+            };
         };
         execute_wap(
             db,
@@ -620,14 +628,23 @@ async fn execute_models_parallel(
                     Some(s) => format!("{}.{}", s, result.model),
                     None => result.model.clone(),
                 };
-                let row_count = ctx
+                let row_count = match ctx
                     .db
                     .query_count(&format!(
                         "SELECT 1 FROM {}",
                         quote_qualified(&qualified_name)
                     ))
                     .await
-                    .ok();
+                {
+                    Ok(count) => Some(count),
+                    Err(e) => {
+                        eprintln!(
+                            "[warn] Failed to get row count for {}: {}",
+                            qualified_name, e
+                        );
+                        None
+                    }
+                };
                 update_state_for_model(
                     state_file,
                     &result.model,

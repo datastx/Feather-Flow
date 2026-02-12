@@ -366,7 +366,7 @@ impl Selector {
                         // Compare SQL content by reading the reference source file
                         // For simplicity, we compare the raw SQL from current model
                         // against what we can infer changed
-                        self.is_model_modified(model, ref_model)
+                        Self::is_model_modified(model, ref_model)
                     } else {
                         // If not in reference, it's also considered "modified" (new)
                         true
@@ -394,11 +394,7 @@ impl Selector {
     }
 
     /// Check if a model has been modified compared to reference
-    fn is_model_modified(
-        &self,
-        current: &Model,
-        reference: &crate::manifest::ManifestModel,
-    ) -> bool {
+    fn is_model_modified(current: &Model, reference: &crate::manifest::ManifestModel) -> bool {
         // Compare by checking if dependencies changed
         let current_deps: HashSet<String> =
             current.depends_on.iter().map(|m| m.to_string()).collect();

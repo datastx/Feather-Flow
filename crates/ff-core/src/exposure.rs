@@ -216,8 +216,8 @@ pub fn discover_exposures(paths: &[impl AsRef<Path>]) -> CoreResult<Vec<Exposure
                         Ok(exposure) => exposures.push(exposure),
                         Err(e) => {
                             // Log warning but don't fail - file might not be an exposure
-                            eprintln!(
-                                "[warn] Failed to load exposure from {}: {}",
+                            log::warn!(
+                                "Failed to load exposure from {}: {}",
                                 file_path.display(),
                                 e
                             );

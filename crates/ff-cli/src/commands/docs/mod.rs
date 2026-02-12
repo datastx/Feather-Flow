@@ -1,6 +1,6 @@
 //! Docs command implementation - Generate and serve documentation
 
-pub(crate) mod data;
+pub(super) mod data;
 mod generate;
 #[cfg(feature = "docs-serve")]
 mod serve;

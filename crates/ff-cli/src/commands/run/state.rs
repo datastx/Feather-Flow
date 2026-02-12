@@ -16,16 +16,16 @@ use super::compile::CompiledModel;
 
 /// Run result for a single model
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct ModelRunResult {
-    pub(crate) model: String,
-    pub(crate) status: RunStatus,
-    pub(crate) materialization: String,
-    pub(crate) duration_secs: f64,
-    pub(crate) error: Option<String>,
+pub(super) struct ModelRunResult {
+    pub(super) model: String,
+    pub(super) status: RunStatus,
+    pub(super) materialization: String,
+    pub(super) duration_secs: f64,
+    pub(super) error: Option<String>,
 }
 
 /// Run results output file format
-pub(crate) type RunResults = CommandResults<ModelRunResult>;
+pub(super) type RunResults = CommandResults<ModelRunResult>;
 
 /// Compute a hash of the project configuration for resume validation
 pub(super) fn compute_config_hash(project: &Project) -> String {
@@ -127,7 +127,7 @@ pub(super) fn compute_smart_skips(
 }
 
 /// Compute schema checksum for a model (from its YAML schema)
-pub(crate) fn compute_schema_checksum(
+pub(super) fn compute_schema_checksum(
     name: &str,
     compiled_models: &HashMap<String, CompiledModel>,
 ) -> Option<String> {
@@ -147,7 +147,7 @@ pub(crate) fn compute_schema_checksum(
 }
 
 /// Compute input checksums for a model (upstream model SQL checksums)
-pub(crate) fn compute_input_checksums(
+pub(super) fn compute_input_checksums(
     name: &str,
     compiled_models: &HashMap<String, CompiledModel>,
 ) -> HashMap<String, String> {
@@ -168,7 +168,7 @@ pub(crate) fn compute_input_checksums(
 }
 
 /// Update state file entry for a successfully-run model
-pub(crate) fn update_state_for_model(
+pub(super) fn update_state_for_model(
     state_file: &mut StateFile,
     name: &str,
     compiled: &CompiledModel,
@@ -236,7 +236,7 @@ pub(super) fn find_affected_exposures(
         .map(|exposure| {
             (
                 exposure.name.clone(),
-                format!("{}", exposure.exposure_type),
+                exposure.exposure_type.to_string(),
                 exposure.depends_on.clone(),
             )
         })

@@ -276,7 +276,11 @@ impl Snapshot {
     }
 
     /// Generate SQL to detect changed records based on strategy
-    pub fn changed_records_sql(&self, source_alias: &str, snapshot_alias: &str) -> String {
+    pub fn changed_records_sql(
+        &self,
+        source_alias: &str,
+        snapshot_alias: &str,
+    ) -> Result<String, CoreError> {
         let src_alias = quote_ident(source_alias);
         let snap_alias = quote_ident(snapshot_alias);
         let unique_key_conditions: Vec<String> = self
@@ -291,10 +295,14 @@ impl Snapshot {
 
         let change_condition = match self.config.strategy {
             SnapshotStrategy::Timestamp => {
-                // Timestamp strategy requires updated_at to be set (validated in SnapshotConfig::validate)
-                let updated_at_col = self.config.updated_at.as_deref().expect(
-                    "Timestamp strategy requires updated_at (should be caught by validation)",
-                );
+                let Some(updated_at_col) = self.config.updated_at.as_deref() else {
+                    return Err(CoreError::ConfigInvalid {
+                        message: format!(
+                            "Snapshot '{}' with timestamp strategy is missing 'updated_at' column",
+                            self.config.name
+                        ),
+                    });
+                };
                 let updated_at = quote_ident(updated_at_col);
                 let dbt_updated_at = quote_ident(SCD_UPDATED_AT);
                 format!("{src_alias}.{updated_at} > {snap_alias}.{dbt_updated_at}")
@@ -313,7 +321,7 @@ impl Snapshot {
             }
         };
 
-        format!(
+        Ok(format!(
             "SELECT {source}.* \
              FROM {source} AS {src_alias} \
              INNER JOIN ({current}) AS {snap_alias} \
@@ -325,7 +333,7 @@ impl Snapshot {
             snap_alias = snap_alias,
             conditions = unique_key_conditions.join(" AND "),
             change_condition = change_condition,
-        )
+        ))
     }
 
     /// Generate SQL to detect hard deletes (records missing from source)
@@ -621,5 +629,27 @@ snapshots:
 
         assert_eq!(snapshots.len(), 1);
         assert_eq!(snapshots[0].name, "customer_history");
+    }
+
+    #[test]
+    fn test_changed_records_sql_timestamp_missing_updated_at_returns_error() {
+        let config = SnapshotConfig {
+            name: "bad_snapshot".to_string(),
+            source: "raw.customers".to_string(),
+            unique_key: vec!["id".to_string()],
+            strategy: SnapshotStrategy::Timestamp,
+            updated_at: None, // Missing updated_at
+            check_cols: Vec::new(),
+            invalidate_hard_deletes: false,
+            schema: None,
+            description: None,
+            tags: Vec::new(),
+        };
+
+        let snapshot = Snapshot::new(config, std::path::PathBuf::from("test.yml"));
+        let result = snapshot.changed_records_sql("src", "snap");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("missing 'updated_at'"), "Got: {}", err_msg);
     }
 }

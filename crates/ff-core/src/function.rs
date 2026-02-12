@@ -6,6 +6,7 @@
 
 use crate::error::{CoreError, CoreResult};
 use crate::function_name::FunctionName;
+use crate::serde_helpers::default_true;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -91,10 +92,6 @@ pub struct FunctionConfig {
     /// Whether the function is deterministic (default: true)
     #[serde(default = "default_true")]
     pub deterministic: bool,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 /// YAML schema for a function definition file

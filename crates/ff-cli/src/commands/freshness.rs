@@ -54,7 +54,11 @@ pub async fn execute(args: &FreshnessArgs, global: &GlobalArgs) -> Result<()> {
     match args.output {
         CliOutput::Table => print_table(&results),
         CliOutput::Json => {
-            println!("{}", serde_json::to_string_pretty(&results)?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&results)
+                    .context("Failed to serialize freshness results")?
+            );
         }
     }
 

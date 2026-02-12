@@ -246,9 +246,14 @@ impl ProjectLineage {
                         .map(|s| s.as_str())
                         .unwrap_or(source_table);
 
-                    if known_models.contains(resolved_table) {
+                    // Case-insensitive model matching: find the original-case
+                    // model name for consistent edge creation
+                    let matched_model = known_models
+                        .iter()
+                        .find(|m| m.eq_ignore_ascii_case(resolved_table));
+                    if let Some(source_model) = matched_model {
                         new_edges.push(LineageEdge {
-                            source_model: resolved_table.to_string(),
+                            source_model: source_model.clone(),
                             source_column: source_ref.column.clone(),
                             target_model: target_model.clone(),
                             target_column: col_lineage.output_column.clone(),

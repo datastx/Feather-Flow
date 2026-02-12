@@ -9,7 +9,7 @@ use std::sync::Arc;
 use super::compile::CompiledModel;
 
 /// Execute an incremental model with schema change handling
-pub(crate) async fn execute_incremental(
+pub(super) async fn execute_incremental(
     db: &Arc<dyn Database>,
     table_name: &str,
     compiled: &CompiledModel,
@@ -155,7 +155,7 @@ async fn execute_strategy(
 /// 4. If tests pass: DROP prod + CTAS from wap to prod
 /// 5. If tests fail: keep wap table, return error
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn execute_wap(
+pub(super) async fn execute_wap(
     db: &Arc<dyn Database>,
     name: &str,
     qualified_name: &str,

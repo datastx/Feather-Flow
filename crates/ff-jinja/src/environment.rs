@@ -22,6 +22,14 @@ pub struct JinjaEnvironment<'a> {
     config_capture: ConfigCapture,
 }
 
+impl std::fmt::Debug for JinjaEnvironment<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JinjaEnvironment")
+            .field("env", &"<Environment>")
+            .finish()
+    }
+}
+
 impl<'a> JinjaEnvironment<'a> {
     /// Create a new Jinja environment with variables from config
     pub fn new(vars: &HashMap<String, serde_yaml::Value>) -> Self {
@@ -129,43 +137,39 @@ impl<'a> JinjaEnvironment<'a> {
         Ok((rendered, config))
     }
 
-    /// Get the captured config values from the last render
-    pub fn get_captured_config(&self) -> HashMap<String, Value> {
-        // Poisoned mutex recovery: these getters read non-critical config
-        // metadata. If a panic poisoned the lock, we still want to return
-        // the inner data rather than propagate the poison.
+    /// Acquire the config capture lock, recovering from poison.
+    ///
+    /// Poisoned mutex recovery: these getters read non-critical config
+    /// metadata. If a panic poisoned the lock, we still want to return
+    /// the inner data rather than propagate the poison.
+    fn read_config(&self) -> std::sync::MutexGuard<'_, HashMap<String, Value>> {
         self.config_capture
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .clone()
+    }
+
+    /// Get the captured config values from the last render
+    pub fn get_captured_config(&self) -> HashMap<String, Value> {
+        self.read_config().clone()
     }
 
     /// Extract materialization from captured config
     pub fn get_materialization(&self) -> Option<String> {
-        // Poisoned mutex recovery — see get_captured_config comment
-        self.config_capture
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
+        self.read_config()
             .get("materialized")
             .and_then(|v| v.as_str().map(String::from))
     }
 
     /// Extract schema from captured config
     pub fn get_schema(&self) -> Option<String> {
-        // Poisoned mutex recovery — see get_captured_config comment
-        self.config_capture
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
+        self.read_config()
             .get("schema")
             .and_then(|v| v.as_str().map(String::from))
     }
 
     /// Extract tags from captured config
     pub fn get_tags(&self) -> Vec<String> {
-        // Poisoned mutex recovery — see get_captured_config comment
-        self.config_capture
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
+        self.read_config()
             .get("tags")
             .and_then(|v| {
                 // Try to iterate over the value if it's a sequence

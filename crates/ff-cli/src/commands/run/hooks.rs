@@ -63,7 +63,7 @@ pub(super) async fn create_schemas(
 /// Uses simple string replacement rather than full Jinja rendering because
 /// hooks only support the `this` variable and the cost of a full template
 /// engine round-trip is unnecessary here.
-pub(crate) async fn execute_hooks(
+pub(super) async fn execute_hooks(
     db: &Arc<dyn Database>,
     hooks: &[String],
     qualified_name: &str,
@@ -82,7 +82,7 @@ pub(crate) async fn execute_hooks(
 /// Returns Ok(Some(result)) if contract validation was performed,
 /// Ok(None) if no contract was defined,
 /// Err if contract was enforced and violations were found.
-pub(crate) async fn validate_model_contract(
+pub(super) async fn validate_model_contract(
     db: &Arc<dyn Database>,
     model_name: &str,
     qualified_name: &str,

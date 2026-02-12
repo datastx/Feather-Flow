@@ -766,7 +766,12 @@ impl Model {
         self.config.wap.unwrap_or(false)
     }
 
-    /// Get all dependencies (both model and external)
+    /// Get all dependencies (both model and external) as plain strings.
+    ///
+    /// Note: this erases the distinction between `ModelName` and `TableName`,
+    /// returning both as `String`. Callers that need to distinguish between
+    /// model dependencies and external table dependencies should use
+    /// `depends_on` and `external_deps` fields directly.
     pub fn all_dependencies(&self) -> HashSet<String> {
         let mut deps: HashSet<String> = self.depends_on.iter().map(|m| m.to_string()).collect();
         deps.extend(self.external_deps.iter().map(|t| t.to_string()));

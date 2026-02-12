@@ -161,9 +161,16 @@ pub(crate) fn yaml_to_json(yaml: &serde_yaml::Value) -> serde_json::Value {
             if let Some(i) = n.as_i64() {
                 serde_json::Value::Number(serde_json::Number::from(i))
             } else if let Some(f) = n.as_f64() {
-                serde_json::Number::from_f64(f)
-                    .map(serde_json::Value::Number)
-                    .unwrap_or(serde_json::Value::Null)
+                match serde_json::Number::from_f64(f) {
+                    Some(num) => serde_json::Value::Number(num),
+                    None => {
+                        log::warn!(
+                            "YAML number {} is NaN or Infinity; converting to JSON null",
+                            f
+                        );
+                        serde_json::Value::Null
+                    }
+                }
             } else {
                 serde_json::Value::Null
             }

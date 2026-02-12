@@ -15,7 +15,11 @@ static DANGEROUS_KEYWORDS_RE: LazyLock<Regex> = LazyLock::new(|| {
         .expect("hardcoded regex is valid")
 });
 
-/// Error type for test SQL generation
+/// Error type for test SQL generation.
+///
+/// Currently has a single variant for invalid thresholds. Structured as an enum
+/// to allow extending with additional error kinds (e.g. custom test resolution
+/// failures) without breaking the public API.
 #[derive(Error, Debug)]
 pub enum TestGenError {
     /// Invalid threshold value (NaN or Infinity)
@@ -77,6 +81,10 @@ pub fn generate_accepted_values_test(
     values: &[String],
     quote: bool,
 ) -> String {
+    if values.is_empty() {
+        // Empty values list means every row fails — return all rows
+        return format!("SELECT * FROM {}", quote_qualified(table));
+    }
     let formatted_values: Vec<String> = if quote {
         values
             .iter()
@@ -205,6 +213,12 @@ fn generate_sql_for_test_type(
         }
         TestType::MinValue { value } => generate_min_value_test(table, column, *value)
             .unwrap_or_else(|e| {
+                log::warn!(
+                    "min_value test for {}.{} has invalid threshold: {}",
+                    table,
+                    column,
+                    e
+                );
                 // Return SQL that yields one row so the test FAILS instead of silently passing
                 format!(
                     "SELECT '{}' AS error",
@@ -213,6 +227,12 @@ fn generate_sql_for_test_type(
             }),
         TestType::MaxValue { value } => generate_max_value_test(table, column, *value)
             .unwrap_or_else(|e| {
+                log::warn!(
+                    "max_value test for {}.{} has invalid threshold: {}",
+                    table,
+                    column,
+                    e
+                );
                 format!(
                     "SELECT '{}' AS error",
                     escape_sql_string(&format!("ERROR: invalid threshold value: {}", e))
