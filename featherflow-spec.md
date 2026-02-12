@@ -2137,10 +2137,10 @@ Errors include relevant context:
 | Progress Indicators | 1 | Done |
 | Verbose Mode | 1 | Done |
 | Exposure Definitions | 2 | Done |
-| Data Diff / Compare | 2 | Done |
+| ~~Data Diff / Compare~~ | - | Removed |
 | Model Ownership and Metadata | 3 | Done |
 
-**Key Files**: `custom_tests.rs`, `config.rs`, `exposure.rs`, `diff.rs`, `model.rs`
+**Key Files**: `custom_tests.rs`, `config.rs`, `exposure.rs`, `model.rs`
 
 ### Phase C: Advanced Features (v1.2.0) - COMPLETE
 
@@ -2281,15 +2281,6 @@ filters:
 Commands:
 - `ff metric` - List all metrics
 - Metrics generate SQL for BI tools
-
-### Data Diff (Feature 13)
-
-Compare model output between environments:
-
-```bash
-ff diff fct_orders --compare-to /path/to/prod.duckdb
-ff diff fct_orders --columns order_id,total_amount --compare-to prod.duckdb
-```
 
 ### Model Versioning (Feature 9)
 

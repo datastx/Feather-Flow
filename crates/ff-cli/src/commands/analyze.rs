@@ -57,14 +57,17 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
     // Build lineage
     let mut project_lineage = ProjectLineage::new();
     for (name, model) in &project.models {
-        if let Ok(rendered) = jinja.render(&model.raw_sql) {
-            if let Ok(stmts) = parser.parse(&rendered) {
-                if let Some(stmt) = stmts.first() {
-                    if let Some(lineage) = extract_column_lineage(stmt, name) {
-                        project_lineage.add_model_lineage(lineage);
-                    }
-                }
-            }
+        let Ok(rendered) = jinja.render(&model.raw_sql) else {
+            continue;
+        };
+        let Ok(stmts) = parser.parse(&rendered) else {
+            continue;
+        };
+        let Some(stmt) = stmts.first() else {
+            continue;
+        };
+        if let Some(lineage) = extract_column_lineage(stmt, name) {
+            project_lineage.add_model_lineage(lineage);
         }
     }
     project_lineage.resolve_edges(&known_models);
@@ -154,7 +157,12 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
             .collect();
 
         // Rebuild schema catalog from context for DataFusion propagation
-        let mut plan_catalog: SchemaCatalog = ctx.yaml_schemas().clone();
+        let yaml_string_map: SchemaCatalog = ctx
+            .yaml_schemas()
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect();
+        let mut plan_catalog: SchemaCatalog = yaml_string_map.clone();
         for ext in &external_tables {
             if !plan_catalog.contains_key(ext) {
                 plan_catalog.insert(ext.clone(), RelSchema::empty());
@@ -165,7 +173,7 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
         let propagation = propagate_schemas(
             &order,
             &sql_sources,
-            ctx.yaml_schemas(),
+            &yaml_string_map,
             &plan_catalog,
             &user_fn_stubs,
         );

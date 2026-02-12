@@ -1155,6 +1155,7 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr",
  "datafusion-sql",
+ "ff-analysis",
  "ff-core",
  "ff-sql",
  "log",

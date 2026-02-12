@@ -124,42 +124,30 @@ fn print_table(lineage: &ProjectLineage, args: &LineageArgs) {
         return;
     }
 
-    let edges: Vec<_> = if let (Some(model), Some(column)) = (&args.model, &args.column) {
-        match args.direction {
-            LineageDirection::Upstream => lineage
-                .trace_column(model, column)
-                .into_iter()
-                .cloned()
-                .collect(),
-            LineageDirection::Downstream => lineage
-                .column_consumers(model, column)
-                .into_iter()
-                .cloned()
-                .collect(),
-            LineageDirection::Both => {
-                let mut all: Vec<_> = lineage
-                    .trace_column(model, column)
-                    .into_iter()
-                    .cloned()
-                    .collect();
-                all.extend(lineage.column_consumers(model, column).into_iter().cloned());
-                all
+    let edges: Vec<&ff_sql::LineageEdge> =
+        if let (Some(model), Some(column)) = (&args.model, &args.column) {
+            match args.direction {
+                LineageDirection::Upstream => lineage.trace_column(model, column),
+                LineageDirection::Downstream => lineage.column_consumers(model, column),
+                LineageDirection::Both => {
+                    let mut all = lineage.trace_column(model, column);
+                    all.extend(lineage.column_consumers(model, column));
+                    all
+                }
             }
-        }
-    } else if let Some(model) = &args.model {
-        lineage
-            .edges
-            .iter()
-            .filter(|e| match args.direction {
-                LineageDirection::Upstream => e.target_model == *model,
-                LineageDirection::Downstream => e.source_model == *model,
-                LineageDirection::Both => e.target_model == *model || e.source_model == *model,
-            })
-            .cloned()
-            .collect()
-    } else {
-        lineage.edges.clone()
-    };
+        } else if let Some(model) = &args.model {
+            lineage
+                .edges
+                .iter()
+                .filter(|e| match args.direction {
+                    LineageDirection::Upstream => e.target_model == *model,
+                    LineageDirection::Downstream => e.source_model == *model,
+                    LineageDirection::Both => e.target_model == *model || e.source_model == *model,
+                })
+                .collect()
+        } else {
+            lineage.edges.iter().collect()
+        };
 
     if edges.is_empty() {
         println!("No matching lineage edges found.");

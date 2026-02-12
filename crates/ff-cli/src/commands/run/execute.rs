@@ -8,17 +8,30 @@ use ff_db::Database;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 
 use crate::cli::{OutputFormat, RunArgs};
 use crate::commands::common::RunStatus;
 
 use super::compile::CompiledModel;
 use super::hooks::{execute_hooks, validate_model_contract};
-use super::incremental::{execute_incremental, execute_wap};
+use super::incremental::{execute_incremental, execute_wap, WapParams};
 use super::state::{update_state_for_model, ModelRunResult};
+
+/// Acquire a mutex lock, recovering from a poisoned state if necessary.
+///
+/// If a previous thread panicked while holding the lock the mutex becomes
+/// poisoned.  This helper logs a warning and recovers the inner data so
+/// execution can continue.
+fn recover_mutex<T>(lock: &Mutex<T>) -> MutexGuard<'_, T> {
+    lock.lock().unwrap_or_else(|p| {
+        eprintln!("[warn] mutex poisoned, recovering");
+        p.into_inner()
+    })
+}
 
 /// Shared context for model execution that groups related parameters
 pub(super) struct ExecutionContext<'a> {
@@ -109,15 +122,15 @@ async fn run_single_model(
                 error: Some("WAP schema unexpectedly missing".to_string()),
             };
         };
-        execute_wap(
+        execute_wap(&WapParams {
             db,
             name,
-            &qualified_name,
-            ws,
+            qualified_name: &qualified_name,
+            wap_schema: ws,
             compiled,
             full_refresh,
-            &exec_sql,
-        )
+            exec_sql: &exec_sql,
+        })
         .await
     } else {
         match compiled.materialization {
@@ -302,7 +315,7 @@ async fn execute_models_sequential(
                 .template(
                     "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}",
                 )
-                .unwrap_or_else(|_| ProgressStyle::default_bar())
+                .expect("static progress bar template is valid")
                 .progress_chars("#>-"),
         );
         Some(pb)
@@ -471,7 +484,7 @@ async fn execute_models_parallel(
                 .template(
                     "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({msg})",
                 )
-                .unwrap_or_else(|_| ProgressStyle::default_bar())
+                .expect("static progress bar template is valid")
                 .progress_chars("#>-"),
         );
         Some(Arc::new(pb))
@@ -492,7 +505,7 @@ async fn execute_models_parallel(
         }
 
         // Spawn tasks for all models in this level
-        let mut handles = Vec::new();
+        let mut set = JoinSet::new();
 
         for name in level_models {
             // Check if we should stop before starting a new model
@@ -513,20 +526,14 @@ async fn execute_models_parallel(
             // Skip ephemeral models (they're inlined during compilation)
             if compiled.materialization == Materialization::Ephemeral {
                 success_count.fetch_add(1, Ordering::SeqCst);
-                run_results
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .push(ModelRunResult {
-                        model: name.clone(),
-                        status: RunStatus::Success,
-                        materialization: "ephemeral".to_string(),
-                        duration_secs: 0.0,
-                        error: None,
-                    });
-                completed
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .insert(name);
+                recover_mutex(&run_results).push(ModelRunResult {
+                    model: name.clone(),
+                    status: RunStatus::Success,
+                    materialization: "ephemeral".to_string(),
+                    duration_secs: 0.0,
+                    error: None,
+                });
+                recover_mutex(&completed).insert(name);
                 continue;
             }
             // Clone fields needed inside the spawned task
@@ -543,19 +550,19 @@ async fn execute_models_parallel(
             let completed = Arc::clone(&completed);
             let progress = progress.clone();
 
-            let handle = tokio::spawn(async move {
+            set.spawn(async move {
                 // Acquire semaphore permit
                 let _permit = match semaphore.acquire().await {
                     Ok(permit) => permit,
                     Err(_) => {
                         // Semaphore was closed -- treat as cancellation
-                        return (name, None);
+                        return;
                     }
                 };
 
                 // Check if we should stop
                 if stopped.load(Ordering::SeqCst) && fail_fast {
-                    return (name, None);
+                    return;
                 }
 
                 let model_result = run_single_model(
@@ -578,29 +585,19 @@ async fn execute_models_parallel(
                     success_count.fetch_add(1, Ordering::SeqCst);
                 }
 
-                run_results
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .push(model_result);
-                completed
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .insert(name.clone());
+                recover_mutex(&run_results).push(model_result);
+                recover_mutex(&completed).insert(name.clone());
 
                 // Update progress bar
                 if let Some(ref pb) = progress {
                     pb.inc(1);
                 }
-
-                (name, Some(()))
             });
-
-            handles.push(handle);
         }
 
         // Wait for all models in this level to complete
-        for handle in handles {
-            if let Err(e) = handle.await {
+        while let Some(res) = set.join_next().await {
+            if let Err(e) = res {
                 eprintln!("[warn] Task join error: {}", e);
             }
         }
@@ -611,10 +608,7 @@ async fn execute_models_parallel(
         pb.finish_with_message("Complete");
     }
 
-    let final_results = run_results
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .clone();
+    let final_results = recover_mutex(&run_results).clone();
     let final_success = success_count.load(Ordering::SeqCst);
     let final_failure = failure_count.load(Ordering::SeqCst);
     let final_stopped = stopped.load(Ordering::SeqCst);
@@ -687,8 +681,8 @@ fn compute_execution_levels(
                     current_level.push(name.clone());
                 }
             } else {
-                log::warn!(
-                    "Model '{}' in execution order but not in compiled models",
+                eprintln!(
+                    "[warn] Model '{}' in execution order but not in compiled models",
                     name
                 );
             }

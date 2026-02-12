@@ -375,56 +375,29 @@ async fn check_sources_freshness(
             quote_qualified(&qualified_name)
         );
 
-        let result = match db.query_one(&query).await {
-            Ok(Some(loaded_at_str)) => {
-                let loaded_at = common::parse_timestamp(&loaded_at_str);
+        let result =
+            build_source_freshness_result(db, source, table, freshness_config, now, &query).await;
 
-                match loaded_at {
-                    Some(loaded_at_ts) => {
-                        let age = now.signed_duration_since(loaded_at_ts);
-                        let age_secs = age.num_seconds().max(0) as u64;
+        results.push(result);
+    }
 
-                        // Calculate thresholds in seconds
-                        let warn_secs = freshness_config
-                            .warn_after
-                            .as_ref()
-                            .map(|p| period_to_seconds(p.count, &p.period));
-                        let error_secs = freshness_config
-                            .error_after
-                            .as_ref()
-                            .map(|p| period_to_seconds(p.count, &p.period));
+    results
+}
 
-                        let status =
-                            determine_status_seconds(Some(age_secs), warn_secs, error_secs);
+async fn build_source_freshness_result(
+    db: &Arc<dyn Database>,
+    source: &SourceFile,
+    table: &ff_core::source::SourceTable,
+    freshness_config: &ff_core::model::FreshnessConfig,
+    now: chrono::DateTime<chrono::Utc>,
+    query: &str,
+) -> FreshnessResult {
+    let query_result = db.query_one(query).await;
 
-                        FreshnessResult {
-                            resource_type: "source".to_string(),
-                            name: source.name.clone(),
-                            table_name: Some(table.name.clone()),
-                            status,
-                            loaded_at: Some(loaded_at_str),
-                            age_seconds: Some(age_secs),
-                            age_human: Some(format_duration(age_secs)),
-                            warn_threshold_seconds: warn_secs,
-                            error_threshold_seconds: error_secs,
-                            error: None,
-                        }
-                    }
-                    None => FreshnessResult {
-                        resource_type: "source".to_string(),
-                        name: source.name.clone(),
-                        table_name: Some(table.name.clone()),
-                        status: FreshnessStatus::RuntimeError,
-                        loaded_at: Some(loaded_at_str.clone()),
-                        age_seconds: None,
-                        age_human: None,
-                        warn_threshold_seconds: None,
-                        error_threshold_seconds: None,
-                        error: Some(format!("Could not parse timestamp: {}", loaded_at_str)),
-                    },
-                }
-            }
-            Ok(None) => FreshnessResult {
+    let loaded_at_str = match query_result {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            return FreshnessResult {
                 resource_type: "source".to_string(),
                 name: source.name.clone(),
                 table_name: Some(table.name.clone()),
@@ -435,8 +408,10 @@ async fn check_sources_freshness(
                 warn_threshold_seconds: None,
                 error_threshold_seconds: None,
                 error: Some("No data in table or NULL loaded_at".to_string()),
-            },
-            Err(e) => FreshnessResult {
+            };
+        }
+        Err(e) => {
+            return FreshnessResult {
                 resource_type: "source".to_string(),
                 name: source.name.clone(),
                 table_name: Some(table.name.clone()),
@@ -447,13 +422,51 @@ async fn check_sources_freshness(
                 warn_threshold_seconds: None,
                 error_threshold_seconds: None,
                 error: Some(e.to_string()),
-            },
+            };
+        }
+    };
+
+    let Some(loaded_at_ts) = common::parse_timestamp(&loaded_at_str) else {
+        return FreshnessResult {
+            resource_type: "source".to_string(),
+            name: source.name.clone(),
+            table_name: Some(table.name.clone()),
+            status: FreshnessStatus::RuntimeError,
+            loaded_at: Some(loaded_at_str.clone()),
+            age_seconds: None,
+            age_human: None,
+            warn_threshold_seconds: None,
+            error_threshold_seconds: None,
+            error: Some(format!("Could not parse timestamp: {}", loaded_at_str)),
         };
+    };
 
-        results.push(result);
+    let age = now.signed_duration_since(loaded_at_ts);
+    let age_secs = age.num_seconds().max(0) as u64;
+
+    let warn_secs = freshness_config
+        .warn_after
+        .as_ref()
+        .map(|p| period_to_seconds(p.count, &p.period));
+    let error_secs = freshness_config
+        .error_after
+        .as_ref()
+        .map(|p| period_to_seconds(p.count, &p.period));
+
+    let status = determine_status_seconds(Some(age_secs), warn_secs, error_secs);
+
+    FreshnessResult {
+        resource_type: "source".to_string(),
+        name: source.name.clone(),
+        table_name: Some(table.name.clone()),
+        status,
+        loaded_at: Some(loaded_at_str),
+        age_seconds: Some(age_secs),
+        age_human: Some(format_duration(age_secs)),
+        warn_threshold_seconds: warn_secs,
+        error_threshold_seconds: error_secs,
+        error: None,
     }
-
-    results
 }
 
 // ---------------------------------------------------------------------------
@@ -602,62 +615,5 @@ fn print_table(results: &[FreshnessResult]) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_timestamp_various_formats() {
-        assert!(common::parse_timestamp("2024-01-15 10:30:00").is_some());
-        assert!(common::parse_timestamp("2024-01-15 10:30:00.123").is_some());
-        assert!(common::parse_timestamp("2024-01-15T10:30:00Z").is_some());
-        assert!(common::parse_timestamp("2024-01-15T10:30:00.123Z").is_some());
-    }
-
-    #[test]
-    fn test_period_to_seconds() {
-        assert_eq!(period_to_seconds(30, &FreshnessPeriod::Minute), 1800);
-        assert_eq!(period_to_seconds(2, &FreshnessPeriod::Hour), 7200);
-        assert_eq!(period_to_seconds(1, &FreshnessPeriod::Day), 86400);
-    }
-
-    #[test]
-    fn test_determine_status_seconds() {
-        // No thresholds - always pass
-        assert_eq!(
-            determine_status_seconds(Some(100), None, None),
-            FreshnessStatus::Pass
-        );
-
-        // Under both thresholds
-        assert_eq!(
-            determine_status_seconds(Some(60), Some(120), Some(240)),
-            FreshnessStatus::Pass
-        );
-
-        // Over warn but under error
-        assert_eq!(
-            determine_status_seconds(Some(180), Some(120), Some(240)),
-            FreshnessStatus::Warn
-        );
-
-        // Over error
-        assert_eq!(
-            determine_status_seconds(Some(300), Some(120), Some(240)),
-            FreshnessStatus::Error
-        );
-
-        // No age data
-        assert_eq!(
-            determine_status_seconds(None, Some(120), Some(240)),
-            FreshnessStatus::RuntimeError
-        );
-    }
-
-    #[test]
-    fn test_format_duration() {
-        assert_eq!(format_duration(30), "30s");
-        assert_eq!(format_duration(90), "1m 30s");
-        assert_eq!(format_duration(7200), "2h 0m");
-        assert_eq!(format_duration(172800), "2d 0h");
-    }
-}
+#[path = "freshness_test.rs"]
+mod tests;

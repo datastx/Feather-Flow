@@ -8,7 +8,7 @@ mod commands;
 
 use cli::Cli;
 use commands::{
-    analyze, clean, compile, diff, docs, freshness, function, init, lineage, ls, parse, run,
+    analyze, clean, compile, docs, freshness, function, init, lineage, ls, parse, run,
     run_operation, seed, snapshot, test, validate,
 };
 
@@ -30,7 +30,6 @@ async fn main() {
         cli::Commands::Snapshot(args) => snapshot::execute(args, &cli.global).await,
         cli::Commands::RunOperation(args) => run_operation::execute(args, &cli.global).await,
         cli::Commands::Freshness(args) => freshness::execute(args, &cli.global).await,
-        cli::Commands::Diff(args) => diff::execute(args, &cli.global).await,
         cli::Commands::Lineage(args) => lineage::execute(args, &cli.global).await,
         cli::Commands::Analyze(args) => analyze::execute(args, &cli.global).await,
         cli::Commands::Function(args) => function::execute(args, &cli.global).await,

@@ -161,28 +161,10 @@ impl Manifest {
     pub fn add_source(&mut self, source: &SourceFile) {
         for table in &source.tables {
             let key = format!("{}.{}", source.name, table.name);
-
-            let columns: Vec<ManifestSourceColumn> = table
+            let columns = table
                 .columns
                 .iter()
-                .map(|col| {
-                    let tests: Vec<String> = col
-                        .tests
-                        .iter()
-                        .map(|t| match t {
-                            crate::model::TestDefinition::Simple(name) => name.clone(),
-                            crate::model::TestDefinition::Parameterized(map) => {
-                                map.keys().next().cloned().unwrap_or_default()
-                            }
-                        })
-                        .collect();
-                    ManifestSourceColumn {
-                        name: col.name.clone(),
-                        data_type: col.data_type.clone(),
-                        description: col.description.clone(),
-                        tests,
-                    }
-                })
+                .map(Self::source_column_to_manifest)
                 .collect();
 
             let manifest_source = ManifestSource {
@@ -196,6 +178,25 @@ impl Manifest {
             };
 
             self.sources.insert(key, manifest_source);
+        }
+    }
+
+    fn source_column_to_manifest(col: &crate::source::SourceColumn) -> ManifestSourceColumn {
+        let tests = col.tests.iter().map(Self::test_definition_name).collect();
+        ManifestSourceColumn {
+            name: col.name.clone(),
+            data_type: col.data_type.clone(),
+            description: col.description.clone(),
+            tests,
+        }
+    }
+
+    fn test_definition_name(t: &crate::model::TestDefinition) -> String {
+        match t {
+            crate::model::TestDefinition::Simple(name) => name.clone(),
+            crate::model::TestDefinition::Parameterized(map) => {
+                map.keys().next().cloned().unwrap_or_default()
+            }
         }
     }
 
@@ -381,39 +382,5 @@ fn chrono_lite_now() -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::model_name::ModelName;
-    use std::collections::HashSet;
-
-    #[test]
-    fn test_manifest_serialization() {
-        let mut manifest = Manifest::new("test_project");
-
-        let model = Model {
-            name: ModelName::new("test_model"),
-            path: std::path::PathBuf::from("models/test_model.sql"),
-            raw_sql: "SELECT 1".to_string(),
-            compiled_sql: Some("SELECT 1".to_string()),
-            config: Default::default(),
-            depends_on: HashSet::from_iter(vec![ModelName::new("other_model")]),
-            external_deps: HashSet::new(),
-            schema: None,
-            base_name: None,
-            version: None,
-        };
-
-        manifest.add_model(
-            &model,
-            Path::new("target/compiled/test_project/models/test_model.sql"),
-            Materialization::View,
-            None,
-        );
-
-        let json = serde_json::to_string(&manifest).unwrap();
-        let loaded: Manifest = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(loaded.project_name, "test_project");
-        assert_eq!(loaded.model_count(), 1);
-    }
-}
+#[path = "manifest_test.rs"]
+mod tests;
