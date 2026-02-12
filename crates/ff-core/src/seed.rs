@@ -172,7 +172,7 @@ impl Seed {
 }
 
 /// Discover all seed files in the given paths
-pub fn discover_seeds(seed_paths: &[PathBuf]) -> Vec<Seed> {
+pub fn discover_seeds(seed_paths: &[PathBuf]) -> Result<Vec<Seed>, CoreError> {
     let mut seeds = Vec::new();
 
     for seed_path in seed_paths {
@@ -180,26 +180,30 @@ pub fn discover_seeds(seed_paths: &[PathBuf]) -> Vec<Seed> {
             continue;
         }
 
-        discover_seeds_recursive(seed_path, &mut seeds);
+        discover_seeds_recursive(seed_path, &mut seeds)?;
     }
 
     // Sort seeds by name for consistent ordering
     seeds.sort_by(|a, b| a.name.cmp(&b.name));
-    seeds
+    Ok(seeds)
 }
 
 /// Recursively discover CSV files in a directory
-fn discover_seeds_recursive(dir: &Path, seeds: &mut Vec<Seed>) {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(_) => return,
-    };
+fn discover_seeds_recursive(dir: &Path, seeds: &mut Vec<Seed>) -> Result<(), CoreError> {
+    let entries = std::fs::read_dir(dir).map_err(|e| CoreError::IoWithPath {
+        path: dir.display().to_string(),
+        source: e,
+    })?;
 
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = entry.map_err(|e| CoreError::IoWithPath {
+            path: dir.display().to_string(),
+            source: e,
+        })?;
         let path = entry.path();
 
         if path.is_dir() {
-            discover_seeds_recursive(&path, seeds);
+            discover_seeds_recursive(&path, seeds)?;
         } else if path.extension().is_some_and(|e| e == "csv") {
             match Seed::from_file(path) {
                 Ok(seed) => seeds.push(seed),
@@ -209,6 +213,8 @@ fn discover_seeds_recursive(dir: &Path, seeds: &mut Vec<Seed>) {
             }
         }
     }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -306,7 +312,7 @@ column_types:
         std::fs::write(seeds_dir.join("a.csv"), "id\n1").unwrap();
         std::fs::write(seeds_dir.join("b.csv"), "id\n2").unwrap();
 
-        let seeds = discover_seeds(&[seeds_dir]);
+        let seeds = discover_seeds(&[seeds_dir]).unwrap();
         assert_eq!(seeds.len(), 2);
         assert_eq!(seeds[0].name, "a");
         assert_eq!(seeds[1].name, "b");

@@ -22,6 +22,7 @@ pub mod query_comment;
 pub mod run_state;
 pub mod seed;
 pub mod selector;
+pub(crate) mod serde_helpers;
 pub mod snapshot;
 pub mod source;
 pub mod sql_utils;

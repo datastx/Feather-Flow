@@ -82,10 +82,22 @@ fn validate_no_derived_tables(statements: &[Statement]) -> SqlResult<()> {
 
 /// Recursively check a query's FROM clause for derived tables
 fn check_query_for_derived_tables(query: &Query) -> SqlResult<()> {
-    if let SetExpr::Select(select) = query.body.as_ref() {
-        for table in &select.from {
-            check_table_with_joins_for_derived(table)?;
+    check_set_expr_for_derived_tables(query.body.as_ref())
+}
+
+/// Recursively check a SetExpr for derived tables in FROM clauses
+fn check_set_expr_for_derived_tables(expr: &SetExpr) -> SqlResult<()> {
+    match expr {
+        SetExpr::Select(select) => {
+            for table in &select.from {
+                check_table_with_joins_for_derived(table)?;
+            }
         }
+        SetExpr::SetOperation { left, right, .. } => {
+            check_set_expr_for_derived_tables(left)?;
+            check_set_expr_for_derived_tables(right)?;
+        }
+        _ => {}
     }
     Ok(())
 }

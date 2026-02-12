@@ -1,6 +1,7 @@
 //! Configuration types and parsing for featherflow.yml
 
 use crate::error::{CoreError, CoreResult};
+use crate::serde_helpers::default_true;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -549,10 +550,6 @@ impl Default for QueryCommentConfig {
     fn default() -> Self {
         Self { enabled: true }
     }
-}
-
-fn default_true() -> bool {
-    true
 }
 
 #[cfg(test)]

@@ -9,15 +9,15 @@ use std::collections::{HashMap, HashSet};
 /// Context object passed to analysis passes, providing access to project metadata
 pub struct AnalysisContext {
     /// The loaded project
-    pub project: Project,
+    pub(crate) project: Project,
     /// Model dependency DAG
-    pub dag: ModelDag,
+    pub(crate) dag: ModelDag,
     /// Schemas derived from YAML column definitions
-    pub yaml_schemas: HashMap<String, RelSchema>,
+    pub(crate) yaml_schemas: HashMap<String, RelSchema>,
     /// Column-level lineage from ff-sql
-    pub lineage: ProjectLineage,
+    pub(crate) lineage: ProjectLineage,
     /// Set of known model names
-    pub known_models: HashSet<String>,
+    pub(crate) known_models: HashSet<String>,
 }
 
 impl AnalysisContext {
@@ -41,5 +41,30 @@ impl AnalysisContext {
     /// Get the YAML-declared schema for a model, if available
     pub fn model_schema(&self, model_name: &str) -> Option<&RelSchema> {
         self.yaml_schemas.get(model_name)
+    }
+
+    /// Access the loaded project
+    pub fn project(&self) -> &Project {
+        &self.project
+    }
+
+    /// Access the model dependency DAG
+    pub fn dag(&self) -> &ModelDag {
+        &self.dag
+    }
+
+    /// Access column-level lineage
+    pub fn lineage(&self) -> &ProjectLineage {
+        &self.lineage
+    }
+
+    /// Access the set of known model names
+    pub fn known_models(&self) -> &HashSet<String> {
+        &self.known_models
+    }
+
+    /// Access the YAML-derived schemas map
+    pub fn yaml_schemas(&self) -> &HashMap<String, RelSchema> {
+        &self.yaml_schemas
     }
 }

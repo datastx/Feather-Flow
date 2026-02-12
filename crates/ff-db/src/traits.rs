@@ -86,12 +86,26 @@ impl CsvLoadOptions {
 }
 
 /// Core database operations: execute SQL, query, check existence.
+///
+/// # Trusted-input contract
+///
+/// [`execute`](Self::execute) and [`execute_batch`](Self::execute_batch) pass
+/// `sql` directly to the database engine without sanitisation. Callers **must**
+/// ensure the SQL is constructed from trusted sources (compiled model SQL,
+/// internal framework queries, or parameterised values that have already been
+/// validated/escaped). Never pass unsanitised user input to these methods.
 #[async_trait]
 pub trait DatabaseCore: Send + Sync {
-    /// Execute SQL that modifies data, returns affected rows
+    /// Execute SQL that modifies data, returns affected rows.
+    ///
+    /// The caller is responsible for ensuring `sql` does not contain untrusted input.
+    /// See the trait-level safety contract for details.
     async fn execute(&self, sql: &str) -> DbResult<usize>;
 
-    /// Execute multiple SQL statements
+    /// Execute multiple SQL statements in a single batch.
+    ///
+    /// The caller is responsible for ensuring `sql` does not contain untrusted input.
+    /// See the trait-level safety contract for details.
     async fn execute_batch(&self, sql: &str) -> DbResult<()>;
 
     /// Check if a table or view exists

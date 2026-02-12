@@ -90,11 +90,8 @@ fn extract_join_condition(
     match constraint {
         JoinConstraint::On(expr) => Some(expr.clone()),
         JoinConstraint::Using(columns) => {
-            if columns.is_empty() {
-                return None;
-            }
             let mut iter = columns.iter();
-            let first = iter.next().unwrap();
+            let first = iter.next()?;
             let mut condition = build_eq_for_object_name(first, left_table, right_table);
             for col in iter {
                 condition = sqlparser::ast::Expr::BinaryOp {

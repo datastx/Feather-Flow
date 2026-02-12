@@ -147,25 +147,25 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
         let sql_sources: HashMap<String, String> = order
             .iter()
             .filter_map(|name| {
-                let model = ctx.project.models.get(name.as_str())?;
+                let model = ctx.project().models.get(name.as_str())?;
                 let rendered = jinja.render(&model.raw_sql).ok()?;
                 Some((name.clone(), rendered))
             })
             .collect();
 
         // Rebuild schema catalog from context for DataFusion propagation
-        let mut plan_catalog: SchemaCatalog = ctx.yaml_schemas.clone();
+        let mut plan_catalog: SchemaCatalog = ctx.yaml_schemas().clone();
         for ext in &external_tables {
             if !plan_catalog.contains_key(ext) {
                 plan_catalog.insert(ext.clone(), RelSchema::empty());
             }
         }
 
-        let user_fn_stubs = super::common::build_user_function_stubs(&ctx.project);
+        let user_fn_stubs = super::common::build_user_function_stubs(ctx.project());
         let propagation = propagate_schemas(
             &order,
             &sql_sources,
-            &ctx.yaml_schemas,
+            ctx.yaml_schemas(),
             &plan_catalog,
             &user_fn_stubs,
         );

@@ -376,14 +376,14 @@ pub(crate) fn build_exposure_doc(exposure: &Exposure) -> ExposureDoc {
     ExposureDoc {
         name: exposure.name.clone(),
         description: exposure.description.clone(),
-        exposure_type: format!("{}", exposure.exposure_type),
+        exposure_type: exposure.exposure_type.to_string(),
         owner: ExposureOwnerDoc {
             name: exposure.owner.name.clone(),
             email: exposure.owner.email.clone(),
         },
         depends_on: exposure.depends_on.clone(),
         url: exposure.url.clone(),
-        maturity: format!("{}", exposure.maturity),
+        maturity: exposure.maturity.to_string(),
         tags: exposure.tags.clone(),
     }
 }

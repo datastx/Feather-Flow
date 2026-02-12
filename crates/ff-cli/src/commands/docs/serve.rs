@@ -156,8 +156,12 @@ pub async fn execute(args: &DocsServeArgs, global: &GlobalArgs) -> Result<()> {
 
     println!("Press Ctrl+C to stop.\n");
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("Failed to bind to {}:{}", args.host, args.port))?;
+    axum::serve(listener, app)
+        .await
+        .context("HTTP server error")?;
 
     Ok(())
 }

@@ -310,16 +310,32 @@ impl Manifest {
         self.models.insert(model.name.clone(), manifest_model);
     }
 
-    /// Save the manifest to a file
+    /// Save the manifest to a file atomically
+    ///
+    /// Uses write-to-temp-then-rename pattern to prevent corruption.
     pub fn save(&self, path: &Path) -> crate::error::CoreResult<()> {
         let json = serde_json::to_string_pretty(self)?;
 
         // Create parent directories if needed
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+            std::fs::create_dir_all(parent).map_err(|e| crate::error::CoreError::IoWithPath {
+                path: parent.display().to_string(),
+                source: e,
+            })?;
         }
 
-        std::fs::write(path, json)?;
+        let temp_path = path.with_extension("json.tmp");
+        std::fs::write(&temp_path, &json).map_err(|e| crate::error::CoreError::IoWithPath {
+            path: temp_path.display().to_string(),
+            source: e,
+        })?;
+        std::fs::rename(&temp_path, path).map_err(|e| {
+            let _ = std::fs::remove_file(&temp_path);
+            crate::error::CoreError::IoWithPath {
+                path: path.display().to_string(),
+                source: e,
+            }
+        })?;
         Ok(())
     }
 

@@ -134,8 +134,11 @@ impl TestSummary {
     }
 
     /// Check if all tests passed
+    ///
+    /// Returns `false` when no tests were run (`total == 0`) to avoid
+    /// falsely reporting success on an empty test suite.
     pub fn all_passed(&self) -> bool {
-        self.failed == 0 && self.errors == 0
+        self.total > 0 && self.failed == 0 && self.errors == 0
     }
 }
 
@@ -161,11 +164,17 @@ impl<'a> TestRunner<'a> {
                     TestResult::pass(test, duration)
                 } else {
                     // Fetch sample failing rows (up to 5)
-                    let sample_failures = self
-                        .db
-                        .query_sample_rows(&test.sql, 5)
-                        .await
-                        .unwrap_or_default();
+                    let sample_failures = match self.db.query_sample_rows(&test.sql, 5).await {
+                        Ok(rows) => rows,
+                        Err(e) => {
+                            log::warn!(
+                                "Failed to fetch sample failures for test '{}': {}",
+                                test.name,
+                                e
+                            );
+                            Vec::new()
+                        }
+                    };
                     TestResult::fail(test, count, sample_failures, duration)
                 }
             }

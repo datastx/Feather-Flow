@@ -231,6 +231,9 @@ impl ModelDag {
 
     /// Get models matching a selector pattern
     /// Supports: +model (ancestors + model), model+ (model + descendants)
+    ///
+    /// **Deprecated**: Prefer [`Selector`](crate::selector::Selector) for richer
+    /// selection syntax (tags, paths, state-based selectors).
     pub fn select(&self, selector: &str) -> CoreResult<Vec<String>> {
         let (prefix, model_name, suffix) = Self::parse_selector(selector);
 

@@ -15,7 +15,7 @@ pub async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
     let db = common::create_database_connection(&project.config, global.target.as_deref())?;
 
     let seed_paths = project.config.seed_paths_absolute(&project.root);
-    let all_seeds = discover_seeds(&seed_paths);
+    let all_seeds = discover_seeds(&seed_paths)?;
 
     if all_seeds.is_empty() {
         println!("No seed files found in seed_paths.");

@@ -9,6 +9,10 @@ pub enum JinjaError {
     #[error("[J001] Jinja render error: {0}")]
     RenderError(String),
 
+    /// Template render error with source (J001)
+    #[error("[J001] Jinja render error: {0}")]
+    RenderErrorSource(#[source] minijinja::Error),
+
     /// Internal error
     #[error("Internal error: {0}")]
     Internal(String),
@@ -19,6 +23,6 @@ pub type JinjaResult<T> = Result<T, JinjaError>;
 
 impl From<minijinja::Error> for JinjaError {
     fn from(err: minijinja::Error) -> Self {
-        JinjaError::RenderError(err.to_string())
+        JinjaError::RenderErrorSource(err)
     }
 }

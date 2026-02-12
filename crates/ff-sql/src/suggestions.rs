@@ -308,6 +308,10 @@ fn extract_columns_from_expr(expr: &Expr) -> Vec<String> {
                         | sqlparser::ast::FunctionArg::Named {
                             arg: sqlparser::ast::FunctionArgExpr::Expr(e),
                             ..
+                        }
+                        | sqlparser::ast::FunctionArg::ExprNamed {
+                            arg: sqlparser::ast::FunctionArgExpr::Expr(e),
+                            ..
                         } => {
                             columns.extend(extract_columns_from_expr(e));
                         }

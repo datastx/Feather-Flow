@@ -13,26 +13,37 @@ use std::sync::Mutex;
 
 use ff_core::snapshot::{SCD_ID, SCD_UPDATED_AT, SCD_VALID_FROM, SCD_VALID_TO};
 
-/// Check whether a SQL string contains a semicolon outside of single-quoted literals.
+/// Check whether a SQL string contains a semicolon outside of quoted contexts.
 ///
-/// Walks the string tracking quote depth so that values like `'foo;bar'` are
-/// not treated as statement terminators. Escaped quotes (`''`) inside literals
-/// are handled correctly.
+/// Walks the string tracking both single-quoted literals (`'foo;bar'`) and
+/// double-quoted identifiers (`"my;table"`) so that semicolons inside either
+/// are not treated as statement terminators. Escaped quotes (`''` / `""`)
+/// inside their respective contexts are handled correctly.
 fn contains_unquoted_semicolon(sql: &str) -> bool {
-    let mut in_quote = false;
+    let mut in_single = false;
+    let mut in_double = false;
     let mut chars = sql.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
-            '\'' if in_quote => {
-                // Two consecutive quotes inside a literal = escaped quote
+            '\'' if in_single => {
+                // Two consecutive single quotes inside a literal = escaped quote
                 if chars.peek() == Some(&'\'') {
-                    chars.next(); // skip the second quote
+                    chars.next();
                 } else {
-                    in_quote = false;
+                    in_single = false;
                 }
             }
-            '\'' => in_quote = true,
-            ';' if !in_quote => return true,
+            '\'' if !in_double => in_single = true,
+            '"' if in_double => {
+                // Two consecutive double quotes inside an identifier = escaped quote
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                } else {
+                    in_double = false;
+                }
+            }
+            '"' if !in_single => in_double = true,
+            ';' if !in_single && !in_double => return true,
             _ => {}
         }
     }
@@ -208,8 +219,12 @@ const ALLOWED_SQL_TYPES: &[&str] = &[
     "UINTEGER",
     "USMALLINT",
     "UTINYINT",
+    "UHUGEINT",
     "UUID",
     "VARCHAR",
+    "BITSTRING",
+    "TIMETZ",
+    "TIMESTAMP_TZ",
     "STRUCT",
     "MAP",
     "LIST",
@@ -256,6 +271,14 @@ fn validate_sql_type(type_str: &str) -> DbResult<()> {
 /// and release before any await.
 pub struct DuckDbBackend {
     conn: Mutex<Connection>,
+}
+
+impl std::fmt::Debug for DuckDbBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DuckDbBackend")
+            .field("conn", &"<Mutex<Connection>>")
+            .finish()
+    }
 }
 
 impl DuckDbBackend {
@@ -1085,11 +1108,35 @@ impl DatabaseSnapshot for DuckDbBackend {
 #[async_trait]
 impl DatabaseFunction for DuckDbBackend {
     async fn deploy_function(&self, create_sql: &str) -> DbResult<()> {
+        // Validate: must start with CREATE and not contain unquoted semicolons
+        // (multi-statement injection)
+        let trimmed = create_sql.trim_start();
+        if !trimmed.to_uppercase().starts_with("CREATE") {
+            return Err(DbError::ExecutionError(
+                "deploy_function: SQL must start with CREATE".to_string(),
+            ));
+        }
+        if contains_unquoted_semicolon(create_sql) {
+            return Err(DbError::ExecutionError(
+                "deploy_function: SQL must not contain multiple statements".to_string(),
+            ));
+        }
         self.execute_sync(create_sql)?;
         Ok(())
     }
 
     async fn drop_function(&self, drop_sql: &str) -> DbResult<()> {
+        let trimmed = drop_sql.trim_start();
+        if !trimmed.to_uppercase().starts_with("DROP") {
+            return Err(DbError::ExecutionError(
+                "drop_function: SQL must start with DROP".to_string(),
+            ));
+        }
+        if contains_unquoted_semicolon(drop_sql) {
+            return Err(DbError::ExecutionError(
+                "drop_function: SQL must not contain multiple statements".to_string(),
+            ));
+        }
         self.execute_sync(drop_sql)?;
         Ok(())
     }
