@@ -12,7 +12,7 @@ diagnostics expected) and **should-fail** (specific diagnostics must fire).
 1. [Fixture Architecture](#1-fixture-architecture)
 2. [Type Inference Pass (A001-A005)](#2-type-inference-pass-a001-a005)
 3. [Nullability Pass (A010-A012)](#3-nullability-pass-a010-a012)
-4. [Unused Column Pass (A020-A021)](#4-unused-column-pass-a020-a021)
+4. [Unused Column Pass (A020)](#4-unused-column-pass-a020)
 5. [Join Key Pass (A030-A033)](#5-join-key-pass-a030-a033)
 6. [Cross-Model Consistency (A040-A041)](#6-cross-model-consistency-a040-a041)
 7. [Schema Propagation Engine](#7-schema-propagation-engine)
@@ -221,7 +221,7 @@ Fixture categories:
 
 ---
 
-## 4. Unused Column Pass (A020-A021)
+## 4. Unused Column Pass (A020)
 
 ### A020 — Column Produced but Never Consumed Downstream
 
@@ -243,21 +243,7 @@ Fixture categories:
 | 4.1.7 | All columns consumed by downstream | No A020 |
 | 4.1.8 | Single model in project | No A020 (terminal) |
 
-### A021 — SELECT * Blocks Detection
-
-**Should-fail: SELECT * in non-terminal model emits A021 (Info)**
-
-| # | Test Case | SQL Pattern | Expected |
-|---|-----------|-------------|----------|
-| 4.2.1 | SELECT * in staging model | `stg: SELECT * FROM raw`. `fct` depends on `stg` | A021 on `stg` |
-| 4.2.2 | SELECT t.* in non-terminal | `stg: SELECT t.* FROM raw t`. Has dependents | A021 on `stg` |
-
-**Should-pass: no SELECT * or terminal model**
-
-| # | Test Case | Expected |
-|---|-----------|----------|
-| 4.2.3 | Explicit column list in non-terminal | No A021 |
-| 4.2.4 | SELECT * in terminal model | No A021 (terminal skipped) |
+> **Note:** A021 (SELECT * blocks detection) has been retired. DataFusion expands `SELECT *` into explicit column references during planning, so unused column detection works transparently with wildcards.
 
 ---
 
@@ -723,7 +709,7 @@ Test that `is_compatible_with` returns correct results for all pairings:
 | 13.6 | `sa_fail_type_mismatch_chain` | src → stg → fct | 3 models | A002 in stg UNION, A030 in fct JOIN |
 | 13.7 | `sa_fail_null_violations` | src → stg → fct | 3 models | A010, A011, A041 across chain |
 | 13.8 | `sa_fail_schema_drift` | src → stg → fct | 3 models | A040 extras and missing |
-| 13.9 | `sa_fail_unused_columns` | src → stg → fct | 3 models | A020, A021 in staging layer |
+| 13.9 | `sa_fail_unused_columns` | src → stg → fct | 3 models | A020 in staging layer |
 | 13.10 | `sa_fail_join_issues` | src → stg → fct | 3 models | A030, A032, A033 in fact layer |
 | 13.11 | `sa_fail_mixed_diagnostics` | 6+ models | Various | Multiple diagnostic codes across DAG |
 | 13.12 | `sa_pass_all_duckdb_types` | src → model | 2 models | Every DuckDB type in YAML + SQL |
@@ -1332,7 +1318,7 @@ vars:
 |----------|-------------|-------------|-------|
 | Type Inference (A001-A005) | 16 | 19 | 35 |
 | Nullability (A010-A012) | 10 | 11 | 21 |
-| Unused Columns (A020-A021) | 5 | 4 | 9 |
+| Unused Columns (A020) | 3 | 5 | 8 |
 | Join Keys (A030-A033) | 8 | 12 | 20 |
 | Cross-Model (A040-A041) | 5 | 11 | 16 |
 | Schema Propagation | 10 | 4 | 14 |

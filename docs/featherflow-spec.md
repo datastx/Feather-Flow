@@ -155,14 +155,14 @@ columns: ...
 **How it works**:
 1. Parse each SQL file using the configured dialect
 2. Walk the AST to find all table references (FROM, JOIN)
-3. Reject CTEs (S005), FROM-clause derived tables (S006), and SELECT * (S009) as hard errors
+3. Reject CTEs (S005) and FROM-clause derived tables (S006) as hard errors
 4. Match remaining tables against known models, seeds, and sources
 5. Build a dependency graph for execution ordering
 
 **Edge cases handled**:
 - CTEs produce hard error `S005 CteNotAllowed` — each transform must be its own model
 - FROM-clause derived tables (subqueries in FROM) produce hard error `S006 DerivedTableNotAllowed`
-- `SELECT *` and `table.*` wildcards produce hard error `S009 SelectStarNotAllowed` — every model must explicitly list its columns
+- `SELECT *` and `table.*` wildcards are allowed — DataFusion expands them during static analysis
 - Scalar subqueries in SELECT, WHERE, and HAVING clauses remain allowed
 - Schema-qualified names are resolved correctly
 - Case-insensitive matching for table names
@@ -795,7 +795,6 @@ For each model, documentation includes:
 | Model directory mismatch (E012) | Error | SQL file stem doesn't match directory name |
 | CTE not allowed (S005) | Error | CTEs prohibited — each transform must be its own model |
 | Derived table not allowed (S006) | Error | FROM-clause subqueries prohibited |
-| SELECT * not allowed (S009) | Error | SELECT * prohibited — explicitly list all columns |
 | Static analysis: schema mismatch (SA01) | Error | Column missing/extra, type mismatch, or nullability mismatch vs YAML |
 | Orphaned schema files | Warning | Schema without corresponding model |
 | Undeclared external tables | Warning | References to unknown tables |
@@ -1040,7 +1039,7 @@ The analyze command runs two tiers of passes:
 | `type_inference` | A001-A005 | Type checking: unknown types, UNION mismatches, numeric ops on strings, lossy casts |
 | `nullability` | A010-A012 | Nullable columns from JOINs without null guards, YAML vs inferred nullability |
 | `join_keys` | A030, A032-A033 | Join key type mismatches, cross joins, non-equi joins |
-| `unused_columns` | A020-A021 | Unused columns in downstream models, SELECT * detection |
+| `unused_columns` | A020 | Unused columns in downstream models |
 
 *LogicalPlan-based passes* (DataFusion LogicalPlan):
 | Pass | Diagnostics | Description |
@@ -1126,7 +1125,6 @@ The `propagate_schemas()` function is the core of cross-model analysis:
 | A011 | nullability | YAML NOT NULL vs JOIN-inferred nullable |
 | A012 | nullability | Redundant IS NULL check |
 | A020 | unused_columns | Unused column in downstream models |
-| A021 | unused_columns | SELECT * blocks unused column detection |
 | A030 | join_keys | Join key type mismatch |
 | A032 | join_keys | Cross join detected |
 | A033 | join_keys | Non-equi join detected |
@@ -1852,11 +1850,10 @@ Target-level `wap_schema` > project-level `wap_schema`
 | E020 | StateError | State file corrupted or invalid |
 | S005 | CteNotAllowed | CTEs prohibited — each transform must be its own model |
 | S006 | DerivedTableNotAllowed | FROM-clause subqueries prohibited |
-| S009 | SelectStarNotAllowed | SELECT * prohibited — explicitly list all columns |
 | SA01 | StaticAnalysisError | Schema mismatch: column missing/extra, type mismatch, or nullability mismatch vs YAML |
 | A001-A005 | AnalysisTypeInference | Type inference diagnostics (see Static Analysis Engine) |
 | A010-A012 | AnalysisNullability | Nullability propagation diagnostics |
-| A020-A021 | AnalysisUnusedColumns | Unused column diagnostics |
+| A020 | AnalysisUnusedColumns | Unused column diagnostics |
 | A030-A033 | AnalysisJoinKeys | Join key analysis diagnostics |
 | A040-A041 | AnalysisCrossModel | Cross-model consistency diagnostics (DataFusion) |
 | AE001-AE008 | AnalysisInternalError | Internal analysis errors (lowering, planning, etc.) |
@@ -1943,7 +1940,7 @@ Errors include relevant context:
 |------|----------|
 | Model references itself | Error: circular dependency |
 | CTE in model SQL | Hard error S005 (CteNotAllowed) |
-| SELECT * in model SQL | Hard error S009 (SelectStarNotAllowed) |
+| SELECT * in model SQL | Allowed — DuckDB and DataFusion expand wildcards |
 | Empty SQL file | Error: no SQL statements |
 | Schema file without model | Warning during validation |
 | Model without schema | Error E010 (MissingSchemaFile) — schema file required |

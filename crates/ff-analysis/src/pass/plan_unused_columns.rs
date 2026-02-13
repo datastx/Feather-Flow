@@ -1,8 +1,8 @@
 //! UnusedColumnDetection DagPlanPass — finds columns produced but never consumed downstream (A020)
 //!
-//! Operates on DataFusion LogicalPlans instead of the custom RelOp IR.
-//! A021 (SELECT * blocks detection) is no longer needed because DataFusion
-//! expands `SELECT *` into explicit column references during planning.
+//! Operates on DataFusion LogicalPlans. DataFusion expands `SELECT *` into
+//! explicit column references during planning, so wildcards are handled
+//! transparently without any special-case logic.
 
 use std::collections::{HashMap, HashSet};
 
