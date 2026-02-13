@@ -35,8 +35,8 @@ fn test_function_discovery_sample_project() {
 
     assert_eq!(
         project.functions.len(),
-        2,
-        "Sample project should have 2 functions"
+        3,
+        "Sample project should have 3 functions"
     );
 
     let names: Vec<&str> = project.function_names();
@@ -47,6 +47,10 @@ fn test_function_discovery_sample_project() {
     assert!(
         names.contains(&"safe_divide"),
         "Should find safe_divide function"
+    );
+    assert!(
+        names.contains(&"order_volume_by_status"),
+        "Should find order_volume_by_status table function"
     );
 }
 
@@ -182,8 +186,8 @@ fn test_function_list_command() {
         "Should list safe_divide in output"
     );
     assert!(
-        stdout.contains("2 functions"),
-        "Should show 2 functions count"
+        stdout.contains("3 functions"),
+        "Should show 3 functions count"
     );
 }
 
@@ -210,7 +214,7 @@ fn test_function_list_json_output() {
     assert!(parsed.is_array(), "JSON output should be an array");
 
     let arr = parsed.as_array().unwrap();
-    assert_eq!(arr.len(), 2, "Should have 2 functions in JSON output");
+    assert_eq!(arr.len(), 3, "Should have 3 functions in JSON output");
 }
 
 // ── CLI: ff function show ───────────────────────────────────────────────

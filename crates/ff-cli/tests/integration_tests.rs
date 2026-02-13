@@ -20,7 +20,7 @@ fn test_load_sample_project() {
     let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
 
     assert_eq!(project.config.name, "sample_project");
-    assert_eq!(project.models.len(), 10);
+    assert_eq!(project.models.len(), 11);
     assert!(project.models.contains_key("stg_orders"));
     assert!(project.models.contains_key("stg_customers"));
     assert!(project.models.contains_key("stg_products"));
@@ -31,6 +31,7 @@ fn test_load_sample_project() {
     assert!(project.models.contains_key("dim_customers"));
     assert!(project.models.contains_key("dim_products"));
     assert!(project.models.contains_key("fct_orders"));
+    assert!(project.models.contains_key("rpt_order_volume"));
 }
 
 /// Test parsing and dependency extraction
@@ -1989,7 +1990,15 @@ fn test_analysis_propagation_sample_project() {
     let topo_order = dag.topological_order().unwrap();
 
     let yaml_schemas: SchemaCatalog = catalog.clone();
-    let result = propagate_schemas(&topo_order, &sql_sources, &yaml_schemas, &catalog, &[]);
+    let (user_fn_stubs, user_table_fn_stubs) = build_user_function_stubs_from_project(&project);
+    let result = propagate_schemas(
+        &topo_order,
+        &sql_sources,
+        &yaml_schemas,
+        &catalog,
+        &user_fn_stubs,
+        &user_table_fn_stubs,
+    );
 
     // All models should plan successfully
     assert!(
@@ -2141,7 +2150,15 @@ fn build_analysis_pipeline(fixture_path: &str) -> AnalysisPipeline {
         .map(|(k, v)| (k.to_string(), v.clone()))
         .collect();
 
-    let propagation = propagate_schemas(&topo_order, &sql_sources, &yaml_string_map, &catalog, &[]);
+    let (user_fn_stubs, user_table_fn_stubs) = build_user_function_stubs_from_project(&project);
+    let propagation = propagate_schemas(
+        &topo_order,
+        &sql_sources,
+        &yaml_string_map,
+        &catalog,
+        &user_fn_stubs,
+        &user_table_fn_stubs,
+    );
 
     let order: Vec<String> = topo_order
         .into_iter()
@@ -2178,6 +2195,45 @@ fn run_single_pass(pipeline: &AnalysisPipeline, pass_name: &str) -> Vec<ff_analy
         &pipeline.ctx,
         Some(&filter),
     )
+}
+
+/// Build user function stubs from a Project's discovered functions (mirrors CLI common.rs logic).
+fn build_user_function_stubs_from_project(
+    project: &Project,
+) -> (
+    Vec<ff_analysis::UserFunctionStub>,
+    Vec<ff_analysis::UserTableFunctionStub>,
+) {
+    use ff_core::function::FunctionReturn;
+
+    let mut scalar_stubs = Vec::new();
+    let mut table_stubs = Vec::new();
+    for f in &project.functions {
+        match &f.returns {
+            FunctionReturn::Scalar { data_type } => {
+                let sig = f.signature();
+                if let Some(stub) = ff_analysis::UserFunctionStub::new(
+                    sig.name.to_string(),
+                    sig.arg_types,
+                    data_type.clone(),
+                ) {
+                    scalar_stubs.push(stub);
+                }
+            }
+            FunctionReturn::Table { columns } => {
+                let cols: Vec<(String, String)> = columns
+                    .iter()
+                    .map(|c| (c.name.clone(), c.data_type.clone()))
+                    .collect();
+                if let Some(stub) =
+                    ff_analysis::UserTableFunctionStub::new(f.name.to_string(), cols)
+                {
+                    table_stubs.push(stub);
+                }
+            }
+        }
+    }
+    (scalar_stubs, table_stubs)
 }
 
 fn diagnostics_with_code(
@@ -2277,7 +2333,7 @@ fn test_analysis_sample_project_no_false_diagnostics() {
         "Expected no planning failures, got: {:?}",
         pipeline.propagation.failures
     );
-    assert_eq!(pipeline.propagation.model_plans.len(), 10);
+    assert_eq!(pipeline.propagation.model_plans.len(), 11);
 
     let diagnostics = run_all_passes(&pipeline);
 

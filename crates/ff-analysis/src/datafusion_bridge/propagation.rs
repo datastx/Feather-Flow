@@ -9,7 +9,9 @@ use std::collections::HashMap;
 use datafusion_expr::LogicalPlan;
 
 use crate::datafusion_bridge::planner::sql_to_plan;
-use crate::datafusion_bridge::provider::{FeatherFlowProvider, UserFunctionStub};
+use crate::datafusion_bridge::provider::{
+    FeatherFlowProvider, UserFunctionStub, UserTableFunctionStub,
+};
 use crate::datafusion_bridge::types::arrow_to_sql_type;
 use crate::schema::{RelSchema, SchemaCatalog};
 use crate::types::{Nullability, TypedColumn};
@@ -111,6 +113,7 @@ pub fn propagate_schemas(
     yaml_schemas: &HashMap<String, RelSchema>,
     initial_catalog: &SchemaCatalog,
     user_functions: &[UserFunctionStub],
+    user_table_functions: &[UserTableFunctionStub],
 ) -> PropagationResult {
     let mut catalog = initial_catalog.clone();
     let mut model_plans: HashMap<String, ModelPlanResult> = HashMap::new();
@@ -125,7 +128,11 @@ pub fn propagate_schemas(
             }
         };
 
-        let provider = FeatherFlowProvider::with_user_functions(&catalog, user_functions);
+        let provider = FeatherFlowProvider::with_user_functions(
+            &catalog,
+            user_functions,
+            user_table_functions,
+        );
         match sql_to_plan(sql, &provider) {
             Ok(plan) => {
                 let inferred_schema = extract_schema_from_plan(&plan);
