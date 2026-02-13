@@ -171,6 +171,10 @@ pub enum CoreError {
     /// E018: Unsupported schema version
     #[error("[E018] Unsupported schema version {version}, only version 1 is supported")]
     UnsupportedSchemaVersion { version: u32 },
+
+    /// E019: Empty name where a non-empty name is required
+    #[error("[E019] Empty name: {context}")]
+    EmptyName { context: String },
 }
 
 /// Result type alias for CoreError

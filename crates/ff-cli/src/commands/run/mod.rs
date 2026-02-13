@@ -200,7 +200,7 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     create_schemas(&db, &compiled_models, global).await?;
 
     // Create WAP schema if configured
-    if let Some(ref ws) = wap_schema {
+    if let Some(ws) = wap_schema {
         db.create_schema_if_not_exists(ws)
             .await
             .with_context(|| format!("Failed to create WAP schema: {}", ws))?;
@@ -222,16 +222,14 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
-    // Load state for incremental tracking
     let state_path = project.target_dir().join("state.json");
     let mut state_file = StateFile::load(&state_path).unwrap_or_default();
 
-    // Create run state for tracking this execution
     let selection_str = args.nodes.clone();
     let mut run_state = RunState::new(
         execution_order
             .iter()
-            .map(|s| ModelName::new(s.clone()))
+            .filter_map(|s| ModelName::try_new(s.clone()))
             .collect(),
         selection_str,
         config_hash,
@@ -247,12 +245,12 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         compiled_models: &compiled_models,
         execution_order: &execution_order,
         args,
-        wap_schema: wap_schema.as_deref(),
+        wap_schema,
     };
 
     let (run_results, success_count, failure_count, stopped_early) =
         execute_models_with_state(&exec_ctx, &mut state_file, &mut run_state, &run_state_path)
-            .await;
+            .await?;
 
     // Mark run as completed
     run_state.mark_run_completed();

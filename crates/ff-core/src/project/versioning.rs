@@ -97,8 +97,8 @@ impl Project {
                 if let Some((latest_name, _)) = self.get_latest_version(base_name) {
                     if latest_name != reference {
                         return Some(format!(
-                            "Warning: Model '{}' depends on '{}' which is not the latest version. Latest is '{}'.",
-                            reference, reference, latest_name
+                            "Warning: '{}' is not the latest version. Latest is '{}'.",
+                            reference, latest_name
                         ));
                     }
                 }

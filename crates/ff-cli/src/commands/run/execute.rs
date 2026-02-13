@@ -22,6 +22,32 @@ use super::hooks::{execute_hooks, validate_model_contract};
 use super::incremental::{execute_incremental, execute_wap, WapParams};
 use super::state::{update_state_for_model, ModelRunResult};
 
+/// Create an optional progress bar for model execution.
+fn create_progress_bar(count: usize, quiet: bool, output: &OutputFormat) -> Option<ProgressBar> {
+    if !quiet && *output == OutputFormat::Text {
+        let pb = ProgressBar::new(count as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}",
+                )
+                .expect("static progress bar template is valid")
+                .progress_chars("#>-"),
+        );
+        Some(pb)
+    } else {
+        None
+    }
+}
+
+/// Build a schema-qualified name from an optional schema and a model name.
+fn build_qualified_name(schema: Option<&str>, name: &str) -> String {
+    match schema {
+        Some(s) => format!("{}.{}", s, name),
+        None => name.to_string(),
+    }
+}
+
 /// Acquire a mutex lock, recovering from a poisoned state if necessary.
 ///
 /// If a previous thread panicked while holding the lock the mutex becomes
@@ -81,10 +107,7 @@ async fn run_single_model(
     full_refresh: bool,
     wap_schema: Option<&str>,
 ) -> ModelRunResult {
-    let qualified_name = match &compiled.schema {
-        Some(s) => quote_qualified(&format!("{}.{}", s, name)),
-        None => quote_qualified(name),
-    };
+    let qualified_name = quote_qualified(&build_qualified_name(compiled.schema.as_deref(), name));
 
     let model_start = Instant::now();
 
@@ -244,19 +267,19 @@ pub(super) async fn execute_models_with_state(
     state_file: &mut StateFile,
     run_state: &mut RunState,
     run_state_path: &Path,
-) -> (Vec<ModelRunResult>, usize, usize, bool) {
+) -> anyhow::Result<(Vec<ModelRunResult>, usize, usize, bool)> {
     let (run_results, success_count, failure_count, stopped_early) =
         execute_models(ctx, state_file).await;
 
     for result in &run_results {
         let duration_ms = (result.duration_secs * 1000.0) as u64;
         if matches!(result.status, RunStatus::Success) {
-            run_state.mark_completed(&result.model, duration_ms);
+            run_state.mark_completed(&result.model, duration_ms)?;
         } else {
             run_state.mark_failed(
                 &result.model,
                 result.error.as_deref().unwrap_or("unknown error"),
-            );
+            )?;
         }
     }
 
@@ -264,7 +287,7 @@ pub(super) async fn execute_models_with_state(
         eprintln!("Warning: Failed to save run state: {}", e);
     }
 
-    (run_results, success_count, failure_count, stopped_early)
+    Ok((run_results, success_count, failure_count, stopped_early))
 }
 
 /// Get all transitive dependents of a model
@@ -310,20 +333,7 @@ async fn execute_models_sequential(
         .collect();
     let executable_count = executable_models.len();
 
-    let progress = if !ctx.args.quiet && ctx.args.output == OutputFormat::Text {
-        let pb = ProgressBar::new(executable_count as u64);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template(
-                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}",
-                )
-                .expect("static progress bar template is valid")
-                .progress_chars("#>-"),
-        );
-        Some(pb)
-    } else {
-        None
-    };
+    let progress = create_progress_bar(executable_count, ctx.args.quiet, &ctx.args.output);
 
     let mut executable_idx = 0;
     for name in ctx.execution_order.iter() {
@@ -404,10 +414,7 @@ async fn execute_models_sequential(
             success_count += 1;
 
             // Try to get row count for state tracking (non-blocking)
-            let qualified_name = match &compiled.schema {
-                Some(s) => format!("{}.{}", s, name),
-                None => name.clone(),
-            };
+            let qualified_name = build_qualified_name(compiled.schema.as_deref(), name);
             let row_count = match ctx
                 .db
                 .query_count(&format!(
@@ -426,7 +433,11 @@ async fn execute_models_sequential(
                 }
             };
 
-            update_state_for_model(state_file, name, compiled, ctx.compiled_models, row_count);
+            if let Err(e) =
+                update_state_for_model(state_file, name, compiled, ctx.compiled_models, row_count)
+            {
+                eprintln!("[warn] Failed to update state for '{}': {}", name, e);
+            }
 
             run_results.push(model_result);
         }
@@ -604,10 +615,8 @@ async fn execute_models_parallel(
     for result in &final_results {
         if matches!(result.status, RunStatus::Success) {
             if let Some(compiled) = ctx.compiled_models.get(&result.model) {
-                let qualified_name = match &compiled.schema {
-                    Some(s) => format!("{}.{}", s, result.model),
-                    None => result.model.clone(),
-                };
+                let qualified_name =
+                    build_qualified_name(compiled.schema.as_deref(), &result.model);
                 let row_count = match ctx
                     .db
                     .query_count(&format!(
@@ -625,13 +634,18 @@ async fn execute_models_parallel(
                         None
                     }
                 };
-                update_state_for_model(
+                if let Err(e) = update_state_for_model(
                     state_file,
                     &result.model,
                     compiled,
                     ctx.compiled_models,
                     row_count,
-                );
+                ) {
+                    eprintln!(
+                        "[warn] Failed to update state for '{}': {}",
+                        result.model, e
+                    );
+                }
             }
         }
     }

@@ -1389,14 +1389,14 @@ fn test_run_state_new_and_mark() {
     assert_eq!(state.status, RunStatus::Running);
 
     // Mark model a as completed
-    state.mark_completed("a", 1500);
+    state.mark_completed("a", 1500).unwrap();
     assert_eq!(state.completed_models.len(), 1);
     assert_eq!(state.pending_models.len(), 2);
     assert!(state.is_completed("a"));
     assert!(!state.is_failed("a"));
 
     // Mark model b as failed
-    state.mark_failed("b", "SQL error");
+    state.mark_failed("b", "SQL error").unwrap();
     assert_eq!(state.failed_models.len(), 1);
     assert_eq!(state.pending_models.len(), 1);
     assert!(state.is_failed("b"));
@@ -1420,7 +1420,7 @@ fn test_run_state_persistence() {
         None,
         "hash123".to_string(),
     );
-    state.mark_completed("model_a", 1000);
+    state.mark_completed("model_a", 1000).unwrap();
 
     // Save
     state.save(&state_path).unwrap();
@@ -1448,9 +1448,9 @@ fn test_run_state_models_to_run() {
         "hash".to_string(),
     );
 
-    state.mark_completed("a", 1000);
-    state.mark_completed("b", 2000);
-    state.mark_failed("c", "error");
+    state.mark_completed("a", 1000).unwrap();
+    state.mark_completed("b", 2000).unwrap();
+    state.mark_failed("c", "error").unwrap();
 
     // models_to_run should include failed (c) and pending (d)
     let to_run = state.models_to_run();

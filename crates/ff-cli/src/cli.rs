@@ -70,14 +70,8 @@ pub enum Commands {
     /// Remove generated artifacts
     Clean(CleanArgs),
 
-    /// Execute snapshots (SCD Type 2)
-    Snapshot(SnapshotArgs),
-
     /// Execute a standalone operation (macro that returns SQL)
     RunOperation(RunOperationArgs),
-
-    /// Check model freshness (SLA monitoring)
-    Freshness(FreshnessArgs),
 
     /// Show column-level lineage across models
     Lineage(LineageArgs),
@@ -87,6 +81,9 @@ pub enum Commands {
 
     /// Manage user-defined functions (DuckDB macros)
     Function(FunctionArgs),
+
+    /// Run seeds, models, and tests in a single invocation
+    Build(BuildArgs),
 }
 
 /// Arguments for the parse command
@@ -326,6 +323,46 @@ pub struct SeedArgs {
     pub show_columns: bool,
 }
 
+/// Arguments for the build command
+#[derive(Args, Debug)]
+pub struct BuildArgs {
+    /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
+    #[arg(short = 'n', long)]
+    pub nodes: Option<String>,
+
+    /// Exclude models matching this pattern
+    #[arg(short, long)]
+    pub exclude: Option<String>,
+
+    /// Drop and recreate all models
+    #[arg(long)]
+    pub full_refresh: bool,
+
+    /// Stop on first failure in any phase
+    #[arg(long)]
+    pub fail_fast: bool,
+
+    /// Number of threads for parallel execution (default: 1)
+    #[arg(long, default_value = "1")]
+    pub threads: usize,
+
+    /// Store test failure rows to target/test_failures/
+    #[arg(long)]
+    pub store_failures: bool,
+
+    /// Skip DataFusion static analysis
+    #[arg(long)]
+    pub skip_static_analysis: bool,
+
+    /// Output format
+    #[arg(short, long, value_enum, default_value = "text")]
+    pub output: OutputFormat,
+
+    /// Suppress progress indicators
+    #[arg(short, long)]
+    pub quiet: bool,
+}
+
 /// Arguments for the validate command
 #[derive(Args, Debug)]
 pub struct ValidateArgs {
@@ -418,51 +455,6 @@ pub struct CleanArgs {
     /// Show what would be deleted without actually deleting
     #[arg(long)]
     pub dry_run: bool,
-}
-
-/// Arguments for the freshness command
-#[derive(Args, Debug)]
-pub struct FreshnessArgs {
-    /// Check only sources (default: check both)
-    #[arg(long)]
-    pub sources: bool,
-
-    /// Check only models (default: check both)
-    #[arg(long)]
-    pub models_only: bool,
-
-    /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
-    #[arg(short = 'n', long)]
-    pub nodes: Option<String>,
-
-    /// Output format
-    #[arg(short, long, value_enum, default_value = "table")]
-    pub output: FreshnessOutput,
-
-    /// Write results to target/freshness.json
-    #[arg(long)]
-    pub write_json: bool,
-}
-
-/// Freshness output formats
-#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FreshnessOutput {
-    /// Table format
-    Table,
-    /// JSON output
-    Json,
-}
-
-/// Arguments for the snapshot command
-#[derive(Args, Debug)]
-pub struct SnapshotArgs {
-    /// Snapshot names to run (comma-separated, default: all)
-    #[arg(long)]
-    pub snapshots: Option<String>,
-
-    /// Node selector (names, +node, node+, N+node, node+N)
-    #[arg(short = 'n', long)]
-    pub nodes: Option<String>,
 }
 
 /// Arguments for the run-operation command

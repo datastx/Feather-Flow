@@ -23,7 +23,7 @@ fn test_mark_completed() {
         "abc123".to_string(),
     );
 
-    state.mark_completed("model_a", 1500);
+    state.mark_completed("model_a", 1500).unwrap();
 
     assert_eq!(state.pending_models.len(), 1);
     assert_eq!(state.completed_models.len(), 1);
@@ -39,7 +39,9 @@ fn test_mark_failed() {
         "abc123".to_string(),
     );
 
-    state.mark_failed("model_a", "SQL error: invalid syntax");
+    state
+        .mark_failed("model_a", "SQL error: invalid syntax")
+        .unwrap();
 
     assert_eq!(state.pending_models.len(), 1);
     assert_eq!(state.failed_models.len(), 1);
@@ -59,8 +61,8 @@ fn test_models_to_run() {
         "abc123".to_string(),
     );
 
-    state.mark_completed("model_a", 1000);
-    state.mark_failed("model_b", "error");
+    state.mark_completed("model_a", 1000).unwrap();
+    state.mark_failed("model_b", "error").unwrap();
 
     let to_run = state.models_to_run();
     assert_eq!(to_run.len(), 2);
@@ -78,7 +80,7 @@ fn test_save_and_load() {
         Some("--select +model_b".to_string()),
         "abc123".to_string(),
     );
-    state.mark_completed("model_a", 1500);
+    state.mark_completed("model_a", 1500).unwrap();
 
     state.save(&path).unwrap();
 
@@ -100,9 +102,9 @@ fn test_summary() {
         "abc123".to_string(),
     );
 
-    state.mark_completed("model_a", 1000);
-    state.mark_completed("model_b", 2000);
-    state.mark_failed("model_c", "error");
+    state.mark_completed("model_a", 1000).unwrap();
+    state.mark_completed("model_b", 2000).unwrap();
+    state.mark_failed("model_c", "error").unwrap();
 
     let summary = state.summary();
     assert_eq!(summary.completed, 2);

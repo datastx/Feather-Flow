@@ -4,7 +4,7 @@
 use crate::error::{DbError, DbResult};
 use crate::traits::{
     CsvLoadOptions, DatabaseCore, DatabaseCsv, DatabaseFunction, DatabaseIncremental,
-    DatabaseSchema, DatabaseSnapshot, SnapshotResult,
+    DatabaseSchema,
 };
 use async_trait::async_trait;
 
@@ -134,50 +134,6 @@ impl DatabaseIncremental for SnowflakeBackend {
         _unique_keys: &[String],
     ) -> DbResult<()> {
         Err(not_impl("delete_insert"))
-    }
-}
-
-#[async_trait]
-impl DatabaseSnapshot for SnowflakeBackend {
-    async fn execute_snapshot(
-        &self,
-        _snapshot_table: &str,
-        _source_table: &str,
-        _unique_keys: &[String],
-        _updated_at_column: Option<&str>,
-        _check_cols: Option<&[String]>,
-        _invalidate_hard_deletes: bool,
-    ) -> DbResult<SnapshotResult> {
-        Err(not_impl("execute_snapshot"))
-    }
-
-    async fn snapshot_insert_new(
-        &self,
-        _snapshot_table: &str,
-        _source_table: &str,
-        _unique_keys: &[String],
-    ) -> DbResult<usize> {
-        Err(not_impl("snapshot_insert_new"))
-    }
-
-    async fn snapshot_update_changed(
-        &self,
-        _snapshot_table: &str,
-        _source_table: &str,
-        _unique_keys: &[String],
-        _updated_at_column: Option<&str>,
-        _check_cols: Option<&[String]>,
-    ) -> DbResult<usize> {
-        Err(not_impl("snapshot_update_changed"))
-    }
-
-    async fn snapshot_invalidate_deleted(
-        &self,
-        _snapshot_table: &str,
-        _source_table: &str,
-        _unique_keys: &[String],
-    ) -> DbResult<usize> {
-        Err(not_impl("snapshot_invalidate_deleted"))
     }
 }
 

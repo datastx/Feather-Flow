@@ -33,7 +33,7 @@ impl fmt::Display for ExitCode {
 
 impl std::error::Error for ExitCode {}
 
-/// Status for model run / compile / snapshot operations.
+/// Status for model run / compile operations.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RunStatus {
@@ -148,59 +148,6 @@ pub(crate) fn parse_on_schema_change(s: &str) -> OnSchemaChange {
         "fail" => OnSchemaChange::Fail,
         "append_new_columns" => OnSchemaChange::AppendNewColumns,
         _ => OnSchemaChange::Ignore,
-    }
-}
-
-/// Parse various timestamp formats into a UTC DateTime.
-pub(crate) fn parse_timestamp(s: &str) -> Option<DateTime<Utc>> {
-    let formats = [
-        "%Y-%m-%d %H:%M:%S%.f",
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%dT%H:%M:%S%.fZ",
-        "%Y-%m-%dT%H:%M:%SZ",
-        "%Y-%m-%dT%H:%M:%S%.f",
-        "%Y-%m-%dT%H:%M:%S",
-    ];
-
-    for fmt in &formats {
-        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, fmt) {
-            return Some(DateTime::from_naive_utc_and_offset(dt, Utc));
-        }
-    }
-
-    // Try parsing as RFC3339
-    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-        return Some(dt.with_timezone(&Utc));
-    }
-
-    // Try date-only format
-    if let Ok(date) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        if let Some(datetime) = date.and_hms_opt(0, 0, 0) {
-            return Some(DateTime::from_naive_utc_and_offset(datetime, Utc));
-        }
-    }
-
-    None
-}
-
-/// Freshness status shared between source and model freshness commands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum FreshnessStatus {
-    Pass,
-    Warn,
-    Error,
-    RuntimeError,
-}
-
-impl fmt::Display for FreshnessStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            FreshnessStatus::Pass => write!(f, "pass"),
-            FreshnessStatus::Warn => write!(f, "warn"),
-            FreshnessStatus::Error => write!(f, "error"),
-            FreshnessStatus::RuntimeError => write!(f, "runtime_error"),
-        }
     }
 }
 
@@ -480,7 +427,7 @@ pub(crate) fn report_static_analysis_results(
 
 /// Generic wrapper for command results written to JSON.
 ///
-/// Many commands (run, snapshot, etc.) produce a JSON file with the same
+/// Many commands (run, etc.) produce a JSON file with the same
 /// envelope: a timestamp, elapsed seconds, success/failure counts, and a
 /// vec of per-item results.  `CommandResults<T>` captures that pattern so
 /// each command only needs to define its per-item result type.
@@ -517,10 +464,8 @@ pub(crate) fn write_json_results<T: Serialize + ?Sized>(path: &Path, data: &T) -
 pub(crate) fn calculate_column_widths(headers: &[&str], rows: &[Vec<String>]) -> Vec<usize> {
     let mut widths: Vec<usize> = headers.iter().map(|h| h.len()).collect();
     for row in rows {
-        for (i, cell) in row.iter().enumerate() {
-            if i < widths.len() {
-                widths[i] = widths[i].max(cell.len());
-            }
+        for (w, cell) in widths.iter_mut().zip(row.iter()) {
+            *w = (*w).max(cell.len());
         }
     }
     widths
@@ -567,23 +512,6 @@ pub(crate) fn print_table(headers: &[&str], rows: &[Vec<String>]) {
             .collect();
         println!("{}", row_parts.join("  "));
     }
-}
-
-/// Print just the header and separator lines for a table.
-///
-/// This is useful for commands that need to print rows individually
-/// (e.g. to interleave extra output like error messages between rows).
-/// Use [`calculate_column_widths`] to obtain the `widths` parameter.
-pub(crate) fn print_table_header(headers: &[&str], widths: &[usize]) {
-    let header_parts: Vec<String> = headers
-        .iter()
-        .zip(widths)
-        .map(|(h, &w)| format!("{:<width$}", h, width = w))
-        .collect();
-    println!("{}", header_parts.join("  "));
-
-    let sep_parts: Vec<String> = widths.iter().map(|&w| "-".repeat(w)).collect();
-    println!("{}", sep_parts.join("  "));
 }
 
 /// Create a database connection from a config and optional target override.

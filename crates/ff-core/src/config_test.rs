@@ -207,11 +207,8 @@ targets:
     schema: prod_schema
 "#;
     let config: Config = serde_yaml::from_str(yaml).unwrap();
-    assert_eq!(config.get_schema(None), Some("base_schema".to_string()));
-    assert_eq!(
-        config.get_schema(Some("prod")),
-        Some("prod_schema".to_string())
-    );
+    assert_eq!(config.get_schema(None), Some("base_schema"));
+    assert_eq!(config.get_schema(Some("prod")), Some("prod_schema"));
 }
 
 #[test]

@@ -134,10 +134,10 @@ pub(super) fn compute_schema_checksum(
     compiled_models
         .get(name)
         .and_then(|c| c.model_schema.as_ref())
-        .map(|schema| {
-            let yaml =
-                serde_json::to_string(schema).expect("ModelSchema serialization should never fail");
-            compute_checksum(&yaml)
+        .and_then(|schema| {
+            serde_json::to_string(schema)
+                .ok()
+                .map(|yaml| compute_checksum(&yaml))
         })
 }
 
@@ -169,7 +169,7 @@ pub(super) fn update_state_for_model(
     compiled: &CompiledModel,
     compiled_models: &HashMap<String, CompiledModel>,
     row_count: Option<usize>,
-) {
+) -> anyhow::Result<()> {
     let state_config = ModelStateConfig::new(
         compiled.materialization,
         compiled.schema.clone(),
@@ -179,8 +179,10 @@ pub(super) fn update_state_for_model(
     );
     let schema_checksum = compute_schema_checksum(name, compiled_models);
     let input_checksums = compute_input_checksums(name, compiled_models);
+    let model_name = ff_core::ModelName::try_new(name)
+        .ok_or_else(|| anyhow::anyhow!("Empty model name in state update"))?;
     let model_state = ModelState::new_with_checksums(
-        ff_core::ModelName::new(name),
+        model_name,
         &compiled.sql,
         row_count,
         state_config,
@@ -188,6 +190,7 @@ pub(super) fn update_state_for_model(
         input_checksums,
     );
     state_file.upsert_model(model_state);
+    Ok(())
 }
 
 /// Write run results to JSON file

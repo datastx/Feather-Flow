@@ -5,6 +5,7 @@
 //! diagnostics that the custom IR produced.
 
 use arrow::datatypes::DataType as ArrowDataType;
+use datafusion_common::DFSchemaRef;
 use datafusion_expr::{Expr, ExprSchemable, LogicalPlan};
 
 use crate::context::AnalysisContext;
@@ -44,57 +45,9 @@ fn walk_plan(model: &str, plan: &LogicalPlan, diags: &mut Vec<Diagnostic>) {
         LogicalPlan::Union(union) => {
             if union.inputs.len() >= 2 {
                 let first_schema = union.inputs[0].schema();
-                let first_len = first_schema.fields().len();
 
                 for (i, input) in union.inputs.iter().enumerate().skip(1) {
-                    let input_schema = input.schema();
-                    let input_len = input_schema.fields().len();
-
-                    // A003: UNION column count mismatch
-                    if input_len != first_len {
-                        diags.push(Diagnostic {
-                            code: DiagnosticCode::A003,
-                            severity: Severity::Error,
-                            message: format!(
-                                "UNION branch {} has {} columns, but first branch has {}",
-                                i + 1,
-                                input_len,
-                                first_len
-                            ),
-                            model: model.to_string(),
-                            column: None,
-                            hint: None,
-                            pass_name: "plan_type_inference".into(),
-                        });
-                    } else {
-                        // A002: Type mismatch in UNION columns
-                        for (l, r) in first_schema
-                            .fields()
-                            .iter()
-                            .zip(input_schema.fields().iter())
-                        {
-                            let l_type = arrow_to_sql_type(l.data_type());
-                            let r_type = arrow_to_sql_type(r.data_type());
-                            if !l_type.is_compatible_with(&r_type) {
-                                diags.push(Diagnostic {
-                                    code: DiagnosticCode::A002,
-                                    severity: Severity::Warning,
-                                    message: format!(
-                                        "Type mismatch in UNION column '{}': {} vs {}",
-                                        l.name(),
-                                        l_type.display_name(),
-                                        r_type.display_name()
-                                    ),
-                                    model: model.to_string(),
-                                    column: Some(l.name().clone()),
-                                    hint: Some(
-                                        "Add explicit CASTs to ensure matching types".to_string(),
-                                    ),
-                                    pass_name: "plan_type_inference".into(),
-                                });
-                            }
-                        }
-                    }
+                    check_union_column_types(model, first_schema, input.schema(), i + 1, diags);
                 }
             }
 
@@ -127,6 +80,59 @@ fn walk_plan(model: &str, plan: &LogicalPlan, diags: &mut Vec<Diagnostic>) {
             for input in plan.inputs() {
                 walk_plan(model, input, diags);
             }
+        }
+    }
+}
+
+/// Check a single UNION branch against the first branch for column count (A003) and type (A002) mismatches.
+fn check_union_column_types(
+    model: &str,
+    first_schema: &DFSchemaRef,
+    input_schema: &DFSchemaRef,
+    branch_idx: usize,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let first_len = first_schema.fields().len();
+    let input_len = input_schema.fields().len();
+
+    if input_len != first_len {
+        diags.push(Diagnostic {
+            code: DiagnosticCode::A003,
+            severity: Severity::Error,
+            message: format!(
+                "UNION branch {} has {} columns, but first branch has {}",
+                branch_idx, input_len, first_len
+            ),
+            model: model.to_string(),
+            column: None,
+            hint: None,
+            pass_name: "plan_type_inference".into(),
+        });
+        return;
+    }
+
+    for (l, r) in first_schema
+        .fields()
+        .iter()
+        .zip(input_schema.fields().iter())
+    {
+        let l_type = arrow_to_sql_type(l.data_type());
+        let r_type = arrow_to_sql_type(r.data_type());
+        if !l_type.is_compatible_with(&r_type) {
+            diags.push(Diagnostic {
+                code: DiagnosticCode::A002,
+                severity: Severity::Warning,
+                message: format!(
+                    "Type mismatch in UNION column '{}': {} vs {}",
+                    l.name(),
+                    l_type.display_name(),
+                    r_type.display_name()
+                ),
+                model: model.to_string(),
+                column: Some(l.name().clone()),
+                hint: Some("Add explicit CASTs to ensure matching types".to_string()),
+                pass_name: "plan_type_inference".into(),
+            });
         }
     }
 }

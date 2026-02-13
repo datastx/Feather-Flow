@@ -379,22 +379,24 @@ fn validate_schemas(
 
     // Validate test columns exist in schema
     for test in &project.tests {
-        if let Some(model) = project.get_model(&test.model) {
-            if let Some(schema) = &model.schema {
-                let schema_columns: HashSet<&str> =
-                    schema.columns.iter().map(|c| c.name.as_str()).collect();
-                if !schema_columns.contains(test.column.as_str()) {
-                    ctx.warning(
-                        "W006",
-                        format!(
-                            "Test references column '{}' not defined in schema for model '{}'",
-                            test.column, test.model
-                        ),
-                        Some(model.path.with_extension("yml").display().to_string()),
-                    );
-                    schema_issues += 1;
-                }
-            }
+        let Some(model) = project.get_model(&test.model) else {
+            continue;
+        };
+        let Some(schema) = &model.schema else {
+            continue;
+        };
+        let schema_columns: HashSet<&str> =
+            schema.columns.iter().map(|c| c.name.as_str()).collect();
+        if !schema_columns.contains(test.column.as_str()) {
+            ctx.warning(
+                "W006",
+                format!(
+                    "Test references column '{}' not defined in schema for model '{}'",
+                    test.column, test.model
+                ),
+                Some(model.path.with_extension("yml").display().to_string()),
+            );
+            schema_issues += 1;
         }
     }
 

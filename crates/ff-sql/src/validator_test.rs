@@ -1,5 +1,40 @@
 use super::*;
+use crate::error::{SqlError, SqlResult};
 use crate::parser::SqlParser;
+use sqlparser::ast::Statement;
+
+fn validate_statements(statements: &[Statement]) -> SqlResult<()> {
+    for stmt in statements {
+        validate_statement(stmt)?;
+    }
+    Ok(())
+}
+
+fn validate_statement(statement: &Statement) -> SqlResult<()> {
+    match statement {
+        Statement::Query(_) => Ok(()),
+        Statement::Insert(_) => Err(SqlError::UnsupportedStatement(
+            "INSERT statements are not allowed in models".to_string(),
+        )),
+        Statement::Update { .. } => Err(SqlError::UnsupportedStatement(
+            "UPDATE statements are not allowed in models".to_string(),
+        )),
+        Statement::Delete(_) => Err(SqlError::UnsupportedStatement(
+            "DELETE statements are not allowed in models".to_string(),
+        )),
+        Statement::Drop { .. } => Err(SqlError::UnsupportedStatement(
+            "DROP statements are not allowed in models".to_string(),
+        )),
+        Statement::Truncate { .. } => Err(SqlError::UnsupportedStatement(
+            "TRUNCATE statements are not allowed in models".to_string(),
+        )),
+        _ => Ok(()),
+    }
+}
+
+fn is_select_statement(statement: &Statement) -> bool {
+    matches!(statement, Statement::Query(_))
+}
 
 fn validate_sql(sql: &str) -> SqlResult<()> {
     let parser = SqlParser::duckdb();

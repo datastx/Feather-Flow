@@ -23,7 +23,6 @@ pub mod run_state;
 pub mod seed;
 pub mod selector;
 pub(crate) mod serde_helpers;
-pub mod snapshot;
 pub mod source;
 pub mod sql_utils;
 pub mod state;
@@ -43,20 +42,13 @@ pub use function::{
 };
 pub use function_name::FunctionName;
 pub use manifest::Manifest;
-pub use model::{
-    ColumnConstraint, DataClassification, FreshnessConfig, FreshnessPeriod, FreshnessThreshold,
-    Model, ModelSchema, SchemaContract,
-};
+pub use model::{ColumnConstraint, DataClassification, Model, ModelSchema, SchemaContract};
 pub use model_name::ModelName;
 pub use project::{Project, ProjectParts};
 pub use query_comment::{QueryCommentContext, QueryCommentMetadata};
 pub use run_state::{CompletedModel, FailedModel, RunState, RunStateSummary, RunStatus};
 pub use seed::{Seed, SeedConfig};
 pub use selector::{apply_selectors, Selector, TraversalDepth};
-pub use snapshot::{
-    discover_snapshots, Snapshot, SnapshotConfig, SnapshotStrategy, SCD_ID, SCD_UPDATED_AT,
-    SCD_VALID_FROM, SCD_VALID_TO,
-};
 pub use source::{SourceFile, SourceTable};
 pub use state::{ModelState, ModelStateConfig, StateFile};
 pub use table_name::TableName;

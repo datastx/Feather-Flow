@@ -263,8 +263,13 @@ impl FunctionDef {
             });
         }
 
+        let func_name =
+            FunctionName::try_new(&schema.name).ok_or_else(|| CoreError::EmptyName {
+                context: "function name".into(),
+            })?;
+
         Ok(FunctionDef {
-            name: FunctionName::new(&schema.name),
+            name: func_name,
             function_type: schema.function_type,
             args: schema.args,
             returns: schema.returns,

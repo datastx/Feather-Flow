@@ -94,8 +94,8 @@ impl BreakingChange {
     }
 
     /// Add downstream models that might be affected
-    pub fn with_downstream(mut self, downstream: Vec<String>) -> Self {
-        self.downstream_models = downstream;
+    pub fn with_downstream(mut self, downstream: &[String]) -> Self {
+        self.downstream_models = downstream.to_vec();
         self
     }
 }
@@ -172,7 +172,7 @@ pub fn detect_breaking_changes(
         if !current_models.contains_key(model_name.as_str()) {
             let downstream = downstream_map
                 .get(model_name.as_str())
-                .cloned()
+                .map(|v| v.as_slice())
                 .unwrap_or_default();
             report.add_change(
                 BreakingChange::new(model_name, BreakingChangeType::ModelRemoved)
@@ -186,7 +186,7 @@ pub fn detect_breaking_changes(
         if let Some(curr_model) = current_models.get(model_name.as_str()) {
             let downstream = downstream_map
                 .get(model_name.as_str())
-                .cloned()
+                .map(|v| v.as_slice())
                 .unwrap_or_default();
 
             // Check materialization change
@@ -199,7 +199,7 @@ pub fn detect_breaking_changes(
                             new: curr_model.materialized.to_string(),
                         },
                     )
-                    .with_downstream(downstream.clone()),
+                    .with_downstream(downstream),
                 );
             }
 
@@ -214,7 +214,7 @@ pub fn detect_breaking_changes(
                                 new_schema: new.clone(),
                             },
                         )
-                        .with_downstream(downstream.clone()),
+                        .with_downstream(downstream),
                     );
                 }
             }
@@ -228,7 +228,7 @@ pub fn detect_breaking_changes(
                     model_name,
                     prev_schema,
                     curr_schema,
-                    &downstream,
+                    downstream,
                     &mut report,
                 );
             }
@@ -294,7 +294,7 @@ fn compare_schemas(
                         column: col_name.to_string(),
                     },
                 )
-                .with_downstream(downstream.to_vec()),
+                .with_downstream(downstream),
             );
         }
     }
@@ -312,7 +312,7 @@ fn compare_schemas(
                             new_type: curr_type.to_string(),
                         },
                     )
-                    .with_downstream(downstream.to_vec()),
+                    .with_downstream(downstream),
                 );
             }
         }

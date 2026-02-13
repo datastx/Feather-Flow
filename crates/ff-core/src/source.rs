@@ -4,7 +4,7 @@
 //! managed by Featherflow (e.g., tables loaded by ETL pipelines).
 
 use crate::error::{CoreError, CoreResult};
-use crate::model::{FreshnessConfig, TestDefinition};
+use crate::model::TestDefinition;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -73,10 +73,6 @@ pub struct SourceTable {
     /// Column definitions
     #[serde(default)]
     pub columns: Vec<SourceColumn>,
-
-    /// Freshness configuration (future implementation)
-    #[serde(default)]
-    pub freshness: Option<FreshnessConfig>,
 }
 
 /// Column definition within a source table
@@ -97,10 +93,6 @@ pub struct SourceColumn {
     #[serde(default)]
     pub tests: Vec<TestDefinition>,
 }
-
-// FreshnessConfig, FreshnessThreshold, and FreshnessPeriod are imported from
-// crate::model to avoid duplication. Both model and source freshness use the
-// same unified types.
 
 impl SourceFile {
     /// Load and validate a source file from a path
@@ -241,15 +233,10 @@ fn discover_sources_recursive(dir: &Path, sources: &mut Vec<SourceFile>) -> Core
 
 /// Build lookup of known source tables for dependency categorization
 pub fn build_source_lookup(sources: &[SourceFile]) -> HashSet<String> {
-    let mut lookup = HashSet::new();
-
-    for source in sources {
-        for name in source.get_all_table_names() {
-            lookup.insert(name);
-        }
-    }
-
-    lookup
+    sources
+        .iter()
+        .flat_map(|s| s.get_all_table_names())
+        .collect()
 }
 
 #[cfg(test)]

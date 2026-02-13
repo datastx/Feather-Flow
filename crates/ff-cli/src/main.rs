@@ -8,8 +8,8 @@ mod commands;
 
 use cli::Cli;
 use commands::{
-    analyze, clean, compile, docs, freshness, function, init, lineage, ls, parse, run,
-    run_operation, seed, snapshot, test, validate,
+    analyze, build, clean, compile, docs, function, init, lineage, ls, parse, run, run_operation,
+    seed, test, validate,
 };
 
 #[tokio::main]
@@ -27,12 +27,11 @@ async fn main() {
         cli::Commands::Validate(args) => validate::execute(args, &cli.global).await,
         cli::Commands::Docs(args) => docs::execute(args, &cli.global).await,
         cli::Commands::Clean(args) => clean::execute(args, &cli.global).await,
-        cli::Commands::Snapshot(args) => snapshot::execute(args, &cli.global).await,
         cli::Commands::RunOperation(args) => run_operation::execute(args, &cli.global).await,
-        cli::Commands::Freshness(args) => freshness::execute(args, &cli.global).await,
         cli::Commands::Lineage(args) => lineage::execute(args, &cli.global).await,
         cli::Commands::Analyze(args) => analyze::execute(args, &cli.global).await,
         cli::Commands::Function(args) => function::execute(args, &cli.global).await,
+        cli::Commands::Build(args) => build::execute(args, &cli.global).await,
     };
 
     if let Err(err) = result {
