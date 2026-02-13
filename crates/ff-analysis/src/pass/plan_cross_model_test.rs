@@ -35,6 +35,7 @@ fn test_a040_extra_column_in_sql() {
         &yaml_schemas,
         &initial_catalog,
         &[],
+        &[],
     );
     let ctx = make_ctx();
     let pass = CrossModelConsistency;
@@ -78,6 +79,7 @@ fn test_a040_missing_column_from_sql() {
         &sql_sources,
         &yaml_schemas,
         &initial_catalog,
+        &[],
         &[],
     );
     let ctx = make_ctx();
@@ -124,6 +126,7 @@ fn test_no_diagnostics_for_matching_schema() {
         &sql_sources,
         &yaml_schemas,
         &initial_catalog,
+        &[],
         &[],
     );
     let ctx = make_ctx();
@@ -174,6 +177,7 @@ fn test_a040_type_mismatch() {
         &yaml_schemas,
         &initial_catalog,
         &[],
+        &[],
     );
     let ctx = make_ctx();
     let diagnostics = CrossModelConsistency.run_project(&result.model_plans, &ctx);
@@ -218,6 +222,7 @@ fn test_a040_multiple_extras() {
         &sql_sources,
         &yaml_schemas,
         &initial_catalog,
+        &[],
         &[],
     );
     let ctx = make_ctx();
@@ -267,6 +272,7 @@ fn test_a040_combo_extra_and_missing() {
         &sql_sources,
         &yaml_schemas,
         &initial_catalog,
+        &[],
         &[],
     );
     let ctx = make_ctx();
@@ -321,6 +327,7 @@ fn test_a040_compatible_types_no_diagnostic() {
         &yaml_schemas,
         &initial_catalog,
         &[],
+        &[],
     );
     let ctx = make_ctx();
     let diagnostics = CrossModelConsistency.run_project(&result.model_plans, &ctx);
@@ -373,6 +380,7 @@ fn test_a041_left_join_nullable_vs_yaml_not_null() {
         &yaml_schemas,
         &initial_catalog,
         &[],
+        &[],
     );
     let ctx = make_ctx();
     let diagnostics = CrossModelConsistency.run_project(&result.model_plans, &ctx);
@@ -423,6 +431,7 @@ fn test_a041_both_nullable_no_diagnostic() {
         &yaml_schemas,
         &initial_catalog,
         &[],
+        &[],
     );
     let ctx = make_ctx();
     let diagnostics = CrossModelConsistency.run_project(&result.model_plans, &ctx);
@@ -462,6 +471,7 @@ fn test_a041_both_not_null_no_diagnostic() {
         &sql_sources,
         &yaml_schemas,
         &initial_catalog,
+        &[],
         &[],
     );
     let ctx = make_ctx();

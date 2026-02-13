@@ -108,13 +108,15 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
-    let user_fn_stubs = super::common::build_user_function_stubs(ctx.project());
+    let (user_fn_stubs, user_table_fn_stubs) =
+        super::common::build_user_function_stubs(ctx.project());
     let propagation = propagate_schemas(
         &order,
         &sql_sources,
         &yaml_string_map,
         &plan_catalog,
         &user_fn_stubs,
+        &user_table_fn_stubs,
     );
 
     if propagation.model_plans.is_empty() && propagation.failures.is_empty() {

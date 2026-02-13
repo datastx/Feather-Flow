@@ -26,6 +26,7 @@ fn test_linear_chain_propagation() {
         &HashMap::new(),
         &initial_catalog,
         &[],
+        &[],
     );
 
     assert!(result.failures.is_empty());
@@ -70,6 +71,7 @@ fn test_multi_step_propagation() {
         &sql_sources,
         &HashMap::new(),
         &initial_catalog,
+        &[],
         &[],
     );
 
@@ -121,6 +123,7 @@ fn test_diamond_dag_propagation() {
         &HashMap::new(),
         &initial_catalog,
         &[],
+        &[],
     );
 
     assert!(result.failures.is_empty());
@@ -162,6 +165,7 @@ fn test_schema_mismatch_detection() {
         &yaml_schemas,
         &initial_catalog,
         &[],
+        &[],
     );
 
     let model_result = &result.model_plans["test_model"];
@@ -200,6 +204,7 @@ fn test_plan_failure_recorded() {
         &HashMap::new(),
         &initial_catalog,
         &[],
+        &[],
     );
 
     assert!(result.failures.contains_key("bad_model"));
@@ -237,6 +242,7 @@ fn test_fan_out_propagation() {
         &sql_sources,
         &HashMap::new(),
         &initial_catalog,
+        &[],
         &[],
     );
 
@@ -283,6 +289,7 @@ fn test_fan_in_propagation() {
         &HashMap::new(),
         &initial_catalog,
         &[],
+        &[],
     );
 
     assert!(result.failures.is_empty());
@@ -318,6 +325,7 @@ fn test_column_narrowing() {
         &HashMap::new(),
         &initial_catalog,
         &[],
+        &[],
     );
 
     assert!(result.failures.is_empty());
@@ -347,6 +355,7 @@ fn test_column_rename_via_alias() {
         &sql_sources,
         &HashMap::new(),
         &initial_catalog,
+        &[],
         &[],
     );
 
@@ -383,6 +392,7 @@ fn test_deep_chain_propagation() {
         &sql_sources,
         &HashMap::new(),
         &initial_catalog,
+        &[],
         &[],
     );
 
@@ -424,6 +434,7 @@ fn test_upstream_failure_isolation() {
         &HashMap::new(),
         &initial_catalog,
         &[],
+        &[],
     );
 
     assert!(result.failures.contains_key("bad_model"));
@@ -445,6 +456,7 @@ fn test_missing_sql_source_skipped() {
         &sql_sources,
         &HashMap::new(),
         &initial_catalog,
+        &[],
         &[],
     );
 
@@ -478,6 +490,7 @@ fn test_aggregate_type_preservation() {
         &sql_sources,
         &HashMap::new(),
         &initial_catalog,
+        &[],
         &[],
     );
 
@@ -531,6 +544,7 @@ fn test_coalesce_type_preservation() {
         &sql_sources,
         &HashMap::new(),
         &initial_catalog,
+        &[],
         &[],
     );
 

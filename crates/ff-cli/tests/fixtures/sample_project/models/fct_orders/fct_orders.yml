@@ -47,3 +47,6 @@ columns:
   - name: balance_due
     type: DECIMAL(10,2)
     description: "Remaining balance (amount - payment_total)"
+  - name: payment_ratio
+    type: DOUBLE
+    description: "Ratio of payments received to order amount (NULL when order amount is zero)"

@@ -10,7 +10,7 @@ use arrow::datatypes::{Field, Schema, SchemaRef};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::{plan_err, Result as DFResult};
 use datafusion_expr::planner::ExprPlanner;
-use datafusion_expr::{AggregateUDF, ScalarUDF, TableSource, WindowUDF};
+use datafusion_expr::{AggregateUDF, Expr, ScalarUDF, TableSource, WindowUDF};
 use datafusion_sql::planner::ContextProvider;
 use datafusion_sql::TableReference;
 
@@ -19,10 +19,10 @@ use crate::datafusion_bridge::types::sql_type_to_arrow;
 use crate::schema::{RelSchema, SchemaCatalog};
 use crate::types::Nullability;
 
-/// Metadata for a user-defined function stub to register in the DataFusion context.
+/// Metadata for a user-defined scalar function stub to register in the DataFusion context.
 ///
 /// Function names are case-insensitive — internally normalized to uppercase for lookup.
-/// Only scalar functions are supported; table functions require `SchemaCatalog` registration.
+/// For table-returning functions, see [`UserTableFunctionStub`].
 #[derive(Debug, Clone)]
 pub struct UserFunctionStub {
     name: String,
@@ -66,6 +66,40 @@ impl UserFunctionStub {
     }
 }
 
+/// Metadata for a user-defined table function stub to register in the DataFusion context.
+///
+/// Table functions return a set of rows with a fixed schema. They are registered
+/// via `get_table_function_source` so DataFusion can resolve `SELECT * FROM func(args)`.
+#[derive(Debug, Clone)]
+pub struct UserTableFunctionStub {
+    name: String,
+    /// Each entry is `(column_name, sql_type_string)`.
+    columns: Vec<(String, String)>,
+}
+
+impl UserTableFunctionStub {
+    /// Create a new user table function stub.
+    ///
+    /// Returns `None` if the name is empty or columns are empty.
+    pub fn new(name: impl Into<String>, columns: Vec<(String, String)>) -> Option<Self> {
+        let name = name.into();
+        if name.is_empty() || columns.is_empty() {
+            return None;
+        }
+        Some(Self { name, columns })
+    }
+
+    /// Function name
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Output columns as `(name, sql_type)` pairs
+    pub fn columns(&self) -> &[(String, String)] {
+        &self.columns
+    }
+}
+
 /// A ContextProvider backed by a Feather-Flow SchemaCatalog.
 ///
 /// Maps model/source names to Arrow schemas so DataFusion's `SqlToRel`
@@ -76,18 +110,20 @@ pub struct FeatherFlowProvider<'a> {
     config: ConfigOptions,
     scalar_functions: HashMap<String, Arc<ScalarUDF>>,
     aggregate_functions: HashMap<String, Arc<AggregateUDF>>,
+    table_functions: HashMap<String, Arc<dyn TableSource>>,
 }
 
 impl<'a> FeatherFlowProvider<'a> {
     /// Create a new provider from a schema catalog reference
     pub fn new(catalog: &'a SchemaCatalog) -> Self {
-        Self::with_user_functions(catalog, &[])
+        Self::with_user_functions(catalog, &[], &[])
     }
 
     /// Create a new provider with additional user-defined function stubs
     pub fn with_user_functions(
         catalog: &'a SchemaCatalog,
         user_functions: &[UserFunctionStub],
+        user_table_functions: &[UserTableFunctionStub],
     ) -> Self {
         let mut scalar_functions: HashMap<String, Arc<ScalarUDF>> = functions::duckdb_scalar_udfs()
             .into_iter()
@@ -105,11 +141,28 @@ impl<'a> FeatherFlowProvider<'a> {
             scalar_functions.insert(uf.name().to_uppercase(), udf);
         }
 
+        // Register user-defined table function stubs
+        let mut table_functions: HashMap<String, Arc<dyn TableSource>> = HashMap::new();
+        for tf in user_table_functions {
+            let fields: Vec<Field> = tf
+                .columns()
+                .iter()
+                .map(|(col_name, col_type)| {
+                    let arrow_type = sql_type_to_arrow(&crate::types::parse_sql_type(col_type));
+                    Field::new(col_name, arrow_type, true)
+                })
+                .collect();
+            let schema = Arc::new(Schema::new(fields));
+            let source: Arc<dyn TableSource> = Arc::new(LogicalTableSource { schema });
+            table_functions.insert(tf.name().to_uppercase(), source);
+        }
+
         Self {
             catalog,
             config: ConfigOptions::default(),
             scalar_functions,
             aggregate_functions,
+            table_functions,
         }
     }
 
@@ -166,6 +219,17 @@ impl ContextProvider for FeatherFlowProvider<'_> {
         }
 
         plan_err!("Table not found: {table_name}")
+    }
+
+    fn get_table_function_source(
+        &self,
+        name: &str,
+        _args: Vec<Expr>,
+    ) -> DFResult<Arc<dyn TableSource>> {
+        if let Some(source) = self.table_functions.get(&name.to_uppercase()) {
+            return Ok(source.clone());
+        }
+        plan_err!("Table function not found: {name}")
     }
 
     fn get_function_meta(&self, name: &str) -> Option<Arc<ScalarUDF>> {

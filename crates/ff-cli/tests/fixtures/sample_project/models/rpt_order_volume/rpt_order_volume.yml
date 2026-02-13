@@ -1,0 +1,18 @@
+version: 1
+
+description: "Report showing order volume by status using a table function"
+owner: analytics-team
+tags:
+  - reports
+  - orders
+
+columns:
+  - name: status
+    type: VARCHAR
+    description: "Order status"
+  - name: order_count
+    type: INTEGER
+    description: "Number of orders with this status"
+  - name: pct_of_hundred
+    type: DOUBLE
+    description: "Order count as percentage of 100"
