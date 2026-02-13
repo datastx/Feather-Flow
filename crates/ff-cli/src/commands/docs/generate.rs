@@ -28,10 +28,15 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
     fs::create_dir_all(&output_dir).context("Failed to create output directory")?;
 
     // Get models to document
-    let models_to_doc: Vec<&str> = if let Some(filter) = &args.models {
-        filter.split(',').map(|s| s.trim()).collect()
+    let models_to_doc: Vec<String> = if args.nodes.is_some() {
+        let (_, dag) = crate::commands::common::build_project_dag(&project)?;
+        crate::commands::common::resolve_nodes(&project, &dag, &args.nodes)?
     } else {
-        project.model_names()
+        project
+            .model_names()
+            .into_iter()
+            .map(String::from)
+            .collect()
     };
 
     if global.verbose {
@@ -50,7 +55,7 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
     let mut index_entries: Vec<ModelSummary> = Vec::new();
 
     for name in &models_to_doc {
-        if let Some(model) = project.get_model(name) {
+        if let Some(model) = project.get_model(name.as_str()) {
             let has_schema = model.schema.is_some();
 
             if has_schema {

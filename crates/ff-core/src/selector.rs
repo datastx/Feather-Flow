@@ -19,6 +19,17 @@ use crate::ModelName;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+/// Traversal depth for ancestor/descendant graph walks
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TraversalDepth {
+    /// No traversal
+    None,
+    /// Traverse up to N hops
+    Bounded(usize),
+    /// Traverse all ancestors/descendants
+    Unlimited,
+}
+
 /// State comparison type
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StateType {
@@ -31,11 +42,11 @@ pub enum StateType {
 /// Parsed selector type
 #[derive(Debug, Clone)]
 pub enum SelectorType {
-    /// Model name with optional +prefix/suffix for ancestors/descendants
+    /// Model name with optional ancestor/descendant depth
     Model {
         name: String,
-        include_ancestors: bool,
-        include_descendants: bool,
+        ancestor_depth: TraversalDepth,
+        descendant_depth: TraversalDepth,
     },
     /// Path-based selection with glob pattern
     Path { pattern: String },
@@ -126,13 +137,10 @@ impl Selector {
             });
         }
 
-        // Parse model selector with optional +prefix/suffix
-        let include_ancestors = selector.starts_with('+');
-        let include_descendants = selector.ends_with('+');
-        let name = selector
-            .trim_start_matches('+')
-            .trim_end_matches('+')
-            .to_string();
+        // Parse model selector with optional +prefix/suffix and bounded depth
+        // Supported forms: model, +model, model+, +model+,
+        //   N+model, model+N, N+model+N, N+model+, +model+N
+        let (ancestor_depth, descendant_depth, name) = parse_model_selector(selector)?;
 
         if name.is_empty() {
             return Err(CoreError::InvalidSelector {
@@ -144,8 +152,8 @@ impl Selector {
         Ok(Self {
             selector_type: SelectorType::Model {
                 name,
-                include_ancestors,
-                include_descendants,
+                ancestor_depth,
+                descendant_depth,
             },
         })
     }
@@ -175,15 +183,35 @@ impl Selector {
         dag: &ModelDag,
         reference_manifest: Option<&Manifest>,
     ) -> CoreResult<Vec<String>> {
+        let matched = self.apply_unordered(models, dag, reference_manifest)?;
+        // Return in topological order
+        let order = dag.topological_order()?;
+        Ok(order.into_iter().filter(|m| matched.contains(m)).collect())
+    }
+
+    /// Apply this selector returning an unordered set of matched model names.
+    ///
+    /// Used internally to avoid redundant topo-sorts when combining multiple
+    /// selectors.
+    fn apply_unordered(
+        &self,
+        models: &HashMap<ModelName, Model>,
+        dag: &ModelDag,
+        reference_manifest: Option<&Manifest>,
+    ) -> CoreResult<HashSet<String>> {
         match &self.selector_type {
             SelectorType::Model {
                 name,
-                include_ancestors,
-                include_descendants,
-            } => self.select_by_model(name, *include_ancestors, *include_descendants, dag),
-            SelectorType::Path { pattern } => self.select_by_path(pattern, models),
-            SelectorType::Tag { tag } => self.select_by_tag(tag, models),
-            SelectorType::Owner { owner } => self.select_by_owner(owner, models),
+                ancestor_depth,
+                descendant_depth,
+            } => self.select_by_model_unordered(name, *ancestor_depth, *descendant_depth, dag),
+            SelectorType::Path { pattern } => {
+                Ok(self.select_by_path(pattern, models)?.into_iter().collect())
+            }
+            SelectorType::Tag { tag } => Ok(self.select_by_tag(tag, models)?.into_iter().collect()),
+            SelectorType::Owner { owner } => {
+                Ok(self.select_by_owner(owner, models)?.into_iter().collect())
+            }
             SelectorType::State {
                 state_type,
                 include_descendants,
@@ -193,42 +221,50 @@ impl Selector {
                     reason: "state: selector requires --state flag with path to reference manifest"
                         .to_string(),
                 })?;
-                self.select_by_state(state_type, *include_descendants, models, dag, manifest)
+                self.select_by_state_unordered(
+                    state_type,
+                    *include_descendants,
+                    models,
+                    dag,
+                    manifest,
+                )
             }
         }
     }
 
-    /// Select models by name with optional ancestors/descendants
-    fn select_by_model(
+    /// Select models by name with optional ancestor/descendant depth.
+    ///
+    /// Returns the matched set (unordered). Callers that need topological
+    /// order should sort after collecting all selectors.
+    fn select_by_model_unordered(
         &self,
         name: &str,
-        include_ancestors: bool,
-        include_descendants: bool,
+        ancestor_depth: TraversalDepth,
+        descendant_depth: TraversalDepth,
         dag: &ModelDag,
-    ) -> CoreResult<Vec<String>> {
+    ) -> CoreResult<HashSet<String>> {
         if !dag.contains(name) {
             return Err(CoreError::ModelNotFound {
                 name: name.to_string(),
             });
         }
 
-        let mut selected = vec![name.to_string()];
+        let mut selected = HashSet::new();
+        selected.insert(name.to_string());
 
-        if include_ancestors {
-            selected.extend(dag.ancestors(name));
+        match ancestor_depth {
+            TraversalDepth::None => {}
+            TraversalDepth::Unlimited => selected.extend(dag.ancestors(name)),
+            TraversalDepth::Bounded(n) => selected.extend(dag.ancestors_bounded(name, n)),
         }
 
-        if include_descendants {
-            selected.extend(dag.descendants(name));
+        match descendant_depth {
+            TraversalDepth::None => {}
+            TraversalDepth::Unlimited => selected.extend(dag.descendants(name)),
+            TraversalDepth::Bounded(n) => selected.extend(dag.descendants_bounded(name, n)),
         }
 
-        // Return in topological order
-        let order = dag.topological_order()?;
-        let selected_set: HashSet<_> = selected.into_iter().collect();
-        Ok(order
-            .into_iter()
-            .filter(|m| selected_set.contains(m))
-            .collect())
+        Ok(selected)
     }
 
     /// Select models by path pattern (supports glob wildcards)
@@ -348,15 +384,15 @@ impl Selector {
         Ok(selected)
     }
 
-    /// Select models by state comparison
-    fn select_by_state(
+    /// Select models by state comparison (unordered)
+    fn select_by_state_unordered(
         &self,
         state_type: &StateType,
         include_descendants: bool,
         models: &HashMap<ModelName, Model>,
         dag: &ModelDag,
         reference_manifest: &Manifest,
-    ) -> CoreResult<Vec<String>> {
+    ) -> CoreResult<HashSet<String>> {
         let mut selected: HashSet<String> = HashSet::new();
 
         for (name, model) in models {
@@ -368,9 +404,6 @@ impl Selector {
                 StateType::Modified => {
                     // Model is modified if SQL content differs from reference
                     if let Some(ref_model) = reference_manifest.models.get(name.as_str()) {
-                        // Compare SQL content by reading the reference source file
-                        // For simplicity, we compare the raw SQL from current model
-                        // against what we can infer changed
                         Self::is_model_modified(model, ref_model)
                     } else {
                         // If not in reference, it's also considered "modified" (new)
@@ -393,9 +426,7 @@ impl Selector {
             selected.extend(descendants);
         }
 
-        // Return in topological order
-        let order = dag.topological_order()?;
-        Ok(order.into_iter().filter(|m| selected.contains(m)).collect())
+        Ok(selected)
     }
 
     /// Check if a model has been modified compared to reference
@@ -440,6 +471,161 @@ impl Selector {
 
         false
     }
+}
+
+/// Parse a model selector string into `(ancestor_depth, descendant_depth, name)`.
+///
+/// Handles: `model`, `+model`, `model+`, `+model+`,
+///   `N+model`, `model+N`, `N+model+N`, `N+model+`, `+model+N`.
+///
+/// **Limitation**: Purely numeric model names (e.g. `123`) cannot use the
+/// bounded `N+model` syntax because the leading digits are parsed as a
+/// depth prefix. Such models can still be selected with plain `123` or
+/// `+123` / `123+` (unbounded) forms.
+fn parse_model_selector(s: &str) -> CoreResult<(TraversalDepth, TraversalDepth, String)> {
+    let parts: Vec<&str> = s.split('+').collect();
+    match parts.len() {
+        // No '+' at all → plain model name
+        1 => Ok((
+            TraversalDepth::None,
+            TraversalDepth::None,
+            parts[0].to_string(),
+        )),
+        // One '+' → either prefix or suffix
+        2 => {
+            let (left, right) = (parts[0], parts[1]);
+            if left.is_empty() && !right.is_empty() {
+                // +model
+                Ok((
+                    TraversalDepth::Unlimited,
+                    TraversalDepth::None,
+                    right.to_string(),
+                ))
+            } else if !left.is_empty() && right.is_empty() {
+                // Could be "model+" or "N+"
+                // If left is all digits, that's invalid (e.g. "3+")
+                if left.chars().all(|c| c.is_ascii_digit()) {
+                    Err(CoreError::InvalidSelector {
+                        selector: s.to_string(),
+                        reason: "model name cannot be empty".to_string(),
+                    })
+                } else {
+                    // model+
+                    Ok((
+                        TraversalDepth::None,
+                        TraversalDepth::Unlimited,
+                        left.to_string(),
+                    ))
+                }
+            } else if !left.is_empty() && !right.is_empty() {
+                // N+model or model+N
+                if left.chars().all(|c| c.is_ascii_digit()) {
+                    let n: usize = left.parse().map_err(|_| CoreError::InvalidSelector {
+                        selector: s.to_string(),
+                        reason: format!("invalid depth '{}'", left),
+                    })?;
+                    Ok((
+                        TraversalDepth::Bounded(n),
+                        TraversalDepth::None,
+                        right.to_string(),
+                    ))
+                } else if right.chars().all(|c| c.is_ascii_digit()) {
+                    let n: usize = right.parse().map_err(|_| CoreError::InvalidSelector {
+                        selector: s.to_string(),
+                        reason: format!("invalid depth '{}'", right),
+                    })?;
+                    Ok((
+                        TraversalDepth::None,
+                        TraversalDepth::Bounded(n),
+                        left.to_string(),
+                    ))
+                } else {
+                    Err(CoreError::InvalidSelector {
+                        selector: s.to_string(),
+                        reason: "ambiguous selector: expected N+model or model+N".to_string(),
+                    })
+                }
+            } else {
+                // both empty → just "+"
+                Err(CoreError::InvalidSelector {
+                    selector: s.to_string(),
+                    reason: "model name cannot be empty".to_string(),
+                })
+            }
+        }
+        // Two '+' → three parts
+        3 => {
+            let (left, middle, right) = (parts[0], parts[1], parts[2]);
+            if middle.is_empty() {
+                return Err(CoreError::InvalidSelector {
+                    selector: s.to_string(),
+                    reason: "model name cannot be empty".to_string(),
+                });
+            }
+            let ancestor_depth = if left.is_empty() {
+                TraversalDepth::Unlimited
+            } else if left.chars().all(|c| c.is_ascii_digit()) {
+                let n: usize = left.parse().map_err(|_| CoreError::InvalidSelector {
+                    selector: s.to_string(),
+                    reason: format!("invalid depth '{}'", left),
+                })?;
+                TraversalDepth::Bounded(n)
+            } else {
+                return Err(CoreError::InvalidSelector {
+                    selector: s.to_string(),
+                    reason: format!("expected a number before '+', got '{}'", left),
+                });
+            };
+            let descendant_depth = if right.is_empty() {
+                TraversalDepth::Unlimited
+            } else if right.chars().all(|c| c.is_ascii_digit()) {
+                let n: usize = right.parse().map_err(|_| CoreError::InvalidSelector {
+                    selector: s.to_string(),
+                    reason: format!("invalid depth '{}'", right),
+                })?;
+                TraversalDepth::Bounded(n)
+            } else {
+                return Err(CoreError::InvalidSelector {
+                    selector: s.to_string(),
+                    reason: format!("expected a number after '+', got '{}'", right),
+                });
+            };
+            Ok((ancestor_depth, descendant_depth, middle.to_string()))
+        }
+        _ => Err(CoreError::InvalidSelector {
+            selector: s.to_string(),
+            reason: "too many '+' characters in selector".to_string(),
+        }),
+    }
+}
+
+/// Parse comma-separated selectors and return the union of matched models in
+/// topological order.
+///
+/// If `selectors_str` is `None`, returns all models in topological order.
+pub fn apply_selectors(
+    selectors_str: &Option<String>,
+    models: &HashMap<ModelName, Model>,
+    dag: &ModelDag,
+) -> CoreResult<Vec<String>> {
+    let Some(raw) = selectors_str else {
+        return dag.topological_order();
+    };
+
+    let mut combined: HashSet<String> = HashSet::new();
+    for token in raw.split(',') {
+        let token = token.trim();
+        if token.is_empty() {
+            continue;
+        }
+        let sel = Selector::parse(token)?;
+        let matched = sel.apply_unordered(models, dag, None)?;
+        combined.extend(matched);
+    }
+
+    // Single topo-sort at the end
+    let order = dag.topological_order()?;
+    Ok(order.into_iter().filter(|m| combined.contains(m)).collect())
 }
 
 #[cfg(test)]

@@ -54,9 +54,9 @@ pub async fn execute(args: &SnapshotArgs, global: &GlobalArgs) -> Result<()> {
             .iter()
             .filter(|s| selected.contains(&s.name.as_str()))
             .collect()
-    } else if let Some(ref select) = args.select {
+    } else if let Some(ref nodes) = args.nodes {
         // Simple name matching for now
-        let selected: Vec<&str> = select.split(',').map(|s| s.trim()).collect();
+        let selected: Vec<&str> = nodes.split(',').map(|s| s.trim()).collect();
         all_snapshots
             .iter()
             .filter(|s| selected.contains(&s.name.as_str()))

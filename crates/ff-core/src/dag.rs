@@ -5,7 +5,7 @@ use crate::model_name::ModelName;
 use petgraph::algo::toposort;
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 /// A directed acyclic graph of model dependencies
 #[derive(Debug)]
@@ -84,7 +84,7 @@ impl ModelDag {
     fn find_cycle_path(&self, start: NodeIndex) -> String {
         let mut path: Vec<String> = vec![self.graph[start].to_string()];
         let mut current = start;
-        let mut visited = std::collections::HashSet::new();
+        let mut visited = HashSet::new();
         visited.insert(current);
 
         while let Some(edge) = self.graph.edges(current).next() {
@@ -165,64 +165,93 @@ impl ModelDag {
 
     /// Get all ancestors (transitive dependencies) of a model
     pub fn ancestors(&self, model: &str) -> Vec<String> {
-        let mut result = Vec::new();
-        let mut visited = std::collections::HashSet::new();
-
         if let Some(&idx) = self.node_map.get(model) {
-            self.collect_ancestors(idx, &mut result, &mut visited);
+            self.collect_reachable(idx, petgraph::Direction::Incoming)
+        } else {
+            Vec::new()
         }
-
-        result
     }
 
-    fn collect_ancestors(
-        &self,
-        idx: NodeIndex,
-        result: &mut Vec<String>,
-        visited: &mut std::collections::HashSet<NodeIndex>,
-    ) {
-        for edge in self
-            .graph
-            .edges_directed(idx, petgraph::Direction::Incoming)
-        {
-            let source = edge.source();
-            if !visited.contains(&source) {
-                visited.insert(source);
-                result.push(self.graph[source].to_string());
-                self.collect_ancestors(source, result, visited);
-            }
-        }
+    /// Get ancestors up to `max_depth` hops away using BFS
+    pub fn ancestors_bounded(&self, model: &str, max_depth: usize) -> Vec<String> {
+        self.traverse_bfs_bounded(model, petgraph::Direction::Incoming, max_depth)
     }
 
     /// Get all descendants (transitive dependents) of a model
     pub fn descendants(&self, model: &str) -> Vec<String> {
-        let mut result = Vec::new();
-        let mut visited = std::collections::HashSet::new();
-
         if let Some(&idx) = self.node_map.get(model) {
-            self.collect_descendants(idx, &mut result, &mut visited);
+            self.collect_reachable(idx, petgraph::Direction::Outgoing)
+        } else {
+            Vec::new()
         }
+    }
 
+    /// Get descendants up to `max_depth` hops away using BFS
+    pub fn descendants_bounded(&self, model: &str, max_depth: usize) -> Vec<String> {
+        self.traverse_bfs_bounded(model, petgraph::Direction::Outgoing, max_depth)
+    }
+
+    /// Collect all nodes reachable from `start` by following edges in `direction` (DFS).
+    fn collect_reachable(&self, start: NodeIndex, direction: petgraph::Direction) -> Vec<String> {
+        let mut result = Vec::new();
+        let mut visited = HashSet::new();
+        self.collect_reachable_dfs(start, direction, &mut result, &mut visited);
         result
     }
 
-    fn collect_descendants(
+    fn collect_reachable_dfs(
         &self,
         idx: NodeIndex,
+        direction: petgraph::Direction,
         result: &mut Vec<String>,
-        visited: &mut std::collections::HashSet<NodeIndex>,
+        visited: &mut HashSet<NodeIndex>,
     ) {
-        for edge in self
-            .graph
-            .edges_directed(idx, petgraph::Direction::Outgoing)
-        {
-            let target = edge.target();
-            if !visited.contains(&target) {
-                visited.insert(target);
-                result.push(self.graph[target].to_string());
-                self.collect_descendants(target, result, visited);
+        for edge in self.graph.edges_directed(idx, direction) {
+            let neighbor = match direction {
+                petgraph::Direction::Incoming => edge.source(),
+                petgraph::Direction::Outgoing => edge.target(),
+            };
+            if visited.insert(neighbor) {
+                result.push(self.graph[neighbor].to_string());
+                self.collect_reachable_dfs(neighbor, direction, result, visited);
             }
         }
+    }
+
+    /// BFS traversal collecting nodes up to `max_depth` hops from `model` in `direction`.
+    fn traverse_bfs_bounded(
+        &self,
+        model: &str,
+        direction: petgraph::Direction,
+        max_depth: usize,
+    ) -> Vec<String> {
+        let Some(&start) = self.node_map.get(model) else {
+            return Vec::new();
+        };
+
+        let mut result = Vec::new();
+        let mut visited = HashSet::new();
+        visited.insert(start);
+        let mut queue = VecDeque::new();
+        queue.push_back((start, 0usize));
+
+        while let Some((current, depth)) = queue.pop_front() {
+            if depth >= max_depth {
+                continue;
+            }
+            for edge in self.graph.edges_directed(current, direction) {
+                let neighbor = match direction {
+                    petgraph::Direction::Incoming => edge.source(),
+                    petgraph::Direction::Outgoing => edge.target(),
+                };
+                if visited.insert(neighbor) {
+                    result.push(self.graph[neighbor].to_string());
+                    queue.push_back((neighbor, depth + 1));
+                }
+            }
+        }
+
+        result
     }
 
     /// Get models matching a selector pattern
@@ -254,7 +283,7 @@ impl ModelDag {
         }
 
         let order = self.topological_order()?;
-        let selected_set: std::collections::HashSet<_> = selected.into_iter().collect();
+        let selected_set: HashSet<_> = selected.into_iter().collect();
         Ok(order
             .into_iter()
             .filter(|m| selected_set.contains(m))

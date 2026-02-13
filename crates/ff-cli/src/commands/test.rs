@@ -167,12 +167,13 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
         model_qualified_names.insert(name.to_string(), qualified_name);
     }
 
-    let model_filter: Option<Vec<String>> = args.models.as_ref().map(|m| {
-        m.split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect()
-    });
+    let model_filter: Option<std::collections::HashSet<String>> = if args.nodes.is_some() {
+        let (_, dag) = common::build_project_dag(&project)?;
+        let resolved = common::resolve_nodes(&project, &dag, &args.nodes)?;
+        Some(resolved.into_iter().collect())
+    } else {
+        None
+    };
 
     let source_tests = generate_source_tests(&project.sources);
 

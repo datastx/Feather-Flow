@@ -20,14 +20,18 @@ pub async fn execute(args: &FreshnessArgs, global: &GlobalArgs) -> Result<()> {
     let db = common::create_database_connection(&project.config, global.target.as_deref())?;
 
     // Determine what to check: both by default, or whichever flag is set
-    let check_models = !args.sources || args.models;
-    let check_sources = !args.models || args.sources;
+    let check_models = !args.sources || args.models_only;
+    let check_sources = !args.models_only || args.sources;
 
-    // Parse select filter
-    let select_filter: Option<std::collections::HashSet<String>> = args
-        .select
-        .as_ref()
-        .map(|s| s.split(',').map(|name| name.trim().to_string()).collect());
+    // Parse node filter — use selector-aware resolution for models so that
+    // `+model`, `tag:X`, `path:X`, etc. work; sources keep plain name matching.
+    let select_filter: Option<std::collections::HashSet<String>> = if args.nodes.is_some() {
+        let (_, dag) = common::build_project_dag(&project)?;
+        let resolved = common::resolve_nodes(&project, &dag, &args.nodes)?;
+        Some(resolved.into_iter().collect())
+    } else {
+        None
+    };
 
     let mut results: Vec<FreshnessResult> = Vec::new();
 

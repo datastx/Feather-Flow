@@ -227,7 +227,7 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     let mut state_file = StateFile::load(&state_path).unwrap_or_default();
 
     // Create run state for tracking this execution
-    let selection_str = args.select.clone().or(args.models.clone());
+    let selection_str = args.nodes.clone();
     let mut run_state = RunState::new(
         execution_order
             .iter()
