@@ -42,7 +42,7 @@ struct CompileResults {
     results: Vec<ModelCompileResult>,
 }
 
-use crate::commands::common::{filter_models, parse_hooks_from_config};
+use crate::commands::common::parse_hooks_from_config;
 
 /// Intermediate compilation result before ephemeral inlining
 struct CompileOutput {
@@ -113,20 +113,28 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
     let macro_paths = project.config.macro_paths_absolute(&project.root);
     let jinja = JinjaEnvironment::with_macros(&vars, &macro_paths);
 
-    let model_names = filter_models(&project, &args.models);
+    // Compile all models first — filtering happens after DAG build
+    let all_model_names: Vec<String> = project
+        .model_names()
+        .into_iter()
+        .map(String::from)
+        .collect();
     let external_tables = common::build_external_tables_lookup(&project);
     let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
 
-    if !json_mode {
+    if !json_mode && args.nodes.is_none() {
         if args.parse_only {
-            println!("Validating {} models (parse-only)...\n", model_names.len());
+            println!(
+                "Validating {} models (parse-only)...\n",
+                all_model_names.len()
+            );
         } else {
-            println!("Compiling {} models...\n", model_names.len());
+            println!("Compiling {} models...\n", all_model_names.len());
         }
     }
 
-    if global.verbose {
-        eprintln!("[verbose] Compiling {} models", model_names.len());
+    if global.verbose && args.nodes.is_none() {
+        eprintln!("[verbose] Compiling {} models", all_model_names.len());
     }
 
     let output_dir = args
@@ -162,7 +170,7 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
         comment_ctx: comment_ctx.as_ref(),
     };
 
-    for name in &model_names {
+    for name in &all_model_names {
         match compile_model_phase1(&mut project, name, &compile_ctx) {
             Ok(compiled) => {
                 dependencies.insert(name.clone(), compiled.dependencies.clone());
@@ -191,6 +199,29 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
     let topo_order = dag
         .topological_order()
         .context("Circular dependency detected")?;
+
+    // Apply selector filtering now that DAG is available
+    let model_names: Vec<String> = common::resolve_nodes(&project, &dag, &args.nodes)?;
+    let model_names_set: HashSet<String> = model_names.iter().cloned().collect();
+
+    // Filter compiled_models to only those selected
+    compiled_models.retain(|m| model_names_set.contains(&m.name));
+
+    if !json_mode && args.nodes.is_some() {
+        if args.parse_only {
+            println!("Validating {} models (parse-only)...\n", model_names.len());
+        } else {
+            println!("Compiling {} models...\n", model_names.len());
+        }
+    }
+
+    if global.verbose && args.nodes.is_some() {
+        eprintln!(
+            "[verbose] Compiling {} models (of {} total)",
+            model_names.len(),
+            all_model_names.len()
+        );
+    }
 
     // Static analysis phase (DataFusion LogicalPlan)
     if !args.skip_static_analysis {

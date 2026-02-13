@@ -1,12 +1,13 @@
 //! Parse command implementation
 
 use anyhow::{Context, Result};
+use ff_core::dag::ModelDag;
 use ff_jinja::JinjaEnvironment;
 use ff_sql::{extract_dependencies, SqlParser};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::cli::{GlobalArgs, ParseArgs, ParseOutput};
-use crate::commands::common::{filter_models, load_project};
+use crate::commands::common::{self, load_project};
 
 /// Execute the parse command
 pub async fn execute(args: &ParseArgs, global: &GlobalArgs) -> Result<()> {
@@ -20,21 +21,21 @@ pub async fn execute(args: &ParseArgs, global: &GlobalArgs) -> Result<()> {
     // Create Jinja environment
     let jinja = JinjaEnvironment::new(&project.config.vars);
 
-    // Filter models if specified
-    let model_names = filter_models(&project, &args.models);
-
     // Collect external tables as a set
     let external_tables: HashSet<String> = project.config.external_tables.iter().cloned().collect();
     let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
 
-    if global.verbose {
-        eprintln!("[verbose] Parsing {} models", model_names.len());
-    }
+    // Parse all models first to extract deps for DAG
+    let all_model_names: Vec<String> = project
+        .model_names()
+        .into_iter()
+        .map(String::from)
+        .collect();
 
-    // Process each model
     let mut all_deps: Vec<ModelDeps> = Vec::new();
+    let mut dep_map: HashMap<String, Vec<String>> = HashMap::new();
 
-    for name in &model_names {
+    for name in &all_model_names {
         let model = project
             .get_model(name)
             .with_context(|| format!("Model not found: {}", name))?;
@@ -59,6 +60,8 @@ pub async fn execute(args: &ParseArgs, global: &GlobalArgs) -> Result<()> {
             &external_tables,
         );
 
+        dep_map.insert(name.clone(), model_deps.clone());
+
         all_deps.push(ModelDeps {
             name: name.clone(),
             path: model.path.display().to_string(),
@@ -66,6 +69,16 @@ pub async fn execute(args: &ParseArgs, global: &GlobalArgs) -> Result<()> {
             external_dependencies: ext_deps,
             all_tables: deps.into_iter().collect(),
         });
+    }
+
+    // Build DAG and apply selector filtering
+    let dag = ModelDag::build(&dep_map).context("Failed to build dependency DAG")?;
+    let model_names = common::resolve_nodes(&project, &dag, &args.nodes)?;
+    let model_names_set: HashSet<String> = model_names.iter().cloned().collect();
+    all_deps.retain(|d| model_names_set.contains(&d.name));
+
+    if global.verbose {
+        eprintln!("[verbose] Parsing {} models", model_names.len());
     }
 
     // Output results based on format

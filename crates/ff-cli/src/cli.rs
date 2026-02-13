@@ -92,9 +92,9 @@ pub enum Commands {
 /// Arguments for the parse command
 #[derive(Args, Debug)]
 pub struct ParseArgs {
-    /// Model names to parse (comma-separated, default: all)
-    #[arg(short, long)]
-    pub models: Option<String>,
+    /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
+    #[arg(short = 'n', long)]
+    pub nodes: Option<String>,
 
     /// Output format
     #[arg(short, long, value_enum, default_value = "pretty")]
@@ -129,9 +129,9 @@ pub enum OutputFormat {
 /// Arguments for the compile command
 #[derive(Args, Debug)]
 pub struct CompileArgs {
-    /// Model names to compile (comma-separated, default: all)
-    #[arg(short, long)]
-    pub models: Option<String>,
+    /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
+    #[arg(short = 'n', long)]
+    pub nodes: Option<String>,
 
     /// Override output directory
     #[arg(short = 'd', long)]
@@ -161,13 +161,9 @@ pub struct CompileArgs {
 /// Arguments for the run command
 #[derive(Args, Debug)]
 pub struct RunArgs {
-    /// Model names to run (comma-separated, default: all)
-    #[arg(short, long)]
-    pub models: Option<String>,
-
-    /// dbt-style selector (+model, model+)
-    #[arg(short, long)]
-    pub select: Option<String>,
+    /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
+    #[arg(short = 'n', long)]
+    pub nodes: Option<String>,
 
     /// Exclude models matching this pattern
     #[arg(short, long)]
@@ -233,9 +229,9 @@ pub struct LsArgs {
     #[arg(short, long, value_enum, default_value = "table")]
     pub output: LsOutput,
 
-    /// dbt-style selector to filter models
-    #[arg(short, long)]
-    pub select: Option<String>,
+    /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
+    #[arg(short = 'n', long)]
+    pub nodes: Option<String>,
 
     /// Exclude models matching this pattern
     #[arg(short, long)]
@@ -285,9 +281,9 @@ pub enum LsOutput {
 /// Arguments for the test command
 #[derive(Args, Debug)]
 pub struct TestArgs {
-    /// Model names to test (comma-separated, default: all with tests)
-    #[arg(short, long)]
-    pub models: Option<String>,
+    /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
+    #[arg(short = 'n', long)]
+    pub nodes: Option<String>,
 
     /// Stop on first failure
     #[arg(long)]
@@ -333,9 +329,9 @@ pub struct SeedArgs {
 /// Arguments for the validate command
 #[derive(Args, Debug)]
 pub struct ValidateArgs {
-    /// Model names to validate (comma-separated, default: all)
-    #[arg(short, long)]
-    pub models: Option<String>,
+    /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
+    #[arg(short = 'n', long)]
+    pub nodes: Option<String>,
 
     /// Enable strict mode (warnings become errors)
     #[arg(long)]
@@ -361,9 +357,9 @@ pub struct DocsArgs {
     #[command(subcommand)]
     pub command: Option<DocsCommands>,
 
-    /// Model names to generate docs for (comma-separated, default: all with schemas)
-    #[arg(short, long)]
-    pub models: Option<String>,
+    /// Node names to generate docs for (comma-separated, default: all with schemas)
+    #[arg(short = 'n', long)]
+    pub nodes: Option<String>,
 
     /// Output directory for documentation (default: target/docs)
     #[arg(short, long)]
@@ -392,9 +388,9 @@ pub struct DocsServeArgs {
     #[arg(long, default_value = "127.0.0.1")]
     pub host: String,
 
-    /// Filter models by selector
-    #[arg(long)]
-    pub select: Option<String>,
+    /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
+    #[arg(short = 'n', long)]
+    pub nodes: Option<String>,
 
     /// Don't open browser automatically
     #[arg(long)]
@@ -433,11 +429,11 @@ pub struct FreshnessArgs {
 
     /// Check only models (default: check both)
     #[arg(long)]
-    pub models: bool,
+    pub models_only: bool,
 
-    /// Filter specific resources by name (comma-separated)
-    #[arg(long)]
-    pub select: Option<String>,
+    /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
+    #[arg(short = 'n', long)]
+    pub nodes: Option<String>,
 
     /// Output format
     #[arg(short, long, value_enum, default_value = "table")]
@@ -464,9 +460,9 @@ pub struct SnapshotArgs {
     #[arg(long)]
     pub snapshots: Option<String>,
 
-    /// dbt-style selector (+snapshot, snapshot+)
-    #[arg(short, long)]
-    pub select: Option<String>,
+    /// Node selector (names, +node, node+, N+node, node+N)
+    #[arg(short = 'n', long)]
+    pub nodes: Option<String>,
 }
 
 /// Arguments for the run-operation command
@@ -495,12 +491,12 @@ pub struct InitArgs {
 /// Arguments for the lineage command
 #[derive(Args, Debug)]
 pub struct LineageArgs {
-    /// Filter to a specific model
-    #[arg(short, long)]
-    pub model: Option<String>,
+    /// Filter to a specific node
+    #[arg(short = 'n', long)]
+    pub node: Option<String>,
 
-    /// Filter to a specific column (requires --model)
-    #[arg(long, requires = "model")]
+    /// Filter to a specific column (requires --node)
+    #[arg(long, requires = "node")]
     pub column: Option<String>,
 
     /// Direction to trace lineage
@@ -541,9 +537,9 @@ pub enum LineageOutput {
 /// Arguments for the analyze command
 #[derive(Args, Debug)]
 pub struct AnalyzeArgs {
-    /// Model names to analyze (comma-separated, default: all)
-    #[arg(short, long)]
-    pub models: Option<String>,
+    /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
+    #[arg(short = 'n', long)]
+    pub nodes: Option<String>,
 
     /// Run only specific passes (comma-separated, e.g., type_inference,nullability)
     #[arg(long)]

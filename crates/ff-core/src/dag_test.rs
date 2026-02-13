@@ -68,3 +68,88 @@ fn test_selector_descendants() {
     assert!(selected.contains(&"stg".to_string()));
     assert!(selected.contains(&"fct".to_string()));
 }
+
+/// Build a 4-node linear chain: raw → stg → int → fct
+fn build_linear_dag() -> ModelDag {
+    let mut deps = HashMap::new();
+    deps.insert("raw".to_string(), vec![]);
+    deps.insert("stg".to_string(), vec!["raw".to_string()]);
+    deps.insert("int".to_string(), vec!["stg".to_string()]);
+    deps.insert("fct".to_string(), vec!["int".to_string()]);
+    ModelDag::build(&deps).unwrap()
+}
+
+#[test]
+fn test_ancestors_bounded_1() {
+    let dag = build_linear_dag();
+    let result = dag.ancestors_bounded("fct", 1);
+    assert_eq!(result, vec!["int".to_string()]);
+}
+
+#[test]
+fn test_ancestors_bounded_2() {
+    let dag = build_linear_dag();
+    let mut result = dag.ancestors_bounded("fct", 2);
+    result.sort();
+    assert_eq!(result, vec!["int".to_string(), "stg".to_string()]);
+}
+
+#[test]
+fn test_ancestors_bounded_all() {
+    let dag = build_linear_dag();
+    let mut result = dag.ancestors_bounded("fct", 10);
+    result.sort();
+    assert_eq!(
+        result,
+        vec!["int".to_string(), "raw".to_string(), "stg".to_string()]
+    );
+}
+
+#[test]
+fn test_ancestors_bounded_0() {
+    let dag = build_linear_dag();
+    let result = dag.ancestors_bounded("fct", 0);
+    assert!(result.is_empty());
+}
+
+#[test]
+fn test_descendants_bounded_1() {
+    let dag = build_linear_dag();
+    let result = dag.descendants_bounded("raw", 1);
+    assert_eq!(result, vec!["stg".to_string()]);
+}
+
+#[test]
+fn test_descendants_bounded_2() {
+    let dag = build_linear_dag();
+    let mut result = dag.descendants_bounded("raw", 2);
+    result.sort();
+    assert_eq!(result, vec!["int".to_string(), "stg".to_string()]);
+}
+
+#[test]
+fn test_descendants_bounded_all() {
+    let dag = build_linear_dag();
+    let mut result = dag.descendants_bounded("raw", 10);
+    result.sort();
+    assert_eq!(
+        result,
+        vec!["fct".to_string(), "int".to_string(), "stg".to_string()]
+    );
+}
+
+#[test]
+fn test_descendants_bounded_0() {
+    let dag = build_linear_dag();
+    let result = dag.descendants_bounded("raw", 0);
+    assert!(result.is_empty());
+}
+
+#[test]
+fn test_bounded_nonexistent_model() {
+    let dag = build_linear_dag();
+    let result = dag.ancestors_bounded("nonexistent", 1);
+    assert!(result.is_empty());
+    let result = dag.descendants_bounded("nonexistent", 1);
+    assert!(result.is_empty());
+}

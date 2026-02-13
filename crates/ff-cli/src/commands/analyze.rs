@@ -59,20 +59,12 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
         .topological_order()
         .context("Failed to get topological order")?;
 
-    let model_filter: Option<HashSet<String>> = args
-        .models
-        .as_ref()
-        .map(|m| m.split(',').map(|s| s.trim().to_string()).collect());
+    let resolved = super::common::resolve_nodes(&project, &dag, &args.nodes)?;
+    let resolved_set: HashSet<String> = resolved.into_iter().collect();
 
     let order: Vec<String> = topo_order
         .into_iter()
-        .filter(|n| {
-            if let Some(filter) = &model_filter {
-                filter.contains(n)
-            } else {
-                true
-            }
-        })
+        .filter(|n| resolved_set.contains(n))
         .filter(|n| project.models.contains_key(n.as_str()))
         .collect();
 

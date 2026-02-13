@@ -52,7 +52,7 @@ pub use project::{Project, ProjectParts};
 pub use query_comment::{QueryCommentContext, QueryCommentMetadata};
 pub use run_state::{CompletedModel, FailedModel, RunState, RunStateSummary, RunStatus};
 pub use seed::{Seed, SeedConfig};
-pub use selector::Selector;
+pub use selector::{apply_selectors, Selector, TraversalDepth};
 pub use snapshot::{
     discover_snapshots, Snapshot, SnapshotConfig, SnapshotStrategy, SCD_ID, SCD_UPDATED_AT,
     SCD_VALID_FROM, SCD_VALID_TO,

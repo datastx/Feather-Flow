@@ -4,7 +4,6 @@ use anyhow::{Context, Result};
 use ff_core::config::Materialization;
 use ff_core::dag::ModelDag;
 use ff_core::exposure::Exposure;
-use ff_core::selector::Selector;
 use ff_jinja::JinjaEnvironment;
 use ff_sql::{extract_dependencies, SqlParser};
 use std::collections::{HashMap, HashSet};
@@ -97,11 +96,8 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
 
     let dag = ModelDag::build(&dependencies).context("Failed to build dependency graph")?;
 
-    let filtered_names: HashSet<String> = if let Some(selector_str) = &args.select {
-        let selector = Selector::parse(selector_str).context("Invalid selector")?;
-        selector
-            .apply(&project.models, &dag)
-            .context("Failed to apply selector")?
+    let filtered_names: HashSet<String> = if args.nodes.is_some() {
+        common::resolve_nodes(&project, &dag, &args.nodes)?
             .into_iter()
             .collect()
     } else {

@@ -99,22 +99,19 @@ pub(crate) fn parse_hooks_from_config(
         .unwrap_or_default()
 }
 
-/// Filter models from the project based on an optional comma-separated list.
+/// Resolve nodes from the project using selector-aware filtering with DAG support.
 ///
-/// If `models_arg` is `None`, returns all model names.
-pub(crate) fn filter_models(project: &Project, models_arg: &Option<String>) -> Vec<String> {
-    match models_arg {
-        Some(models) => models
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect(),
-        None => project
-            .model_names()
-            .into_iter()
-            .map(String::from)
-            .collect(),
-    }
+/// Parses each comma-separated token through `Selector::parse()`, applies them
+/// against the DAG, and returns the union in topological order.
+/// If `nodes_arg` is `None`, returns all models in topological order.
+pub(crate) fn resolve_nodes(
+    project: &Project,
+    dag: &ff_core::dag::ModelDag,
+    nodes_arg: &Option<String>,
+) -> Result<Vec<String>> {
+    use ff_core::selector::apply_selectors;
+
+    Ok(apply_selectors(nodes_arg, &project.models, dag)?)
 }
 
 /// Build a lookup set of all external tables including sources.
@@ -300,6 +297,51 @@ pub(crate) fn build_schema_catalog(
 /// Load a project from the directory specified in global CLI arguments.
 pub(crate) fn load_project(global: &GlobalArgs) -> Result<Project> {
     Project::load(&global.project_dir).context("Failed to load project")
+}
+
+/// Build a DAG from a project by rendering Jinja, parsing SQL, and extracting
+/// dependencies for every model.
+///
+/// Models that fail Jinja rendering or SQL parsing are included in the DAG
+/// with no dependencies (disconnected nodes) so that selectors that reference
+/// them by name still work.
+///
+/// Returns `(dependencies_map, dag)`.
+pub(crate) fn build_project_dag(
+    project: &Project,
+) -> Result<(HashMap<String, Vec<String>>, ff_core::dag::ModelDag)> {
+    let jinja = ff_jinja::JinjaEnvironment::new(&project.config.vars);
+    let parser = ff_sql::SqlParser::from_dialect_name(&project.config.dialect.to_string())
+        .context("Invalid SQL dialect")?;
+    let external_tables = build_external_tables_lookup(project);
+    let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
+
+    let mut dependencies: HashMap<String, Vec<String>> = HashMap::new();
+
+    for (name, model) in &project.models {
+        let rendered = match jinja.render(&model.raw_sql) {
+            Ok(sql) => sql,
+            Err(_) => {
+                dependencies.insert(name.to_string(), Vec::new());
+                continue;
+            }
+        };
+        let stmts = match parser.parse(&rendered) {
+            Ok(s) => s,
+            Err(_) => {
+                dependencies.insert(name.to_string(), Vec::new());
+                continue;
+            }
+        };
+        let deps = ff_sql::extract_dependencies(&stmts);
+        let (model_deps, _) =
+            ff_sql::extractor::categorize_dependencies(deps, &known_models, &external_tables);
+        dependencies.insert(name.to_string(), model_deps);
+    }
+
+    let dag =
+        ff_core::dag::ModelDag::build(&dependencies).context("Failed to build dependency graph")?;
+    Ok((dependencies, dag))
 }
 
 /// Build user function stubs for static analysis from project functions.

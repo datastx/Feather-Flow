@@ -623,13 +623,13 @@ fn test_cli_analyze_model_filter() {
             "analyze",
             "--project-dir",
             "tests/fixtures/sa_dag_fail_mixed",
-            "--models",
+            "--nodes",
             "stg",
             "--output",
             "json",
         ])
         .output()
-        .expect("Failed to run ff analyze --models stg");
+        .expect("Failed to run ff analyze --nodes stg");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let diags: Vec<serde_json::Value> = serde_json::from_str(stdout.trim())
@@ -639,7 +639,7 @@ fn test_cli_analyze_model_filter() {
         let model = diag.get("model").and_then(|m| m.as_str()).unwrap_or("");
         assert_eq!(
             model, "stg",
-            "With --models stg, all diagnostics should be for 'stg', got '{}'",
+            "With --nodes stg, all diagnostics should be for 'stg', got '{}'",
             model
         );
     }

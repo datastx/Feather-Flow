@@ -82,7 +82,7 @@ pub async fn execute(args: &LineageArgs, global: &GlobalArgs) -> Result<()> {
 
 /// Print lineage as JSON
 fn print_json(lineage: &ProjectLineage, args: &LineageArgs) -> Result<()> {
-    if let (Some(model), Some(column)) = (&args.model, &args.column) {
+    if let (Some(model), Some(column)) = (&args.node, &args.column) {
         // Filter to specific column
         let edges: Vec<_> = match args.direction {
             LineageDirection::Upstream => lineage.trace_column(model, column),
@@ -94,7 +94,7 @@ fn print_json(lineage: &ProjectLineage, args: &LineageArgs) -> Result<()> {
             }
         };
         println!("{}", serde_json::to_string_pretty(&edges)?);
-    } else if let Some(model) = &args.model {
+    } else if let Some(model) = &args.node {
         // Filter to specific model
         let edges: Vec<_> = lineage
             .edges
@@ -125,7 +125,7 @@ fn print_table(lineage: &ProjectLineage, args: &LineageArgs) {
     }
 
     let edges: Vec<&ff_sql::LineageEdge> =
-        if let (Some(model), Some(column)) = (&args.model, &args.column) {
+        if let (Some(model), Some(column)) = (&args.node, &args.column) {
             match args.direction {
                 LineageDirection::Upstream => lineage.trace_column(model, column),
                 LineageDirection::Downstream => lineage.column_consumers(model, column),
@@ -135,7 +135,7 @@ fn print_table(lineage: &ProjectLineage, args: &LineageArgs) {
                     all
                 }
             }
-        } else if let Some(model) = &args.model {
+        } else if let Some(model) = &args.node {
             lineage
                 .edges
                 .iter()

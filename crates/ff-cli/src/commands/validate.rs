@@ -107,7 +107,7 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
 
     let mut ctx = ValidationContext::new();
 
-    let models_to_validate = get_models_to_validate(&project, &args.models);
+    let models_to_validate = get_models_to_validate(&project, &args.nodes)?;
     let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
         .context("Invalid SQL dialect")?;
     let macro_paths = project.config.macro_paths_absolute(&project.root);
@@ -157,16 +157,22 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
     print_issues_and_summary(&ctx, args.strict)
 }
 
-/// Get list of models to validate based on CLI filter
-fn get_models_to_validate(project: &Project, filter: &Option<String>) -> Vec<String> {
-    if let Some(f) = filter {
-        f.split(',').map(|s| s.trim().to_string()).collect()
+/// Get list of models to validate based on CLI filter.
+///
+/// When a filter is provided, builds the project DAG and resolves selectors
+/// (supporting `+model`, `tag:X`, `path:X`, `N+model`, etc.).
+/// When no filter is given, returns all model names without building a DAG.
+fn get_models_to_validate(project: &Project, filter: &Option<String>) -> Result<Vec<String>> {
+    if filter.is_some() {
+        let (_, dag) =
+            crate::commands::common::build_project_dag(project).context("building DAG")?;
+        crate::commands::common::resolve_nodes(project, &dag, filter)
     } else {
-        project
+        Ok(project
             .model_names()
             .into_iter()
             .map(String::from)
-            .collect()
+            .collect())
     }
 }
 

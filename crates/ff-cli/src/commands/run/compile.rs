@@ -418,32 +418,39 @@ pub(super) fn determine_execution_order(
     };
 
     // Validate --defer usage
-    if args.defer.is_some()
-        && args.state.is_none()
-        && args.select.is_none()
-        && args.models.is_none()
-    {
+    if args.defer.is_some() && args.state.is_none() && args.nodes.is_none() {
         anyhow::bail!(
-            "The --defer flag requires either --state, --select, or --models to specify which models to run"
+            "The --defer flag requires either --state or --nodes to specify which models to run"
         );
     }
 
-    let models_to_run: Vec<String> = if let Some(select) = &args.select {
-        // Parse the selector to check if it's a state selector
-        let selector = Selector::parse(select).context("Invalid selector")?;
-
-        if selector.requires_state() && reference_manifest.is_none() {
-            anyhow::bail!("state: selector requires --state flag with path to reference manifest");
+    let models_to_run: Vec<String> = if let Some(nodes_str) = &args.nodes {
+        // Check if any token is a state: selector
+        let mut combined = Vec::new();
+        for token in nodes_str.split(',') {
+            let token = token.trim();
+            if token.is_empty() {
+                continue;
+            }
+            let selector = Selector::parse(token).context("Invalid selector")?;
+            if selector.requires_state() && reference_manifest.is_none() {
+                anyhow::bail!(
+                    "state: selector requires --state flag with path to reference manifest"
+                );
+            }
+            let matched = selector
+                .apply_with_state(&project.models, &dag, reference_manifest.as_ref())
+                .context("Failed to apply selector")?;
+            combined.extend(matched);
         }
-
-        selector
-            .apply_with_state(&project.models, &dag, reference_manifest.as_ref())
-            .context("Failed to apply selector")?
-    } else if let Some(models) = &args.models {
-        models
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
+        // Deduplicate and return in topological order
+        let combined_set: std::collections::HashSet<String> = combined.into_iter().collect();
+        let order = dag
+            .topological_order()
+            .context("Failed to get execution order")?;
+        order
+            .into_iter()
+            .filter(|m| combined_set.contains(m))
             .collect()
     } else {
         dag.topological_order()
