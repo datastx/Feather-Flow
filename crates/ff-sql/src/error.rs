@@ -38,10 +38,8 @@ pub enum SqlError {
     /// Ephemeral model inlining failed (S008)
     #[error("[S008] Failed to inline ephemeral model '{model_name}': {reason}")]
     InlineError { model_name: String, reason: String },
-
-    /// SELECT * not allowed (S009)
-    #[error("[S009] SELECT * is not allowed — explicitly list all columns")]
-    SelectStarNotAllowed,
+    // S009: Reserved/retired — SELECT * is now allowed (DataFusion expands wildcards transparently).
+    // Do not reuse this code to avoid confusion with historical diagnostics.
 }
 
 /// Result type alias for SqlError

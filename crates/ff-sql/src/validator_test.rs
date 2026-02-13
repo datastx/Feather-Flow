@@ -151,33 +151,21 @@ fn test_join_without_derived_passes() {
 }
 
 #[test]
-fn test_select_star_rejected() {
+fn test_select_star_allowed() {
     let result = validate_no_complex("SELECT * FROM users");
-    assert!(result.is_err());
-    assert!(matches!(
-        result.unwrap_err(),
-        SqlError::SelectStarNotAllowed
-    ));
+    assert!(result.is_ok());
 }
 
 #[test]
-fn test_qualified_wildcard_rejected() {
+fn test_qualified_wildcard_allowed() {
     let result = validate_no_complex("SELECT t.* FROM users t");
-    assert!(result.is_err());
-    assert!(matches!(
-        result.unwrap_err(),
-        SqlError::SelectStarNotAllowed
-    ));
+    assert!(result.is_ok());
 }
 
 #[test]
-fn test_select_star_in_union_rejected() {
+fn test_select_star_in_union_allowed() {
     let result = validate_no_complex("SELECT * FROM users UNION ALL SELECT * FROM customers");
-    assert!(result.is_err());
-    assert!(matches!(
-        result.unwrap_err(),
-        SqlError::SelectStarNotAllowed
-    ));
+    assert!(result.is_ok());
 }
 
 #[test]

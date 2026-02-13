@@ -1,7 +1,7 @@
 //! SQL validation utilities
 
 use crate::error::{SqlError, SqlResult};
-use sqlparser::ast::{Query, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins};
+use sqlparser::ast::{Query, SetExpr, Statement, TableFactor, TableWithJoins};
 
 /// Validate that SQL contains no CTEs (WITH clauses)
 ///
@@ -78,54 +78,13 @@ fn check_table_factor_for_derived(factor: &TableFactor) -> SqlResult<()> {
     }
 }
 
-/// Validate that SQL contains no SELECT * or table.* wildcards
-///
-/// Every model must explicitly list its columns — wildcards hide schema
-/// changes and break the contract between models.
-fn validate_no_select_star(statements: &[Statement]) -> SqlResult<()> {
-    for stmt in statements {
-        if let Statement::Query(query) = stmt {
-            check_query_for_select_star(query)?;
-        }
-    }
-    Ok(())
-}
-
-/// Recursively check a query for SELECT * and table.* wildcards
-fn check_query_for_select_star(query: &Query) -> SqlResult<()> {
-    check_set_expr_for_select_star(query.body.as_ref())
-}
-
-/// Check a SetExpr node for SELECT * wildcards
-fn check_set_expr_for_select_star(expr: &SetExpr) -> SqlResult<()> {
-    match expr {
-        SetExpr::Select(select) => {
-            for item in &select.projection {
-                if matches!(
-                    item,
-                    SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(..)
-                ) {
-                    return Err(SqlError::SelectStarNotAllowed);
-                }
-            }
-        }
-        SetExpr::SetOperation { left, right, .. } => {
-            check_set_expr_for_select_star(left)?;
-            check_set_expr_for_select_star(right)?;
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-/// Validate that SQL contains no CTEs, no derived tables, and no SELECT *
+/// Validate that SQL contains no CTEs and no derived tables
 ///
 /// This is the combined check that should be called during validation and compilation.
 /// Scalar subqueries in SELECT/WHERE/HAVING remain allowed.
 pub fn validate_no_complex_queries(statements: &[Statement]) -> SqlResult<()> {
     validate_no_ctes(statements)?;
     validate_no_derived_tables(statements)?;
-    validate_no_select_star(statements)?;
     Ok(())
 }
 

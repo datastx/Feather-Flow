@@ -323,7 +323,6 @@ const severityMap: Record<string, vscode.DiagnosticSeverity> = {
   'E012': Error,    // Model directory mismatch
   'S005': Error,    // CTE not allowed
   'S006': Error,    // Derived table not allowed
-  'S009': Error,    // SELECT * not allowed
   'SA01': Error,    // Schema mismatch (missing from SQL)
   'E006': Error,    // SQL parse error
   'E007': Error,    // Circular dependency
@@ -340,7 +339,6 @@ const severityMap: Record<string, vscode.DiagnosticSeverity> = {
   // Info — style/best practice
   'A012': Info,     // Redundant IS NULL
   'A020': Info,     // Unused column
-  'A021': Info,     // SELECT * blocks detection
 };
 ```
 

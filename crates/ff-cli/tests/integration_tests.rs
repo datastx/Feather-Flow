@@ -20,11 +20,12 @@ fn test_load_sample_project() {
     let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
 
     assert_eq!(project.config.name, "sample_project");
-    assert_eq!(project.models.len(), 9);
+    assert_eq!(project.models.len(), 10);
     assert!(project.models.contains_key("stg_orders"));
     assert!(project.models.contains_key("stg_customers"));
     assert!(project.models.contains_key("stg_products"));
     assert!(project.models.contains_key("stg_payments"));
+    assert!(project.models.contains_key("stg_payments_star"));
     assert!(project.models.contains_key("int_orders_enriched"));
     assert!(project.models.contains_key("int_customer_metrics"));
     assert!(project.models.contains_key("dim_customers"));
@@ -2276,7 +2277,7 @@ fn test_analysis_sample_project_no_false_diagnostics() {
         "Expected no planning failures, got: {:?}",
         pipeline.propagation.failures
     );
-    assert_eq!(pipeline.propagation.model_plans.len(), 9);
+    assert_eq!(pipeline.propagation.model_plans.len(), 10);
 
     let diagnostics = run_all_passes(&pipeline);
 

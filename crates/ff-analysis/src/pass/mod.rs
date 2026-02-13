@@ -35,8 +35,8 @@ pub enum DiagnosticCode {
     A012,
     /// A020: Unused column
     A020,
-    /// A021: SELECT * blocks detection (no longer emitted — DataFusion expands *)
-    A021,
+    // A021: Reserved/retired — SELECT * is now allowed; DataFusion expands wildcards transparently.
+    // Do not reuse this code to avoid confusion with historical diagnostics.
     /// A030: Join key type mismatch
     A030,
     /// A032: Cross join

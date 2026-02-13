@@ -158,7 +158,7 @@ Every expression node carries its `resolved_type: SqlType` and `nullability: Nul
 | `type_inference` | `TypeInference` | A001-A005 | Unknown types, UNION mismatches, SUM/AVG on strings, lossy casts |
 | `nullability` | `NullabilityPropagation` | A010-A012 | Nullable columns from outer JOINs without guards, YAML NOT NULL conflicts |
 | `join_keys` | `JoinKeyAnalysis` | A030, A032-A033 | Join key type mismatches, cross joins, non-equi joins |
-| `unused_columns` | `UnusedColumnDetection` (DAG pass) | A020-A021 | Columns produced but never consumed downstream |
+| `unused_columns` | `UnusedColumnDetection` (DAG pass) | A020 | Columns produced but never consumed downstream |
 
 ### Tier 2: DataFusion LogicalPlan
 
@@ -926,7 +926,6 @@ If the YAML for this model declares `customer_name` as NOT NULL:
 | A011 | `nullability` | Warning | YAML declares NOT NULL but column is nullable after JOIN |
 | A012 | `nullability` | Info | IS NULL or IS NOT NULL check on an always-NOT-NULL column (redundant) |
 | A020 | `unused_columns` | Info | Column produced but never referenced by any downstream model |
-| A021 | `unused_columns` | Info | Model uses SELECT * — cannot detect unused columns |
 | A030 | `join_keys` | Warning | Join key columns have incompatible types |
 | A032 | `join_keys` | Info | Cross join (Cartesian product) detected |
 | A033 | `join_keys` | Info | Non-equi join condition detected |
@@ -975,7 +974,7 @@ If the YAML for this model declares `customer_name` as NOT NULL:
 | `crates/ff-analysis/src/pass/type_inference.rs` | A001-A005: Type checking on IR |
 | `crates/ff-analysis/src/pass/nullability.rs` | A010-A012: Nullability propagation on IR |
 | `crates/ff-analysis/src/pass/join_keys.rs` | A030-A033: Join key analysis on IR |
-| `crates/ff-analysis/src/pass/unused_columns.rs` | A020-A021: Unused column detection (DAG) |
+| `crates/ff-analysis/src/pass/unused_columns.rs` | A020: Unused column detection (DAG) |
 | `crates/ff-analysis/src/pass/plan_pass.rs` | `PlanPassManager`, `PlanPass`, `DagPlanPass` traits |
 | `crates/ff-analysis/src/pass/plan_cross_model.rs` | A040-A041: Cross-model consistency on LogicalPlan |
 | `crates/ff-analysis/src/datafusion_bridge/mod.rs` | Bridge module declaration |
