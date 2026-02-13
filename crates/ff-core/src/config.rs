@@ -37,10 +37,6 @@ pub struct Config {
     #[serde(default = "default_test_paths")]
     pub test_paths: Vec<String>,
 
-    /// Directories containing snapshot YAML files
-    #[serde(default = "default_snapshot_paths")]
-    pub snapshot_paths: Vec<String>,
-
     /// Directories containing exposure YAML files
     #[serde(default = "default_exposure_paths")]
     pub exposure_paths: Vec<String>,
@@ -243,10 +239,6 @@ fn default_test_paths() -> Vec<String> {
     vec!["tests".to_string()]
 }
 
-fn default_snapshot_paths() -> Vec<String> {
-    vec!["snapshots".to_string()]
-}
-
 fn default_exposure_paths() -> Vec<String> {
     vec!["exposures".to_string()]
 }
@@ -376,11 +368,6 @@ impl Config {
         Self::paths_absolute(&self.test_paths, root)
     }
 
-    /// Get absolute snapshot paths relative to a project root
-    pub fn snapshot_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
-        Self::paths_absolute(&self.snapshot_paths, root)
-    }
-
     /// Get absolute exposure paths relative to a project root
     pub fn exposure_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
         Self::paths_absolute(&self.exposure_paths, root)
@@ -435,41 +422,34 @@ impl Config {
     }
 
     /// Get schema, optionally applying target overrides
-    pub fn get_schema(&self, target: Option<&str>) -> Option<String> {
-        if let Some(schema) = target
+    pub fn get_schema(&self, target: Option<&str>) -> Option<&str> {
+        target
             .and_then(|name| self.targets.get(name))
-            .and_then(|tc| tc.schema.clone())
-        {
-            return Some(schema);
-        }
-        self.schema.clone()
+            .and_then(|tc| tc.schema.as_deref())
+            .or(self.schema.as_deref())
     }
 
     /// Get WAP schema, optionally applying target overrides
-    pub fn get_wap_schema(&self, target: Option<&str>) -> Option<String> {
-        if let Some(schema) = target
+    pub fn get_wap_schema(&self, target: Option<&str>) -> Option<&str> {
+        target
             .and_then(|name| self.targets.get(name))
-            .and_then(|tc| tc.wap_schema.clone())
-        {
-            return Some(schema);
-        }
-        self.wap_schema.clone()
+            .and_then(|tc| tc.wap_schema.as_deref())
+            .or(self.wap_schema.as_deref())
     }
 
     /// Get merged variables, with target overrides taking precedence
     pub fn get_merged_vars(&self, target: Option<&str>) -> HashMap<String, serde_yaml::Value> {
-        let mut vars = self.vars.clone();
-
-        if let Some(name) = target {
-            if let Some(target_config) = self.targets.get(name) {
-                // Target vars override base vars
-                for (key, value) in &target_config.vars {
+        let target_config = target.and_then(|name| self.targets.get(name));
+        match target_config.filter(|tc| !tc.vars.is_empty()) {
+            Some(tc) => {
+                let mut vars = self.vars.clone();
+                for (key, value) in &tc.vars {
                     vars.insert(key.clone(), value.clone());
                 }
+                vars
             }
+            None => self.vars.clone(),
         }
-
-        vars
     }
 
     /// Resolve target from CLI flag or FF_TARGET environment variable

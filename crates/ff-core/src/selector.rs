@@ -482,6 +482,28 @@ impl Selector {
 /// bounded `N+model` syntax because the leading digits are parsed as a
 /// depth prefix. Such models can still be selected with plain `123` or
 /// `+123` / `123+` (unbounded) forms.
+/// Parse a depth specifier string into a `TraversalDepth`.
+///
+/// - Empty string → `Unlimited`
+/// - All digits → `Bounded(n)`
+/// - Otherwise → error with `context` in the message
+fn parse_depth(part: &str, selector: &str, context: &str) -> CoreResult<TraversalDepth> {
+    if part.is_empty() {
+        Ok(TraversalDepth::Unlimited)
+    } else if part.chars().all(|c| c.is_ascii_digit()) {
+        let n: usize = part.parse().map_err(|_| CoreError::InvalidSelector {
+            selector: selector.to_string(),
+            reason: format!("invalid depth '{}'", part),
+        })?;
+        Ok(TraversalDepth::Bounded(n))
+    } else {
+        Err(CoreError::InvalidSelector {
+            selector: selector.to_string(),
+            reason: format!("expected a number {} '+', got '{}'", context, part),
+        })
+    }
+}
+
 fn parse_model_selector(s: &str) -> CoreResult<(TraversalDepth, TraversalDepth, String)> {
     let parts: Vec<&str> = s.split('+').collect();
     match parts.len() {
@@ -503,7 +525,6 @@ fn parse_model_selector(s: &str) -> CoreResult<(TraversalDepth, TraversalDepth, 
                 ))
             } else if !left.is_empty() && right.is_empty() {
                 // Could be "model+" or "N+"
-                // If left is all digits, that's invalid (e.g. "3+")
                 if left.chars().all(|c| c.is_ascii_digit()) {
                     Err(CoreError::InvalidSelector {
                         selector: s.to_string(),
@@ -520,25 +541,11 @@ fn parse_model_selector(s: &str) -> CoreResult<(TraversalDepth, TraversalDepth, 
             } else if !left.is_empty() && !right.is_empty() {
                 // N+model or model+N
                 if left.chars().all(|c| c.is_ascii_digit()) {
-                    let n: usize = left.parse().map_err(|_| CoreError::InvalidSelector {
-                        selector: s.to_string(),
-                        reason: format!("invalid depth '{}'", left),
-                    })?;
-                    Ok((
-                        TraversalDepth::Bounded(n),
-                        TraversalDepth::None,
-                        right.to_string(),
-                    ))
+                    let depth = parse_depth(left, s, "before")?;
+                    Ok((depth, TraversalDepth::None, right.to_string()))
                 } else if right.chars().all(|c| c.is_ascii_digit()) {
-                    let n: usize = right.parse().map_err(|_| CoreError::InvalidSelector {
-                        selector: s.to_string(),
-                        reason: format!("invalid depth '{}'", right),
-                    })?;
-                    Ok((
-                        TraversalDepth::None,
-                        TraversalDepth::Bounded(n),
-                        left.to_string(),
-                    ))
+                    let depth = parse_depth(right, s, "after")?;
+                    Ok((TraversalDepth::None, depth, left.to_string()))
                 } else {
                     Err(CoreError::InvalidSelector {
                         selector: s.to_string(),
@@ -562,34 +569,8 @@ fn parse_model_selector(s: &str) -> CoreResult<(TraversalDepth, TraversalDepth, 
                     reason: "model name cannot be empty".to_string(),
                 });
             }
-            let ancestor_depth = if left.is_empty() {
-                TraversalDepth::Unlimited
-            } else if left.chars().all(|c| c.is_ascii_digit()) {
-                let n: usize = left.parse().map_err(|_| CoreError::InvalidSelector {
-                    selector: s.to_string(),
-                    reason: format!("invalid depth '{}'", left),
-                })?;
-                TraversalDepth::Bounded(n)
-            } else {
-                return Err(CoreError::InvalidSelector {
-                    selector: s.to_string(),
-                    reason: format!("expected a number before '+', got '{}'", left),
-                });
-            };
-            let descendant_depth = if right.is_empty() {
-                TraversalDepth::Unlimited
-            } else if right.chars().all(|c| c.is_ascii_digit()) {
-                let n: usize = right.parse().map_err(|_| CoreError::InvalidSelector {
-                    selector: s.to_string(),
-                    reason: format!("invalid depth '{}'", right),
-                })?;
-                TraversalDepth::Bounded(n)
-            } else {
-                return Err(CoreError::InvalidSelector {
-                    selector: s.to_string(),
-                    reason: format!("expected a number after '+', got '{}'", right),
-                });
-            };
+            let ancestor_depth = parse_depth(left, s, "before")?;
+            let descendant_depth = parse_depth(right, s, "after")?;
             Ok((ancestor_depth, descendant_depth, middle.to_string()))
         }
         _ => Err(CoreError::InvalidSelector {

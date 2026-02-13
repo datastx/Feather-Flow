@@ -164,12 +164,10 @@ impl StateFile {
             None => return true,
         };
 
-        // SQL changed
         if state.checksum != current_sql_checksum {
             return true;
         }
 
-        // Schema changed
         match (&state.schema_checksum, current_schema_checksum) {
             (Some(old), Some(new)) if old != new => return true,
             (None, Some(_)) => return true,
@@ -177,7 +175,6 @@ impl StateFile {
             _ => {}
         }
 
-        // Any upstream input changed
         for (input_name, current_checksum) in current_input_checksums {
             match state.input_checksums.get(input_name) {
                 Some(old_checksum) if old_checksum != current_checksum => return true,
@@ -186,7 +183,6 @@ impl StateFile {
             }
         }
 
-        // Check if inputs were removed
         for input_name in state.input_checksums.keys() {
             if !current_input_checksums.contains_key(input_name) {
                 return true;

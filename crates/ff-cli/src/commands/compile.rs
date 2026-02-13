@@ -155,7 +155,7 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
 
     let default_materialization = project.config.materialization;
 
-    // Phase 1: Compile all models (render Jinja, parse SQL, extract dependencies)
+    // Phase 1: compile models
     let mut compiled_models: Vec<CompileOutput> = Vec::new();
     let mut materializations: HashMap<String, Materialization> = HashMap::new();
 
@@ -242,8 +242,7 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
-    // Phase 2: Inline ephemeral dependencies and write files
-    // Build a map of ephemeral model SQL for inlining
+    // Phase 2: inline ephemeral deps and write files
     let ephemeral_sql: HashMap<String, String> = compiled_models
         .iter()
         .filter(|m| m.materialization == Materialization::Ephemeral)
@@ -300,10 +299,10 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
                 }
                 inline_ephemeral_ctes(&compiled.sql, &ephemeral_deps, &order)?
             } else {
-                compiled.sql.clone()
+                compiled.sql
             }
         } else {
-            compiled.sql.clone()
+            compiled.sql
         };
 
         // Write the compiled SQL (with inlined ephemerals)
@@ -484,11 +483,11 @@ fn compile_model_phase1(
     model.compiled_sql = Some(rendered.clone());
     model.depends_on = model_deps
         .iter()
-        .map(|s| ff_core::ModelName::new(s.clone()))
+        .filter_map(|s| ff_core::ModelName::try_new(s.clone()))
         .collect();
     model.external_deps = ext_deps
         .iter()
-        .map(|s| ff_core::TableName::new(s.clone()))
+        .filter_map(|s| ff_core::TableName::try_new(s.clone()))
         .collect();
     model.config = ModelConfig {
         materialized: config_values

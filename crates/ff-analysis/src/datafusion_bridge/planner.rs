@@ -28,12 +28,6 @@ pub fn sql_to_plan(sql: &str, provider: &FeatherFlowProvider) -> AnalysisResult<
         AnalysisError::PlanningError(format!("Failed to parse SQL for planning: {e}"))
     })?;
 
-    if df_stmts.is_empty() {
-        return Err(AnalysisError::PlanningError(
-            "No statements found in SQL".to_string(),
-        ));
-    }
-
     let planner = SqlToRel::new(provider);
     let first_stmt = df_stmts
         .into_iter()

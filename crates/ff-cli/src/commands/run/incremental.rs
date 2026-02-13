@@ -142,23 +142,23 @@ async fn execute_strategy(
             db.execute(&insert_sql).await.map(|_| ())
         }
         IncrementalStrategy::Merge => {
-            let unique_keys = compiled.unique_key.clone().unwrap_or_default();
+            let unique_keys = compiled.unique_key.as_deref().unwrap_or_default();
             if unique_keys.is_empty() {
                 Err(ff_db::DbError::ExecutionError(
                     "Merge strategy requires unique_key to be specified".to_string(),
                 ))
             } else {
-                db.merge_into(table_name, exec_sql, &unique_keys).await
+                db.merge_into(table_name, exec_sql, unique_keys).await
             }
         }
         IncrementalStrategy::DeleteInsert => {
-            let unique_keys = compiled.unique_key.clone().unwrap_or_default();
+            let unique_keys = compiled.unique_key.as_deref().unwrap_or_default();
             if unique_keys.is_empty() {
                 Err(ff_db::DbError::ExecutionError(
                     "Delete+insert strategy requires unique_key to be specified".to_string(),
                 ))
             } else {
-                db.delete_insert(table_name, exec_sql, &unique_keys).await
+                db.delete_insert(table_name, exec_sql, unique_keys).await
             }
         }
     }

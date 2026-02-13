@@ -1,6 +1,5 @@
 //! Schema metadata types for model YAML files
 
-use super::freshness::FreshnessConfig;
 use super::testing::{parse_test_definition, SchemaTest, TestConfig, TestDefinition};
 use crate::error::CoreError;
 use crate::model_name::ModelName;
@@ -43,10 +42,6 @@ pub struct ModelSchema {
     /// Data contract definition for schema enforcement
     #[serde(default)]
     pub contract: Option<SchemaContract>,
-
-    /// Freshness configuration for SLA monitoring
-    #[serde(default)]
-    pub freshness: Option<FreshnessConfig>,
 
     /// Column definitions
     #[serde(default)]
@@ -117,16 +112,6 @@ impl ModelSchema {
     /// Get all column names defined in the schema
     pub fn column_names(&self) -> Vec<&str> {
         self.columns.iter().map(|c| c.name.as_str()).collect()
-    }
-
-    /// Check if this model has freshness configuration
-    pub fn has_freshness(&self) -> bool {
-        self.freshness.is_some()
-    }
-
-    /// Get the freshness config if defined
-    pub fn get_freshness(&self) -> Option<&FreshnessConfig> {
-        self.freshness.as_ref()
     }
 
     /// Get owner - prefers direct owner field, falls back to meta.owner

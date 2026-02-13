@@ -152,33 +152,35 @@ impl RunState {
     }
 
     /// Mark a model as completed
-    pub fn mark_completed(&mut self, name: &str, duration_ms: u64) {
-        // Remove from pending
+    pub fn mark_completed(&mut self, name: &str, duration_ms: u64) -> CoreResult<()> {
         self.pending_models.retain(|n| n != name);
 
-        // Add to completed
         self.completed_models.push(CompletedModel {
-            name: ModelName::new(name),
+            name: ModelName::try_new(name).ok_or_else(|| crate::error::CoreError::EmptyName {
+                context: "completed model name".into(),
+            })?,
             completed_at: Utc::now(),
             duration_ms,
         });
 
         self.last_updated_at = Utc::now();
+        Ok(())
     }
 
     /// Mark a model as failed
-    pub fn mark_failed(&mut self, name: &str, error: &str) {
-        // Remove from pending
+    pub fn mark_failed(&mut self, name: &str, error: &str) -> CoreResult<()> {
         self.pending_models.retain(|n| n != name);
 
-        // Add to failed
         self.failed_models.push(FailedModel {
-            name: ModelName::new(name),
+            name: ModelName::try_new(name).ok_or_else(|| crate::error::CoreError::EmptyName {
+                context: "failed model name".into(),
+            })?,
             failed_at: Utc::now(),
             error: error.to_string(),
         });
 
         self.last_updated_at = Utc::now();
+        Ok(())
     }
 
     /// Mark the run as completed
@@ -209,17 +211,11 @@ impl RunState {
 
     /// Get models that need to be run (failed + pending)
     pub fn models_to_run(&self) -> Vec<ModelName> {
-        let mut models = Vec::new();
-
-        // Add failed models (for retry)
-        for m in &self.failed_models {
-            models.push(m.name.clone());
-        }
-
-        // Add pending models
-        models.extend(self.pending_models.clone());
-
-        models
+        self.failed_models
+            .iter()
+            .map(|m| m.name.clone())
+            .chain(self.pending_models.iter().cloned())
+            .collect()
     }
 
     /// Get only the failed models (for --retry-failed)

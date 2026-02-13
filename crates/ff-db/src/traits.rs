@@ -5,7 +5,6 @@
 //! - [`DatabaseSchema`]: DDL operations (create table/view, drop, alter)
 //! - [`DatabaseCsv`]: CSV loading and schema inference
 //! - [`DatabaseIncremental`]: Merge/delete-insert for incremental models
-//! - [`DatabaseSnapshot`]: SCD Type 2 snapshot operations
 //!
 //! The [`Database`] super-trait combines all of them. Consumers that need
 //! all capabilities use `Arc<dyn Database>`.
@@ -194,56 +193,6 @@ pub trait DatabaseIncremental: Send + Sync {
     ) -> DbResult<()>;
 }
 
-/// SCD Type 2 snapshot operations.
-#[async_trait]
-pub trait DatabaseSnapshot: Send + Sync {
-    /// Execute a snapshot operation (SCD Type 2)
-    async fn execute_snapshot(
-        &self,
-        snapshot_table: &str,
-        source_table: &str,
-        unique_keys: &[String],
-        updated_at_column: Option<&str>,
-        check_cols: Option<&[String]>,
-        invalidate_hard_deletes: bool,
-    ) -> DbResult<SnapshotResult>;
-
-    /// Insert new records into snapshot.
-    ///
-    /// **Warning**: This method runs outside a transaction. For atomic snapshot
-    /// operations, use [`execute_snapshot`](Self::execute_snapshot) instead.
-    async fn snapshot_insert_new(
-        &self,
-        snapshot_table: &str,
-        source_table: &str,
-        unique_keys: &[String],
-    ) -> DbResult<usize>;
-
-    /// Update changed records in snapshot (set valid_to, insert new version).
-    ///
-    /// **Warning**: This method runs outside a transaction. For atomic snapshot
-    /// operations, use [`execute_snapshot`](Self::execute_snapshot) instead.
-    async fn snapshot_update_changed(
-        &self,
-        snapshot_table: &str,
-        source_table: &str,
-        unique_keys: &[String],
-        updated_at_column: Option<&str>,
-        check_cols: Option<&[String]>,
-    ) -> DbResult<usize>;
-
-    /// Handle hard deletes by setting valid_to on records missing from source.
-    ///
-    /// **Warning**: This method runs outside a transaction. For atomic snapshot
-    /// operations, use [`execute_snapshot`](Self::execute_snapshot) instead.
-    async fn snapshot_invalidate_deleted(
-        &self,
-        snapshot_table: &str,
-        source_table: &str,
-        unique_keys: &[String],
-    ) -> DbResult<usize>;
-}
-
 /// User-defined function management operations.
 #[async_trait]
 pub trait DatabaseFunction: Send + Sync {
@@ -277,33 +226,12 @@ pub trait DatabaseFunction: Send + Sync {
 ///
 /// - [`DuckDbBackend`](crate::DuckDbBackend) - Primary implementation using DuckDB
 pub trait Database:
-    DatabaseCore
-    + DatabaseSchema
-    + DatabaseCsv
-    + DatabaseIncremental
-    + DatabaseSnapshot
-    + DatabaseFunction
+    DatabaseCore + DatabaseSchema + DatabaseCsv + DatabaseIncremental + DatabaseFunction
 {
 }
 
 /// Blanket implementation: any type that implements all sub-traits also implements Database.
 impl<T> Database for T where
-    T: DatabaseCore
-        + DatabaseSchema
-        + DatabaseCsv
-        + DatabaseIncremental
-        + DatabaseSnapshot
-        + DatabaseFunction
+    T: DatabaseCore + DatabaseSchema + DatabaseCsv + DatabaseIncremental + DatabaseFunction
 {
-}
-
-/// Result of a snapshot execution
-#[derive(Debug, Clone, Default)]
-pub struct SnapshotResult {
-    /// Number of new records inserted
-    pub new_records: usize,
-    /// Number of records that were updated (changed)
-    pub updated_records: usize,
-    /// Number of records that were invalidated (hard deleted)
-    pub deleted_records: usize,
 }

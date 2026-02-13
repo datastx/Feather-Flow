@@ -10,7 +10,6 @@ fn make_schema(columns: Vec<(&str, &str)>, enforced: bool) -> ModelSchema {
         meta: std::collections::HashMap::new(),
         tags: vec![],
         contract: Some(SchemaContract { enforced }),
-        freshness: None,
         columns: columns
             .into_iter()
             .map(|(name, dtype)| SchemaColumnDef {

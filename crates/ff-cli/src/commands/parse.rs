@@ -13,19 +13,15 @@ use crate::commands::common::{self, load_project};
 pub async fn execute(args: &ParseArgs, global: &GlobalArgs) -> Result<()> {
     let project = load_project(global)?;
 
-    // Create SQL parser
     let dialect_str = project.config.dialect.to_string();
     let dialect = args.dialect.as_deref().unwrap_or(&dialect_str);
     let parser = SqlParser::from_dialect_name(dialect).context("Invalid SQL dialect")?;
 
-    // Create Jinja environment
     let jinja = JinjaEnvironment::new(&project.config.vars);
 
-    // Collect external tables as a set
     let external_tables: HashSet<String> = project.config.external_tables.iter().cloned().collect();
     let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
 
-    // Parse all models first to extract deps for DAG
     let all_model_names: Vec<String> = project
         .model_names()
         .into_iter()

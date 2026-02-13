@@ -12,5 +12,5 @@ pub use duckdb::DuckDbBackend;
 pub use error::DbError;
 pub use traits::{
     CsvLoadOptions, Database, DatabaseCore, DatabaseCsv, DatabaseFunction, DatabaseIncremental,
-    DatabaseSchema, DatabaseSnapshot, SnapshotResult,
+    DatabaseSchema,
 };

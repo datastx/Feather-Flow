@@ -4,6 +4,7 @@
 //! bridge and analysis passes, and no longer belong inside the deleted IR layer.
 
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 
 /// Valid bit widths for integer types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -156,59 +157,61 @@ impl SqlType {
     }
 
     /// Human-readable display name
-    pub fn display_name(&self) -> String {
+    pub fn display_name(&self) -> Cow<'static, str> {
         match self {
-            SqlType::Boolean => "BOOLEAN".into(),
+            SqlType::Boolean => Cow::Borrowed("BOOLEAN"),
             SqlType::Integer {
                 bits: IntBitWidth::I8,
-            } => "TINYINT".into(),
+            } => Cow::Borrowed("TINYINT"),
             SqlType::Integer {
                 bits: IntBitWidth::I16,
-            } => "SMALLINT".into(),
+            } => Cow::Borrowed("SMALLINT"),
             SqlType::Integer {
                 bits: IntBitWidth::I32,
-            } => "INTEGER".into(),
+            } => Cow::Borrowed("INTEGER"),
             SqlType::Integer {
                 bits: IntBitWidth::I64,
-            } => "BIGINT".into(),
-            SqlType::HugeInt => "HUGEINT".into(),
+            } => Cow::Borrowed("BIGINT"),
+            SqlType::HugeInt => Cow::Borrowed("HUGEINT"),
             SqlType::Float {
                 bits: FloatBitWidth::F32,
-            } => "FLOAT".into(),
+            } => Cow::Borrowed("FLOAT"),
             SqlType::Float {
                 bits: FloatBitWidth::F64,
-            } => "DOUBLE".into(),
+            } => Cow::Borrowed("DOUBLE"),
             SqlType::Decimal {
                 precision: Some(p),
                 scale: Some(s),
-            } => format!("DECIMAL({p},{s})"),
+            } => Cow::Owned(format!("DECIMAL({p},{s})")),
             SqlType::Decimal {
                 precision: Some(p), ..
-            } => format!("DECIMAL({p})"),
-            SqlType::Decimal { .. } => "DECIMAL".into(),
+            } => Cow::Owned(format!("DECIMAL({p})")),
+            SqlType::Decimal { .. } => Cow::Borrowed("DECIMAL"),
             SqlType::String {
                 max_length: Some(n),
-            } => format!("VARCHAR({n})"),
-            SqlType::String { .. } => "VARCHAR".into(),
-            SqlType::Date => "DATE".into(),
-            SqlType::Time => "TIME".into(),
-            SqlType::Timestamp => "TIMESTAMP".into(),
-            SqlType::Interval => "INTERVAL".into(),
-            SqlType::Binary => "BINARY".into(),
-            SqlType::Json => "JSON".into(),
-            SqlType::Uuid => "UUID".into(),
-            SqlType::Array(inner) => format!("{}[]", inner.display_name()),
+            } => Cow::Owned(format!("VARCHAR({n})")),
+            SqlType::String { .. } => Cow::Borrowed("VARCHAR"),
+            SqlType::Date => Cow::Borrowed("DATE"),
+            SqlType::Time => Cow::Borrowed("TIME"),
+            SqlType::Timestamp => Cow::Borrowed("TIMESTAMP"),
+            SqlType::Interval => Cow::Borrowed("INTERVAL"),
+            SqlType::Binary => Cow::Borrowed("BINARY"),
+            SqlType::Json => Cow::Borrowed("JSON"),
+            SqlType::Uuid => Cow::Borrowed("UUID"),
+            SqlType::Array(inner) => Cow::Owned(format!("{}[]", inner.display_name())),
             SqlType::Struct(fields) => {
                 let field_strs: Vec<String> = fields
                     .iter()
                     .map(|(name, ty)| format!("{} {}", name, ty.display_name()))
                     .collect();
-                format!("STRUCT({})", field_strs.join(", "))
+                Cow::Owned(format!("STRUCT({})", field_strs.join(", ")))
             }
-            SqlType::Map { key, value } => {
-                format!("MAP({}, {})", key.display_name(), value.display_name())
-            }
-            SqlType::Unknown(reason) => format!("UNKNOWN({reason})"),
+            SqlType::Map { key, value } => Cow::Owned(format!(
+                "MAP({}, {})",
+                key.display_name(),
+                value.display_name()
+            )),
+            SqlType::Unknown(reason) => Cow::Owned(format!("UNKNOWN({reason})")),
         }
     }
 }

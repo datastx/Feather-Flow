@@ -27,24 +27,27 @@ impl ModelDag {
     }
 
     /// Add a model to the DAG
-    pub fn add_model(&mut self, name: &str) -> NodeIndex {
+    pub fn add_model(&mut self, name: &str) -> CoreResult<NodeIndex> {
         if let Some(&idx) = self.node_map.get(name) {
-            idx
+            Ok(idx)
         } else {
-            let model_name = ModelName::new(name);
+            let model_name = ModelName::try_new(name).ok_or_else(|| CoreError::EmptyName {
+                context: "model name in DAG".into(),
+            })?;
             let idx = self.graph.add_node(model_name.clone());
             self.node_map.insert(model_name, idx);
-            idx
+            Ok(idx)
         }
     }
 
     /// Add a dependency edge (from depends on to)
-    pub fn add_dependency(&mut self, from: &str, to: &str) {
-        let from_idx = self.add_model(from);
-        let to_idx = self.add_model(to);
+    pub fn add_dependency(&mut self, from: &str, to: &str) -> CoreResult<()> {
+        let from_idx = self.add_model(from)?;
+        let to_idx = self.add_model(to)?;
         // Edge goes from dependency to dependent (to -> from)
         // This way topological sort gives us dependencies first
         self.graph.add_edge(to_idx, from_idx, ());
+        Ok(())
     }
 
     /// Build the DAG from a map of model name -> dependencies
@@ -52,14 +55,14 @@ impl ModelDag {
         let mut dag = Self::new();
 
         for model in dependencies.keys() {
-            dag.add_model(model);
+            dag.add_model(model)?;
         }
 
         for (model, deps) in dependencies {
             for dep in deps {
                 // Only add edge if the dependency is also a model (not external)
                 if dependencies.contains_key(dep) {
-                    dag.add_dependency(model, dep);
+                    dag.add_dependency(model, dep)?;
                 }
             }
         }

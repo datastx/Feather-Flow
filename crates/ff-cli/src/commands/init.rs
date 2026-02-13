@@ -41,7 +41,6 @@ pub async fn execute(args: &InitArgs) -> Result<()> {
         "sources",
         "macros",
         "tests",
-        "snapshots",
         "functions",
     ];
     for dir in &dirs {
@@ -63,7 +62,6 @@ seed_paths: ["seeds"]
 source_paths: ["sources"]
 macro_paths: ["macros"]
 test_paths: ["tests"]
-snapshot_paths: ["snapshots"]
 function_paths: ["functions"]
 target_path: "target"
 
@@ -161,7 +159,6 @@ returns:
     println!("  Created sources/");
     println!("  Created macros/");
     println!("  Created tests/");
-    println!("  Created snapshots/");
     println!("  Created functions/safe_divide.yml");
     println!("  Created functions/safe_divide.sql");
     println!("  Created .gitignore");

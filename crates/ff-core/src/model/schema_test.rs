@@ -1,5 +1,4 @@
 use super::*;
-use crate::model::freshness::FreshnessPeriod;
 use crate::model::testing::TestType;
 
 #[test]
@@ -562,108 +561,6 @@ columns:
     let email_col = &schema.columns[0];
     assert_eq!(email_col.constraints.len(), 1);
     assert!(email_col.constraints.contains(&ColumnConstraint::Unique));
-}
-
-#[test]
-fn test_parse_model_freshness() {
-    let yaml = r#"
-version: 1
-freshness:
-  loaded_at_field: updated_at
-  warn_after:
-    count: 4
-    period: hour
-  error_after:
-    count: 8
-    period: hour
-columns:
-  - name: id
-    type: INTEGER
-"#;
-    let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
-
-    assert!(schema.has_freshness());
-    let freshness = schema.get_freshness().unwrap();
-    assert_eq!(freshness.loaded_at_field, "updated_at");
-
-    let warn = freshness.warn_after.as_ref().unwrap();
-    assert_eq!(warn.count, 4);
-    assert_eq!(warn.period, FreshnessPeriod::Hour);
-    assert_eq!(warn.to_seconds(), 4 * 3600);
-
-    let error = freshness.error_after.as_ref().unwrap();
-    assert_eq!(error.count, 8);
-    assert_eq!(error.period, FreshnessPeriod::Hour);
-    assert_eq!(error.to_seconds(), 8 * 3600);
-}
-
-#[test]
-fn test_freshness_warn_only() {
-    let yaml = r#"
-version: 1
-freshness:
-  loaded_at_field: created_at
-  warn_after:
-    count: 2
-    period: day
-columns:
-  - name: id
-    type: INTEGER
-"#;
-    let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
-
-    let freshness = schema.get_freshness().unwrap();
-    assert_eq!(freshness.loaded_at_field, "created_at");
-
-    let warn = freshness.warn_after.as_ref().unwrap();
-    assert_eq!(warn.count, 2);
-    assert_eq!(warn.period, FreshnessPeriod::Day);
-    assert_eq!(warn.to_seconds(), 2 * 86400);
-
-    // No error_after
-    assert!(freshness.error_after.is_none());
-}
-
-#[test]
-fn test_freshness_minutes() {
-    let yaml = r#"
-version: 1
-freshness:
-  loaded_at_field: last_sync
-  warn_after:
-    count: 30
-    period: minute
-  error_after:
-    count: 60
-    period: minute
-columns: []
-"#;
-    let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
-
-    let freshness = schema.get_freshness().unwrap();
-    assert_eq!(freshness.loaded_at_field, "last_sync");
-
-    let warn = freshness.warn_after.as_ref().unwrap();
-    assert_eq!(warn.count, 30);
-    assert_eq!(warn.period, FreshnessPeriod::Minute);
-    assert_eq!(warn.to_seconds(), 30 * 60);
-
-    let error = freshness.error_after.as_ref().unwrap();
-    assert_eq!(error.to_seconds(), 60 * 60);
-}
-
-#[test]
-fn test_no_freshness() {
-    let yaml = r#"
-version: 1
-columns:
-  - name: id
-    type: INTEGER
-"#;
-    let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
-
-    assert!(!schema.has_freshness());
-    assert!(schema.get_freshness().is_none());
 }
 
 #[test]

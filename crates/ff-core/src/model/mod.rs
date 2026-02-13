@@ -1,11 +1,9 @@
 //! Model representation
 
-pub mod freshness;
 pub mod schema;
 pub mod testing;
 
 // Re-export all public types to preserve existing `ff_core::model::*` paths
-pub use freshness::{FreshnessConfig, FreshnessPeriod, FreshnessThreshold};
 pub use schema::{
     ColumnConstraint, ColumnReference, DataClassification, ModelSchema, SchemaColumnDef,
     SchemaContract,

@@ -36,24 +36,19 @@ impl Project {
 
         let models = Self::discover_models(&root, &config)?;
 
-        // Discover source definitions
         let source_paths = config.source_paths_absolute(&root);
         let sources = discover_sources(&source_paths)?;
 
-        // Collect tests from 1:1 schema files loaded with each model
         let mut tests = Vec::new();
         for model in models.values() {
             tests.extend(model.get_schema_tests());
         }
 
-        // Discover singular tests from test_paths
         let singular_tests = Self::discover_singular_tests(&root, &config)?;
 
-        // Discover exposure definitions
         let exposure_paths = config.exposure_paths_absolute(&root);
         let exposures = discover_exposures(&exposure_paths)?;
 
-        // Discover user-defined function definitions
         let function_paths = config.function_paths_absolute(&root);
         let functions = discover_functions(&function_paths)?;
 

@@ -3,50 +3,6 @@
 use crate::error::{SqlError, SqlResult};
 use sqlparser::ast::{Query, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins};
 
-/// Validate that SQL contains only supported statements
-#[cfg(test)]
-fn validate_statements(statements: &[Statement]) -> SqlResult<()> {
-    for stmt in statements {
-        validate_statement(stmt)?;
-    }
-    Ok(())
-}
-
-/// Validate a single SQL statement
-#[cfg(test)]
-fn validate_statement(statement: &Statement) -> SqlResult<()> {
-    match statement {
-        // Supported statements for models
-        Statement::Query(_) => Ok(()),
-
-        // Unsupported statements
-        Statement::Insert(_) => Err(SqlError::UnsupportedStatement(
-            "INSERT statements are not allowed in models".to_string(),
-        )),
-        Statement::Update { .. } => Err(SqlError::UnsupportedStatement(
-            "UPDATE statements are not allowed in models".to_string(),
-        )),
-        Statement::Delete(_) => Err(SqlError::UnsupportedStatement(
-            "DELETE statements are not allowed in models".to_string(),
-        )),
-        Statement::Drop { .. } => Err(SqlError::UnsupportedStatement(
-            "DROP statements are not allowed in models".to_string(),
-        )),
-        Statement::Truncate { .. } => Err(SqlError::UnsupportedStatement(
-            "TRUNCATE statements are not allowed in models".to_string(),
-        )),
-
-        // Other statements - allow for now (CREATE, etc. might be used in edge cases)
-        _ => Ok(()),
-    }
-}
-
-/// Check if SQL is a SELECT statement
-#[cfg(test)]
-fn is_select_statement(statement: &Statement) -> bool {
-    matches!(statement, Statement::Query(_))
-}
-
 /// Validate that SQL contains no CTEs (WITH clauses)
 ///
 /// Every transform should be its own model — CTEs violate the
@@ -137,24 +93,7 @@ fn validate_no_select_star(statements: &[Statement]) -> SqlResult<()> {
 
 /// Recursively check a query for SELECT * and table.* wildcards
 fn check_query_for_select_star(query: &Query) -> SqlResult<()> {
-    match query.body.as_ref() {
-        SetExpr::Select(select) => {
-            for item in &select.projection {
-                if matches!(
-                    item,
-                    SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(..)
-                ) {
-                    return Err(SqlError::SelectStarNotAllowed);
-                }
-            }
-        }
-        SetExpr::SetOperation { left, right, .. } => {
-            check_set_expr_for_select_star(left)?;
-            check_set_expr_for_select_star(right)?;
-        }
-        _ => {}
-    }
-    Ok(())
+    check_set_expr_for_select_star(query.body.as_ref())
 }
 
 /// Check a SetExpr node for SELECT * wildcards

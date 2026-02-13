@@ -15,7 +15,7 @@ use super::{Diagnostic, DiagnosticCode, Severity};
 fn mismatch_to_diagnostic(
     model_name: &str,
     mismatch: &SchemaMismatch,
-    pass_name: &str,
+    pass_name: &'static str,
 ) -> Diagnostic {
     match mismatch {
         SchemaMismatch::ExtraInSql { column } => Diagnostic {
@@ -27,7 +27,7 @@ fn mismatch_to_diagnostic(
             hint: Some(format!(
                 "Add '{column}' to the YAML schema or remove it from SELECT"
             )),
-            pass_name: pass_name.to_string().into(),
+            pass_name: pass_name.into(),
         },
         SchemaMismatch::MissingFromSql { column } => Diagnostic {
             code: DiagnosticCode::A040,
@@ -36,7 +36,7 @@ fn mismatch_to_diagnostic(
             model: model_name.to_string(),
             column: Some(column.clone()),
             hint: Some(format!("Add '{column}' to SELECT or remove it from YAML")),
-            pass_name: pass_name.to_string().into(),
+            pass_name: pass_name.into(),
         },
         SchemaMismatch::TypeMismatch {
             column,
@@ -53,7 +53,7 @@ fn mismatch_to_diagnostic(
             hint: Some(format!(
                 "Update YAML type to '{inferred_type}' or add explicit CAST"
             )),
-            pass_name: pass_name.to_string().into(),
+            pass_name: pass_name.into(),
         },
         SchemaMismatch::NullabilityMismatch {
             column,
@@ -74,7 +74,7 @@ fn mismatch_to_diagnostic(
                 model: model_name.to_string(),
                 column: Some(column.clone()),
                 hint: Some(hint.to_string()),
-                pass_name: pass_name.to_string().into(),
+                pass_name: pass_name.into(),
             }
         }
     }
