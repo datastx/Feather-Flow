@@ -150,20 +150,24 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
     let mut model_qualified_names: HashMap<String, String> = HashMap::new();
 
     for (name, model) in &project.models {
-        let schema = if let Ok((_, config_values)) = jinja.render_with_config(&model.raw_sql) {
-            config_values
-                .get("schema")
-                .and_then(|v| v.as_str())
-                .map(String::from)
-                .or_else(|| project.config.schema.clone())
-        } else {
-            project.config.schema.clone()
-        };
+        let (database, schema) =
+            if let Ok((_, config_values)) = jinja.render_with_config(&model.raw_sql) {
+                let db = config_values
+                    .get("database")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                let s = config_values
+                    .get("schema")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .or_else(|| project.config.schema.clone());
+                (db, s)
+            } else {
+                (None, project.config.schema.clone())
+            };
 
-        let qualified_name = match schema {
-            Some(s) => format!("{}.{}", s, name),
-            None => name.to_string(),
-        };
+        let qualified_name =
+            common::build_qualified_name(database.as_deref(), schema.as_deref(), name);
         model_qualified_names.insert(name.to_string(), qualified_name);
     }
 
@@ -294,7 +298,7 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
     let final_errors = counters.errors.load(Ordering::SeqCst);
 
     if json_mode {
-        let results = counters.test_results.lock().await.clone();
+        let results = std::mem::take(&mut *counters.test_results.lock().await);
         let output = TestResults {
             timestamp: Utc::now(),
             elapsed_secs: start_time.elapsed().as_secs_f64(),

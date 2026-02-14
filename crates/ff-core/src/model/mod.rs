@@ -69,6 +69,10 @@ pub struct ModelConfig {
     #[serde(default)]
     pub materialized: Option<Materialization>,
 
+    /// Target database
+    #[serde(default)]
+    pub database: Option<String>,
+
     /// Target schema
     #[serde(default)]
     pub schema: Option<String>,
@@ -214,6 +218,11 @@ impl Model {
     /// 2. Project default
     pub fn materialization(&self, default: Materialization) -> Materialization {
         self.config.materialized.unwrap_or(default)
+    }
+
+    /// Get the database for this model from the SQL config() function.
+    pub fn target_database(&self) -> Option<&str> {
+        self.config.database.as_deref()
     }
 
     /// Get the schema for this model, falling back through the precedence chain:

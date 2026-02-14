@@ -544,6 +544,16 @@ impl DatabaseSchema for DuckDbBackend {
         }
         Ok(())
     }
+
+    async fn attach_database_if_not_exists(&self, path: &str, alias: &str) -> DbResult<()> {
+        let sql = format!(
+            "ATTACH IF NOT EXISTS '{}' AS {}",
+            escape_sql_string(path),
+            quote_ident(alias)
+        );
+        self.execute_sync(&sql)?;
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -766,11 +776,11 @@ fn unique_id() -> String {
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
     let count = COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("{}_{}_{}", now.as_secs(), now.subsec_nanos(), count)
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(d) => format!("{}_{}_{}", d.as_secs(), d.subsec_nanos(), count),
+        Err(_) => format!("0_0_{}", count),
+    }
 }
 
 #[cfg(test)]

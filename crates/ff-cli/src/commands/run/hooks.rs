@@ -34,7 +34,44 @@ pub(super) fn create_database_connection(
     common::create_database_connection(&project.config, global.target.as_deref())
 }
 
-/// Create all required schemas before running models
+/// Attach external databases referenced by models.
+///
+/// Collects unique `database` values from compiled models and calls
+/// `ATTACH IF NOT EXISTS` for each one. Database files are stored as
+/// siblings of the main database file in the project target directory.
+pub(super) async fn attach_databases(
+    db: &Arc<dyn Database>,
+    compiled_models: &HashMap<String, CompiledModel>,
+    target_path: &std::path::Path,
+    global: &GlobalArgs,
+) -> Result<()> {
+    let databases: HashSet<String> = compiled_models
+        .values()
+        .filter_map(|m| m.database.clone())
+        .collect();
+
+    for db_name in &databases {
+        let db_path = target_path.join(format!("{}.duckdb", db_name));
+        let db_path_str = db_path.display().to_string();
+        if global.verbose {
+            eprintln!(
+                "[verbose] Attaching database '{}' from {}",
+                db_name, db_path_str
+            );
+        }
+        db.attach_database_if_not_exists(&db_path_str, db_name)
+            .await
+            .with_context(|| format!("Failed to attach database: {}", db_name))?;
+    }
+
+    Ok(())
+}
+
+/// Create all required schemas before running models.
+///
+/// Handles database-qualified schemas: if a model has `database='foo'` and
+/// `schema='bar'`, creates schema `foo.bar` (DuckDB supports cross-database
+/// schema creation).
 pub(super) async fn create_schemas(
     db: &Arc<dyn Database>,
     compiled_models: &HashMap<String, CompiledModel>,
@@ -42,7 +79,13 @@ pub(super) async fn create_schemas(
 ) -> Result<()> {
     let schemas_to_create: HashSet<String> = compiled_models
         .values()
-        .filter_map(|m| m.schema.clone())
+        .filter_map(|m| {
+            let schema = m.schema.as_deref()?;
+            match m.database.as_deref() {
+                Some(db_name) => Some(format!("{}.{}", db_name, schema)),
+                None => Some(schema.to_string()),
+            }
+        })
         .collect();
 
     for schema in &schemas_to_create {
@@ -89,7 +132,6 @@ pub(super) async fn validate_model_contract(
     model_schema: Option<&ModelSchema>,
     verbose: bool,
 ) -> Result<Option<ContractValidationResult>> {
-    // Check if model has a schema with contract
     let schema = match model_schema {
         Some(s) if s.contract.is_some() => s,
         _ => return Ok(None), // No contract to validate
@@ -99,16 +141,13 @@ pub(super) async fn validate_model_contract(
         eprintln!("[verbose] Validating contract for model: {}", model_name);
     }
 
-    // Get actual table schema from database
     let actual_columns = db
         .get_table_schema(qualified_name)
         .await
         .context("Failed to get schema for contract validation")?;
 
-    // Validate the contract
     let result = validate_contract(model_name, schema, &actual_columns);
 
-    // Log violations
     for violation in &result.violations {
         let severity = if result.enforced { "ERROR" } else { "WARN" };
         match &violation.violation_type {
@@ -142,7 +181,7 @@ pub(super) async fn validate_model_contract(
         }
     }
 
-    // If contract is enforced and has violations (excluding extra columns), fail
+    // Extra columns are informational only — enforced contracts fail on missing/mismatched columns
     if result.enforced && !result.passed {
         let violation_count = result
             .violations

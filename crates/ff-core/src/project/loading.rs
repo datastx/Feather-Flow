@@ -114,13 +114,7 @@ impl Project {
             let all_visible_files: Vec<std::path::PathBuf> = std::fs::read_dir(&path)?
                 .filter_map(|e| e.ok())
                 .map(|e| e.path())
-                .filter(|p| {
-                    p.is_file()
-                        && !p
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .is_some_and(|n| n.starts_with('.'))
-                })
+                .filter(|p| is_visible_file(p))
                 .collect();
 
             let sql_files: Vec<&std::path::PathBuf> = all_visible_files
@@ -232,4 +226,12 @@ impl Project {
 
         Ok(())
     }
+}
+
+fn is_visible_file(p: &std::path::Path) -> bool {
+    p.is_file()
+        && !p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with('.'))
 }

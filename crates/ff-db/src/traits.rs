@@ -153,6 +153,12 @@ pub trait DatabaseSchema: Send + Sync {
 
     /// Add columns to an existing table
     async fn add_columns(&self, table: &str, columns: &[(String, String)]) -> DbResult<()>;
+
+    /// Attach an external database file if not already attached.
+    ///
+    /// For DuckDB this executes `ATTACH IF NOT EXISTS '<path>' AS <alias>`.
+    /// Other backends may no-op if they handle databases differently.
+    async fn attach_database_if_not_exists(&self, path: &str, alias: &str) -> DbResult<()>;
 }
 
 /// CSV loading and schema inference.

@@ -26,7 +26,6 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
     let external_tables = build_external_tables_lookup(&project);
     let (schema_catalog, yaml_schemas) = build_schema_catalog(&project, &external_tables);
 
-    // Render SQL, extract dependencies and lineage in a single pass
     let mut dep_map: HashMap<String, Vec<String>> = HashMap::new();
     let mut project_lineage = ProjectLineage::new();
     for (name, model) in &project.models {

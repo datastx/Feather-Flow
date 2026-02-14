@@ -94,6 +94,11 @@ impl DatabaseSchema for SnowflakeBackend {
     async fn add_columns(&self, _table: &str, _columns: &[(String, String)]) -> DbResult<()> {
         Err(not_impl("add_columns"))
     }
+
+    async fn attach_database_if_not_exists(&self, _path: &str, _alias: &str) -> DbResult<()> {
+        // Snowflake handles databases natively; no ATTACH needed.
+        Ok(())
+    }
 }
 
 #[async_trait]

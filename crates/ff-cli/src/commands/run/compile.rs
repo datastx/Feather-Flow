@@ -20,6 +20,7 @@ use crate::commands::common::{self, parse_hooks_from_config};
 pub(crate) struct CompiledModel {
     pub(crate) sql: String,
     pub(crate) materialization: Materialization,
+    pub(crate) database: Option<String>,
     pub(crate) schema: Option<String>,
     pub(crate) dependencies: Vec<String>,
     /// Unique key(s) for incremental merge/delete_insert strategies
@@ -50,7 +51,6 @@ fn is_cache_valid(project: &Project) -> bool {
         return false;
     };
 
-    // Check all model files are older than manifest
     for model in project.models.values() {
         if let Ok(meta) = std::fs::metadata(&model.path) {
             if let Ok(mtime) = meta.modified() {
@@ -61,7 +61,6 @@ fn is_cache_valid(project: &Project) -> bool {
         }
     }
 
-    // Check config file
     let config_path = project.root.join("featherflow.yml");
     if let Ok(meta) = std::fs::metadata(config_path) {
         if let Ok(mtime) = meta.modified() {
@@ -124,7 +123,6 @@ fn load_from_manifest(
             let raw_sql = match std::fs::read_to_string(&compiled_path) {
                 Ok(sql) => sql,
                 Err(_) => {
-                    // Fall back to recompiling this model
                     let model = project.get_model(name).with_context(|| {
                         format!("Model '{}' not found during recompilation", name)
                     })?;
@@ -136,19 +134,17 @@ fn load_from_manifest(
                 }
             };
 
-            // Strip any existing query comment from cached compiled SQL
+            // Query comments encode per-invocation metadata (target, timestamp) so
+            // cached SQL must be stripped and a fresh comment regenerated.
             let sql = ff_core::query_comment::strip_query_comment(&raw_sql).to_string();
 
-            // Regenerate query comment for this invocation
             let query_comment = comment_ctx.map(|ctx| {
                 let metadata = ctx.build_metadata(name, &manifest_model.materialized.to_string());
                 ff_core::query_comment::build_query_comment(&metadata)
             });
 
-            // Get model schema from project if available
             let model_schema = project.get_model(name).and_then(|m| m.schema.clone());
 
-            // Merge project-level hooks with manifest (model-level) hooks
             // Project pre_hooks run BEFORE model pre_hooks
             let mut pre_hook = project.config.pre_hook.clone();
             pre_hook.extend(manifest_model.pre_hook.clone());
@@ -161,6 +157,7 @@ fn load_from_manifest(
                 CompiledModel {
                     sql,
                     materialization: manifest_model.materialized,
+                    database: manifest_model.database.clone(),
                     schema: manifest_model.schema.clone(),
                     dependencies: manifest_model
                         .depends_on
@@ -222,13 +219,17 @@ fn compile_all_models(
             .map(common::parse_materialization)
             .unwrap_or(project.config.materialization);
 
+        let database = config_values
+            .get("database")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
         let schema = config_values
             .get("schema")
             .and_then(|v| v.as_str())
             .map(String::from)
             .or_else(|| project.config.schema.clone());
 
-        // Parse incremental config if model is incremental
         let (unique_key, incremental_strategy, on_schema_change) =
             if mat == Materialization::Incremental {
                 let unique_key = config_values
@@ -256,7 +257,6 @@ fn compile_all_models(
                 (None, None, None)
             };
 
-        // Parse hooks from config and merge with project-level hooks
         // Project pre_hooks run BEFORE model pre_hooks
         let mut pre_hook = project.config.pre_hook.clone();
         pre_hook.extend(parse_hooks_from_config(&config_values, "pre_hook"));
@@ -264,10 +264,8 @@ fn compile_all_models(
         let mut post_hook = parse_hooks_from_config(&config_values, "post_hook");
         post_hook.extend(project.config.post_hook.clone());
 
-        // Get model schema for contract validation
         let model_schema = model.schema.clone();
 
-        // Resolve WAP from config() or YAML
         let wap = config_values
             .get("wap")
             .map(|v| {
@@ -277,7 +275,6 @@ fn compile_all_models(
             })
             .unwrap_or_else(|| model.wap_enabled());
 
-        // Build query comment for this model
         let query_comment = comment_ctx.map(|ctx| {
             let metadata = ctx.build_metadata(name, &mat.to_string());
             ff_core::query_comment::build_query_comment(&metadata)
@@ -288,6 +285,7 @@ fn compile_all_models(
             CompiledModel {
                 sql: rendered,
                 materialization: mat,
+                database,
                 schema,
                 dependencies: model_deps,
                 unique_key,
@@ -335,13 +333,10 @@ fn resolve_deferred_dependencies(
     let selected_set: HashSet<String> = selected_models.iter().cloned().collect();
     let mut deferred_models: HashSet<String> = HashSet::new();
 
-    // Find all upstream dependencies that are not in the selected set
     for model_name in selected_models {
         if let Some(compiled) = compiled_models.get(model_name) {
             for dep in &compiled.dependencies {
                 if !selected_set.contains(dep) {
-                    // This dependency is not selected - need to defer it
-                    // Check if it exists in the deferred manifest
                     if deferred_manifest.get_model(dep).is_some() {
                         if !deferred_models.contains(dep) {
                             deferred_models.insert(dep.clone());
@@ -361,7 +356,6 @@ fn resolve_deferred_dependencies(
         }
     }
 
-    // Also check for transitive dependencies of deferred models
     let mut to_check: Vec<String> = deferred_models.iter().cloned().collect();
     while let Some(model_name) = to_check.pop() {
         if let Some(manifest_model) = deferred_manifest.get_model(&model_name) {
@@ -403,7 +397,6 @@ pub(super) fn determine_execution_order(
 
     let dag = ModelDag::build(&dependencies).context("Failed to build dependency graph")?;
 
-    // Load reference manifest if --state is provided
     let reference_manifest: Option<Manifest> = if let Some(state_path) = &args.state {
         let path = Path::new(state_path);
         if !path.exists() {
@@ -417,7 +410,6 @@ pub(super) fn determine_execution_order(
         None
     };
 
-    // Validate --defer usage
     if args.defer.is_some() && args.state.is_none() && args.nodes.is_none() {
         anyhow::bail!(
             "The --defer flag requires either --state or --nodes to specify which models to run"
@@ -425,7 +417,6 @@ pub(super) fn determine_execution_order(
     }
 
     let models_to_run: Vec<String> = if let Some(nodes_str) = &args.nodes {
-        // Check if any token is a state: selector
         let mut combined = Vec::new();
         for token in nodes_str.split(',') {
             let token = token.trim();
@@ -443,7 +434,6 @@ pub(super) fn determine_execution_order(
                 .context("Failed to apply selector")?;
             combined.extend(matched);
         }
-        // Deduplicate and return in topological order
         let combined_set: std::collections::HashSet<String> = combined.into_iter().collect();
         let order = dag
             .topological_order()
@@ -457,7 +447,6 @@ pub(super) fn determine_execution_order(
             .context("Failed to get execution order")?
     };
 
-    // Apply exclusion filter if provided
     let models_after_exclusion: Vec<String> = if let Some(exclude) = &args.exclude {
         let excluded: HashSet<String> = exclude
             .split(',')
@@ -472,11 +461,9 @@ pub(super) fn determine_execution_order(
         models_to_run
     };
 
-    // Handle --defer: load deferred manifest and validate dependencies
     let deferred_models: HashSet<String> = if let Some(defer_path) = &args.defer {
         let deferred_manifest = load_deferred_manifest(defer_path, global)?;
 
-        // Resolve which models can be deferred
         let deferred = resolve_deferred_dependencies(
             &models_after_exclusion,
             compiled_models,
@@ -484,7 +471,6 @@ pub(super) fn determine_execution_order(
             global,
         )?;
 
-        // Log deferred models summary
         if !deferred.is_empty() {
             println!(
                 "Deferring {} model(s) to manifest at: {}",

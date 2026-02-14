@@ -230,7 +230,6 @@ async fn validate(_args: &FunctionValidateArgs, global: &GlobalArgs) -> Result<(
     let mut issue_count = 0;
 
     for func in &project.functions {
-        // Check that SQL body is non-empty
         if func.sql_body.trim().is_empty() {
             eprintln!(
                 "  [FN001] Function '{}': SQL body is empty ({})",
@@ -240,7 +239,6 @@ async fn validate(_args: &FunctionValidateArgs, global: &GlobalArgs) -> Result<(
             issue_count += 1;
         }
 
-        // Check arg type strings are parseable
         for arg in &func.args {
             let parsed = ff_analysis::parse_sql_type(&arg.data_type);
             if matches!(parsed, ff_analysis::SqlType::Unknown(_)) {
@@ -252,7 +250,6 @@ async fn validate(_args: &FunctionValidateArgs, global: &GlobalArgs) -> Result<(
             }
         }
 
-        // Check return type is parseable
         match &func.returns {
             ff_core::function::FunctionReturn::Scalar { data_type } => {
                 let parsed = ff_analysis::parse_sql_type(data_type);

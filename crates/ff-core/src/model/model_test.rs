@@ -98,6 +98,7 @@ fn test_config_precedence_sql_wins() {
         compiled_sql: None,
         config: ModelConfig {
             materialized: Some(Materialization::Table),
+            database: None,
             schema: Some("sql_schema".to_string()),
             tags: vec![],
             unique_key: None,
@@ -214,6 +215,7 @@ fn test_model_config_hooks_default() {
 fn test_model_config_with_hooks() {
     let config = ModelConfig {
         materialized: None,
+        database: None,
         schema: None,
         tags: vec![],
         unique_key: None,

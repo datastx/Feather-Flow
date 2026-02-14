@@ -1,4 +1,4 @@
-{{ config(materialized='table', schema='reports') }}
+{{ config(materialized='table', database='reporting', schema='reports') }}
 
 SELECT
     status,

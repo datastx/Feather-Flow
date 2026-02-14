@@ -123,6 +123,22 @@ pub(crate) fn build_external_tables_lookup(project: &Project) -> HashSet<String>
     external_tables
 }
 
+/// Build a qualified name from optional database, optional schema, and a bare name.
+///
+/// Produces 1-, 2-, or 3-part dotted names depending on which qualifiers are present.
+pub(crate) fn build_qualified_name(
+    database: Option<&str>,
+    schema: Option<&str>,
+    name: &str,
+) -> String {
+    match (database, schema) {
+        (Some(db), Some(s)) => format!("{}.{}.{}", db, s, name),
+        (Some(db), None) => format!("{}.{}", db, name),
+        (None, Some(s)) => format!("{}.{}", s, name),
+        (None, None) => name.to_string(),
+    }
+}
+
 /// Parse a materialization string from Jinja config values.
 pub(crate) fn parse_materialization(s: &str) -> Materialization {
     match s {
@@ -202,8 +218,6 @@ pub(crate) fn build_schema_catalog(
         yaml_schemas.insert(name.clone(), rel_schema);
     }
 
-    // Add source tables to catalog — use column definitions if available,
-    // fall back to empty schema for sources without column metadata
     for source_file in &project.sources {
         for table in &source_file.tables {
             if schema_catalog.contains_key(&table.name) {
@@ -231,7 +245,6 @@ pub(crate) fn build_schema_catalog(
         }
     }
 
-    // Add remaining external tables with empty schemas
     for ext in external_tables {
         if !schema_catalog.contains_key(ext) {
             schema_catalog.insert(ext.clone(), RelSchema::empty());
@@ -405,7 +418,6 @@ pub(crate) fn report_static_analysis_results(
 ) -> (usize, usize, usize) {
     let mut mismatch_count = 0;
 
-    // Sort model names for deterministic output ordering
     let mut model_names: Vec<&String> = result.model_plans.keys().collect();
     model_names.sort();
 
@@ -417,7 +429,6 @@ pub(crate) fn report_static_analysis_results(
         }
     }
 
-    // Sort failure keys for deterministic output ordering
     let mut failure_names: Vec<&String> = result.failures.keys().collect();
     failure_names.sort();
 
@@ -499,7 +510,6 @@ pub(crate) fn calculate_column_widths(headers: &[&str], rows: &[Vec<String>]) ->
 pub(crate) fn print_table(headers: &[&str], rows: &[Vec<String>]) {
     let widths = calculate_column_widths(headers, rows);
 
-    // Print header
     let header_parts: Vec<String> = headers
         .iter()
         .zip(&widths)
@@ -507,11 +517,9 @@ pub(crate) fn print_table(headers: &[&str], rows: &[Vec<String>]) {
         .collect();
     println!("{}", header_parts.join("  "));
 
-    // Print separator
     let sep_parts: Vec<String> = widths.iter().map(|&w| "-".repeat(w)).collect();
     println!("{}", sep_parts.join("  "));
 
-    // Print rows
     for row in rows {
         let row_parts: Vec<String> = row
             .iter()

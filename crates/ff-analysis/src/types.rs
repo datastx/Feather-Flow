@@ -348,13 +348,7 @@ pub fn parse_sql_type(s: &str) -> SqlType {
         "JSON" | "JSONB" => SqlType::Json,
         "UUID" => SqlType::Uuid,
 
-        _ => {
-            // Try to parse parameterized types like VARCHAR(255), DECIMAL(10,2)
-            if let Some(inner) = try_parse_parameterized(s) {
-                return inner;
-            }
-            SqlType::Unknown(s.to_string())
-        }
+        _ => try_parse_parameterized(s).unwrap_or_else(|| SqlType::Unknown(s.to_string())),
     }
 }
 
@@ -453,13 +447,10 @@ fn split_top_level(s: &str, delimiter: char) -> Vec<&str> {
     for (i, c) in s.char_indices() {
         match c {
             '(' => depth += 1,
-            ')' => {
-                if depth == 0 {
-                    log::warn!("Unbalanced closing parenthesis in type string: {:?}", s);
-                } else {
-                    depth -= 1;
-                }
+            ')' if depth == 0 => {
+                log::warn!("Unbalanced closing parenthesis in type string: {:?}", s);
             }
+            ')' => depth -= 1,
             c if c == delimiter && depth == 0 => {
                 parts.push(&s[start..i]);
                 start = i + 1;

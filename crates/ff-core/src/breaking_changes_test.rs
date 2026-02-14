@@ -10,6 +10,7 @@ fn make_model(name: &str, deps: Vec<&str>) -> ManifestModel {
         depends_on: deps.into_iter().map(ModelName::new).collect(),
         external_deps: Vec::new(),
         materialized: Materialization::View,
+        database: None,
         schema: None,
         unique_key: None,
         incremental_strategy: None,

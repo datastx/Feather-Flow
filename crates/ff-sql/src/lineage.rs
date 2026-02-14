@@ -230,23 +230,26 @@ impl ProjectLineage {
 
     /// Resolve cross-model edges by matching source tables to known models
     pub fn resolve_edges(&mut self, known_models: &HashSet<String>) {
-        let mut new_edges = Vec::new();
-
-        for (target_model, lineage) in &self.models {
-            for col_lineage in &lineage.columns {
-                for source_ref in &col_lineage.source_columns {
-                    if let Some(edge) = resolve_single_edge(
-                        target_model,
-                        lineage,
-                        col_lineage,
-                        source_ref,
-                        known_models,
-                    ) {
-                        new_edges.push(edge);
-                    }
-                }
-            }
-        }
+        let new_edges: Vec<LineageEdge> = self
+            .models
+            .iter()
+            .flat_map(|(target_model, lineage)| {
+                lineage.columns.iter().flat_map(move |col_lineage| {
+                    col_lineage
+                        .source_columns
+                        .iter()
+                        .filter_map(move |source_ref| {
+                            resolve_single_edge(
+                                target_model,
+                                lineage,
+                                col_lineage,
+                                source_ref,
+                                known_models,
+                            )
+                        })
+                })
+            })
+            .collect();
 
         self.edges.extend(new_edges);
     }
@@ -448,12 +451,12 @@ fn extract_lineage_from_select(select: &Select, lineage: &mut ModelLineage) {
             SelectItem::Wildcard(_) => {
                 let mut col_lineage = ColumnLineage::new("*");
                 col_lineage.expr_type = ExprType::Wildcard;
-                let tables: Vec<&String> = lineage.source_tables.iter().collect();
-                for table in tables {
-                    col_lineage
-                        .source_columns
-                        .insert(ColumnRef::qualified(table, "*"));
-                }
+                col_lineage.source_columns.extend(
+                    lineage
+                        .source_tables
+                        .iter()
+                        .map(|table| ColumnRef::qualified(table, "*")),
+                );
                 lineage.add_column(col_lineage);
             }
         }

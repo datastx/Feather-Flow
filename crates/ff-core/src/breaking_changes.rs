@@ -164,10 +164,8 @@ pub fn detect_breaking_changes(
 ) -> BreakingChangeReport {
     let mut report = BreakingChangeReport::new();
 
-    // Build reverse dependency map for downstream impact analysis
     let downstream_map = build_downstream_map(current_models);
 
-    // Check for removed models
     for model_name in previous.models.keys() {
         if !current_models.contains_key(model_name.as_str()) {
             let downstream = downstream_map
@@ -181,7 +179,6 @@ pub fn detect_breaking_changes(
         }
     }
 
-    // Check for changes in existing models
     for (model_name, prev_model) in &previous.models {
         if let Some(curr_model) = current_models.get(model_name.as_str()) {
             let downstream = downstream_map
@@ -189,7 +186,6 @@ pub fn detect_breaking_changes(
                 .map(|v| v.as_slice())
                 .unwrap_or_default();
 
-            // Check materialization change
             if prev_model.materialized != curr_model.materialized {
                 report.add_change(
                     BreakingChange::new(
@@ -203,7 +199,7 @@ pub fn detect_breaking_changes(
                 );
             }
 
-            // Check schema change (database schema, not model schema file)
+            // "schema" here refers to the database schema (e.g. staging), not the YAML model schema
             if prev_model.schema != curr_model.schema {
                 if let (Some(old), Some(new)) = (&prev_model.schema, &curr_model.schema) {
                     report.add_change(
@@ -219,7 +215,6 @@ pub fn detect_breaking_changes(
                 }
             }
 
-            // Check for column changes (if we have schema information)
             if let (Some(prev_schema), Some(curr_schema)) = (
                 previous_schemas.get(model_name.as_str()),
                 current_schemas.get(model_name.as_str()),
@@ -235,7 +230,6 @@ pub fn detect_breaking_changes(
         }
     }
 
-    // Check for new models (informational)
     for model_name in current_models.keys() {
         if !previous.models.contains_key(model_name.as_str()) {
             report.add_new_model(model_name.to_string());
@@ -249,18 +243,18 @@ pub fn detect_breaking_changes(
 fn build_downstream_map(
     models: &HashMap<ModelName, ManifestModel>,
 ) -> HashMap<String, Vec<String>> {
-    let mut downstream: HashMap<String, Vec<String>> = HashMap::new();
-
-    for (model_name, model) in models {
-        for dep in &model.depends_on {
-            downstream
-                .entry(dep.to_string())
-                .or_default()
-                .push(model_name.to_string());
-        }
-    }
-
-    downstream
+    models
+        .iter()
+        .flat_map(|(model_name, model)| {
+            model
+                .depends_on
+                .iter()
+                .map(move |dep| (dep.to_string(), model_name.to_string()))
+        })
+        .fold(HashMap::new(), |mut acc, (dep, model)| {
+            acc.entry(dep).or_default().push(model);
+            acc
+        })
 }
 
 /// Compare two schemas for breaking changes
@@ -271,7 +265,6 @@ fn compare_schemas(
     downstream: &[String],
     report: &mut BreakingChangeReport,
 ) {
-    // SchemaColumnDef has name and data_type
     let prev_cols: HashMap<&str, &str> = prev_schema
         .columns
         .iter()
@@ -284,7 +277,6 @@ fn compare_schemas(
         .map(|c| (c.name.as_str(), c.data_type.as_str()))
         .collect();
 
-    // Check for removed columns
     for col_name in prev_cols.keys() {
         if !curr_cols.contains_key(col_name) {
             report.add_change(
@@ -299,7 +291,6 @@ fn compare_schemas(
         }
     }
 
-    // Check for type changes (using normalized comparison to avoid false positives)
     for (col_name, prev_type) in &prev_cols {
         if let Some(curr_type) = curr_cols.get(col_name) {
             if !crate::contract::types_compatible(prev_type, curr_type) {

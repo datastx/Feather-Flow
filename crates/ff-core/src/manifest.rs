@@ -40,6 +40,10 @@ pub struct ManifestModel {
     /// Materialization type
     pub materialized: Materialization,
 
+    /// Target database
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database: Option<String>,
+
     /// Target schema
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
@@ -294,6 +298,7 @@ impl Manifest {
             source_path,
             compiled_path,
             materialized,
+            database: model.target_database().map(String::from),
             schema: model.target_schema(default_schema).map(String::from),
             tags,
             depends_on: model.depends_on.iter().cloned().collect(),

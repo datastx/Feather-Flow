@@ -98,7 +98,6 @@ impl StateFile {
     ///
     /// Uses write-to-temp-then-rename pattern to prevent corruption
     pub fn save(&self, path: &Path) -> CoreResult<()> {
-        // Create parent directories if needed
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| CoreError::IoWithPath {
                 path: parent.display().to_string(),

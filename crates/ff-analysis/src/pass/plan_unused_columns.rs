@@ -34,14 +34,12 @@ impl DagPlanPass for PlanUnusedColumns {
     ) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
 
-        // Sort for deterministic output
         let mut sorted_names: Vec<&String> = models.keys().collect();
         sorted_names.sort();
 
         for model_name in sorted_names {
             let result = &models[model_name];
 
-            // Get output columns from the plan schema
             let output_columns: Vec<String> = result
                 .plan
                 .schema()
@@ -50,17 +48,13 @@ impl DagPlanPass for PlanUnusedColumns {
                 .map(|f| f.name().clone())
                 .collect();
 
-            // Check if this model has downstream dependents
             let dependents = ctx.dag().dependents(model_name);
             if dependents.is_empty() {
-                // Terminal model — skip, it's a final output
                 continue;
             }
 
-            // Collect all columns consumed by downstream models from this model
             let consumed = collect_consumed_columns(model_name, &dependents, models, ctx);
 
-            // A020: Column produced but never consumed
             for col_name in &output_columns {
                 if !consumed.contains(&col_name.to_lowercase()) {
                     diagnostics.push(Diagnostic {
@@ -94,14 +88,12 @@ fn collect_consumed_columns(
 ) -> HashSet<String> {
     let mut consumed = HashSet::new();
 
-    // Use lineage edges to find which columns are consumed
     for edge in &ctx.lineage().edges {
         if edge.source_model == source_model {
             consumed.insert(edge.source_column.to_lowercase());
         }
     }
 
-    // Also walk downstream plans to find column references
     for dep_name in dependents {
         if let Some(dep_result) = models.get(dep_name) {
             collect_column_refs_from_plan(&dep_result.plan, &mut consumed);
@@ -125,13 +117,7 @@ fn collect_column_refs_from_plan(plan: &LogicalPlan, consumed: &mut HashSet<Stri
             collect_column_refs_from_plan(&filter.input, consumed);
         }
         LogicalPlan::Join(join) => {
-            for (left_key, right_key) in &join.on {
-                collect_column_refs_lowercase(left_key, consumed);
-                collect_column_refs_lowercase(right_key, consumed);
-            }
-            if let Some(ref filter) = join.filter {
-                collect_column_refs_lowercase(filter, consumed);
-            }
+            collect_join_key_refs(join, consumed);
             collect_column_refs_from_plan(&join.left, consumed);
             collect_column_refs_from_plan(&join.right, consumed);
         }
@@ -155,6 +141,20 @@ fn collect_column_refs_from_plan(plan: &LogicalPlan, consumed: &mut HashSet<Stri
                 collect_column_refs_from_plan(input, consumed);
             }
         }
+    }
+}
+
+/// Collect column references from JOIN keys and filter
+fn collect_join_key_refs(
+    join: &datafusion_expr::logical_plan::Join,
+    consumed: &mut HashSet<String>,
+) {
+    for (left_key, right_key) in &join.on {
+        collect_column_refs_lowercase(left_key, consumed);
+        collect_column_refs_lowercase(right_key, consumed);
+    }
+    if let Some(ref filter) = join.filter {
+        collect_column_refs_lowercase(filter, consumed);
     }
 }
 

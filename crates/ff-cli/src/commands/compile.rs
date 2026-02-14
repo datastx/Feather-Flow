@@ -85,10 +85,8 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
     let mut project = load_project(global)?;
     let json_mode = args.output == OutputFormat::Json;
 
-    // Resolve target from CLI flag or FF_TARGET env var
     let target = Config::resolve_target(global.target.as_deref());
 
-    // Create query comment context if enabled
     let comment_ctx = if project.config.query_comment.enabled {
         Some(ff_core::query_comment::QueryCommentContext::new(
             &project.config.name,
@@ -98,7 +96,6 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
         None
     };
 
-    // Get vars merged with target overrides, then merge with CLI --vars
     let base_vars = project.config.get_merged_vars(target.as_deref());
     let vars = merge_vars(&base_vars, &args.vars)?;
 
@@ -113,7 +110,6 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
     let macro_paths = project.config.macro_paths_absolute(&project.root);
     let jinja = JinjaEnvironment::with_macros(&vars, &macro_paths);
 
-    // Compile all models first — filtering happens after DAG build
     let all_model_names: Vec<String> = project
         .model_names()
         .into_iter()
@@ -155,7 +151,6 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
 
     let default_materialization = project.config.materialization;
 
-    // Phase 1: compile models
     let mut compiled_models: Vec<CompileOutput> = Vec::new();
     let mut materializations: HashMap<String, Materialization> = HashMap::new();
 
@@ -194,17 +189,14 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
-    // Validate DAG (always done even in parse-only mode)
     let dag = ModelDag::build(&dependencies).context("Failed to build dependency graph")?;
     let topo_order = dag
         .topological_order()
         .context("Circular dependency detected")?;
 
-    // Apply selector filtering now that DAG is available
     let model_names: Vec<String> = common::resolve_nodes(&project, &dag, &args.nodes)?;
     let model_names_set: HashSet<String> = model_names.iter().cloned().collect();
 
-    // Filter compiled_models to only those selected
     compiled_models.retain(|m| model_names_set.contains(&m.name));
 
     if !json_mode && args.nodes.is_some() {
@@ -223,7 +215,6 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
         );
     }
 
-    // Static analysis phase (DataFusion LogicalPlan)
     if !args.skip_static_analysis {
         let analysis_result = run_static_analysis(
             &project,
@@ -242,7 +233,6 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
-    // Phase 2: inline ephemeral deps and write files
     let ephemeral_sql: HashMap<String, String> = compiled_models
         .iter()
         .filter(|m| m.materialization == Materialization::Ephemeral)
@@ -258,7 +248,6 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
     }
 
     for compiled in compiled_models {
-        // Skip ephemeral models - they don't get written as files
         if compiled.materialization == Materialization::Ephemeral {
             if !json_mode {
                 println!("  \u{2713} {} (ephemeral) [inlined]", compiled.name);
@@ -275,9 +264,7 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
             continue;
         }
 
-        // Inline ephemeral dependencies into this model's SQL
         let final_sql = if !ephemeral_sql.is_empty() {
-            // Collect ephemeral dependencies for this model
             let is_ephemeral =
                 |name: &str| materializations.get(name) == Some(&Materialization::Ephemeral);
             let get_sql = |name: &str| ephemeral_sql.get(name).cloned();
@@ -305,7 +292,6 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
             compiled.sql
         };
 
-        // Write the compiled SQL (with inlined ephemerals)
         if args.parse_only {
             if !json_mode {
                 println!(
@@ -341,7 +327,6 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
                 format!("Failed to write compiled SQL for model: {}", compiled.name)
             })?;
 
-            // Also update the model's compiled_sql with the clean version (no comment)
             if let Some(model) = project.get_model_mut(&compiled.name) {
                 model.compiled_sql = Some(final_sql);
             }
@@ -374,7 +359,6 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
     }
 
     let manifest_path = if !args.parse_only && failure_count == 0 {
-        // Write manifest only if not in parse-only mode and no failures
         write_manifest(&project, &model_names, &output_dir, global.verbose)?;
         Some(project.manifest_path().display().to_string())
     } else {
@@ -494,6 +478,10 @@ fn compile_model_phase1(
             .get("materialized")
             .and_then(|v| v.as_str())
             .map(common::parse_materialization),
+        database: config_values
+            .get("database")
+            .and_then(|v| v.as_str())
+            .map(String::from),
         schema: config_values
             .get("schema")
             .and_then(|v| v.as_str())
@@ -634,7 +622,6 @@ fn run_static_analysis(
     )?;
     let result = &output.result;
 
-    // Handle --explain flag
     if let Some(ref explain_model) = args.explain {
         if let Some(plan_result) = result.model_plans.get(explain_model) {
             println!("LogicalPlan for '{}':\n", explain_model);

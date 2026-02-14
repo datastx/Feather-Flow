@@ -108,11 +108,12 @@ fn collect_join_nullable_columns(plan: &LogicalPlan, nullable: &mut HashSet<Stri
                 _ => None,
             };
             if let Some(sides) = nullable_side {
-                for side in sides {
-                    for field in side.schema().fields() {
-                        nullable.insert(field.name().clone());
-                    }
-                }
+                nullable.extend(
+                    sides
+                        .iter()
+                        .flat_map(|side| side.schema().fields())
+                        .map(|field| field.name().clone()),
+                );
             }
         }
         _ => {

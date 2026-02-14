@@ -28,7 +28,7 @@ use crate::commands::common::{self, load_project};
 
 use compile::{determine_execution_order, load_or_compile_models};
 use execute::{execute_models_with_state, ExecutionContext};
-use hooks::{create_database_connection, create_schemas};
+use hooks::{attach_databases, create_database_connection, create_schemas};
 use state::{
     compute_config_hash, compute_smart_skips, find_affected_exposures, write_run_results,
     RunResults,
@@ -197,6 +197,7 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     let target = ff_core::config::Config::resolve_target(global.target.as_deref());
     let wap_schema = project.config.get_wap_schema(target.as_deref());
 
+    attach_databases(&db, &compiled_models, &project.target_dir(), global).await?;
     create_schemas(&db, &compiled_models, global).await?;
 
     // Create WAP schema if configured

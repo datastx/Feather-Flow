@@ -40,13 +40,7 @@ fn create_progress_bar(count: usize, quiet: bool, output: &OutputFormat) -> Opti
     }
 }
 
-/// Build a schema-qualified name from an optional schema and a model name.
-fn build_qualified_name(schema: Option<&str>, name: &str) -> String {
-    match schema {
-        Some(s) => format!("{}.{}", s, name),
-        None => name.to_string(),
-    }
-}
+use crate::commands::common::build_qualified_name;
 
 /// Acquire a mutex lock, recovering from a poisoned state if necessary.
 ///
@@ -107,7 +101,11 @@ async fn run_single_model(
     full_refresh: bool,
     wap_schema: Option<&str>,
 ) -> ModelRunResult {
-    let qualified_name = quote_qualified(&build_qualified_name(compiled.schema.as_deref(), name));
+    let qualified_name = quote_qualified(&build_qualified_name(
+        compiled.database.as_deref(),
+        compiled.schema.as_deref(),
+        name,
+    ));
 
     let model_start = Instant::now();
 
@@ -358,7 +356,6 @@ async fn execute_models_sequential(
             continue;
         }
 
-        // Skip ephemeral models (they're inlined during compilation)
         if compiled.materialization == Materialization::Ephemeral {
             success_count += 1;
             run_results.push(ModelRunResult {
@@ -398,10 +395,7 @@ async fn execute_models_sequential(
             failure_count += 1;
 
             if is_wap {
-                let dependents = get_transitive_dependents(name, ctx.compiled_models);
-                for dep in &dependents {
-                    failed_models.insert(dep.clone());
-                }
+                failed_models.extend(get_transitive_dependents(name, ctx.compiled_models));
             }
 
             run_results.push(model_result);
@@ -413,8 +407,11 @@ async fn execute_models_sequential(
         } else {
             success_count += 1;
 
-            // Try to get row count for state tracking (non-blocking)
-            let qualified_name = build_qualified_name(compiled.schema.as_deref(), name);
+            let qualified_name = build_qualified_name(
+                compiled.database.as_deref(),
+                compiled.schema.as_deref(),
+                name,
+            );
             let row_count = match ctx
                 .db
                 .query_count(&format!(
@@ -455,7 +452,7 @@ async fn execute_models_sequential(
 async fn execute_model_task(
     db: Arc<dyn Database>,
     name: String,
-    compiled: CompiledModel,
+    compiled: Arc<CompiledModel>,
     full_refresh: bool,
     wap_schema: Option<String>,
     fail_fast: bool,
@@ -578,10 +575,11 @@ async fn execute_models_parallel(
                 continue;
             }
 
+            let compiled = Arc::new(compiled.clone());
             set.spawn(execute_model_task(
                 db,
                 name,
-                compiled.clone(),
+                compiled,
                 ctx.args.full_refresh,
                 ctx.wap_schema.map(String::from),
                 ctx.args.fail_fast,
@@ -615,8 +613,11 @@ async fn execute_models_parallel(
     for result in &final_results {
         if matches!(result.status, RunStatus::Success) {
             if let Some(compiled) = ctx.compiled_models.get(&result.model) {
-                let qualified_name =
-                    build_qualified_name(compiled.schema.as_deref(), &result.model);
+                let qualified_name = build_qualified_name(
+                    compiled.database.as_deref(),
+                    compiled.schema.as_deref(),
+                    &result.model,
+                );
                 let row_count = match ctx
                     .db
                     .query_count(&format!(
@@ -668,6 +669,17 @@ fn deps_satisfied(
     })
 }
 
+fn warn_missing_models(names: &[String], compiled_models: &HashMap<String, CompiledModel>) {
+    for name in names {
+        if !compiled_models.contains_key(name) {
+            eprintln!(
+                "[warn] Model '{}' in execution order but not in compiled models",
+                name
+            );
+        }
+    }
+}
+
 /// Compute execution levels - models at the same level have no dependencies on each other
 fn compute_execution_levels(
     execution_order: &[String],
@@ -675,38 +687,26 @@ fn compute_execution_levels(
 ) -> Vec<Vec<String>> {
     let mut levels: Vec<Vec<String>> = Vec::new();
     let mut completed: HashSet<String> = HashSet::new();
-
     let order_set: HashSet<String> = execution_order.iter().cloned().collect();
-
-    // Process models in topological order, grouping by when they become ready
     let mut remaining: Vec<String> = execution_order.to_vec();
 
+    warn_missing_models(&remaining, compiled_models);
+
     while !remaining.is_empty() {
-        let mut current_level = Vec::new();
+        let current_level: Vec<String> = remaining
+            .iter()
+            .filter(|name| deps_satisfied(name, compiled_models, &completed, &order_set))
+            .cloned()
+            .collect();
 
-        for name in &remaining {
-            if deps_satisfied(name, compiled_models, &completed, &order_set) {
-                current_level.push(name.clone());
-            } else if !compiled_models.contains_key(name) {
-                eprintln!(
-                    "[warn] Model '{}' in execution order but not in compiled models",
-                    name
-                );
-            }
-        }
+        completed.extend(current_level.iter().cloned());
 
-        for name in &current_level {
-            completed.insert(name.clone());
-        }
-
-        // Remove current level from remaining (use HashSet for O(1) lookup)
         let current_set: HashSet<&String> = current_level.iter().collect();
         remaining.retain(|name| !current_set.contains(name));
 
         if !current_level.is_empty() {
             levels.push(current_level);
         } else if !remaining.is_empty() {
-            // Safety: if we can't make progress, just add all remaining as single level
             levels.push(remaining.clone());
             break;
         }
