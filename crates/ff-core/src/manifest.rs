@@ -314,6 +314,8 @@ impl Manifest {
     /// Save the manifest to a file atomically
     ///
     /// Uses write-to-temp-then-rename pattern to prevent corruption.
+    /// The temp file includes the process ID to avoid races when multiple
+    /// processes compile the same project concurrently (e.g. parallel tests).
     pub fn save(&self, path: &Path) -> crate::error::CoreResult<()> {
         let json = serde_json::to_string_pretty(self)?;
 
@@ -325,7 +327,7 @@ impl Manifest {
             })?;
         }
 
-        let temp_path = path.with_extension("json.tmp");
+        let temp_path = path.with_extension(format!("json.{}.tmp", std::process::id()));
         std::fs::write(&temp_path, &json).map_err(|e| crate::error::CoreError::IoWithPath {
             path: temp_path.display().to_string(),
             source: e,

@@ -1,0 +1,17 @@
+version: 1
+
+description: "Staged events from raw source"
+
+columns:
+  - name: id
+    type: INTEGER
+  - name: user_id
+    type: INTEGER
+  - name: event_type
+    type: VARCHAR
+  - name: event_date
+    type: DATE
+  - name: amount_dollars
+    type: DOUBLE
+  - name: status
+    type: VARCHAR

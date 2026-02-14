@@ -1,0 +1,15 @@
+version: 1
+
+description: "Events with hashed user ID and coalesced columns"
+
+columns:
+  - name: id
+    type: INTEGER
+  - name: user_hash
+    type: VARCHAR
+  - name: event_type
+    type: VARCHAR
+  - name: event_date
+    type: DATE
+  - name: first_non_null
+    type: VARCHAR

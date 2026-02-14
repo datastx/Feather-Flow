@@ -1,0 +1,23 @@
+kind: sources
+version: 1
+
+name: raw_data
+description: "Raw event data"
+schema: main
+
+tables:
+  - name: raw_events
+    description: "Raw event data"
+    columns:
+      - name: id
+        type: INTEGER
+      - name: user_id
+        type: INTEGER
+      - name: event_type
+        type: VARCHAR
+      - name: event_date
+        type: DATE
+      - name: amount_cents
+        type: INTEGER
+      - name: status
+        type: VARCHAR

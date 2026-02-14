@@ -1,0 +1,11 @@
+version: 1
+
+description: "Model where var() has a default but config also defines the var"
+
+columns:
+  - name: id
+    type: INTEGER
+  - name: event_type
+    type: VARCHAR
+  - name: status
+    type: VARCHAR

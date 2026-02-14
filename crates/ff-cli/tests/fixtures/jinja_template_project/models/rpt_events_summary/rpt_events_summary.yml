@@ -1,0 +1,13 @@
+version: 1
+
+description: "Summary report of events by type"
+
+columns:
+  - name: event_type_clean
+    type: VARCHAR
+  - name: event_count
+    type: INTEGER
+  - name: total_amount
+    type: DOUBLE
+  - name: amount_per_event
+    type: DOUBLE

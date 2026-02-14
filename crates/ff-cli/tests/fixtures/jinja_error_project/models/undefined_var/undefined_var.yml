@@ -1,0 +1,9 @@
+version: 1
+
+description: "Model that references an undefined variable without default"
+
+columns:
+  - name: id
+    type: INTEGER
+  - name: status
+    type: VARCHAR
