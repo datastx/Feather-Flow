@@ -590,3 +590,9 @@ When reviewing or writing Makefiles:
 10. **Make help the default** target for discoverability
 
 For more advanced patterns and examples, see [examples.md](examples.md).
+
+---
+
+## Verification
+
+**After every unit of work, run `make ci` before moving on.** This ensures format, clippy, tests, and docs all pass. Do not proceed to the next task until CI is green.

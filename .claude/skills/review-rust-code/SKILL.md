@@ -1091,3 +1091,9 @@ These patterns make clean code the path of least resistance in Rust:
 10. **AST parsing over regex** for structural transformations
 
 For detailed examples and supporting documentation, see [examples.md](examples.md).
+
+---
+
+## Verification
+
+**After every unit of work, run `make ci` before moving on.** This ensures format, clippy, tests, and docs all pass. Do not proceed to the next task until CI is green.
