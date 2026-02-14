@@ -10,7 +10,7 @@ use datafusion_expr::LogicalPlan;
 
 use crate::datafusion_bridge::planner::sql_to_plan;
 use crate::datafusion_bridge::provider::{
-    FeatherFlowProvider, UserFunctionStub, UserTableFunctionStub,
+    FeatherFlowProvider, FunctionRegistry, UserFunctionStub, UserTableFunctionStub,
 };
 use crate::datafusion_bridge::types::arrow_to_sql_type;
 use crate::schema::{RelSchema, SchemaCatalog};
@@ -116,8 +116,11 @@ pub fn propagate_schemas(
     user_table_functions: &[UserTableFunctionStub],
 ) -> PropagationResult {
     let mut catalog = initial_catalog.clone();
-    let mut model_plans: HashMap<String, ModelPlanResult> = HashMap::new();
+    let mut model_plans: HashMap<String, ModelPlanResult> =
+        HashMap::with_capacity(topo_order.len());
     let mut failures: HashMap<String, String> = HashMap::new();
+
+    let registry = FunctionRegistry::with_user_functions(user_functions, user_table_functions);
 
     for model_name in topo_order {
         let sql = match sql_sources.get(model_name) {
@@ -128,11 +131,7 @@ pub fn propagate_schemas(
             }
         };
 
-        let provider = FeatherFlowProvider::with_user_functions(
-            &catalog,
-            user_functions,
-            user_table_functions,
-        );
+        let provider = FeatherFlowProvider::new(&catalog, &registry);
         match sql_to_plan(sql, &provider) {
             Ok(plan) => {
                 let inferred_schema = extract_schema_from_plan(&plan);

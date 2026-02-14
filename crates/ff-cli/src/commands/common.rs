@@ -291,51 +291,6 @@ pub(crate) fn build_project_dag(
     Ok((dependencies, dag))
 }
 
-/// Build user function stubs for static analysis from project functions.
-///
-/// Converts each scalar `FunctionDef` into a `UserFunctionStub` and each table
-/// `FunctionDef` into a `UserTableFunctionStub` that can be registered in the
-/// DataFusion `FeatherFlowProvider`.
-pub(crate) fn build_user_function_stubs(
-    project: &Project,
-) -> (
-    Vec<ff_analysis::UserFunctionStub>,
-    Vec<ff_analysis::UserTableFunctionStub>,
-) {
-    use ff_core::function::FunctionReturn;
-
-    let mut scalar_stubs = Vec::new();
-    let mut table_stubs = Vec::new();
-
-    for f in &project.functions {
-        match &f.returns {
-            FunctionReturn::Scalar { data_type } => {
-                let sig = f.signature();
-                if let Some(stub) = ff_analysis::UserFunctionStub::new(
-                    sig.name.to_string(),
-                    sig.arg_types,
-                    data_type.clone(),
-                ) {
-                    scalar_stubs.push(stub);
-                }
-            }
-            FunctionReturn::Table { columns } => {
-                let cols: Vec<(String, String)> = columns
-                    .iter()
-                    .map(|c| (c.name.clone(), c.data_type.clone()))
-                    .collect();
-                if let Some(stub) =
-                    ff_analysis::UserTableFunctionStub::new(f.name.to_string(), cols)
-                {
-                    table_stubs.push(stub);
-                }
-            }
-        }
-    }
-
-    (scalar_stubs, table_stubs)
-}
-
 /// Result of a static analysis pipeline run.
 ///
 /// Contains the propagation result from DataFusion plus the set of external
@@ -372,7 +327,7 @@ pub(crate) fn run_static_analysis_pipeline(
         .map(|(k, v)| (k.to_string(), v.clone()))
         .collect();
 
-    let (user_fn_stubs, user_table_fn_stubs) = build_user_function_stubs(project);
+    let (user_fn_stubs, user_table_fn_stubs) = ff_analysis::build_user_function_stubs(project);
     let result = propagate_schemas(
         &filtered_order,
         sql_sources,

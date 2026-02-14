@@ -1990,7 +1990,7 @@ fn test_analysis_propagation_sample_project() {
     let topo_order = dag.topological_order().unwrap();
 
     let yaml_schemas: SchemaCatalog = catalog.clone();
-    let (user_fn_stubs, user_table_fn_stubs) = build_user_function_stubs_from_project(&project);
+    let (user_fn_stubs, user_table_fn_stubs) = ff_analysis::build_user_function_stubs(&project);
     let result = propagate_schemas(
         &topo_order,
         &sql_sources,
@@ -2150,7 +2150,7 @@ fn build_analysis_pipeline(fixture_path: &str) -> AnalysisPipeline {
         .map(|(k, v)| (k.to_string(), v.clone()))
         .collect();
 
-    let (user_fn_stubs, user_table_fn_stubs) = build_user_function_stubs_from_project(&project);
+    let (user_fn_stubs, user_table_fn_stubs) = ff_analysis::build_user_function_stubs(&project);
     let propagation = propagate_schemas(
         &topo_order,
         &sql_sources,
@@ -2195,45 +2195,6 @@ fn run_single_pass(pipeline: &AnalysisPipeline, pass_name: &str) -> Vec<ff_analy
         &pipeline.ctx,
         Some(&filter),
     )
-}
-
-/// Build user function stubs from a Project's discovered functions (mirrors CLI common.rs logic).
-fn build_user_function_stubs_from_project(
-    project: &Project,
-) -> (
-    Vec<ff_analysis::UserFunctionStub>,
-    Vec<ff_analysis::UserTableFunctionStub>,
-) {
-    use ff_core::function::FunctionReturn;
-
-    let mut scalar_stubs = Vec::new();
-    let mut table_stubs = Vec::new();
-    for f in &project.functions {
-        match &f.returns {
-            FunctionReturn::Scalar { data_type } => {
-                let sig = f.signature();
-                if let Some(stub) = ff_analysis::UserFunctionStub::new(
-                    sig.name.to_string(),
-                    sig.arg_types,
-                    data_type.clone(),
-                ) {
-                    scalar_stubs.push(stub);
-                }
-            }
-            FunctionReturn::Table { columns } => {
-                let cols: Vec<(String, String)> = columns
-                    .iter()
-                    .map(|c| (c.name.clone(), c.data_type.clone()))
-                    .collect();
-                if let Some(stub) =
-                    ff_analysis::UserTableFunctionStub::new(f.name.to_string(), cols)
-                {
-                    table_stubs.push(stub);
-                }
-            }
-        }
-    }
-    (scalar_stubs, table_stubs)
 }
 
 fn diagnostics_with_code(

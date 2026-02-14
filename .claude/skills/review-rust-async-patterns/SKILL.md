@@ -960,3 +960,9 @@ When reviewing async Rust code, check:
 - **`select!` branches are cancellation-safe** — verified against tokio docs for each method used
 - **No `.await` in `Drop`** — async cleanup via explicit shutdown methods
 - **Stream combinators** preferred over manual select-loop state machines for batching/throttling
+
+---
+
+## Verification
+
+**After every unit of work, run `make ci` before moving on.** This ensures format, clippy, tests, and docs all pass. Do not proceed to the next task until CI is green.

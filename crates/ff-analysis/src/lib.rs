@@ -30,4 +30,6 @@ pub use datafusion_bridge::planner::sql_to_plan;
 pub use datafusion_bridge::propagation::{
     propagate_schemas, ModelPlanResult, PropagationResult, SchemaMismatch,
 };
-pub use datafusion_bridge::provider::{UserFunctionStub, UserTableFunctionStub};
+pub use datafusion_bridge::provider::{
+    build_user_function_stubs, FunctionRegistry, UserFunctionStub, UserTableFunctionStub,
+};
