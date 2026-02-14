@@ -96,7 +96,8 @@ impl StateFile {
 
     /// Save state to a file path atomically
     ///
-    /// Uses write-to-temp-then-rename pattern to prevent corruption
+    /// Uses write-to-temp-then-rename pattern to prevent corruption.
+    /// Temp file includes PID to avoid races from concurrent processes.
     pub fn save(&self, path: &Path) -> CoreResult<()> {
         // Create parent directories if needed
         if let Some(parent) = path.parent() {
@@ -106,7 +107,7 @@ impl StateFile {
             })?;
         }
 
-        let temp_path = path.with_extension("json.tmp");
+        let temp_path = path.with_extension(format!("json.{}.tmp", std::process::id()));
         let json = serde_json::to_string_pretty(self)?;
         std::fs::write(&temp_path, &json).map_err(|e| CoreError::IoWithPath {
             path: temp_path.display().to_string(),

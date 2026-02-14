@@ -1,0 +1,21 @@
+name: jinja_error_project
+version: "1.0.0"
+
+model_paths: ["models"]
+source_paths: ["sources"]
+macro_paths: ["macros"]
+target_path: "target"
+
+materialization: view
+schema: analytics
+dialect: duckdb
+
+database:
+  type: duckdb
+  path: "target/dev.duckdb"
+
+query_comment:
+  enabled: false
+
+vars:
+  known_var: "hello"

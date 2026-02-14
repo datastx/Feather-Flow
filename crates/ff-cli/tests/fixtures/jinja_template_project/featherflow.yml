@@ -1,0 +1,24 @@
+name: jinja_template_project
+version: "1.0.0"
+
+model_paths: ["models"]
+source_paths: ["sources"]
+macro_paths: ["macros"]
+target_path: "target"
+
+materialization: view
+schema: analytics
+dialect: duckdb
+
+database:
+  type: duckdb
+  path: "target/dev.duckdb"
+
+query_comment:
+  enabled: false
+
+vars:
+  min_event_count: 10
+  event_category: "page_view"
+  enable_filtering: true
+  tier: "gold"
