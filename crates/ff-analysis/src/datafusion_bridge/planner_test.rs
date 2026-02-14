@@ -1,4 +1,5 @@
 use super::*;
+use crate::datafusion_bridge::provider::FunctionRegistry;
 use crate::schema::{RelSchema, SchemaCatalog};
 use crate::types::{IntBitWidth, Nullability, SqlType, TypedColumn};
 use std::collections::HashMap;
@@ -71,7 +72,8 @@ fn make_catalog() -> SchemaCatalog {
 
 fn plan_sql(sql: &str) -> AnalysisResult<LogicalPlan> {
     let catalog = make_catalog();
-    let provider = FeatherFlowProvider::new(&catalog);
+    let registry = FunctionRegistry::new();
+    let provider = FeatherFlowProvider::new(&catalog, &registry);
     sql_to_plan(sql, &provider)
 }
 
@@ -171,7 +173,8 @@ fn test_case_expression_plan() {
 #[test]
 fn test_empty_sql_error() {
     let catalog = make_catalog();
-    let provider = FeatherFlowProvider::new(&catalog);
+    let registry = FunctionRegistry::new();
+    let provider = FeatherFlowProvider::new(&catalog, &registry);
     let result = sql_to_plan("", &provider);
     assert!(result.is_err());
 }

@@ -18,7 +18,8 @@ fn test_provider_resolves_table() {
         }]),
     );
 
-    let provider = FeatherFlowProvider::new(&catalog);
+    let registry = FunctionRegistry::new();
+    let provider = FeatherFlowProvider::new(&catalog, &registry);
     let result = provider.get_table_source(TableReference::bare("orders"));
     assert!(result.is_ok());
     let source = result.unwrap();
@@ -29,7 +30,8 @@ fn test_provider_resolves_table() {
 #[test]
 fn test_provider_unknown_table_errors() {
     let catalog: SchemaCatalog = HashMap::new();
-    let provider = FeatherFlowProvider::new(&catalog);
+    let registry = FunctionRegistry::new();
+    let provider = FeatherFlowProvider::new(&catalog, &registry);
     let result = provider.get_table_source(TableReference::bare("nonexistent"));
     assert!(result.is_err());
 }

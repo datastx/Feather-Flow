@@ -109,7 +109,7 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
     }
 
     let (user_fn_stubs, user_table_fn_stubs) =
-        super::common::build_user_function_stubs(ctx.project());
+        ff_analysis::build_user_function_stubs(ctx.project());
     let propagation = propagate_schemas(
         &order,
         &sql_sources,

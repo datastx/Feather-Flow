@@ -1,6 +1,6 @@
 use super::*;
 use crate::datafusion_bridge::planner::sql_to_plan;
-use crate::datafusion_bridge::provider::FeatherFlowProvider;
+use crate::datafusion_bridge::provider::{FeatherFlowProvider, FunctionRegistry};
 use crate::schema::{RelSchema, SchemaCatalog};
 use crate::test_utils::{int32, make_col, varchar};
 use crate::types::Nullability;
@@ -29,7 +29,8 @@ fn make_catalog() -> SchemaCatalog {
 
 fn plan_and_lineage(sql: &str) -> ModelColumnLineage {
     let catalog = make_catalog();
-    let provider = FeatherFlowProvider::new(&catalog);
+    let registry = FunctionRegistry::new();
+    let provider = FeatherFlowProvider::new(&catalog, &registry);
     let plan = sql_to_plan(sql, &provider).unwrap();
     extract_column_lineage("test_model", &plan)
 }
