@@ -358,3 +358,218 @@ WHERE {{ not_null('customer_id') }}"#;
     assert!(result.contains(r#"DATE_TRUNC('month', "created_at") AS month"#));
     assert!(result.contains(r#"WHERE "customer_id" IS NOT NULL"#));
 }
+
+// ===== Context Variable Tests =====
+
+#[test]
+fn test_static_context_variables() {
+    use crate::context::{TargetContext, TemplateContext};
+
+    let ctx = TemplateContext::new(
+        "my_project".to_string(),
+        TargetContext {
+            name: "dev".to_string(),
+            schema: Some("analytics".to_string()),
+            database_type: "duckdb".to_string(),
+        },
+        false,
+    );
+
+    let env = JinjaEnvironment::with_context(&HashMap::new(), &[], &ctx);
+
+    let result = env.render("{{ project_name }}").unwrap();
+    assert_eq!(result, "my_project");
+
+    let result = env.render("{{ ff_version }}").unwrap();
+    assert!(!result.is_empty());
+
+    // run_id should be a valid UUID
+    let result = env.render("{{ run_id }}").unwrap();
+    assert_eq!(result.len(), 36); // UUID format: 8-4-4-4-12
+    assert!(result.contains('-'));
+}
+
+#[test]
+fn test_target_context_object() {
+    use crate::context::{TargetContext, TemplateContext};
+
+    let ctx = TemplateContext::new(
+        "project".to_string(),
+        TargetContext {
+            name: "prod".to_string(),
+            schema: Some("public".to_string()),
+            database_type: "duckdb".to_string(),
+        },
+        true,
+    );
+
+    let env = JinjaEnvironment::with_context(&HashMap::new(), &[], &ctx);
+
+    assert_eq!(env.render("{{ target.name }}").unwrap(), "prod");
+    assert_eq!(env.render("{{ target.database_type }}").unwrap(), "duckdb");
+    assert_eq!(env.render("{{ target.schema }}").unwrap(), "public");
+}
+
+#[test]
+fn test_model_context() {
+    use crate::context::ModelContext;
+
+    let env = JinjaEnvironment::default();
+    let model = ModelContext {
+        name: "stg_orders".to_string(),
+        schema: Some("staging".to_string()),
+        materialized: "table".to_string(),
+        tags: vec!["staging".to_string(), "orders".to_string()],
+        path: "models/stg_orders/stg_orders.sql".to_string(),
+    };
+
+    let result = env.render_with_model("{{ model.name }}", &model).unwrap();
+    assert_eq!(result, "stg_orders");
+
+    let result = env
+        .render_with_model("{{ model.materialized }}", &model)
+        .unwrap();
+    assert_eq!(result, "table");
+
+    let result = env.render_with_model("{{ model.path }}", &model).unwrap();
+    assert_eq!(result, "models/stg_orders/stg_orders.sql");
+}
+
+#[test]
+fn test_model_context_optional() {
+    // Rendering without model context should work — model just won't be available
+    let env = JinjaEnvironment::default();
+    let result = env.render("SELECT 1").unwrap();
+    assert_eq!(result, "SELECT 1");
+}
+
+#[test]
+fn test_executing_flag() {
+    use crate::context::{TargetContext, TemplateContext};
+
+    // executing = false (compile/validate)
+    let ctx = TemplateContext::new("proj".to_string(), TargetContext::default(), false);
+    let env = JinjaEnvironment::with_context(&HashMap::new(), &[], &ctx);
+    assert_eq!(env.render("{{ executing }}").unwrap(), "false");
+
+    // executing = true (run)
+    let ctx = TemplateContext::new("proj".to_string(), TargetContext::default(), true);
+    let env = JinjaEnvironment::with_context(&HashMap::new(), &[], &ctx);
+    assert_eq!(env.render("{{ executing }}").unwrap(), "true");
+}
+
+#[test]
+fn test_warn_capture_and_clear() {
+    let env = JinjaEnvironment::default();
+
+    // First render with a warning
+    let result = env.render("{{ warn('first warning') }}SELECT 1").unwrap();
+    assert_eq!(result, "SELECT 1");
+    let warnings = env.get_captured_warnings();
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0], "first warning");
+
+    // Second render should clear previous warnings
+    let result = env.render("{{ warn('second warning') }}SELECT 2").unwrap();
+    assert_eq!(result, "SELECT 2");
+    let warnings = env.get_captured_warnings();
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0], "second warning");
+
+    // Render without warnings should have empty capture
+    let _ = env.render("SELECT 3").unwrap();
+    assert!(env.get_captured_warnings().is_empty());
+}
+
+#[test]
+fn test_backward_compatibility() {
+    // JinjaEnvironment::new() and with_macros() should still work
+    let env1 = JinjaEnvironment::new(&HashMap::new());
+    assert_eq!(env1.render("SELECT 1").unwrap(), "SELECT 1");
+
+    let env2 = JinjaEnvironment::with_macros(&HashMap::new(), &[]);
+    assert_eq!(env2.render("SELECT 2").unwrap(), "SELECT 2");
+
+    let env3 = JinjaEnvironment::default();
+    assert_eq!(env3.render("SELECT 3").unwrap(), "SELECT 3");
+}
+
+// ===== Integration tests for new functions via render =====
+
+#[test]
+fn test_env_fn_via_render() {
+    std::env::set_var("FF_JINJA_TEST_DB", "mydb");
+    let env = JinjaEnvironment::default();
+    let result = env.render("{{ env('FF_JINJA_TEST_DB') }}").unwrap();
+    assert_eq!(result, "mydb");
+    std::env::remove_var("FF_JINJA_TEST_DB");
+}
+
+#[test]
+fn test_env_fn_default_via_render() {
+    std::env::remove_var("FF_JINJA_TEST_NONEXIST");
+    let env = JinjaEnvironment::default();
+    let result = env
+        .render("{{ env('FF_JINJA_TEST_NONEXIST', 'fallback') }}")
+        .unwrap();
+    assert_eq!(result, "fallback");
+}
+
+#[test]
+fn test_log_fn_via_render() {
+    let env = JinjaEnvironment::default();
+    let result = env.render("before{{ log('debug msg') }}after").unwrap();
+    assert_eq!(result, "beforeafter");
+}
+
+#[test]
+fn test_error_fn_via_render() {
+    let env = JinjaEnvironment::default();
+    let result = env.render("{{ error('bad thing') }}");
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("bad thing"));
+}
+
+#[test]
+fn test_from_json_via_render() {
+    let env = JinjaEnvironment::default();
+    let template = r#"{% set data = from_json('{"name": "alice"}') %}{{ data.name }}"#;
+    let result = env.render(template).unwrap();
+    assert_eq!(result, "alice");
+}
+
+#[test]
+fn test_to_json_function_via_render() {
+    let env = JinjaEnvironment::default();
+    // to_json on a string
+    let result = env.render("{{ to_json('hello') }}").unwrap();
+    assert_eq!(result, r#""hello""#);
+}
+
+#[test]
+fn test_to_json_as_filter() {
+    let env = JinjaEnvironment::default();
+    let result = env.render("{{ 42 | to_json }}").unwrap();
+    assert_eq!(result, "42");
+}
+
+#[test]
+fn test_render_with_config_and_model() {
+    use crate::context::ModelContext;
+
+    let env = JinjaEnvironment::default();
+    let model = ModelContext {
+        name: "test_model".to_string(),
+        materialized: "view".to_string(),
+        ..Default::default()
+    };
+
+    let (rendered, config) = env
+        .render_with_config_and_model(
+            "{{ config(materialized='table') }}{{ model.name }}",
+            Some(&model),
+        )
+        .unwrap();
+    assert_eq!(rendered, "test_model");
+    assert_eq!(config.get("materialized").unwrap().as_str(), Some("table"));
+}

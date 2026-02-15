@@ -98,12 +98,23 @@ pub(super) fn load_or_compile_models(
         if global.verbose {
             eprintln!("[verbose] Using cached manifest");
         }
-        load_from_manifest(project, manifest, &all_model_names, comment_ctx)
+        load_from_manifest(
+            project,
+            manifest,
+            &all_model_names,
+            global.target.as_deref(),
+            comment_ctx,
+        )
     } else {
         if global.verbose && !args.no_cache {
             eprintln!("[verbose] Cache invalid or missing, recompiling");
         }
-        compile_all_models(project, &all_model_names, comment_ctx)
+        compile_all_models(
+            project,
+            &all_model_names,
+            global.target.as_deref(),
+            comment_ctx,
+        )
     }
 }
 
@@ -112,11 +123,13 @@ fn load_from_manifest(
     project: &Project,
     manifest: &Manifest,
     model_names: &[String],
+    target: Option<&str>,
     comment_ctx: Option<&ff_core::query_comment::QueryCommentContext>,
 ) -> Result<HashMap<String, CompiledModel>> {
     let mut compiled_models = HashMap::new();
     let macro_paths = project.config.macro_paths_absolute(&project.root);
-    let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
+    let template_ctx = common::build_template_context(project, target, true);
+    let jinja = JinjaEnvironment::with_context(&project.config.vars, &macro_paths, &template_ctx);
 
     for name in model_names {
         if let Some(manifest_model) = manifest.get_model(name) {
@@ -187,12 +200,14 @@ fn load_from_manifest(
 fn compile_all_models(
     project: &Project,
     model_names: &[String],
+    target: Option<&str>,
     comment_ctx: Option<&ff_core::query_comment::QueryCommentContext>,
 ) -> Result<HashMap<String, CompiledModel>> {
     let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
         .context("Invalid SQL dialect")?;
     let macro_paths = project.config.macro_paths_absolute(&project.root);
-    let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
+    let template_ctx = common::build_template_context(project, target, true);
+    let jinja = JinjaEnvironment::with_context(&project.config.vars, &macro_paths, &template_ctx);
 
     let external_tables: HashSet<String> = common::build_external_tables_lookup(project);
     let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();

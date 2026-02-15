@@ -111,7 +111,8 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
     let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
         .context("Invalid SQL dialect")?;
     let macro_paths = project.config.macro_paths_absolute(&project.root);
-    let jinja = JinjaEnvironment::with_macros(&vars, &macro_paths);
+    let template_ctx = common::build_template_context(&project, global.target.as_deref(), false);
+    let jinja = JinjaEnvironment::with_context(&vars, &macro_paths, &template_ctx);
 
     // Compile all models first — filtering happens after DAG build
     let all_model_names: Vec<String> = project
@@ -446,14 +447,21 @@ fn compile_model_phase1(
     name: &str,
     ctx: &CompileContext<'_>,
 ) -> Result<CompileOutput> {
+    // Build model context and render from an immutable borrow first
+    let (rendered, config_values) = {
+        let model = project
+            .get_model(name)
+            .with_context(|| format!("Model not found: {}", name))?;
+        let model_ctx = common::build_model_context(model, project);
+        ctx.jinja
+            .render_with_config_and_model(&model.raw_sql, Some(&model_ctx))
+            .with_context(|| format!("Failed to render template for model: {}", name))?
+    };
+
+    // Now get mutable access for updating the model
     let model = project
         .get_model_mut(name)
         .with_context(|| format!("Model not found: {}", name))?;
-
-    let (rendered, config_values) = ctx
-        .jinja
-        .render_with_config(&model.raw_sql)
-        .with_context(|| format!("Failed to render template for model: {}", name))?;
 
     let statements = ctx
         .parser

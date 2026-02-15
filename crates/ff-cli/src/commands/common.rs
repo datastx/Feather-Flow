@@ -477,6 +477,68 @@ pub(crate) fn print_table(headers: &[&str], rows: &[Vec<String>]) {
     }
 }
 
+/// Build a `TemplateContext` from project and target info.
+///
+/// Populates `project_name`, `target` (name, schema, database_type),
+/// and `executing` flag. `run_id` and `run_started_at` are generated
+/// inside `TemplateContext::new()`.
+pub(crate) fn build_template_context(
+    project: &Project,
+    target: Option<&str>,
+    executing: bool,
+) -> ff_jinja::TemplateContext {
+    let resolved_target = ff_core::config::Config::resolve_target(target);
+    let target_name = resolved_target.as_deref().unwrap_or("default").to_string();
+
+    let schema = project.config.schema.clone();
+    let database_type = project.config.database.db_type.to_string();
+
+    ff_jinja::TemplateContext::new(
+        project.config.name.clone(),
+        ff_jinja::TargetContext {
+            name: target_name,
+            schema,
+            database_type,
+        },
+        executing,
+    )
+}
+
+/// Build a `ModelContext` for a given model.
+///
+/// Reads the model's config (materialized, schema, tags) and path,
+/// computing a relative path from the project root.
+pub(crate) fn build_model_context(
+    model: &ff_core::model::Model,
+    project: &Project,
+) -> ff_jinja::ModelContext {
+    let materialized = model
+        .config
+        .materialized
+        .unwrap_or(project.config.materialization)
+        .to_string();
+
+    let schema = model
+        .config
+        .schema
+        .clone()
+        .or_else(|| project.config.schema.clone());
+
+    let rel_path = model
+        .path
+        .strip_prefix(&project.root)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| model.path.display().to_string());
+
+    ff_jinja::ModelContext {
+        name: model.name.to_string(),
+        schema,
+        materialized,
+        tags: model.config.tags.clone(),
+        path: rel_path,
+    }
+}
+
 /// Create a database connection from a config and optional target override.
 ///
 /// Resolves the target via `Config::resolve_target`, gets the database

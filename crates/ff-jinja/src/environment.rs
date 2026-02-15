@@ -6,20 +6,34 @@ use crate::builtins::{
     make_limit_zero_fn, make_not_null_fn, make_percent_of_fn, make_round_money_fn,
     make_safe_divide_fn, make_slugify_fn, make_split_part_fn, make_surrogate_key_fn,
 };
+use crate::context::{ModelContext, TemplateContext};
 use crate::error::{JinjaError, JinjaResult};
 use crate::functions::{
-    make_config_fn, make_is_incremental_fn, make_this_fn, make_var_fn, yaml_to_json, ConfigCapture,
-    IncrementalState,
+    make_config_fn, make_env_fn, make_error_fn, make_from_json_fn, make_is_incremental_fn,
+    make_log_fn, make_this_fn, make_to_json_fn, make_var_fn, make_warn_fn, yaml_to_json,
+    ConfigCapture, IncrementalState, WarningCapture,
 };
 use minijinja::{Environment, Value};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+
+/// Private render context passed to `render_str`.
+///
+/// Contains optional per-model context. When `model` is `None`, the template
+/// variable `{{ model }}` is simply absent (undefined).
+#[derive(Debug, Serialize)]
+struct RenderContext {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<ModelContext>,
+}
 
 /// Jinja templating environment for Featherflow
 pub struct JinjaEnvironment<'a> {
     env: Environment<'a>,
     config_capture: ConfigCapture,
+    warning_capture: WarningCapture,
 }
 
 impl std::fmt::Debug for JinjaEnvironment<'_> {
@@ -36,17 +50,19 @@ impl<'a> JinjaEnvironment<'a> {
         Self::with_macros(vars, &[])
     }
 
-    /// Shared initialization: creates the environment, registers config/var
+    /// Shared initialization: creates the environment, registers all
     /// functions, built-in macros, and sets up the macro path loader.
     ///
-    /// Returns the partially-built `(Environment, ConfigCapture)` so that
-    /// callers can register additional functions before finalising.
+    /// If `template_context` is provided, static context variables
+    /// (`project_name`, `target`, `run_id`, etc.) are set as globals.
     fn init_common(
         vars: &HashMap<String, serde_yaml::Value>,
         macro_paths: &[PathBuf],
-    ) -> (Environment<'a>, ConfigCapture) {
+        template_context: Option<&TemplateContext>,
+    ) -> (Environment<'a>, ConfigCapture, WarningCapture) {
         let mut env = Environment::new();
         let config_capture: ConfigCapture = Arc::new(Mutex::new(HashMap::new()));
+        let warning_capture: WarningCapture = Arc::new(Mutex::new(Vec::new()));
 
         // Convert YAML vars to JSON for the var function
         let json_vars: HashMap<String, serde_json::Value> = vars
@@ -54,20 +70,34 @@ impl<'a> JinjaEnvironment<'a> {
             .map(|(k, v): (&String, &serde_yaml::Value)| (k.clone(), yaml_to_json(v)))
             .collect();
 
-        // Register config() function
-        let config_fn = make_config_fn(config_capture.clone());
-        env.add_function("config", config_fn);
+        // Register core functions
+        env.add_function("config", make_config_fn(config_capture.clone()));
+        env.add_function("var", make_var_fn(json_vars));
 
-        // Register var() function
-        let var_fn = make_var_fn(json_vars);
-        env.add_function("var", var_fn);
+        // Register new utility functions
+        env.add_function("env", make_env_fn());
+        env.add_function("log", make_log_fn());
+        env.add_function("error", make_error_fn());
+        env.add_function("warn", make_warn_fn(warning_capture.clone()));
+        env.add_function("from_json", make_from_json_fn());
+        let to_json_fn = make_to_json_fn();
+        env.add_function("to_json", to_json_fn.clone());
+        env.add_filter("to_json", to_json_fn);
 
         // Register built-in macros
         register_builtins(&mut env);
 
+        // Set static context variables as globals
+        if let Some(ctx) = template_context {
+            env.add_global("project_name", Value::from(ctx.project_name.clone()));
+            env.add_global("target", Value::from_serialize(&ctx.target));
+            env.add_global("run_id", Value::from(ctx.run_id.clone()));
+            env.add_global("run_started_at", Value::from(ctx.run_started_at.clone()));
+            env.add_global("ff_version", Value::from(ctx.ff_version.clone()));
+            env.add_global("executing", Value::from(ctx.executing));
+        }
+
         // Set up a multi-path loader that searches all configured macro paths.
-        // Minijinja's built-in path_loader only supports a single directory,
-        // so we use a custom closure that iterates over all valid paths.
         let valid_paths: Vec<PathBuf> = macro_paths
             .iter()
             .filter(|p| p.exists() && p.is_dir())
@@ -77,7 +107,7 @@ impl<'a> JinjaEnvironment<'a> {
             env.set_loader(move |name: &str| load_macro_from_paths(name, &valid_paths));
         }
 
-        (env, config_capture)
+        (env, config_capture, warning_capture)
     }
 
     /// Create a new Jinja environment with variables and macro paths
@@ -85,36 +115,53 @@ impl<'a> JinjaEnvironment<'a> {
     /// This enables loading macros using `{% from "file.sql" import macro_name %}` syntax.
     /// Macro files are loaded from the specified directories.
     pub fn with_macros(vars: &HashMap<String, serde_yaml::Value>, macro_paths: &[PathBuf]) -> Self {
-        let (env, config_capture) = Self::init_common(vars, macro_paths);
+        let (env, config_capture, warning_capture) = Self::init_common(vars, macro_paths, None);
         Self {
             env,
             config_capture,
+            warning_capture,
+        }
+    }
+
+    /// Create a new Jinja environment with variables, macro paths, and template context.
+    ///
+    /// The template context provides static globals like `project_name`, `target`,
+    /// `run_id`, `run_started_at`, `ff_version`, and `executing`.
+    pub fn with_context(
+        vars: &HashMap<String, serde_yaml::Value>,
+        macro_paths: &[PathBuf],
+        context: &TemplateContext,
+    ) -> Self {
+        let (env, config_capture, warning_capture) =
+            Self::init_common(vars, macro_paths, Some(context));
+        Self {
+            env,
+            config_capture,
+            warning_capture,
         }
     }
 
     /// Render a template string
     pub fn render(&self, template: &str) -> JinjaResult<String> {
-        // Clear previous config captures
-        self.config_capture
-            .lock()
-            .map_err(|e| JinjaError::Internal(format!("config mutex poisoned: {e}")))?
-            .clear();
-
-        // Render the template
-        let result = self
-            .env
-            .render_str(template, ())
-            .map_err(JinjaError::from)?;
-
-        Ok(result)
+        self.render_with_model_context(template, None)
     }
 
-    /// Render a template and return both the result and captured config
-    pub fn render_with_config(
+    /// Render a template with per-model context.
+    ///
+    /// The model context is available in the template as `{{ model.name }}`,
+    /// `{{ model.materialized }}`, etc.
+    pub fn render_with_model(&self, template: &str, model: &ModelContext) -> JinjaResult<String> {
+        self.render_with_model_context(template, Some(model))
+    }
+
+    /// Render a template and return both the result and captured config,
+    /// optionally with per-model context.
+    pub fn render_with_config_and_model(
         &self,
         template: &str,
+        model: Option<&ModelContext>,
     ) -> JinjaResult<(String, HashMap<String, Value>)> {
-        let rendered = self.render(template)?;
+        let rendered = self.render_with_model_context(template, model)?;
         let config = self
             .config_capture
             .lock()
@@ -123,11 +170,43 @@ impl<'a> JinjaEnvironment<'a> {
         Ok((rendered, config))
     }
 
+    /// Render a template and return both the result and captured config
+    pub fn render_with_config(
+        &self,
+        template: &str,
+    ) -> JinjaResult<(String, HashMap<String, Value>)> {
+        self.render_with_config_and_model(template, None)
+    }
+
+    /// Internal render method that handles both with and without model context.
+    fn render_with_model_context(
+        &self,
+        template: &str,
+        model: Option<&ModelContext>,
+    ) -> JinjaResult<String> {
+        // Clear previous captures
+        self.config_capture
+            .lock()
+            .map_err(|e| JinjaError::Internal(format!("config mutex poisoned: {e}")))?
+            .clear();
+        self.warning_capture
+            .lock()
+            .map_err(|e| JinjaError::Internal(format!("warning mutex poisoned: {e}")))?
+            .clear();
+
+        let ctx = RenderContext {
+            model: model.cloned(),
+        };
+
+        let result = self
+            .env
+            .render_str(template, ctx)
+            .map_err(JinjaError::from)?;
+
+        Ok(result)
+    }
+
     /// Acquire the config capture lock, recovering from poison.
-    ///
-    /// Poisoned mutex recovery: these getters read non-critical config
-    /// metadata. If a panic poisoned the lock, we still want to return
-    /// the inner data rather than propagate the poison.
     fn read_config(&self) -> std::sync::MutexGuard<'_, HashMap<String, Value>> {
         self.config_capture
             .lock()
@@ -158,13 +237,20 @@ impl<'a> JinjaEnvironment<'a> {
         self.read_config()
             .get("tags")
             .and_then(|v| {
-                // Try to iterate over the value if it's a sequence
                 v.try_iter().ok().map(|iter| {
                     iter.filter_map(|item| item.as_str().map(String::from))
                         .collect()
                 })
             })
             .unwrap_or_default()
+    }
+
+    /// Get warnings captured during the last render.
+    pub fn get_captured_warnings(&self) -> Vec<String> {
+        self.warning_capture
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 }
 
@@ -178,7 +264,7 @@ impl JinjaEnvironment<'_> {
         incremental_state: IncrementalState,
         qualified_name: &str,
     ) -> Self {
-        let (mut env, config_capture) = Self::init_common(vars, macro_paths);
+        let (mut env, config_capture, warning_capture) = Self::init_common(vars, macro_paths, None);
 
         // Register is_incremental() function
         let is_incremental_fn = make_is_incremental_fn(incremental_state);
@@ -191,6 +277,7 @@ impl JinjaEnvironment<'_> {
         Self {
             env,
             config_capture,
+            warning_capture,
         }
     }
 }
