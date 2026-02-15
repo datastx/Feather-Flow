@@ -10,7 +10,6 @@ pub mod config;
 pub mod contract;
 pub mod dag;
 pub mod error;
-pub mod exposure;
 pub mod function;
 pub mod function_name;
 pub mod manifest;
@@ -35,7 +34,6 @@ pub use breaking_changes::{
 pub use config::{Config, DbType};
 pub use contract::{validate_contract, ContractValidationResult, ContractViolation, ViolationType};
 pub use error::CoreError;
-pub use exposure::{discover_exposures, Exposure, ExposureMaturity, ExposureOwner, ExposureType};
 pub use function::{
     build_function_lookup, discover_functions, FunctionArg, FunctionConfig, FunctionDef,
     FunctionReturn, FunctionReturnColumn, FunctionSignature, FunctionType,

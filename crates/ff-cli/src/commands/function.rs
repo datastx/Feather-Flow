@@ -116,6 +116,8 @@ async fn deploy(args: &FunctionDeployArgs, global: &GlobalArgs) -> Result<()> {
     let db = create_database_connection(&project.config, global.target.as_deref())?;
     let jinja = JinjaEnvironment::new(&project.config.vars);
 
+    common::set_project_search_path(&db, &project).await?;
+
     let functions = filter_functions(&args.functions, &project);
 
     if functions.is_empty() {

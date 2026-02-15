@@ -51,6 +51,30 @@ pub enum SchemaMismatch {
     },
 }
 
+impl SchemaMismatch {
+    /// Returns `true` for SA01 errors that should block execution.
+    ///
+    /// Only `MissingFromSql` is a hard error — a YAML-declared column that
+    /// doesn't appear in the SQL output means the contract is broken.
+    pub fn is_error(&self) -> bool {
+        matches!(self, SchemaMismatch::MissingFromSql { .. })
+    }
+
+    /// Returns `true` for SA02 warnings that should not block execution.
+    pub fn is_warning(&self) -> bool {
+        !self.is_error()
+    }
+
+    /// Diagnostic code string: `"SA01"` for errors, `"SA02"` for warnings.
+    pub fn code(&self) -> &'static str {
+        if self.is_error() {
+            "SA01"
+        } else {
+            "SA02"
+        }
+    }
+}
+
 impl std::fmt::Display for SchemaMismatch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

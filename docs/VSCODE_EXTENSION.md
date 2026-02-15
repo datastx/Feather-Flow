@@ -404,7 +404,6 @@ When hovering over a source table name:
 │ Raw customer data from production database  │
 │                                             │
 │ Schema: main                                │
-│ Freshness: warn after 2h, error after 6h   │
 │                                             │
 │ Columns:                                    │
 │   customer_id    INTEGER   (PK)             │

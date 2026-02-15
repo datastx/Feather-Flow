@@ -4,8 +4,9 @@ SHELL := /bin/bash
         ff-parse ff-parse-json ff-parse-deps ff-compile ff-compile-verbose \
         ff-run ff-run-full-refresh ff-run-select ff-ls ff-ls-json ff-ls-tree \
         ff-test ff-test-verbose ff-test-fail-fast ff-seed ff-seed-full-refresh \
+        ff-function-deploy ff-function-validate \
         ff-docs ff-docs-json ff-docs-serve ff-docs-export ff-validate ff-validate-strict ff-sources ff-help \
-        dev-cycle dev-validate dev-fresh help run watch test-verbose test-integration \
+        dev-cycle dev-validate dev-fresh ci-e2e help run watch test-verbose test-integration \
 	test-unit test-quick test-failed test-sa test-sa-rust test-sa-all fmt-check clippy doc-open update ci-quick ci-full install install-cargo claude-auto-run \
         version version-bump-patch version-bump-minor version-set version-tag \
         build-linux clean-dist \
@@ -185,6 +186,12 @@ ff-seed: ## Load seed data
 ff-seed-full-refresh: ## Load seeds with full refresh
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) seed --full-refresh
 
+ff-function-deploy: ## Deploy user-defined functions
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) function deploy
+
+ff-function-validate: ## Validate user-defined functions
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) function validate
+
 ff-docs: ## Generate documentation
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) docs
 
@@ -213,14 +220,31 @@ ff-help: ## Show CLI help
 # Workflows
 # =============================================================================
 
-dev-cycle: ff-seed ff-run ff-test ## Full cycle: seed -> run -> test
+dev-cycle: ff-seed ff-run ff-function-deploy ff-test ## Full cycle: seed -> run -> deploy functions -> test
 	@echo "Development cycle complete!"
 
 dev-validate: ff-compile ff-validate ## Quick validation: compile -> validate
 	@echo "Validation complete!"
 
-dev-fresh: ff-seed-full-refresh ff-run-full-refresh ff-test ## Full refresh pipeline
+dev-fresh: ff-seed-full-refresh ff-run-full-refresh ff-function-deploy ff-test ## Full refresh pipeline
 	@echo "Fresh pipeline complete!"
+
+ci-e2e: ## End-to-end pipeline test against sample project
+	@echo "=== E2E: clean ==="
+	rm -rf crates/ff-cli/tests/fixtures/sample_project/target
+	@echo "=== E2E: build ==="
+	$(MAKE) build
+	@echo "=== E2E: seed ==="
+	$(MAKE) ff-seed-full-refresh PROJECT_DIR=crates/ff-cli/tests/fixtures/sample_project
+	@echo "=== E2E: run (builds model tables — table functions not yet deployed) ==="
+	-$(MAKE) ff-run-full-refresh PROJECT_DIR=crates/ff-cli/tests/fixtures/sample_project
+	@echo "=== E2E: deploy functions (requires model tables from first run) ==="
+	$(MAKE) ff-function-deploy PROJECT_DIR=crates/ff-cli/tests/fixtures/sample_project
+	@echo "=== E2E: run (all models including table-function dependents) ==="
+	$(MAKE) ff-run-full-refresh PROJECT_DIR=crates/ff-cli/tests/fixtures/sample_project
+	@echo "=== E2E: test (materialized models) ==="
+	cargo run -p ff-cli -- --project-dir crates/ff-cli/tests/fixtures/sample_project test -n dim_customers,fct_orders,dim_products,rpt_order_volume
+	@echo "E2E pipeline passed!"
 
 # =============================================================================
 # Maintenance

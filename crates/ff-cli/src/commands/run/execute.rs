@@ -107,11 +107,12 @@ async fn run_single_model(
     full_refresh: bool,
     wap_schema: Option<&str>,
 ) -> ModelRunResult {
-    let qualified_name = quote_qualified(&build_qualified_name(compiled.schema.as_deref(), name));
+    let qualified_name = build_qualified_name(compiled.schema.as_deref(), name);
+    let quoted_name = quote_qualified(&qualified_name);
 
     let model_start = Instant::now();
 
-    if let Err(e) = execute_hooks(db, &compiled.pre_hook, &qualified_name).await {
+    if let Err(e) = execute_hooks(db, &compiled.pre_hook, &quoted_name).await {
         let duration = model_start.elapsed();
         println!(
             "  \u{2717} {} (pre-hook) - {} [{}ms]",
@@ -178,7 +179,7 @@ async fn run_single_model(
 
     match result {
         Ok(_) => {
-            if let Err(e) = execute_hooks(db, &compiled.post_hook, &qualified_name).await {
+            if let Err(e) = execute_hooks(db, &compiled.post_hook, &quoted_name).await {
                 let duration = model_start.elapsed();
                 println!(
                     "  \u{2717} {} (post-hook) - {} [{}ms]",

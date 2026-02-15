@@ -3,7 +3,6 @@
 use anyhow::{Context, Result};
 use ff_core::config::Materialization;
 use ff_core::dag::ModelDag;
-use ff_core::exposure::Exposure;
 use ff_jinja::JinjaEnvironment;
 use ff_sql::{extract_dependencies, SqlParser};
 use std::collections::{HashMap, HashSet};
@@ -19,7 +18,7 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
         .context("Invalid SQL dialect")?;
     let jinja = JinjaEnvironment::new(&project.config.vars);
 
-    let external_tables: HashSet<String> = project.config.external_tables.iter().cloned().collect();
+    let external_tables = common::build_external_tables_lookup(&project);
     let known_models: HashSet<&str> = project.models.keys().map(|k| k.as_str()).collect();
 
     let mut model_info: Vec<ModelInfo> = Vec::new();
@@ -158,50 +157,14 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
         filtered_info
     };
 
-    let affected_exposures: Vec<&Exposure> = if args.downstream_exposures {
-        let model_names: HashSet<&str> = filtered_info
-            .iter()
-            .filter(|m| m.resource_type == "model")
-            .map(|m| m.name.as_str())
-            .collect();
-
-        find_affected_exposures(&project.exposures, &model_names)
-    } else {
-        Vec::new()
-    };
-
     match args.output {
-        LsOutput::Table => print_table(
-            &filtered_info,
-            &affected_exposures,
-            args.downstream_exposures,
-        ),
-        LsOutput::Json => print_json(
-            &filtered_info,
-            &affected_exposures,
-            args.downstream_exposures,
-        )?,
+        LsOutput::Table => print_table(&filtered_info),
+        LsOutput::Json => print_json(&filtered_info)?,
         LsOutput::Tree => print_tree(&filtered_info)?,
         LsOutput::Path => print_paths(&filtered_info),
     }
 
     Ok(())
-}
-
-/// Find exposures that depend on any of the given models
-fn find_affected_exposures<'a>(
-    exposures: &'a [Exposure],
-    model_names: &HashSet<&str>,
-) -> Vec<&'a Exposure> {
-    exposures
-        .iter()
-        .filter(|exposure| {
-            exposure
-                .depends_on
-                .iter()
-                .any(|dep| model_names.contains(dep.as_str()))
-        })
-        .collect()
 }
 
 /// Model information for display
@@ -219,7 +182,7 @@ struct ModelInfo {
 }
 
 /// Print models in table format
-fn print_table(models: &[&ModelInfo], exposures: &[&Exposure], show_exposures: bool) {
+fn print_table(models: &[&ModelInfo]) {
     let headers = ["NAME", "TYPE", "MATERIALIZED", "SCHEMA", "DEPENDS_ON"];
 
     let rows: Vec<Vec<String>> = models
@@ -277,74 +240,13 @@ fn print_table(models: &[&ModelInfo], exposures: &[&Exposure], show_exposures: b
         parts.push(format!("{} functions", function_count));
     }
     println!("{}", parts.join(", "));
-
-    if show_exposures && !exposures.is_empty() {
-        println!();
-        println!("Downstream Exposures ({} affected):", exposures.len());
-        println!("{:-<60}", "");
-
-        for exposure in exposures {
-            let type_str = format!("{}", exposure.exposure_type);
-            let models_affected: Vec<&str> = exposure
-                .depends_on
-                .iter()
-                .filter(|d| models.iter().any(|m| m.name == *d.as_str()))
-                .map(|s| s.as_str())
-                .collect();
-
-            println!(
-                "  {} ({}) - depends on: {}",
-                exposure.name,
-                type_str,
-                models_affected.join(", ")
-            );
-
-            if let Some(url) = &exposure.url {
-                println!("    URL: {}", url);
-            }
-        }
-    } else if show_exposures && exposures.is_empty() {
-        println!();
-        println!("No downstream exposures affected.");
-    }
 }
 
 /// Print models in JSON format
-fn print_json(models: &[&ModelInfo], exposures: &[&Exposure], show_exposures: bool) -> Result<()> {
-    if show_exposures {
-        let exposure_info: Vec<ExposureInfo> = exposures
-            .iter()
-            .map(|e| ExposureInfo {
-                name: e.name.clone(),
-                exposure_type: format!("{}", e.exposure_type),
-                owner: e.owner.name.clone(),
-                depends_on: e.depends_on.clone(),
-                url: e.url.clone(),
-            })
-            .collect();
-
-        let output = serde_json::json!({
-            "models": models,
-            "affected_exposures": exposure_info,
-        });
-        let json = serde_json::to_string_pretty(&output).context("Failed to serialize to JSON")?;
-        println!("{}", json);
-    } else {
-        let json = serde_json::to_string_pretty(models).context("Failed to serialize to JSON")?;
-        println!("{}", json);
-    }
+fn print_json(models: &[&ModelInfo]) -> Result<()> {
+    let json = serde_json::to_string_pretty(models).context("Failed to serialize to JSON")?;
+    println!("{}", json);
     Ok(())
-}
-
-/// Exposure info for JSON output
-#[derive(Debug, serde::Serialize)]
-struct ExposureInfo {
-    name: String,
-    exposure_type: String,
-    owner: String,
-    depends_on: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    url: Option<String>,
 }
 
 /// Print models in tree format

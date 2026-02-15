@@ -212,31 +212,3 @@ pub(super) fn write_run_results(
     let results_path = project.target_dir().join("run_results.json");
     common::write_json_results(&results_path, &results)
 }
-
-/// Find exposures that depend on any of the models being run.
-///
-/// Returns a list of (exposure_name, exposure_type, depends_on models).
-pub(super) fn find_affected_exposures(
-    project: &Project,
-    models_to_run: &[String],
-) -> Vec<(String, String, Vec<String>)> {
-    let model_set: HashSet<&str> = models_to_run.iter().map(|s| s.as_str()).collect();
-
-    project
-        .exposures
-        .iter()
-        .filter(|exposure| {
-            exposure
-                .depends_on
-                .iter()
-                .any(|dep| model_set.contains(dep.as_str()))
-        })
-        .map(|exposure| {
-            (
-                exposure.name.clone(),
-                exposure.exposure_type.to_string(),
-                exposure.depends_on.clone(),
-            )
-        })
-        .collect()
-}

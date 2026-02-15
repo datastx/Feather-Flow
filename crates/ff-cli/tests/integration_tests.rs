@@ -359,7 +359,7 @@ fn test_source_discovery() {
         .find(|s| s.name == "raw_ecommerce")
         .expect("raw_ecommerce source should exist");
 
-    assert_eq!(ecommerce_source.schema, "main");
+    assert_eq!(ecommerce_source.schema, "analytics");
     assert_eq!(ecommerce_source.tables.len(), 4);
 
     // Check raw_orders table
@@ -480,7 +480,7 @@ fn test_source_qualified_names() {
         .expect("raw_orders table should exist");
 
     let qualified = format!("{}.{}", ecommerce_source.schema, raw_orders_table.name);
-    assert_eq!(qualified, "main.raw_orders");
+    assert_eq!(qualified, "analytics.raw_orders");
 }
 
 /// Test source lookup building
@@ -504,12 +504,12 @@ fn test_source_lookup() {
 
     // Qualified names should also be in the lookup
     assert!(
-        lookup.contains("main.raw_orders"),
-        "main.raw_orders should be in lookup"
+        lookup.contains("analytics.raw_orders"),
+        "analytics.raw_orders should be in lookup"
     );
     assert!(
-        lookup.contains("main.raw_customers"),
-        "main.raw_customers should be in lookup"
+        lookup.contains("analytics.raw_customers"),
+        "analytics.raw_customers should be in lookup"
     );
 }
 
@@ -544,7 +544,7 @@ fn test_docs_html_format() {
 
     let source = &project.sources[0];
     assert_eq!(source.name, "raw_ecommerce");
-    assert_eq!(source.schema, "main");
+    assert_eq!(source.schema, "analytics");
     assert!(!source.tables.is_empty(), "Source should have tables");
 }
 

@@ -337,10 +337,11 @@ pub(crate) fn run_static_analysis_pipeline(
         &user_table_fn_stubs,
     );
 
-    let has_errors = result
-        .model_plans
-        .values()
-        .any(|pr| !pr.mismatches.is_empty());
+    let has_errors = !result.failures.is_empty()
+        || result
+            .model_plans
+            .values()
+            .any(|pr| pr.mismatches.iter().any(|m| m.is_error()));
 
     Ok(StaticAnalysisOutput { result, has_errors })
 }
@@ -351,11 +352,11 @@ pub(crate) fn run_static_analysis_pipeline(
 /// Returns `(mismatch_count, plan_count, failure_count)`.
 ///
 /// The `on_mismatch` callback is called for each schema mismatch with
-/// `(model_name, mismatch_display)`. The `on_failure` callback is called
+/// `(model_name, &SchemaMismatch)`. The `on_failure` callback is called
 /// for each model that failed planning with `(model_name, error_message)`.
 pub(crate) fn report_static_analysis_results(
     result: &ff_analysis::PropagationResult,
-    mut on_mismatch: impl FnMut(&str, &str),
+    mut on_mismatch: impl FnMut(&str, &ff_analysis::SchemaMismatch),
     mut on_failure: impl FnMut(&str, &str),
 ) -> (usize, usize, usize) {
     let mut mismatch_count = 0;
@@ -367,7 +368,7 @@ pub(crate) fn report_static_analysis_results(
     for model_name in model_names {
         let plan_result = &result.model_plans[model_name];
         for mismatch in &plan_result.mismatches {
-            on_mismatch(model_name, &mismatch.to_string());
+            on_mismatch(model_name, mismatch);
             mismatch_count += 1;
         }
     }
@@ -555,4 +556,31 @@ pub(crate) fn create_database_connection(
     let db: Arc<dyn Database> =
         Arc::new(DuckDbBackend::new(&db_config.path).context("Failed to connect to database")?);
     Ok(db)
+}
+
+/// Set the DuckDB search path using the project's configured schema.
+///
+/// This allows unqualified table references in SQL to resolve against
+/// the project's default schema (where seeds and models typically live)
+/// in addition to the default `main` schema.
+pub(crate) async fn set_project_search_path(
+    db: &Arc<dyn Database>,
+    project: &Project,
+) -> Result<()> {
+    let mut schemas = Vec::new();
+
+    if let Some(ref default_schema) = project.config.schema {
+        schemas.push(default_schema.clone());
+    }
+
+    if !schemas.iter().any(|s| s == "main") {
+        schemas.push("main".to_string());
+    }
+
+    let path = schemas.join(",");
+    db.execute(&format!("SET search_path = '{path}'"))
+        .await
+        .context("Failed to set search_path")?;
+
+    Ok(())
 }

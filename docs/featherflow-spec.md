@@ -225,7 +225,6 @@ columns: ...
 | `source_paths` | list | No | `["sources"]` | Source definition YAML files |
 | `macro_paths` | list | No | `["macros"]` | Directories containing Jinja macros |
 | `test_paths` | list | No | `["tests"]` | Directories containing singular tests |
-| `snapshot_paths` | list | No | `["snapshots"]` | Directories containing snapshot definitions |
 | `target_path` | string | No | `"target"` | Output directory for artifacts |
 | `clean_targets` | list | No | `["target"]` | Directories to clean |
 | `materialization` | string | No | `"view"` | Default materialization |
@@ -353,7 +352,6 @@ my_project/
 | Intermediate | `int_` | Complex transformations | `int_orders_enriched` |
 | Marts - Facts | `fct_` | Event/transaction tables | `fct_orders` |
 | Marts - Dimensions | `dim_` | Entity tables | `dim_customers` |
-| Metrics | `mtc_` | Aggregated metrics | `mtc_daily_revenue` |
 
 ### File Discovery Rules
 
@@ -620,7 +618,7 @@ The manifest (`target/manifest.json`) contains:
 |----------|-------------|
 | Schema tests | Defined in model's .yml file, column-level |
 | Singular tests | Standalone SQL files that should return 0 rows |
-| Source tests | Freshness and row count tests on sources |
+| Source tests | Row count tests on sources |
 
 **Definition of Done**:
 - [x] Reads tests from model's .yml schema file
@@ -736,7 +734,6 @@ For each model, documentation includes:
 | Dependents | Reverse lookup (downstream models) |
 | SQL | Raw and compiled SQL |
 | Materialization | From config() or default |
-| Freshness | Last run timestamp |
 
 **Definition of Done**:
 - [x] Generates documentation for all models
@@ -893,37 +890,7 @@ For each model, documentation includes:
 - [x] Handles missing directories gracefully
 - [x] Reports what was cleaned
 
-### 10. `ff source`
-
-**Purpose**: Manage and test external data sources.
-
-**Subcommands**:
-| Subcommand | Description |
-|------------|-------------|
-| `freshness` | Check source freshness |
-| `snapshot-freshness` | Store freshness results |
-
-**Example scenarios**:
-
-*Check all source freshness*:
-- Command: `ff source freshness`
-- Behavior: Queries each source's loaded_at_field
-- Output: Pass/warn/error per source table
-
-*Check specific source*:
-- Command: `ff source freshness --select source:raw_data`
-- Behavior: Only checks raw_data source
-- Use case: Debug specific source issues
-
-**Definition of Done**:
-- [x] Queries freshness based on loaded_at_field
-- [x] Compares against warn_after and error_after thresholds
-- [x] Reports freshness status per source table
-- [x] `--select` filters which sources to check
-- [x] Writes results to target/sources.json
-- [x] Unit tests for freshness check
-
-### 11. `ff lineage`
+### 10. `ff lineage`
 
 **Purpose**: Trace column-level lineage across models using SQL AST analysis.
 
@@ -990,7 +957,7 @@ For each model, documentation includes:
 - [x] Cross-model column references resolved
 - [x] Integration test: lineage matches expected output
 
-### 12. `ff analyze`
+### 11. `ff analyze`
 
 **Purpose**: Run static analysis passes on SQL models to detect potential issues without executing against the database.
 
@@ -1184,7 +1151,6 @@ Sources are defined in YAML files within `source_paths`:
 | `schema` | No | Schema containing source tables |
 | `loader` | No | Tool that loads this data (documentation) |
 | `loaded_at_field` | No | Column containing load timestamp |
-| `freshness` | No | Default freshness config for all tables |
 | `tables` | Yes | List of table definitions |
 | `tags` | No | Tags for selection |
 | `meta` | No | Custom metadata |
@@ -1197,32 +1163,9 @@ Sources are defined in YAML files within `source_paths`:
 | `description` | No | Human-readable description |
 | `identifier` | No | Override actual table name |
 | `loaded_at_field` | No | Override source-level setting |
-| `freshness` | No | Override source-level freshness |
 | `columns` | No | Column definitions |
 | `external` | No | External table configuration |
 | `tags` | No | Tags for selection |
-
-### Freshness Configuration
-
-| Field | Description |
-|-------|-------------|
-| `warn_after.count` | Number of time periods |
-| `warn_after.period` | Time period: minute, hour, day |
-| `error_after.count` | Number of time periods |
-| `error_after.period` | Time period: minute, hour, day |
-| `filter` | SQL WHERE clause for freshness query |
-
-**Example scenario**: You have raw data loaded hourly and need to know if it's stale.
-
-Configuration:
-- loaded_at_field: `_loaded_at`
-- warn_after: 2 hours
-- error_after: 6 hours
-
-Behavior:
-- Freshness query: `SELECT MAX(_loaded_at) FROM source_table`
-- If > 2 hours old: Warning
-- If > 6 hours old: Error
 
 ### How Sources Work in Featherflow
 
@@ -1231,7 +1174,6 @@ Behavior:
 3. **Matching**: Table references are matched by schema.table_name
 4. **Manifest**: Sources appear in manifest with full metadata
 5. **Documentation**: Sources are included in generated docs
-6. **Testing**: Source freshness can be tested via `ff source freshness`
 
 ### Source vs Model vs Seed
 
@@ -1242,7 +1184,7 @@ Behavior:
 | Definition | SQL file | CSV file | YAML definition |
 | Schema file | Required .yml | Optional .yml | Included in source YAML |
 | In dependency graph | Yes | Yes | Yes (as leaf nodes) |
-| Can be tested | Yes | Yes | Freshness only |
+| Can be tested | Yes | Yes | No |
 
 ---
 
@@ -2044,7 +1986,6 @@ Errors include relevant context:
 | Exclusion (`--exclude`) | Done |
 | State selection (`state:`) | Done |
 | Source YAML parsing | Done |
-| Source freshness command | Done |
 | Source in lineage | Done |
 | ff clean command | Done |
 
@@ -2120,10 +2061,9 @@ Errors include relevant context:
 | Integration Test Expansion | 2 | Done |
 | Structured JSON Output | 1 | Done |
 | Data Contracts / Schema Enforcement | 3 | Done |
-| Data Freshness SLAs | 3 | Done |
 | Retry and Partial Run Recovery | 2 | Done |
 
-**Key Files**: `run.rs`, `contract.rs`, `freshness.rs`, `run_state.rs`
+**Key Files**: `run.rs`, `contract.rs`, `run_state.rs`
 
 ### Phase B: Developer Experience (v1.1.0) - COMPLETE
 
@@ -2133,11 +2073,11 @@ Errors include relevant context:
 | Environment/Target Management | 3 | Done |
 | Progress Indicators | 1 | Done |
 | Verbose Mode | 1 | Done |
-| Exposure Definitions | 2 | Done |
+| ~~Exposure Definitions~~ | - | Removed |
 | ~~Data Diff / Compare~~ | - | Removed |
 | Model Ownership and Metadata | 3 | Done |
 
-**Key Files**: `custom_tests.rs`, `config.rs`, `exposure.rs`, `model.rs`
+**Key Files**: `custom_tests.rs`, `config.rs`, `model.rs`
 
 ### Phase C: Advanced Features (v1.2.0) - COMPLETE
 
@@ -2146,11 +2086,10 @@ Errors include relevant context:
 | Ephemeral Materialization | 3 | Done |
 | Macro Documentation | 2 | Done |
 | Model Versioning | 3 | Done |
-| Metric Definitions | 4 | Done |
-| Freshness in Run Results | 1 | Done |
-| Exposure Docs & Impact Analysis | 2 | Done |
+| ~~Metric Definitions~~ | - | Removed |
+| ~~Exposure Docs & Impact Analysis~~ | - | Removed |
 
-**Key Files**: `inline.rs`, `builtins.rs`, `model.rs`, `project.rs`, `metric.rs`
+**Key Files**: `inline.rs`, `builtins.rs`, `model.rs`, `project.rs`
 
 ### Phase D: DataFusion Static Analysis Engine (v1.3.0) - COMPLETE
 
@@ -2181,7 +2120,7 @@ Errors include relevant context:
 
 **PII/Sensitive Data Classification**: Tag columns as PII or sensitive in schema YAML, then use column-level lineage to automatically propagate classification downstream. Any model that derives from a PII column inherits the classification, enabling compliance teams to track sensitive data flow across the entire project.
 
-**Impact Analysis for Compliance**: Given a source column change or deprecation, use lineage to enumerate every downstream model, metric, exposure, and test affected. Generate compliance reports showing the full blast radius of schema changes.
+**Impact Analysis for Compliance**: Given a source column change or deprecation, use lineage to enumerate every downstream model and test affected. Generate compliance reports showing the full blast radius of schema changes.
 
 **IDE Integration**: Language server protocol (LSP) support for Featherflow projects, providing autocomplete for model names, column references, and Jinja variables, inline validation errors, go-to-definition for model dependencies, and lineage visualization in the editor.
 
@@ -2211,73 +2150,6 @@ columns:
 Commands:
 - `ff run` validates contracts after model creation
 - `ff validate --contracts --state` checks contracts without running
-
-### Data Freshness SLAs (Feature 10)
-
-Define freshness SLAs in model YAML:
-
-```yaml
-name: fct_orders
-freshness:
-  loaded_at_field: updated_at
-  warn_after:
-    count: 4
-    period: hour
-  error_after:
-    count: 8
-    period: hour
-```
-
-Commands:
-- `ff freshness` - Check model freshness against SLAs
-- Results included in `ff run` output
-
-### Exposure Definitions (Feature 11)
-
-Document downstream consumers in `exposures/` directory:
-
-```yaml
-version: "1"
-kind: exposure
-name: revenue_dashboard
-type: dashboard
-owner:
-  name: Analytics Team
-  email: analytics@company.com
-depends_on:
-  - fct_orders
-  - dim_customers
-url: https://bi.company.com/dashboard/123
-maturity: high
-```
-
-Commands:
-- `ff ls --downstream-exposures` - Show affected exposures
-- Exposures included in documentation output
-
-### Metric Definitions (Feature 12)
-
-Define semantic metrics in `metrics/` directory:
-
-```yaml
-version: "1"
-kind: metric
-name: total_revenue
-label: Total Revenue
-model: fct_orders
-calculation: sum
-expression: order_amount
-timestamp: order_date
-dimensions:
-  - customer_segment
-  - product_category
-filters:
-  - is_valid = true
-```
-
-Commands:
-- `ff metric` - List all metrics
-- Metrics generate SQL for BI tools
 
 ### Model Versioning (Feature 9)
 
@@ -2472,11 +2344,11 @@ Build targets:
 | Documentation | Yes | Yes | Done |
 | Sources | Yes | Yes | Done |
 | Seeds | Yes | Yes | Done |
-| Snapshots | Yes | Yes | Done |
+| ~~Snapshots~~ | Yes | ~~Removed~~ | Removed |
 | Packages | Yes | No | Not planned |
 | Hooks | Yes | Yes | Done |
-| Exposures | Yes | Yes | Done |
-| Metrics | Yes | Yes | Done |
+| ~~Exposures~~ | Yes | ~~Removed~~ | Removed |
+| ~~Metrics~~ | Yes | ~~Removed~~ | Removed |
 | Column lineage | Limited | Full AST-based + DataFusion LogicalPlan | Done |
 | Static analysis | None | DataFusion-based type checking, schema propagation | Done |
 | Python models | Yes | No | Not planned |

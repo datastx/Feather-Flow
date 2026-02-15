@@ -168,11 +168,13 @@ pub async fn execute(args: &DocsServeArgs, global: &GlobalArgs) -> Result<()> {
 
 /// Build all pre-computed state from the project
 fn build_app_state(project: &Project) -> Result<AppState> {
-    let mut index_models = Vec::new();
-    let mut index_sources = Vec::new();
+    let model_count = project.models.len();
+    let source_count = project.sources.len();
+    let mut index_models = Vec::with_capacity(model_count);
+    let mut index_sources = Vec::with_capacity(source_count);
     let mut edges = Vec::new();
-    let mut model_docs_map: HashMap<String, String> = HashMap::new();
-    let mut search_entries: Vec<SearchEntry> = Vec::new();
+    let mut model_docs_map: HashMap<String, String> = HashMap::with_capacity(model_count);
+    let mut search_entries: Vec<SearchEntry> = Vec::with_capacity(model_count + source_count);
     let mut lineage_entries: Vec<LineageEntry> = Vec::new();
     let mut total_tests = 0;
     let mut total_columns = 0;

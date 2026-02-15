@@ -57,12 +57,63 @@ pub(super) async fn create_schemas(
     Ok(())
 }
 
+/// Set the DuckDB search path to include all project schemas.
+///
+/// Without this, unqualified table references in SQL (e.g. `FROM raw_customers`)
+/// only resolve against the default `main` schema. By including all model schemas
+/// and the project's default schema, cross-schema references work naturally.
+pub(super) async fn set_search_path(
+    db: &Arc<dyn Database>,
+    compiled_models: &HashMap<String, CompiledModel>,
+    project: &Project,
+    wap_schema: Option<&str>,
+    global: &GlobalArgs,
+) -> Result<()> {
+    let mut schemas: Vec<String> = Vec::new();
+
+    if let Some(default_schema) = &project.config.schema {
+        schemas.push(default_schema.clone());
+    }
+
+    for model in compiled_models.values() {
+        if let Some(ref s) = model.schema {
+            if !schemas.contains(s) {
+                schemas.push(s.clone());
+            }
+        }
+    }
+
+    if let Some(ws) = wap_schema {
+        if !schemas.iter().any(|s| s == ws) {
+            schemas.push(ws.to_string());
+        }
+    }
+
+    if !schemas.iter().any(|s| s == "main") {
+        schemas.push("main".to_string());
+    }
+
+    if global.verbose {
+        eprintln!("[verbose] Setting search_path to: {}", schemas.join(","));
+    }
+
+    let path = schemas.join(",");
+    db.execute(&format!("SET search_path = '{path}'"))
+        .await
+        .context("Failed to set search_path")?;
+
+    Ok(())
+}
+
 /// Execute pre/post-hook SQL statements for a model.
 ///
 /// Replaces `{{ this }}` (or `{{this}}`) with the qualified table name.
 /// Uses simple string replacement rather than full Jinja rendering because
 /// hooks only support the `this` variable and the cost of a full template
 /// engine round-trip is unnecessary here.
+///
+/// Hooks that contain only SQL comments (no executable statements) are
+/// silently skipped, since DuckDB rejects comment-only SQL.
 pub(super) async fn execute_hooks(
     db: &Arc<dyn Database>,
     hooks: &[String],
@@ -72,9 +123,23 @@ pub(super) async fn execute_hooks(
         let sql = hook
             .replace("{{ this }}", qualified_name)
             .replace("{{this}}", qualified_name);
+        if is_comment_only(&sql) {
+            continue;
+        }
         db.execute(&sql).await?;
     }
     Ok(())
+}
+
+/// Returns `true` if `sql` contains only line comments (`--`) and whitespace.
+fn is_comment_only(sql: &str) -> bool {
+    for line in sql.lines() {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() && !trimmed.starts_with("--") {
+            return false;
+        }
+    }
+    true
 }
 
 /// Validate schema contract for a model after execution.

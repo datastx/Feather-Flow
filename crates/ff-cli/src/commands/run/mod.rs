@@ -28,11 +28,8 @@ use crate::commands::common::{self, load_project};
 
 use compile::{determine_execution_order, load_or_compile_models};
 use execute::{execute_models_with_state, ExecutionContext};
-use hooks::{create_database_connection, create_schemas};
-use state::{
-    compute_config_hash, compute_smart_skips, find_affected_exposures, write_run_results,
-    RunResults,
-};
+use hooks::{create_database_connection, create_schemas, set_search_path};
+use state::{compute_config_hash, compute_smart_skips, write_run_results, RunResults};
 
 /// Execute the run command
 pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
@@ -168,29 +165,6 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         } else {
             println!("Running {} models...\n", execution_order.len());
         }
-
-        // Show affected exposures
-        let affected_exposures = find_affected_exposures(&project, &execution_order);
-        if !affected_exposures.is_empty() {
-            println!(
-                "  {} downstream exposure(s) may be affected:",
-                affected_exposures.len()
-            );
-            for (exposure_name, exposure_type, depends_on) in &affected_exposures {
-                let models_affected: Vec<&str> = depends_on
-                    .iter()
-                    .filter(|d| execution_order.contains(&d.to_string()))
-                    .map(|s| s.as_str())
-                    .collect();
-                println!(
-                    "    - {} ({}) via {}",
-                    exposure_name,
-                    exposure_type,
-                    models_affected.join(", ")
-                );
-            }
-            println!();
-        }
     }
 
     // Resolve WAP schema from config
@@ -205,6 +179,8 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
             .await
             .with_context(|| format!("Failed to create WAP schema: {}", ws))?;
     }
+
+    set_search_path(&db, &compiled_models, &project, wap_schema, global).await?;
 
     // Execute on-run-start hooks (skip if resuming)
     if previous_run_state.is_none() && !project.config.on_run_start.is_empty() {
@@ -370,12 +346,13 @@ fn run_pre_execution_analysis(
         result,
         |model_name, mismatch| {
             if !json_mode {
-                eprintln!("  [error] {model_name}: {mismatch}");
+                let label = if mismatch.is_error() { "error" } else { "warn" };
+                eprintln!("  [{label}] {model_name}: {mismatch}");
             }
         },
         |model, err| {
-            if global.verbose {
-                eprintln!("[verbose] Static analysis failed for '{}': {}", model, err);
+            if !json_mode {
+                eprintln!("  [error] {model}: planning failed: {err}");
             }
         },
     );

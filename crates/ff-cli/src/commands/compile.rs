@@ -655,7 +655,8 @@ fn run_static_analysis(
         result,
         |model_name, mismatch| {
             if !json_mode {
-                eprintln!("  [error] {model_name}: {mismatch}");
+                let label = if mismatch.is_error() { "error" } else { "warn" };
+                eprintln!("  [{label}] {model_name}: {mismatch}");
             }
         },
         |model, err| {
