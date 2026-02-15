@@ -1,9 +1,13 @@
-//! Jinja template functions: config() and var()
+//! Jinja template functions: config(), var(), env(), log(), error(), warn(),
+//! from_json(), and to_json().
 
 use minijinja::value::{Kwargs, Value};
 use minijinja::Error;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+
+/// Captured warnings from warn() calls
+pub(crate) type WarningCapture = Arc<Mutex<Vec<String>>>;
 
 /// Captured config values from config() calls
 pub(crate) type ConfigCapture = Arc<Mutex<HashMap<String, Value>>>;
@@ -124,7 +128,7 @@ pub(crate) fn make_var_fn(
 }
 
 /// Convert serde_json::Value to minijinja::Value
-fn json_to_minijinja_value(json: &serde_json::Value) -> Value {
+pub(crate) fn json_to_minijinja_value(json: &serde_json::Value) -> Value {
     match json {
         serde_json::Value::Null => Value::from(()),
         serde_json::Value::Bool(b) => Value::from(*b),
@@ -189,6 +193,161 @@ pub(crate) fn yaml_to_json(yaml: &serde_yaml::Value) -> serde_json::Value {
             serde_json::Value::Object(obj)
         }
         serde_yaml::Value::Tagged(tagged) => yaml_to_json(&tagged.value),
+    }
+}
+
+/// Convert a minijinja Value to a serde_json::Value.
+///
+/// This is the inverse of [`json_to_minijinja_value`] and is used by `to_json`.
+pub(crate) fn minijinja_value_to_json(val: &Value) -> serde_json::Value {
+    use minijinja::value::ValueKind;
+    match val.kind() {
+        ValueKind::Undefined | ValueKind::None => serde_json::Value::Null,
+        ValueKind::Bool => serde_json::Value::Bool(val.is_true()),
+        ValueKind::Number => {
+            if let Ok(i) = i64::try_from(val.clone()) {
+                serde_json::Value::Number(i.into())
+            } else if let Ok(f) = f64::try_from(val.clone()) {
+                serde_json::Number::from_f64(f)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or(serde_json::Value::Null)
+            } else {
+                serde_json::Value::Null
+            }
+        }
+        ValueKind::String => {
+            serde_json::Value::String(val.as_str().unwrap_or_default().to_string())
+        }
+        ValueKind::Seq => {
+            let items: Vec<serde_json::Value> = val
+                .try_iter()
+                .map(|iter| iter.map(|v| minijinja_value_to_json(&v)).collect())
+                .unwrap_or_default();
+            serde_json::Value::Array(items)
+        }
+        ValueKind::Map => {
+            let mut map = serde_json::Map::new();
+            if let Ok(keys) = val.try_iter() {
+                for key in keys {
+                    let key_str = key.as_str().unwrap_or_default().to_string();
+                    if let Ok(v) = val.get_item(&key) {
+                        map.insert(key_str, minijinja_value_to_json(&v));
+                    }
+                }
+            }
+            serde_json::Value::Object(map)
+        }
+        _ => serde_json::Value::String(val.to_string()),
+    }
+}
+
+/// Create the `env(name, default?)` function to read environment variables.
+///
+/// Usage in templates:
+/// ```jinja
+/// {{ env("DATABASE_URL") }}
+/// {{ env("MISSING_VAR", "fallback") }}
+/// ```
+pub(crate) fn make_env_fn(
+) -> impl Fn(&str, Option<Value>) -> Result<String, Error> + Send + Sync + Clone + 'static {
+    |name: &str, default: Option<Value>| match std::env::var(name) {
+        Ok(val) => Ok(val),
+        Err(_) => {
+            if let Some(d) = default {
+                Ok(d.to_string())
+            } else {
+                Err(Error::new(
+                    minijinja::ErrorKind::InvalidOperation,
+                    format!(
+                        "Environment variable '{}' is not set and no default provided",
+                        name
+                    ),
+                ))
+            }
+        }
+    }
+}
+
+/// Create the `log(msg)` function for template debugging.
+///
+/// Prints the message to stderr and returns an empty string so it
+/// does not affect the rendered SQL output.
+pub(crate) fn make_log_fn() -> impl Fn(&str) -> String + Send + Sync + Clone + 'static {
+    |msg: &str| {
+        eprintln!("[jinja:log] {}", msg);
+        String::new()
+    }
+}
+
+/// Create the `error(msg)` function that raises a compilation error.
+///
+/// Usage in templates:
+/// ```jinja
+/// {% if var("env") == "prod" %}{{ error("Cannot run in prod!") }}{% endif %}
+/// ```
+pub(crate) fn make_error_fn(
+) -> impl Fn(&str) -> Result<String, Error> + Send + Sync + Clone + 'static {
+    |msg: &str| {
+        Err(Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            msg.to_string(),
+        ))
+    }
+}
+
+/// Create the `warn(msg)` function that emits a warning.
+///
+/// Captures the warning message for later retrieval and prints it to stderr.
+/// Returns an empty string.
+pub(crate) fn make_warn_fn(
+    capture: WarningCapture,
+) -> impl Fn(&str) -> Result<String, Error> + Send + Sync + Clone + 'static {
+    move |msg: &str| {
+        eprintln!("[jinja:warn] {}", msg);
+        let mut warnings = capture.lock().map_err(|e| {
+            Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                format!("warning mutex poisoned: {e}"),
+            )
+        })?;
+        warnings.push(msg.to_string());
+        Ok(String::new())
+    }
+}
+
+/// Create the `from_json(str)` function to parse a JSON string.
+///
+/// Usage in templates:
+/// ```jinja
+/// {% set data = from_json('{"key": "value"}') %}
+/// {{ data.key }}
+/// ```
+pub(crate) fn make_from_json_fn(
+) -> impl Fn(&str) -> Result<Value, Error> + Send + Sync + Clone + 'static {
+    |s: &str| {
+        let parsed: serde_json::Value = serde_json::from_str(s).map_err(|e| {
+            Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                format!("from_json parse error: {}", e),
+            )
+        })?;
+        Ok(json_to_minijinja_value(&parsed))
+    }
+}
+
+/// Create the `to_json(value)` function to serialize a value to JSON.
+///
+/// Also registered as a filter so `{{ value | to_json }}` works.
+pub(crate) fn make_to_json_fn(
+) -> impl Fn(Value) -> Result<String, Error> + Send + Sync + Clone + 'static {
+    |val: Value| {
+        let json_val = minijinja_value_to_json(&val);
+        serde_json::to_string(&json_val).map_err(|e| {
+            Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                format!("to_json serialization error: {}", e),
+            )
+        })
     }
 }
 

@@ -10,7 +10,9 @@ use ff_sql::{extract_column_lineage, extract_dependencies, ProjectLineage, SqlPa
 use std::collections::{HashMap, HashSet};
 
 use crate::cli::{AnalyzeArgs, AnalyzeOutput, AnalyzeSeverity, GlobalArgs};
-use crate::commands::common::{build_external_tables_lookup, build_schema_catalog, load_project};
+use crate::commands::common::{
+    self, build_external_tables_lookup, build_schema_catalog, load_project,
+};
 
 /// Execute the analyze command
 pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
@@ -19,7 +21,8 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
     let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
         .context("Invalid SQL dialect")?;
     let macro_paths = project.config.macro_paths_absolute(&project.root);
-    let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
+    let template_ctx = common::build_template_context(&project, global.target.as_deref(), false);
+    let jinja = JinjaEnvironment::with_context(&project.config.vars, &macro_paths, &template_ctx);
 
     let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
 
