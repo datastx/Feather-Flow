@@ -389,6 +389,71 @@ pub(crate) fn report_static_analysis_results(
     )
 }
 
+/// Run DataFusion-based static analysis on compiled models before execution.
+///
+/// Builds the dependency DAG and runs schema propagation. When `quiet` is
+/// `true`, mismatch and failure messages are suppressed.
+/// Returns `true` when schema errors that should block execution are found.
+pub(crate) fn run_pre_execution_analysis(
+    project: &Project,
+    compiled_models: &HashMap<String, super::run::CompiledModel>,
+    global: &GlobalArgs,
+    quiet: bool,
+) -> Result<bool> {
+    if global.verbose {
+        eprintln!("[verbose] Running pre-execution static analysis...");
+    }
+
+    let external_tables = build_external_tables_lookup(project);
+
+    let dependencies: HashMap<String, Vec<String>> = compiled_models
+        .iter()
+        .map(|(name, model)| (name.clone(), model.dependencies.clone()))
+        .collect();
+
+    let dag =
+        ff_core::dag::ModelDag::build(&dependencies).context("Failed to build dependency DAG")?;
+    let topo_order = dag
+        .topological_order()
+        .context("Failed to get topological order")?;
+
+    let sql_sources: HashMap<String, String> = compiled_models
+        .iter()
+        .map(|(name, model)| (name.clone(), model.sql.clone()))
+        .collect();
+
+    if sql_sources.is_empty() {
+        return Ok(false);
+    }
+
+    let output =
+        run_static_analysis_pipeline(project, &sql_sources, &topo_order, &external_tables)?;
+    let result = &output.result;
+
+    let (_, plan_count, failure_count) = report_static_analysis_results(
+        result,
+        |model_name, mismatch| {
+            if !quiet {
+                let label = if mismatch.is_error() { "error" } else { "warn" };
+                eprintln!("  [{label}] {model_name}: {mismatch}");
+            }
+        },
+        |model, err| {
+            if !quiet {
+                eprintln!("  [error] {model}: planning failed: {err}");
+            }
+        },
+    );
+    if global.verbose {
+        eprintln!(
+            "[verbose] Static analysis: {} models planned, {} failures",
+            plan_count, failure_count
+        );
+    }
+
+    Ok(output.has_errors)
+}
+
 /// Generic wrapper for command results written to JSON.
 ///
 /// Many commands (run, etc.) produce a JSON file with the same

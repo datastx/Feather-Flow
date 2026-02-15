@@ -19,7 +19,7 @@ use ff_core::config::Materialization;
 use ff_core::run_state::RunState;
 use ff_core::state::StateFile;
 use ff_core::ModelName;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::Instant;
 
@@ -56,7 +56,8 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
 
     // Static analysis gate: validate SQL models before execution
     if !args.skip_static_analysis {
-        let has_errors = run_pre_execution_analysis(&project, &compiled_models, global, json_mode)?;
+        let has_errors =
+            common::run_pre_execution_analysis(&project, &compiled_models, global, json_mode)?;
         if has_errors {
             if !json_mode {
                 eprintln!("Static analysis found errors. Use --skip-static-analysis to bypass.");
@@ -296,73 +297,4 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Run DataFusion-based static analysis before execution.
-///
-/// Returns `true` if there are schema errors that should block execution.
-fn run_pre_execution_analysis(
-    project: &ff_core::Project,
-    compiled_models: &HashMap<String, compile::CompiledModel>,
-    global: &GlobalArgs,
-    json_mode: bool,
-) -> Result<bool> {
-    if global.verbose {
-        eprintln!("[verbose] Running pre-execution static analysis...");
-    }
-
-    let external_tables = crate::commands::common::build_external_tables_lookup(project);
-
-    // Build dependency map and topological order
-    let dependencies: HashMap<String, Vec<String>> = compiled_models
-        .iter()
-        .map(|(name, model)| (name.clone(), model.dependencies.clone()))
-        .collect();
-
-    let dag =
-        ff_core::dag::ModelDag::build(&dependencies).context("Failed to build dependency DAG")?;
-    let topo_order = dag
-        .topological_order()
-        .context("Failed to get topological order")?;
-
-    // Build SQL sources from compiled models
-    let sql_sources: HashMap<String, String> = compiled_models
-        .iter()
-        .map(|(name, model)| (name.clone(), model.sql.clone()))
-        .collect();
-
-    if sql_sources.is_empty() {
-        return Ok(false);
-    }
-
-    let output = crate::commands::common::run_static_analysis_pipeline(
-        project,
-        &sql_sources,
-        &topo_order,
-        &external_tables,
-    )?;
-    let result = &output.result;
-
-    let (_, plan_count, failure_count) = common::report_static_analysis_results(
-        result,
-        |model_name, mismatch| {
-            if !json_mode {
-                let label = if mismatch.is_error() { "error" } else { "warn" };
-                eprintln!("  [{label}] {model_name}: {mismatch}");
-            }
-        },
-        |model, err| {
-            if !json_mode {
-                eprintln!("  [error] {model}: planning failed: {err}");
-            }
-        },
-    );
-    if global.verbose {
-        eprintln!(
-            "[verbose] Static analysis: {} models planned, {} failures",
-            plan_count, failure_count
-        );
-    }
-
-    Ok(output.has_errors)
 }

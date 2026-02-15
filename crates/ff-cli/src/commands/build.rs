@@ -16,7 +16,7 @@ use crate::cli::{BuildArgs, GlobalArgs, OutputFormat, RunArgs, SeedArgs};
 use crate::commands::common::{self, load_project, ExitCode, RunStatus};
 use crate::commands::run::{
     create_database_connection, create_schemas, determine_execution_order, load_or_compile_models,
-    run_single_model, set_search_path, CompiledModel,
+    run_single_model, set_search_path,
 };
 use crate::commands::{seed, test};
 
@@ -32,69 +32,6 @@ fn classify_phase_result(result: Result<()>) -> Result<Option<i32>> {
             None => Err(err),
         },
     }
-}
-
-/// Run DataFusion-based static analysis before execution.
-///
-/// Returns `true` if there are schema errors that should block execution.
-fn run_pre_execution_analysis(
-    project: &ff_core::Project,
-    compiled_models: &HashMap<String, CompiledModel>,
-    global: &GlobalArgs,
-    quiet: bool,
-) -> Result<bool> {
-    if global.verbose {
-        eprintln!("[verbose] Running pre-execution static analysis...");
-    }
-
-    let external_tables = common::build_external_tables_lookup(project);
-
-    let dependencies: HashMap<String, Vec<String>> = compiled_models
-        .iter()
-        .map(|(name, model)| (name.clone(), model.dependencies.clone()))
-        .collect();
-
-    let dag =
-        ff_core::dag::ModelDag::build(&dependencies).context("Failed to build dependency DAG")?;
-    let topo_order = dag
-        .topological_order()
-        .context("Failed to get topological order")?;
-
-    let sql_sources: HashMap<String, String> = compiled_models
-        .iter()
-        .map(|(name, model)| (name.clone(), model.sql.clone()))
-        .collect();
-
-    if sql_sources.is_empty() {
-        return Ok(false);
-    }
-
-    let output =
-        common::run_static_analysis_pipeline(project, &sql_sources, &topo_order, &external_tables)?;
-    let result = &output.result;
-
-    let (_, plan_count, failure_count) = common::report_static_analysis_results(
-        result,
-        |model_name, mismatch| {
-            if !quiet {
-                let label = if mismatch.is_error() { "error" } else { "warn" };
-                eprintln!("  [{label}] {model_name}: {mismatch}");
-            }
-        },
-        |model, err| {
-            if !quiet {
-                eprintln!("  [error] {model}: planning failed: {err}");
-            }
-        },
-    );
-    if global.verbose {
-        eprintln!(
-            "[verbose] Static analysis: {} models planned, {} failures",
-            plan_count, failure_count
-        );
-    }
-
-    Ok(output.has_errors)
 }
 
 /// Execute the build command: seed → per-model (materialize + test).
@@ -165,7 +102,8 @@ pub async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()> {
 
     // Static analysis gate
     if !args.skip_static_analysis {
-        let has_errors = run_pre_execution_analysis(&project, &compiled_models, global, quiet)?;
+        let has_errors =
+            common::run_pre_execution_analysis(&project, &compiled_models, global, quiet)?;
         if has_errors {
             if !quiet {
                 eprintln!("Static analysis found errors. Use --skip-static-analysis to bypass.");
@@ -224,9 +162,11 @@ pub async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()> {
     custom_test_registry
         .discover(&macro_paths)
         .context("Failed to discover custom test macros")?;
+    let custom_test_env = test::build_custom_test_env(&macro_paths);
 
     // Build model → qualified-name map (same logic as test command)
-    let mut model_qualified_names: HashMap<String, String> = HashMap::new();
+    let mut model_qualified_names: HashMap<String, String> =
+        HashMap::with_capacity(project.models.len());
     for (name, model) in &project.models {
         let schema = if let Ok((_, config_values)) = jinja.render_with_config(&model.raw_sql) {
             config_values
@@ -308,7 +248,7 @@ pub async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()> {
                 schema_test,
                 qualified_name,
                 &custom_test_registry,
-                &macro_paths,
+                &custom_test_env,
             );
             let result = runner.run_test(&generated).await;
 

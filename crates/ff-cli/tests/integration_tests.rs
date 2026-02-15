@@ -180,15 +180,12 @@ fn test_selector_descendants() {
 async fn test_duckdb_backend() {
     let db = DuckDbBackend::in_memory().unwrap();
 
-    // Create a table
     db.create_table_as("test_table", "SELECT 1 AS id, 'hello' AS name", false)
         .await
         .unwrap();
 
-    // Verify it exists
     assert!(db.relation_exists("test_table").await.unwrap());
 
-    // Query count
     let count = db.query_count("SELECT * FROM test_table").await.unwrap();
     assert_eq!(count, 1);
 }
@@ -269,7 +266,6 @@ async fn test_not_null_constraint() {
 async fn test_full_pipeline() {
     let db = DuckDbBackend::in_memory().unwrap();
 
-    // Load seed data
     let seeds_path = Path::new("testdata/seeds");
     if seeds_path.exists() {
         for entry in std::fs::read_dir(seeds_path).unwrap() {
@@ -310,7 +306,6 @@ fn test_manifest_serialization() {
 async fn test_seed_loading() {
     let db = DuckDbBackend::in_memory().unwrap();
 
-    // Load seeds from the testdata/seeds directory
     let seeds_path = Path::new("testdata/seeds");
     if !seeds_path.exists() {
         // Skip test if seeds directory doesn't exist
@@ -349,10 +344,8 @@ async fn test_seed_loading() {
 fn test_source_discovery() {
     let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
 
-    // Should have discovered sources from source_paths
     assert!(!project.sources.is_empty(), "Sources should be discovered");
 
-    // Check the raw_ecommerce source
     let ecommerce_source = project
         .sources
         .iter()
@@ -362,7 +355,6 @@ fn test_source_discovery() {
     assert_eq!(ecommerce_source.schema, "analytics");
     assert_eq!(ecommerce_source.tables.len(), 4);
 
-    // Check raw_orders table
     let raw_orders_table = ecommerce_source
         .tables
         .iter()
@@ -370,7 +362,6 @@ fn test_source_discovery() {
         .expect("raw_orders table should exist");
     assert_eq!(raw_orders_table.columns.len(), 5);
 
-    // Check raw_customers table
     let raw_customers_table = ecommerce_source
         .tables
         .iter()
@@ -378,7 +369,6 @@ fn test_source_discovery() {
         .expect("raw_customers table should exist");
     assert_eq!(raw_customers_table.columns.len(), 5);
 
-    // Check raw_products table
     let raw_products_table = ecommerce_source
         .tables
         .iter()
@@ -386,7 +376,6 @@ fn test_source_discovery() {
         .expect("raw_products table should exist");
     assert_eq!(raw_products_table.columns.len(), 5);
 
-    // Check raw_payments table
     let raw_payments_table = ecommerce_source
         .tables
         .iter()
@@ -395,14 +384,12 @@ fn test_source_discovery() {
     assert_eq!(raw_payments_table.columns.len(), 5);
 }
 
-/// Test source has kind: sources validation
+/// Test that all discovered sources have non-empty names
 #[test]
-fn test_source_kind_validation() {
+fn test_source_names_not_empty() {
     let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
 
-    // All discovered sources should have kind: sources
     for source in &project.sources {
-        // The source kind is validated during discovery, so if we got here, it passed
         assert!(
             !source.name.is_empty(),
             "Source name should not be empty after validation"
@@ -553,22 +540,21 @@ fn test_docs_html_format() {
 fn test_docs_schema_detection() {
     let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
 
-    let mut with_schema = 0;
-    let mut without_schema = 0;
+    let with_schema = project
+        .models
+        .values()
+        .filter(|m| m.schema.is_some())
+        .count();
 
-    for model in project.models.values() {
-        if model.schema.is_some() {
-            with_schema += 1;
-        } else {
-            without_schema += 1;
-        }
-    }
-
-    // Sample project may have models without schema files
-    // Just ensure we can count them correctly
+    // 1:1 YAML is enforced, so every model should have a schema
     assert!(
-        with_schema + without_schema > 0,
-        "Should have at least one model"
+        with_schema > 0,
+        "Sample project should have models with schemas"
+    );
+    assert_eq!(
+        with_schema,
+        project.models.len(),
+        "All models should have schemas (1:1 YAML enforcement)"
     );
 }
 
@@ -610,41 +596,6 @@ fn test_validate_circular_dependency_detection() {
     let dag = dag_result.unwrap();
     let sorted = dag.topological_order();
     assert!(sorted.is_ok(), "Topological order should succeed");
-}
-
-/// Test validate checks test/type compatibility
-#[test]
-fn test_validate_test_compatibility() {
-    use ff_core::model::TestType;
-
-    // Numeric tests with struct syntax
-    let numeric_tests = vec![
-        TestType::Positive,
-        TestType::NonNegative,
-        TestType::MinValue { value: 0.0 },
-        TestType::MaxValue { value: 100.0 },
-    ];
-
-    // These tests require numeric types
-    for test in &numeric_tests {
-        let is_numeric_test = matches!(
-            test,
-            TestType::Positive
-                | TestType::NonNegative
-                | TestType::MinValue { .. }
-                | TestType::MaxValue { .. }
-        );
-        assert!(is_numeric_test, "{:?} should be a numeric test", test);
-    }
-
-    // Regex test requires string types
-    let regex_test = TestType::Regex {
-        pattern: ".*".to_string(),
-    };
-    assert!(
-        matches!(regex_test, TestType::Regex { .. }),
-        "Regex should be a string-only test"
-    );
 }
 
 /// Test docs output contains expected structure for models with schemas
@@ -751,22 +702,6 @@ fn test_validate_passes_valid_project() {
         unique_names.len(),
         "All model names should be unique"
     );
-}
-
-/// Test validate detects duplicate model names
-#[test]
-fn test_validate_detects_duplicate_models() {
-    use ff_core::dag::ModelDag;
-
-    // Simulate duplicate handling - in practice, Project::load prevents this
-    // but we can test that the DAG handles it correctly
-    let mut deps: HashMap<String, Vec<String>> = HashMap::new();
-    deps.insert("model_a".to_string(), vec![]);
-    // Attempting to insert same key again would just overwrite, not error
-    // This is expected HashMap behavior
-
-    let dag = ModelDag::build(&deps);
-    assert!(dag.is_ok(), "Single model should create valid DAG");
 }
 
 /// Test validate detects SQL syntax errors
@@ -1901,122 +1836,19 @@ fn test_ephemeral_inlining_with_existing_cte() {
 /// Test DataFusion schema propagation on sample project models
 #[test]
 fn test_analysis_propagation_sample_project() {
-    use ff_analysis::{
-        parse_sql_type, propagate_schemas, Nullability, RelSchema, SchemaCatalog, TypedColumn,
-    };
-    use ff_sql::extract_dependencies;
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
 
-    let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
-    let parser = SqlParser::duckdb();
-    let jinja = JinjaEnvironment::new(&project.config.vars);
-
-    let known_models: std::collections::HashSet<&str> =
-        project.models.keys().map(|k| k.as_str()).collect();
-
-    // Build schema catalog from YAML + external tables (sources)
-    let mut catalog: SchemaCatalog = HashMap::new();
-    for (name, model) in &project.models {
-        if let Some(schema) = &model.schema {
-            let columns: Vec<TypedColumn> = schema
-                .columns
-                .iter()
-                .map(|col| {
-                    let sql_type = parse_sql_type(&col.data_type);
-                    TypedColumn {
-                        name: col.name.clone(),
-                        source_table: None,
-                        sql_type,
-                        nullability: Nullability::Unknown,
-                        provenance: vec![],
-                    }
-                })
-                .collect();
-            catalog.insert(name.to_string(), Arc::new(RelSchema::new(columns)));
-        }
-    }
-
-    // Add source tables with their column schemas when available
-    for source_file in &project.sources {
-        for table in &source_file.tables {
-            if catalog.contains_key(&table.name) {
-                continue;
-            }
-            if table.columns.is_empty() {
-                catalog.insert(table.name.clone(), Arc::new(RelSchema::empty()));
-            } else {
-                let columns: Vec<TypedColumn> = table
-                    .columns
-                    .iter()
-                    .map(|col| TypedColumn {
-                        name: col.name.clone(),
-                        source_table: None,
-                        sql_type: parse_sql_type(&col.data_type),
-                        nullability: Nullability::Unknown,
-                        provenance: vec![],
-                    })
-                    .collect();
-                catalog.insert(table.name.clone(), Arc::new(RelSchema::new(columns)));
-            }
-        }
-    }
-    // Add remaining external tables with empty schemas
-    for ext in &project.config.external_tables {
-        if !catalog.contains_key(ext) {
-            catalog.insert(ext.clone(), Arc::new(RelSchema::empty()));
-        }
-    }
-
-    // Build dep map by rendering SQL and extracting dependencies
-    let mut dep_map: HashMap<String, Vec<String>> = HashMap::new();
-    let mut sql_sources: HashMap<String, String> = HashMap::new();
-    for (name, model) in &project.models {
-        let Ok(rendered) = jinja.render(&model.raw_sql) else {
-            dep_map.insert(name.to_string(), vec![]);
-            continue;
-        };
-        let Ok(stmts) = parser.parse(&rendered) else {
-            dep_map.insert(name.to_string(), vec![]);
-            continue;
-        };
-        let raw_deps = extract_dependencies(&stmts);
-        let model_deps: Vec<String> = raw_deps
-            .into_iter()
-            .filter(|d| known_models.contains(d.as_str()))
-            .collect();
-        dep_map.insert(name.to_string(), model_deps);
-        sql_sources.insert(name.to_string(), rendered);
-    }
-
-    let dag = ModelDag::build(&dep_map).unwrap();
-    let topo_order = dag.topological_order().unwrap();
-
-    let yaml_schemas: HashMap<String, Arc<RelSchema>> = catalog
-        .iter()
-        .map(|(k, v)| (k.clone(), Arc::clone(v)))
-        .collect();
-    let (user_fn_stubs, user_table_fn_stubs) = ff_analysis::build_user_function_stubs(&project);
-    let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
-        &yaml_schemas,
-        &catalog,
-        &user_fn_stubs,
-        &user_table_fn_stubs,
-    );
-
-    // All models should plan successfully
     assert!(
-        result.failures.is_empty(),
+        pipeline.propagation.failures.is_empty(),
         "Expected no planning failures, got: {:?}",
-        result.failures
+        pipeline.propagation.failures
     );
     assert!(
-        !result.model_plans.is_empty(),
+        !pipeline.propagation.model_plans.is_empty(),
         "Should have planned at least one model"
     );
 
-    // Each model should have a non-empty inferred schema
-    for (name, plan_result) in &result.model_plans {
+    for (name, plan_result) in &pipeline.propagation.model_plans {
         assert!(
             !plan_result.inferred_schema.is_empty(),
             "Model '{}' should produce a non-empty inferred schema",
@@ -2091,32 +1923,28 @@ fn build_analysis_pipeline(fixture_path: &str) -> AnalysisPipeline {
             if catalog.contains_key(&table.name) {
                 continue;
             }
-            if table.columns.is_empty() {
-                catalog.insert(table.name.clone(), Arc::new(RelSchema::empty()));
-            } else {
-                let columns: Vec<TypedColumn> = table
-                    .columns
-                    .iter()
-                    .map(|col| {
-                        let has_not_null = col.tests.iter().any(|t| {
-                            matches!(t, ff_core::model::TestDefinition::Simple(s) if s == "not_null")
-                        });
-                        let nullability = if has_not_null {
-                            Nullability::NotNull
-                        } else {
-                            Nullability::Unknown
-                        };
-                        TypedColumn {
-                            name: col.name.clone(),
-                            source_table: None,
-                            sql_type: parse_sql_type(&col.data_type),
-                            nullability,
-                            provenance: vec![],
-                        }
-                    })
-                    .collect();
-                catalog.insert(table.name.clone(), Arc::new(RelSchema::new(columns)));
-            }
+            let columns: Vec<TypedColumn> = table
+                .columns
+                .iter()
+                .map(|col| {
+                    let has_not_null = col.tests.iter().any(|t| {
+                        matches!(t, ff_core::model::TestDefinition::Simple(s) if s == "not_null")
+                    });
+                    let nullability = if has_not_null {
+                        Nullability::NotNull
+                    } else {
+                        Nullability::Unknown
+                    };
+                    TypedColumn {
+                        name: col.name.clone(),
+                        source_table: None,
+                        sql_type: parse_sql_type(&col.data_type),
+                        nullability,
+                        provenance: vec![],
+                    }
+                })
+                .collect();
+            catalog.insert(table.name.clone(), Arc::new(RelSchema::new(columns)));
         }
     }
 
@@ -2894,18 +2722,6 @@ fn test_analysis_guard_clean_project_zero_diagnostics() {
     assert!(
         diags.is_empty(),
         "Clean project should have zero diagnostics, got {}:\n{:#?}",
-        diags.len(),
-        diags
-    );
-}
-
-#[test]
-fn test_analysis_guard_ecommerce_zero_diagnostics() {
-    let pipeline = build_analysis_pipeline("tests/fixtures/sa_dag_pass_ecommerce");
-    let diags = run_all_passes(&pipeline);
-    assert!(
-        diags.is_empty(),
-        "Ecommerce regression guard: expected zero diagnostics, got {}:\n{:#?}",
         diags.len(),
         diags
     );

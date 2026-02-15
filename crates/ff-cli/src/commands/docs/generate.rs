@@ -49,6 +49,7 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
 
     println!("Generating documentation...\n");
 
+    let builtin_macros = get_builtin_macros();
     let mut models_with_schema = 0;
     let mut models_without_schema = 0;
     let mut model_docs: Vec<ModelDoc> = Vec::new();
@@ -132,8 +133,12 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
     match args.format {
         DocsFormat::Markdown => {
             // Generate index.md
-            let index_content =
-                generate_index_markdown(&project.config.name, &index_entries, &source_entries);
+            let index_content = generate_index_markdown(
+                &project.config.name,
+                &index_entries,
+                &source_entries,
+                &builtin_macros,
+            );
             let index_path = output_dir.join("index.md");
             fs::write(&index_path, index_content)?;
             println!("  {} index.md", CHECKMARK);
@@ -169,8 +174,12 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
         }
         DocsFormat::Html => {
             // Generate index.html
-            let index_content =
-                generate_index_html(&project.config.name, &index_entries, &source_entries);
+            let index_content = generate_index_html(
+                &project.config.name,
+                &index_entries,
+                &source_entries,
+                &builtin_macros,
+            );
             let index_path = output_dir.join("index.html");
             fs::write(&index_path, index_content)?;
             println!("  {} index.html", CHECKMARK);
@@ -186,13 +195,13 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
     // Generate macro documentation
     match args.format {
         DocsFormat::Markdown => {
-            let macros_content = generate_macros_markdown();
+            let macros_content = generate_macros_markdown(&builtin_macros);
             let macros_path = output_dir.join("macros.md");
             fs::write(&macros_path, macros_content)?;
             println!("  {} macros.md", CHECKMARK);
         }
         DocsFormat::Html => {
-            let macros_content = generate_macros_html();
+            let macros_content = generate_macros_html(&builtin_macros);
             let macros_path = output_dir.join("macros.html");
             fs::write(&macros_path, macros_content)?;
             println!("  {} macros.html", CHECKMARK);
@@ -200,15 +209,12 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
         DocsFormat::Json => {
             // JSON already includes macros in the overall output, but let's also
             // add a separate macros.json with full metadata
-            let macros_data = get_builtin_macros();
-            let macros_json = serde_json::to_string_pretty(&macros_data)?;
+            let macros_json = serde_json::to_string_pretty(&builtin_macros)?;
             let macros_path = output_dir.join("macros.json");
             fs::write(&macros_path, macros_json)?;
             println!("  {} macros.json", CHECKMARK);
         }
     }
-
-    let macro_count = get_builtin_macros().len();
 
     println!();
     println!(
@@ -217,7 +223,7 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
         models_with_schema,
         models_without_schema,
         source_entries.len(),
-        macro_count
+        builtin_macros.len()
     );
     println!("Output: {}", output_dir.display());
 
@@ -415,6 +421,7 @@ fn generate_index_markdown(
     project_name: &str,
     models: &[ModelSummary],
     sources: &[SourceSummary],
+    builtin_macros: &[MacroMetadata],
 ) -> String {
     let mut md = String::new();
 
@@ -439,7 +446,7 @@ fn generate_index_markdown(
         ));
     }
 
-    let macro_count = get_builtin_macros().len();
+    let macro_count = builtin_macros.len();
     md.push_str(&format!(
         "**Macros**: {} built-in macros ([view documentation](macros.md))\n\n",
         macro_count
@@ -789,6 +796,7 @@ fn generate_index_html(
     project_name: &str,
     models: &[ModelSummary],
     sources: &[SourceSummary],
+    builtin_macros: &[MacroMetadata],
 ) -> String {
     let mut html = String::new();
 
@@ -822,7 +830,7 @@ fn generate_index_html(
         ));
     }
 
-    let macro_count = get_builtin_macros().len();
+    let macro_count = builtin_macros.len();
     html.push_str(&format!(
         "<p><strong>Macros:</strong> {} built-in macros (<a href=\"macros.html\">view documentation</a>)</p>\n",
         macro_count
@@ -1023,7 +1031,7 @@ fn format_category_title(category: &str) -> String {
 }
 
 /// Generate markdown documentation for built-in macros
-fn generate_macros_markdown() -> String {
+fn generate_macros_markdown(builtin_macros: &[MacroMetadata]) -> String {
     let mut md = String::new();
 
     md.push_str("# Built-in Macros\n\n");
@@ -1033,7 +1041,7 @@ fn generate_macros_markdown() -> String {
 
     // Get all macros grouped by category
     let categories = get_macro_categories();
-    let all_macros = get_builtin_macros();
+    let all_macros = builtin_macros;
 
     for category in &categories {
         let category_macros: Vec<&MacroMetadata> = all_macros
@@ -1081,7 +1089,7 @@ fn generate_macros_markdown() -> String {
 }
 
 /// Generate HTML documentation for built-in macros
-fn generate_macros_html() -> String {
+fn generate_macros_html(builtin_macros: &[MacroMetadata]) -> String {
     let mut html = String::new();
 
     html.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
@@ -1110,10 +1118,9 @@ fn generate_macros_html() -> String {
 
     // Get all macros grouped by category
     let categories = get_macro_categories();
-    let all_macros = get_builtin_macros();
 
     for category in &categories {
-        let category_macros: Vec<&MacroMetadata> = all_macros
+        let category_macros: Vec<&MacroMetadata> = builtin_macros
             .iter()
             .filter(|m| &m.category == category)
             .collect();

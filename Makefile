@@ -1,19 +1,9 @@
-SHELL := /bin/bash
-
-.PHONY: build build-release test lint fmt check doc clean ci build-target checksums \
-        ff-parse ff-parse-json ff-parse-deps ff-compile ff-compile-verbose \
-        ff-run ff-run-full-refresh ff-run-select ff-ls ff-ls-json ff-ls-tree \
-        ff-test ff-test-verbose ff-test-fail-fast ff-seed ff-seed-full-refresh \
-        ff-function-deploy ff-function-validate \
-        ff-docs ff-docs-json ff-docs-serve ff-docs-export ff-validate ff-validate-strict ff-sources ff-help \
-        dev-cycle dev-validate dev-fresh ci-e2e help run watch test-verbose test-integration \
-	test-unit test-quick test-failed test-sa test-sa-rust test-sa-all fmt-check clippy doc-open update ci-quick ci-full install install-cargo claude-auto-run \
-        version version-bump-patch version-bump-minor version-set version-tag \
-        build-linux clean-dist \
-        docker-build docker-build-release docker-push docker-login docker-run \
-        create-release \
-        vscode-install vscode-build vscode-build-production vscode-watch vscode-test vscode-clean \
-        vscode-package vscode-publish
+MAKEFLAGS += --warn-undefined-variables
+SHELL := bash
+.SHELLFLAGS := -eu -o pipefail -c
+.DEFAULT_GOAL := help
+.DELETE_ON_ERROR:
+.SUFFIXES:
 
 # =============================================================================
 # Configuration
@@ -26,7 +16,7 @@ VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/'
 DIST_DIR := dist
 
 # Cargo
-CARGO_BIN := $(HOME)/.cargo/bin/cargo
+cargo_bin := $(HOME)/.cargo/bin/cargo
 
 # Docker
 DOCKER_REGISTRY := ghcr.io
@@ -34,21 +24,28 @@ DOCKER_IMAGE    := $(DOCKER_REGISTRY)/datastx/feather-flow
 DOCKER_TAG      := $(VERSION)
 
 # Default project for testing CLI commands
-PROJECT_DIR ?= tests/fixtures/sample_project
+PROJECT_DIR ?= crates/ff-cli/tests/fixtures/sample_project
+
+# VS Code extension directory
+vscode_dir := vscode-featherflow
 
 # =============================================================================
 # Development
 # =============================================================================
 
+.PHONY: build
 build: ## Build all crates
 	cargo build --workspace
 
+.PHONY: build-release
 build-release: ## Build release binaries
 	cargo build --workspace --release
 
+.PHONY: run
 run: ## Run CLI with no arguments
 	cargo run -p ff-cli --
 
+.PHONY: watch
 watch: ## Watch and rebuild on changes
 	cargo watch -x 'build --workspace'
 
@@ -56,6 +53,7 @@ watch: ## Watch and rebuild on changes
 # Rust Testing
 # =============================================================================
 
+.PHONY: test
 test: ## Run all tests with summary
 	@echo "Running tests..."
 	@cargo test --workspace --all-features 2>&1 | tee /tmp/test-output.txt; \
@@ -69,9 +67,9 @@ test: ## Run all tests with summary
 	done; \
 	echo ""; \
 	if [ $$EXIT_CODE -eq 0 ]; then \
-		echo "✓ All tests passed!"; \
+		echo "All tests passed!"; \
 	else \
-		echo "✗ Some tests failed. See output above for details."; \
+		echo "Some tests failed. See output above for details."; \
 		echo ""; \
 		echo "Failed tests:"; \
 		grep -E "^test .* FAILED" /tmp/test-output.txt || true; \
@@ -79,44 +77,57 @@ test: ## Run all tests with summary
 	fi
 	@$(MAKE) test-sa-all
 
+.PHONY: test-quick
 test-quick: ## Run tests without output capture (faster feedback)
 	cargo test --workspace --all-features -- --test-threads=4
 
+.PHONY: test-verbose
 test-verbose: ## Run tests with stdout/stderr output
 	cargo test --workspace -- --nocapture
 
+.PHONY: test-integration
 test-integration: ## Run integration tests only
 	cargo test --test '*' -- --test-threads=1
 
+.PHONY: test-unit
 test-unit: ## Run unit tests only
 	cargo test --workspace --lib
 
+.PHONY: test-failed
 test-failed: ## Re-run only previously failed tests
 	cargo test --workspace -- --failed
 
+.PHONY: test-sa
 test-sa: ## Run static analysis CLI integration tests
 	cargo test -p ff-cli --test sa_integration_tests -- --test-threads=1
 
+.PHONY: test-sa-rust
 test-sa-rust: ## Run Rust-level static analysis tests
 	cargo test -p ff-cli --test integration_tests -- test_analysis --test-threads=1
 
+.PHONY: test-sa-all
 test-sa-all: test-sa test-sa-rust ## Run all static analysis tests
 
 # =============================================================================
 # Code Quality
 # =============================================================================
 
+.PHONY: lint
 lint: fmt-check clippy ## Run fmt-check and clippy
 
+.PHONY: fmt
 fmt: ## Format code
 	cargo fmt --all
 
+.PHONY: fmt-check
 fmt-check: ## Check code formatting
 	cargo fmt --all -- --check
 
+.PHONY: clippy
 clippy: ## Run clippy linter
 	cargo clippy --workspace --all-targets -- -D warnings
 
+.PHONY: check
 check: ## Run cargo check
 	cargo check --workspace --all-targets
 
@@ -124,9 +135,11 @@ check: ## Run cargo check
 # Documentation
 # =============================================================================
 
+.PHONY: doc
 doc: ## Generate documentation
 	cargo doc --workspace --no-deps
 
+.PHONY: doc-open
 doc-open: ## Generate and open documentation
 	cargo doc --workspace --no-deps --open
 
@@ -134,85 +147,111 @@ doc-open: ## Generate and open documentation
 # CLI Commands - Featherflow (ff)
 # =============================================================================
 
+.PHONY: ff-parse
 ff-parse: ## Parse SQL files
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) parse
 
+.PHONY: ff-parse-json
 ff-parse-json: ## Parse with JSON output
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) parse --output json
 
+.PHONY: ff-parse-deps
 ff-parse-deps: ## Parse with deps output
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) parse --output deps
 
+.PHONY: ff-compile
 ff-compile: ## Compile Jinja to SQL
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) compile
 
+.PHONY: ff-compile-verbose
 ff-compile-verbose: ## Compile with verbose output
 	cargo run -p ff-cli -- --verbose --project-dir $(PROJECT_DIR) compile
 
+.PHONY: ff-run
 ff-run: ## Execute models
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) run
 
+.PHONY: ff-run-full-refresh
 ff-run-full-refresh: ## Execute with full refresh
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) run --full-refresh
 
+.PHONY: ff-run-select
 ff-run-select: ## Run specific models (set MODELS='+model_name')
 	@if [ -z "$(MODELS)" ]; then \
 		echo "Error: MODELS not set. Usage: make ff-run-select MODELS='+model_name'"; \
 		exit 1; \
 	fi
-	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) run --select $(MODELS)
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) run --nodes $(MODELS)
 
+.PHONY: ff-ls
 ff-ls: ## List models
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) ls
 
+.PHONY: ff-ls-json
 ff-ls-json: ## List models as JSON
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) ls --output json
 
+.PHONY: ff-ls-tree
 ff-ls-tree: ## List models as tree
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) ls --output tree
 
+.PHONY: ff-test
 ff-test: ## Run schema tests
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) test
 
+.PHONY: ff-test-verbose
 ff-test-verbose: ## Run tests with verbose output
 	cargo run -p ff-cli -- --verbose --project-dir $(PROJECT_DIR) test
 
+.PHONY: ff-test-fail-fast
 ff-test-fail-fast: ## Run tests, stop on first failure
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) test --fail-fast
 
+.PHONY: ff-seed
 ff-seed: ## Load seed data
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) seed
 
+.PHONY: ff-seed-full-refresh
 ff-seed-full-refresh: ## Load seeds with full refresh
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) seed --full-refresh
 
+.PHONY: ff-function-deploy
 ff-function-deploy: ## Deploy user-defined functions
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) function deploy
 
+.PHONY: ff-function-validate
 ff-function-validate: ## Validate user-defined functions
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) function validate
 
+.PHONY: ff-docs
 ff-docs: ## Generate documentation
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) docs
 
+.PHONY: ff-docs-json
 ff-docs-json: ## Generate documentation as JSON
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) docs --format json
 
+.PHONY: ff-docs-serve
 ff-docs-serve: ## Serve interactive documentation site
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) docs serve --no-browser
 
+.PHONY: ff-docs-export
 ff-docs-export: ## Export static documentation site
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) docs serve --static-export $(PROJECT_DIR)/target/docs-site --no-browser
 
+.PHONY: ff-validate
 ff-validate: ## Validate project
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) validate
 
+.PHONY: ff-validate-strict
 ff-validate-strict: ## Validate with strict mode
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) validate --strict
 
+.PHONY: ff-sources
 ff-sources: ## List sources (JSON filtered)
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) ls --output json | jq '.[] | select(.type == "source")'
 
+.PHONY: ff-help
 ff-help: ## Show CLI help
 	cargo run -p ff-cli -- --help
 
@@ -220,42 +259,49 @@ ff-help: ## Show CLI help
 # Workflows
 # =============================================================================
 
+.PHONY: dev-cycle
 dev-cycle: ff-seed ff-run ff-function-deploy ff-test ## Full cycle: seed -> run -> deploy functions -> test
 	@echo "Development cycle complete!"
 
+.PHONY: dev-validate
 dev-validate: ff-compile ff-validate ## Quick validation: compile -> validate
 	@echo "Validation complete!"
 
+.PHONY: dev-fresh
 dev-fresh: ff-seed-full-refresh ff-run-full-refresh ff-function-deploy ff-test ## Full refresh pipeline
 	@echo "Fresh pipeline complete!"
 
+.PHONY: ci-e2e
 ci-e2e: ## End-to-end pipeline test against sample project
+	$(eval e2e_dir := crates/ff-cli/tests/fixtures/sample_project)
 	@echo "=== E2E: clean ==="
-	rm -rf crates/ff-cli/tests/fixtures/sample_project/target
+	rm -rf $(e2e_dir)/target
 	@echo "=== E2E: compile ==="
-	$(MAKE) ff-compile PROJECT_DIR=crates/ff-cli/tests/fixtures/sample_project
+	cargo run -p ff-cli -- --project-dir $(e2e_dir) compile
 	@echo "=== E2E: seed ==="
-	$(MAKE) ff-seed-full-refresh PROJECT_DIR=crates/ff-cli/tests/fixtures/sample_project
+	cargo run -p ff-cli -- --project-dir $(e2e_dir) seed --full-refresh
 	@echo "=== E2E: run (builds model tables — table functions not yet deployed) ==="
-	-$(MAKE) ff-run-full-refresh PROJECT_DIR=crates/ff-cli/tests/fixtures/sample_project
+	-cargo run -p ff-cli -- --project-dir $(e2e_dir) run --full-refresh
 	@echo "=== E2E: deploy functions (requires model tables from first run) ==="
-	$(MAKE) ff-function-deploy PROJECT_DIR=crates/ff-cli/tests/fixtures/sample_project
+	cargo run -p ff-cli -- --project-dir $(e2e_dir) function deploy
 	@echo "=== E2E: run (all models including table-function dependents) ==="
-	$(MAKE) ff-run-full-refresh PROJECT_DIR=crates/ff-cli/tests/fixtures/sample_project
+	cargo run -p ff-cli -- --project-dir $(e2e_dir) run --full-refresh
 	@echo "=== E2E: test (materialized models) ==="
-	cargo run -p ff-cli -- --project-dir crates/ff-cli/tests/fixtures/sample_project test -n dim_customers,fct_orders,dim_products,rpt_order_volume
+	cargo run -p ff-cli -- --project-dir $(e2e_dir) test -n dim_customers,fct_orders,dim_products,rpt_order_volume
 	@echo "=== E2E: build (seed + per-model run/test) ==="
-	cargo run -p ff-cli -- --project-dir crates/ff-cli/tests/fixtures/sample_project build --full-refresh
+	cargo run -p ff-cli -- --project-dir $(e2e_dir) build --full-refresh
 	@echo "E2E pipeline passed!"
 
 # =============================================================================
 # Maintenance
 # =============================================================================
 
+.PHONY: clean
 clean: ## Remove build artifacts
 	cargo clean
 	rm -rf $(PROJECT_DIR)/target
 
+.PHONY: update
 update: ## Update dependencies
 	cargo update
 
@@ -263,12 +309,15 @@ update: ## Update dependencies
 # CI
 # =============================================================================
 
+.PHONY: ci
 ci: fmt-check clippy test doc ## Full CI check
 	@echo "CI checks passed!"
 
+.PHONY: ci-quick
 ci-quick: check fmt-check clippy ## Quick CI check (no tests)
 	@echo "Quick CI checks passed!"
 
+.PHONY: ci-full
 ci-full: ci ff-compile ff-validate ## CI + compile + validate
 	@echo "Full CI checks passed!"
 
@@ -276,10 +325,12 @@ ci-full: ci ff-compile ff-validate ## CI + compile + validate
 # Version Management
 # =============================================================================
 
+.PHONY: version
 version: ## Print current version
 	@echo $(VERSION)
 
-version-bump-patch: ## Bump patch version: 0.1.0 → 0.1.1
+.PHONY: version-bump-patch
+version-bump-patch: ## Bump patch version: 0.1.0 -> 0.1.1
 	@CURRENT=$(VERSION); \
 	MAJOR=$$(echo $$CURRENT | cut -d. -f1); \
 	MINOR=$$(echo $$CURRENT | cut -d. -f2); \
@@ -287,17 +338,19 @@ version-bump-patch: ## Bump patch version: 0.1.0 → 0.1.1
 	NEW="$$MAJOR.$$MINOR.$$((PATCH + 1))"; \
 	sed -i '' "s/^version = \"$$CURRENT\"/version = \"$$NEW\"/" Cargo.toml; \
 	cargo generate-lockfile; \
-	echo "Bumped $$CURRENT → $$NEW"
+	echo "Bumped $$CURRENT -> $$NEW"
 
-version-bump-minor: ## Bump minor version: 0.1.0 → 0.2.0
+.PHONY: version-bump-minor
+version-bump-minor: ## Bump minor version: 0.1.0 -> 0.2.0
 	@CURRENT=$(VERSION); \
 	MAJOR=$$(echo $$CURRENT | cut -d. -f1); \
 	MINOR=$$(echo $$CURRENT | cut -d. -f2); \
 	NEW="$$MAJOR.$$((MINOR + 1)).0"; \
 	sed -i '' "s/^version = \"$$CURRENT\"/version = \"$$NEW\"/" Cargo.toml; \
 	cargo generate-lockfile; \
-	echo "Bumped $$CURRENT → $$NEW"
+	echo "Bumped $$CURRENT -> $$NEW"
 
+.PHONY: version-set
 version-set: ## Set explicit version (make version-set NEW_VERSION=0.2.0)
 	@if [ -z "$(NEW_VERSION)" ]; then \
 		echo "Error: NEW_VERSION not set. Usage: make version-set NEW_VERSION=0.2.0"; \
@@ -307,6 +360,7 @@ version-set: ## Set explicit version (make version-set NEW_VERSION=0.2.0)
 	cargo generate-lockfile
 	@echo "Version set to $(NEW_VERSION)"
 
+.PHONY: version-tag
 version-tag: ## Create git tag from current Cargo.toml version
 	git tag -a "v$(VERSION)" -m "Release v$(VERSION)"
 
@@ -314,23 +368,26 @@ version-tag: ## Create git tag from current Cargo.toml version
 # Release
 # =============================================================================
 
+.PHONY: install-cargo
 install-cargo: ## Install Rust toolchain via rustup (if cargo missing)
 	@if ! command -v cargo >/dev/null 2>&1; then \
 		echo "cargo not found, installing Rust toolchain with rustup..."; \
 		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y; \
 	fi
 
+.PHONY: install
 install: install-cargo ## Install CLI binary
 	@set -e; \
 	if command -v cargo >/dev/null 2>&1; then \
 		cargo install --path crates/ff-cli; \
-	elif [ -x "$(CARGO_BIN)" ]; then \
-		"$(CARGO_BIN)" install --path crates/ff-cli; \
+	elif [ -x "$(cargo_bin)" ]; then \
+		"$(cargo_bin)" install --path crates/ff-cli; \
 	else \
 		echo "cargo not found after rustup install; restart your shell or source $$HOME/.cargo/env"; \
 		exit 1; \
 	fi
 
+.PHONY: build-target
 build-target: ## Build for target (set TARGET=x86_64-unknown-linux-gnu)
 	@if [ -z "$(TARGET)" ]; then \
 		echo "Error: TARGET not set. Usage: make build-target TARGET=x86_64-unknown-linux-gnu"; \
@@ -338,15 +395,18 @@ build-target: ## Build for target (set TARGET=x86_64-unknown-linux-gnu)
 	fi
 	cargo build --release --target $(TARGET) -p ff-cli
 
+.PHONY: build-linux
 build-linux: ## Build Linux binary (gnu)
 	cargo build --release --target x86_64-unknown-linux-gnu -p ff-cli
 	mkdir -p $(DIST_DIR)
 	cp target/x86_64-unknown-linux-gnu/release/ff $(DIST_DIR)/ff-x86_64-linux-gnu
 	sha256sum $(DIST_DIR)/ff-x86_64-linux-gnu > $(DIST_DIR)/ff-x86_64-linux-gnu.sha256
 
+.PHONY: clean-dist
 clean-dist: ## Remove dist artifacts
 	rm -rf $(DIST_DIR)
 
+.PHONY: create-release
 create-release: ## Create GitHub release (CI only — requires gh CLI auth)
 	@if [ -z "$(TAG)" ]; then \
 		echo "Error: TAG not set. Usage: make create-release TAG=v0.1.1"; \
@@ -357,6 +417,7 @@ create-release: ## Create GitHub release (CI only — requires gh CLI auth)
 		--title "$(TAG)" \
 		--generate-notes
 
+.PHONY: checksums
 checksums: ## Create checksums (set ARTIFACTS_DIR=artifacts)
 	cd $(ARTIFACTS_DIR) && \
 	for dir in */; do \
@@ -371,6 +432,7 @@ checksums: ## Create checksums (set ARTIFACTS_DIR=artifacts)
 # Docker
 # =============================================================================
 
+.PHONY: docker-build
 docker-build: ## Build Docker image (full multi-stage, for local dev)
 	docker build \
 		--build-arg VERSION=$(VERSION) \
@@ -378,6 +440,7 @@ docker-build: ## Build Docker image (full multi-stage, for local dev)
 		-t $(DOCKER_IMAGE):latest \
 		.
 
+.PHONY: docker-build-release
 docker-build-release: ## Build Docker image from pre-built binary (CI only)
 	docker build \
 		-f Dockerfile.release \
@@ -385,13 +448,16 @@ docker-build-release: ## Build Docker image from pre-built binary (CI only)
 		-t $(DOCKER_IMAGE):latest \
 		.
 
+.PHONY: docker-push
 docker-push: ## Push Docker image to GHCR (requires: make docker-login)
 	docker push $(DOCKER_IMAGE):$(DOCKER_TAG)
 	docker push $(DOCKER_IMAGE):latest
 
+.PHONY: docker-login
 docker-login: ## Authenticate to GHCR (CI sets GITHUB_TOKEN and GITHUB_ACTOR)
 	@echo "$(GITHUB_TOKEN)" | docker login ghcr.io -u "$(GITHUB_ACTOR)" --password-stdin
 
+.PHONY: docker-run
 docker-run: ## Run ff in Docker (pass CMD="validate" etc.)
 	docker run --rm -v $(PWD):/workspace -w /workspace $(DOCKER_IMAGE):latest $(CMD)
 
@@ -399,37 +465,44 @@ docker-run: ## Run ff in Docker (pass CMD="validate" etc.)
 # VS Code Extension
 # =============================================================================
 
-VSCODE_DIR := vscode-featherflow
-
+.PHONY: vscode-install
 vscode-install: ## Install VS Code extension dependencies
-	cd $(VSCODE_DIR) && npm ci
+	cd $(vscode_dir) && npm ci
 
+.PHONY: vscode-build
 vscode-build: vscode-install ## Build VS Code extension (dev)
-	cd $(VSCODE_DIR) && node esbuild.js
+	cd $(vscode_dir) && node esbuild.js
 
+.PHONY: vscode-build-production
 vscode-build-production: vscode-install ## Build VS Code extension (production, minified)
-	cd $(VSCODE_DIR) && node esbuild.js --production
+	cd $(vscode_dir) && node esbuild.js --production
 
+.PHONY: vscode-watch
 vscode-watch: vscode-install ## Watch and rebuild VS Code extension on changes
-	cd $(VSCODE_DIR) && node esbuild.js --watch
+	cd $(vscode_dir) && node esbuild.js --watch
 
+.PHONY: vscode-test
 vscode-test: vscode-install ## Run VS Code extension tests
-	cd $(VSCODE_DIR) && npx vitest run
+	cd $(vscode_dir) && npx vitest run
 
+.PHONY: vscode-package
 vscode-package: vscode-build-production ## Package VS Code extension as .vsix
 	mkdir -p $(DIST_DIR)
-	cd $(VSCODE_DIR) && npx vsce package --out ../$(DIST_DIR)/
+	cd $(vscode_dir) && npx vsce package --out ../$(DIST_DIR)/
 
+.PHONY: vscode-publish
 vscode-publish: vscode-build-production ## Publish VS Code extension to Marketplace (requires VSCE_PAT)
-	cd $(VSCODE_DIR) && npx vsce publish
+	cd $(vscode_dir) && npx vsce publish
 
+.PHONY: vscode-clean
 vscode-clean: ## Remove VS Code extension build artifacts
-	rm -rf $(VSCODE_DIR)/dist $(VSCODE_DIR)/node_modules
+	rm -rf $(vscode_dir)/dist $(vscode_dir)/node_modules
 
 # =============================================================================
 # Claude Code
 # =============================================================================
 
+.PHONY: claude-auto-run
 claude-auto-run: ## Run Claude with auto-permissions
 	claude --dangerously-skip-permissions
 
@@ -437,12 +510,13 @@ claude-auto-run: ## Run Claude with auto-permissions
 # Help
 # =============================================================================
 
+.PHONY: help
 help: ## Show this help message
 	@echo "Featherflow Development Makefile"
 	@echo ""
 	@echo "Usage: make [target]"
 	@echo ""
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-24s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Environment Variables:"

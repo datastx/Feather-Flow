@@ -73,9 +73,10 @@ impl RelSchema {
             columns: self
                 .columns
                 .iter()
-                .map(|c| TypedColumn {
-                    nullability,
-                    ..c.clone()
+                .map(|c| {
+                    let mut col = c.clone();
+                    col.nullability = nullability;
+                    col
                 })
                 .collect(),
         }
@@ -89,9 +90,12 @@ impl RelSchema {
             columns: self
                 .columns
                 .iter()
-                .map(|c| TypedColumn {
-                    source_table: c.source_table.clone().or_else(|| Some(table.to_string())),
-                    ..c.clone()
+                .map(|c| {
+                    let mut col = c.clone();
+                    if col.source_table.is_none() {
+                        col.source_table = Some(table.to_string());
+                    }
+                    col
                 })
                 .collect(),
         }

@@ -31,13 +31,13 @@ struct StaticAssets;
 /// Pre-computed application state shared across all handlers
 struct AppState {
     /// Index JSON (model summaries, edges, stats)
-    index_json: String,
+    index_json: Arc<str>,
     /// Full model docs keyed by name
-    model_docs: HashMap<String, String>,
+    model_docs: HashMap<String, Arc<str>>,
     /// Column-level lineage JSON
-    lineage_json: String,
+    lineage_json: Arc<str>,
     /// Search index JSON
-    search_index_json: String,
+    search_index_json: Arc<str>,
 }
 
 /// Model summary for the index endpoint
@@ -285,10 +285,13 @@ fn build_app_state(project: &Project) -> Result<AppState> {
     };
 
     Ok(AppState {
-        index_json: serde_json::to_string(&index)?,
-        model_docs: model_docs_map,
-        lineage_json: serde_json::to_string(&lineage_entries)?,
-        search_index_json: serde_json::to_string(&search_entries)?,
+        index_json: Arc::from(serde_json::to_string(&index)?),
+        model_docs: model_docs_map
+            .into_iter()
+            .map(|(k, v)| (k, Arc::from(v)))
+            .collect(),
+        lineage_json: Arc::from(serde_json::to_string(&lineage_entries)?),
+        search_index_json: Arc::from(serde_json::to_string(&search_entries)?),
     })
 }
 
@@ -296,7 +299,7 @@ fn build_app_state(project: &Project) -> Result<AppState> {
 async fn get_index(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "application/json")],
-        state.index_json.clone(),
+        String::from(&*state.index_json),
     )
 }
 
@@ -309,7 +312,7 @@ async fn get_model(
         Some(json) => (
             StatusCode::OK,
             [(header::CONTENT_TYPE, "application/json")],
-            json.clone(),
+            String::from(&**json),
         ),
         None => (
             StatusCode::NOT_FOUND,
@@ -323,7 +326,7 @@ async fn get_model(
 async fn get_lineage(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "application/json")],
-        state.lineage_json.clone(),
+        String::from(&*state.lineage_json),
     )
 }
 
@@ -331,7 +334,7 @@ async fn get_lineage(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 async fn get_search_index(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "application/json")],
-        state.search_index_json.clone(),
+        String::from(&*state.search_index_json),
     )
 }
 
@@ -402,15 +405,15 @@ fn export_static_site(state: &AppState, export_path: &str) -> Result<()> {
     fs::create_dir_all(&api_dir)?;
 
     // Write API JSON files
-    fs::write(api_dir.join("index.json"), &state.index_json)?;
-    fs::write(api_dir.join("lineage.json"), &state.lineage_json)?;
-    fs::write(api_dir.join("search-index.json"), &state.search_index_json)?;
+    fs::write(api_dir.join("index.json"), &*state.index_json)?;
+    fs::write(api_dir.join("lineage.json"), &*state.lineage_json)?;
+    fs::write(api_dir.join("search-index.json"), &*state.search_index_json)?;
 
     // Write individual model docs
     let models_dir = api_dir.join("models");
     fs::create_dir_all(&models_dir)?;
     for (name, json) in &state.model_docs {
-        fs::write(models_dir.join(format!("{}.json", name)), json)?;
+        fs::write(models_dir.join(format!("{}.json", name)), &**json)?;
     }
 
     // Write embedded static assets
