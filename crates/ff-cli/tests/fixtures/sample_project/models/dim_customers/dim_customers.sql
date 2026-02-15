@@ -1,4 +1,4 @@
-{{ config(materialized='table', schema='analytics', wap='true') }}
+{{ config(materialized='table', schema='analytics', wap='true', post_hook="INSERT INTO hook_log (model, hook_type) VALUES ('dim_customers', 'post')") }}
 
 SELECT
     m.customer_id,
