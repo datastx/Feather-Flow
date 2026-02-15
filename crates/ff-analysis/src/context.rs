@@ -6,6 +6,7 @@ use ff_core::ModelName;
 use ff_core::Project;
 use ff_sql::ProjectLineage;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 /// Context object passed to analysis passes, providing access to project metadata
 pub struct AnalysisContext {
@@ -14,7 +15,7 @@ pub struct AnalysisContext {
     /// Model dependency DAG
     pub(crate) dag: ModelDag,
     /// Schemas derived from YAML column definitions
-    pub(crate) yaml_schemas: HashMap<ModelName, RelSchema>,
+    pub(crate) yaml_schemas: HashMap<ModelName, Arc<RelSchema>>,
     /// Column-level lineage from ff-sql
     pub(crate) lineage: ProjectLineage,
     /// Set of known model names
@@ -26,7 +27,7 @@ impl AnalysisContext {
     pub fn new(
         project: Project,
         dag: ModelDag,
-        yaml_schemas: HashMap<ModelName, RelSchema>,
+        yaml_schemas: HashMap<ModelName, Arc<RelSchema>>,
         lineage: ProjectLineage,
     ) -> Self {
         let known_models = project.models.keys().cloned().collect();
@@ -41,7 +42,7 @@ impl AnalysisContext {
 
     /// Get the YAML-declared schema for a model, if available
     pub fn model_schema(&self, model_name: &str) -> Option<&RelSchema> {
-        self.yaml_schemas.get(model_name)
+        self.yaml_schemas.get(model_name).map(|arc| arc.as_ref())
     }
 
     /// Access the loaded project
@@ -65,7 +66,7 @@ impl AnalysisContext {
     }
 
     /// Access the YAML-derived schemas map
-    pub fn yaml_schemas(&self) -> &HashMap<ModelName, RelSchema> {
+    pub fn yaml_schemas(&self) -> &HashMap<ModelName, Arc<RelSchema>> {
         &self.yaml_schemas
     }
 }

@@ -114,7 +114,7 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
     let template_ctx = common::build_template_context(&project, global.target.as_deref(), false);
     let jinja = JinjaEnvironment::with_context(&project.config.vars, &macro_paths, &template_ctx);
     let external_tables = common::build_external_tables_lookup(&project);
-    let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
+    let known_models: HashSet<&str> = project.models.keys().map(|k| k.as_str()).collect();
 
     let dependencies = validate_sql_syntax(
         &project,
@@ -184,7 +184,7 @@ fn validate_sql_syntax(
     parser: &SqlParser,
     jinja: &JinjaEnvironment,
     external_tables: &HashSet<String>,
-    known_models: &HashSet<String>,
+    known_models: &HashSet<&str>,
     ctx: &mut ValidationContext,
 ) -> HashMap<String, Vec<String>> {
     print!("Checking SQL syntax... ");
@@ -358,7 +358,7 @@ fn validate_duplicates(project: &Project, ctx: &mut ValidationContext) {
 fn validate_schemas(
     project: &Project,
     models: &[String],
-    known_models: &HashSet<String>,
+    known_models: &HashSet<&str>,
     ctx: &mut ValidationContext,
 ) {
     print!("Checking schema files... ");
@@ -704,7 +704,7 @@ fn validate_contracts(
 fn check_column_schema(
     column: &ff_core::model::SchemaColumnDef,
     model_name: &str,
-    known_models: &HashSet<String>,
+    known_models: &HashSet<&str>,
     file_path: &str,
     ctx: &mut ValidationContext,
 ) -> usize {

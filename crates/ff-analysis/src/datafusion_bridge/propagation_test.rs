@@ -154,10 +154,10 @@ fn test_schema_mismatch_detection() {
     let mut yaml_schemas = HashMap::new();
     yaml_schemas.insert(
         "test_model".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("missing_col", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let result = propagate_schemas(

@@ -218,11 +218,11 @@ fn test_schema_drift_detection() {
     let mut yaml = HashMap::new();
     yaml.insert(
         "model".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::NotNull),
             make_col("email", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let result = propagate_schemas(&topo, &sql, &yaml, &initial, &[], &[]);
@@ -255,10 +255,10 @@ fn test_type_mismatch_in_chain() {
     let mut yaml = HashMap::new();
     yaml.insert(
         "model".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("amount", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let result = propagate_schemas(&topo, &sql, &yaml, &initial, &[], &[]);
@@ -301,10 +301,10 @@ fn test_null_violation_through_left_join() {
     let mut yaml = HashMap::new();
     yaml.insert(
         "model".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::NotNull),
-        ]),
+        ])),
     );
 
     let result = propagate_schemas(&topo, &sql, &yaml, &initial, &[], &[]);
@@ -337,10 +337,10 @@ fn test_plan_pass_manager_clean_dag() {
     let mut yaml = HashMap::new();
     yaml.insert(
         "m1".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("val", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let result = propagate_schemas(&topo, &sql, &yaml, &initial, &[], &[]);
@@ -392,12 +392,12 @@ fn test_mixed_diagnostics() {
     let mut yaml = HashMap::new();
     yaml.insert(
         "model".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("amount", float64(), Nullability::Nullable),
             make_col("name", varchar(), Nullability::NotNull),
             make_col("status", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let result = propagate_schemas(&topo, &sql, &yaml, &initial, &[], &[]);

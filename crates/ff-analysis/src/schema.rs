@@ -61,7 +61,8 @@ impl RelSchema {
 
     /// Merge two schemas (e.g. for JOIN output)
     pub fn merge(left: &RelSchema, right: &RelSchema) -> Self {
-        let mut columns = left.columns.clone();
+        let mut columns = Vec::with_capacity(left.columns.len() + right.columns.len());
+        columns.extend(left.columns.iter().cloned());
         columns.extend(right.columns.iter().cloned());
         Self { columns }
     }

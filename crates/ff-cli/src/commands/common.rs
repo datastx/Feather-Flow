@@ -163,12 +163,12 @@ pub(crate) fn build_schema_catalog(
     external_tables: &HashSet<String>,
 ) -> (
     ff_analysis::SchemaCatalog,
-    HashMap<ff_core::ModelName, ff_analysis::RelSchema>,
+    HashMap<ff_core::ModelName, Arc<ff_analysis::RelSchema>>,
 ) {
     use ff_analysis::{parse_sql_type, Nullability, RelSchema, TypedColumn};
 
     let mut schema_catalog: ff_analysis::SchemaCatalog = HashMap::new();
-    let mut yaml_schemas: HashMap<ff_core::ModelName, RelSchema> = HashMap::new();
+    let mut yaml_schemas: HashMap<ff_core::ModelName, Arc<RelSchema>> = HashMap::new();
 
     for (name, model) in &project.models {
         let Some(schema) = &model.schema else {
@@ -197,8 +197,8 @@ pub(crate) fn build_schema_catalog(
                 }
             })
             .collect();
-        let rel_schema = RelSchema::new(columns);
-        schema_catalog.insert(name.to_string(), Arc::new(rel_schema.clone()));
+        let rel_schema = Arc::new(RelSchema::new(columns));
+        schema_catalog.insert(name.to_string(), Arc::clone(&rel_schema));
         yaml_schemas.insert(name.clone(), rel_schema);
     }
 
@@ -261,7 +261,7 @@ pub(crate) fn build_project_dag(
     let parser = ff_sql::SqlParser::from_dialect_name(&project.config.dialect.to_string())
         .context("Invalid SQL dialect")?;
     let external_tables = build_external_tables_lookup(project);
-    let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
+    let known_models: HashSet<&str> = project.models.keys().map(|k| k.as_str()).collect();
 
     let mut dependencies: HashMap<String, Vec<String>> = HashMap::new();
 
@@ -322,9 +322,9 @@ pub(crate) fn run_static_analysis_pipeline(
         .cloned()
         .collect();
 
-    let yaml_string_map: HashMap<String, ff_analysis::RelSchema> = yaml_schemas
+    let yaml_string_map: HashMap<String, Arc<ff_analysis::RelSchema>> = yaml_schemas
         .iter()
-        .map(|(k, v)| (k.to_string(), v.clone()))
+        .map(|(k, v)| (k.to_string(), Arc::clone(v)))
         .collect();
 
     let (user_fn_stubs, user_table_fn_stubs) = ff_analysis::build_user_function_stubs(project);

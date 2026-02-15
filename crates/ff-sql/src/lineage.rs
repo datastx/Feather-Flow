@@ -229,7 +229,7 @@ impl ProjectLineage {
     }
 
     /// Resolve cross-model edges by matching source tables to known models
-    pub fn resolve_edges(&mut self, known_models: &HashSet<String>) {
+    pub fn resolve_edges(&mut self, known_models: &HashSet<&str>) {
         let mut new_edges = Vec::new();
 
         for (target_model, lineage) in &self.models {
@@ -338,7 +338,7 @@ fn resolve_single_edge(
     lineage: &ModelLineage,
     col_lineage: &ColumnLineage,
     source_ref: &ColumnRef,
-    known_models: &HashSet<String>,
+    known_models: &HashSet<&str>,
 ) -> Option<LineageEdge> {
     let source_table = source_ref.table.as_deref().unwrap_or("");
     let resolved_table = lineage
@@ -350,7 +350,7 @@ fn resolve_single_edge(
         .iter()
         .find(|m| m.eq_ignore_ascii_case(resolved_table))?;
     Some(LineageEdge {
-        source_model: source_model.clone(),
+        source_model: source_model.to_string(),
         source_column: source_ref.column.clone(),
         target_model: target_model.to_string(),
         target_column: col_lineage.output_column.clone(),

@@ -474,12 +474,9 @@ fn compile_model_phase1(
         .with_context(|| format!("Model '{}' uses forbidden SQL constructs", name))?;
 
     let deps = extract_dependencies(&statements);
+    let km: HashSet<&str> = ctx.known_models.iter().map(|s| s.as_str()).collect();
     let (model_deps, ext_deps, unknown_deps) =
-        ff_sql::extractor::categorize_dependencies_with_unknown(
-            deps,
-            ctx.known_models,
-            ctx.external_tables,
-        );
+        ff_sql::extractor::categorize_dependencies_with_unknown(deps, &km, ctx.external_tables);
 
     for unknown in &unknown_deps {
         eprintln!(

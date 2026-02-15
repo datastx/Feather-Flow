@@ -210,7 +210,7 @@ fn compile_all_models(
     let jinja = JinjaEnvironment::with_context(&project.config.vars, &macro_paths, &template_ctx);
 
     let external_tables: HashSet<String> = common::build_external_tables_lookup(project);
-    let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
+    let known_models: HashSet<&str> = project.models.keys().map(|k| k.as_str()).collect();
 
     let mut compiled_models = HashMap::new();
 
