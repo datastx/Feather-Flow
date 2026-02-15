@@ -37,10 +37,6 @@ pub struct Config {
     #[serde(default = "default_test_paths")]
     pub test_paths: Vec<String>,
 
-    /// Directories containing exposure YAML files
-    #[serde(default = "default_exposure_paths")]
-    pub exposure_paths: Vec<String>,
-
     /// Directories containing user-defined function definitions
     #[serde(default = "default_function_paths")]
     pub function_paths: Vec<String>,
@@ -239,10 +235,6 @@ fn default_test_paths() -> Vec<String> {
     vec!["tests".to_string()]
 }
 
-fn default_exposure_paths() -> Vec<String> {
-    vec!["exposures".to_string()]
-}
-
 fn default_function_paths() -> Vec<String> {
     vec!["functions".to_string()]
 }
@@ -366,11 +358,6 @@ impl Config {
     /// Get absolute test paths relative to a project root
     pub fn test_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
         Self::paths_absolute(&self.test_paths, root)
-    }
-
-    /// Get absolute exposure paths relative to a project root
-    pub fn exposure_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
-        Self::paths_absolute(&self.exposure_paths, root)
     }
 
     /// Get absolute function paths relative to a project root

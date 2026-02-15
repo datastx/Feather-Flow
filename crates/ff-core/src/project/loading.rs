@@ -2,7 +2,6 @@
 
 use crate::config::Config;
 use crate::error::{CoreError, CoreResult};
-use crate::exposure::discover_exposures;
 use crate::function::discover_functions;
 use crate::model::{Model, SingularTest};
 use crate::model_name::ModelName;
@@ -46,9 +45,6 @@ impl Project {
 
         let singular_tests = Self::discover_singular_tests(&root, &config)?;
 
-        let exposure_paths = config.exposure_paths_absolute(&root);
-        let exposures = discover_exposures(&exposure_paths)?;
-
         let function_paths = config.function_paths_absolute(&root);
         let functions = discover_functions(&function_paths)?;
 
@@ -59,7 +55,6 @@ impl Project {
             tests,
             singular_tests,
             sources,
-            exposures,
             functions,
         }))
     }

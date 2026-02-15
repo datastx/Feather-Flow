@@ -1,6 +1,5 @@
 //! Shared documentation data types and builder functions
 
-use ff_core::exposure::Exposure;
 use ff_core::model::Model;
 use ff_core::source::SourceFile;
 use ff_sql::{extract_column_lineage, suggest_tests, SqlParser};
@@ -136,41 +135,6 @@ pub(crate) struct SourceSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub table_count: usize,
-}
-
-/// Exposure documentation data for JSON output
-#[derive(Debug, Serialize)]
-pub(crate) struct ExposureDoc {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    pub exposure_type: String,
-    pub owner: ExposureOwnerDoc,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub depends_on: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
-    pub maturity: String,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub tags: Vec<String>,
-}
-
-/// Exposure owner documentation data
-#[derive(Debug, Serialize)]
-pub(crate) struct ExposureOwnerDoc {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub email: Option<String>,
-}
-
-/// Exposure summary for index
-#[derive(Debug, Serialize)]
-pub(crate) struct ExposureSummary {
-    pub name: String,
-    pub exposure_type: String,
-    pub owner: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
 }
 
 /// Build documentation data for a model
@@ -368,22 +332,5 @@ pub(crate) fn build_source_doc(source: &SourceFile) -> SourceDoc {
         owner: source.owner.clone(),
         tags: source.tags.clone(),
         tables,
-    }
-}
-
-/// Build exposure documentation from an Exposure
-pub(crate) fn build_exposure_doc(exposure: &Exposure) -> ExposureDoc {
-    ExposureDoc {
-        name: exposure.name.clone(),
-        description: exposure.description.clone(),
-        exposure_type: exposure.exposure_type.to_string(),
-        owner: ExposureOwnerDoc {
-            name: exposure.owner.name.clone(),
-            email: exposure.owner.email.clone(),
-        },
-        depends_on: exposure.depends_on.clone(),
-        url: exposure.url.clone(),
-        maturity: exposure.maturity.to_string(),
-        tags: exposure.tags.clone(),
     }
 }

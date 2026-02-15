@@ -4,7 +4,6 @@ mod loading;
 mod versioning;
 
 use crate::config::Config;
-use crate::exposure::Exposure;
 use crate::function::FunctionDef;
 use crate::function_name::FunctionName;
 use crate::model::{Model, SchemaTest, SingularTest};
@@ -31,8 +30,6 @@ pub struct ProjectParts {
     pub singular_tests: Vec<SingularTest>,
     /// Source definitions
     pub sources: Vec<SourceFile>,
-    /// Exposure definitions
-    pub exposures: Vec<Exposure>,
     /// User-defined function definitions
     pub functions: Vec<FunctionDef>,
 }
@@ -57,9 +54,6 @@ pub struct Project {
 
     /// Source definitions
     pub sources: Vec<SourceFile>,
-
-    /// Exposure definitions
-    pub exposures: Vec<Exposure>,
 
     /// User-defined function definitions
     pub functions: Vec<FunctionDef>,
@@ -86,7 +80,6 @@ impl Project {
             tests: parts.tests,
             singular_tests: parts.singular_tests,
             sources: parts.sources,
-            exposures: parts.exposures,
             functions: parts.functions,
             functions_by_name,
         }
@@ -143,24 +136,6 @@ impl Project {
     /// Get all source names
     pub fn source_names(&self) -> Vec<&str> {
         self.sources.iter().map(|s| s.name.as_str()).collect()
-    }
-
-    /// Get all exposure names
-    pub fn exposure_names(&self) -> Vec<&str> {
-        self.exposures.iter().map(|e| e.name.as_str()).collect()
-    }
-
-    /// Get an exposure by name
-    pub fn get_exposure(&self, name: &str) -> Option<&Exposure> {
-        self.exposures.iter().find(|e| e.name == name)
-    }
-
-    /// Get exposures that depend on a specific model
-    pub fn exposures_for_model(&self, model_name: &str) -> Vec<&Exposure> {
-        self.exposures
-            .iter()
-            .filter(|e| e.depends_on_model(model_name))
-            .collect()
     }
 
     /// Get all function names

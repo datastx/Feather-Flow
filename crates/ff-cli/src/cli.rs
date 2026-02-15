@@ -241,10 +241,6 @@ pub struct LsArgs {
     /// Filter models by owner (matches owner field or meta.owner)
     #[arg(long)]
     pub owner: Option<String>,
-
-    /// Show downstream exposures that depend on the listed models
-    #[arg(long)]
-    pub downstream_exposures: bool,
 }
 
 /// Resource types for filtering

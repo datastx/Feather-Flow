@@ -75,7 +75,7 @@ fn is_cache_valid(project: &Project) -> bool {
 }
 
 /// Load models from cache or compile them fresh
-pub(super) fn load_or_compile_models(
+pub(crate) fn load_or_compile_models(
     project: &Project,
     args: &RunArgs,
     global: &GlobalArgs,
@@ -405,7 +405,7 @@ fn resolve_deferred_dependencies(
 }
 
 /// Determine execution order based on DAG and CLI arguments
-pub(super) fn determine_execution_order(
+pub(crate) fn determine_execution_order(
     compiled_models: &HashMap<String, CompiledModel>,
     project: &Project,
     args: &RunArgs,
@@ -439,6 +439,10 @@ pub(super) fn determine_execution_order(
         );
     }
 
+    let topo_order = dag
+        .topological_order()
+        .context("Failed to get execution order")?;
+
     let models_to_run: Vec<String> = if let Some(nodes_str) = &args.nodes {
         // Check if any token is a state: selector
         let mut combined = Vec::new();
@@ -460,16 +464,13 @@ pub(super) fn determine_execution_order(
         }
         // Deduplicate and return in topological order
         let combined_set: std::collections::HashSet<String> = combined.into_iter().collect();
-        let order = dag
-            .topological_order()
-            .context("Failed to get execution order")?;
-        order
-            .into_iter()
-            .filter(|m| combined_set.contains(m))
+        topo_order
+            .iter()
+            .filter(|m| combined_set.contains(m.as_str()))
+            .cloned()
             .collect()
     } else {
-        dag.topological_order()
-            .context("Failed to get execution order")?
+        topo_order.clone()
     };
 
     // Apply exclusion filter if provided
@@ -516,8 +517,7 @@ pub(super) fn determine_execution_order(
         HashSet::new()
     };
 
-    let execution_order: Vec<String> = dag
-        .topological_order()?
+    let execution_order: Vec<String> = topo_order
         .into_iter()
         .filter(|m| models_after_exclusion.contains(m) && !deferred_models.contains(m))
         .collect();

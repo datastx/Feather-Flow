@@ -74,14 +74,6 @@ pub enum CoreError {
     #[error("[SRC007] Duplicate table '{table}' in source '{source_name}'")]
     SourceDuplicateTable { table: String, source_name: String },
 
-    /// EXP001: Duplicate exposure name
-    #[error("[EXP001] Duplicate exposure name '{name}' in {path1} and {path2}")]
-    ExposureDuplicateName {
-        name: String,
-        path1: String,
-        path2: String,
-    },
-
     /// E010: Missing schema file for model
     #[error("[E010] Model '{model}' is missing a required schema file ({expected_path}). Every model must have a corresponding YAML file.")]
     MissingSchemaFile {

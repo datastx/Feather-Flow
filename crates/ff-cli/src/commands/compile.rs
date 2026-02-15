@@ -537,7 +537,7 @@ fn compile_model_phase1(
         .config
         .materialized
         .unwrap_or(ctx.default_materialization);
-    let output_path = compute_compiled_path(&model.path, ctx.project_root, ctx.output_dir);
+    let output_path = compute_compiled_path(&model.path, ctx.project_root, ctx.output_dir)?;
 
     let query_comment = ctx.comment_ctx.map(|comment_ctx| {
         let metadata = comment_ctx.build_metadata(name, &mat.to_string());
@@ -567,7 +567,7 @@ fn write_manifest(
         let model = project
             .get_model(name)
             .ok_or_else(|| anyhow::anyhow!("Model '{}' not found in project", name))?;
-        let compiled_path = compute_compiled_path(&model.path, &project.root, output_dir);
+        let compiled_path = compute_compiled_path(&model.path, &project.root, output_dir)?;
 
         manifest.add_model_relative(
             model,
@@ -599,17 +599,19 @@ fn compute_compiled_path(
     model_path: &Path,
     project_root: &Path,
     output_dir: &Path,
-) -> std::path::PathBuf {
+) -> Result<std::path::PathBuf> {
     if let Ok(relative) = model_path.strip_prefix(project_root) {
         let components: Vec<_> = relative.components().collect();
         if components.len() > 1 {
             let subpath: std::path::PathBuf = components[1..].iter().collect();
-            return output_dir.join(subpath);
+            return Ok(output_dir.join(subpath));
         }
     }
 
-    let filename = model_path.file_name().unwrap_or_default();
-    output_dir.join(filename)
+    let filename = model_path
+        .file_name()
+        .context("model path must have a filename")?;
+    Ok(output_dir.join(filename))
 }
 
 /// Run DataFusion-based static analysis on compiled models
@@ -655,7 +657,8 @@ fn run_static_analysis(
         result,
         |model_name, mismatch| {
             if !json_mode {
-                eprintln!("  [error] {model_name}: {mismatch}");
+                let label = if mismatch.is_error() { "error" } else { "warn" };
+                eprintln!("  [{label}] {model_name}: {mismatch}");
             }
         },
         |model, err| {

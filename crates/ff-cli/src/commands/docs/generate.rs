@@ -49,6 +49,7 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
 
     println!("Generating documentation...\n");
 
+    let builtin_macros = get_builtin_macros();
     let mut models_with_schema = 0;
     let mut models_without_schema = 0;
     let mut model_docs: Vec<ModelDoc> = Vec::new();
@@ -128,39 +129,6 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
-    // Generate exposure documentation
-    let mut exposure_docs: Vec<ExposureDoc> = Vec::new();
-    let mut exposure_entries: Vec<ExposureSummary> = Vec::new();
-
-    for exposure in &project.exposures {
-        let doc = build_exposure_doc(exposure);
-
-        exposure_entries.push(ExposureSummary {
-            name: exposure.name.clone(),
-            exposure_type: format!("{}", exposure.exposure_type),
-            owner: exposure.owner.name.clone(),
-            url: exposure.url.clone(),
-        });
-
-        match args.format {
-            DocsFormat::Markdown => {
-                let md_content = generate_exposure_markdown(&doc);
-                let md_path = output_dir.join(format!("exposure_{}.md", exposure.name));
-                fs::write(&md_path, md_content)?;
-                println!("  {} exposure_{}.md", CHECKMARK, exposure.name);
-            }
-            DocsFormat::Json => {
-                exposure_docs.push(doc);
-            }
-            DocsFormat::Html => {
-                let html_content = generate_exposure_html(&doc);
-                let html_path = output_dir.join(format!("exposure_{}.html", exposure.name));
-                fs::write(&html_path, html_content)?;
-                println!("  {} exposure_{}.html", CHECKMARK, exposure.name);
-            }
-        }
-    }
-
     // Generate index/output
     match args.format {
         DocsFormat::Markdown => {
@@ -169,7 +137,7 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
                 &project.config.name,
                 &index_entries,
                 &source_entries,
-                &exposure_entries,
+                &builtin_macros,
             );
             let index_path = output_dir.join("index.md");
             fs::write(&index_path, index_content)?;
@@ -187,22 +155,15 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
                 .map(|d| (d.name.clone(), d))
                 .collect();
 
-            let exposures_map: HashMap<String, ExposureDoc> = exposure_docs
-                .into_iter()
-                .map(|d| (d.name.clone(), d))
-                .collect();
-
             let json_output = serde_json::json!({
                 "project_name": project.config.name,
                 "models": docs_map,
                 "sources": sources_map,
-                "exposures": exposures_map,
                 "summary": {
                     "total_models": models_with_schema + models_without_schema,
                     "models_with_schema": models_with_schema,
                     "models_without_schema": models_without_schema,
                     "total_sources": source_entries.len(),
-                    "total_exposures": exposure_entries.len(),
                 }
             });
 
@@ -217,7 +178,7 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
                 &project.config.name,
                 &index_entries,
                 &source_entries,
-                &exposure_entries,
+                &builtin_macros,
             );
             let index_path = output_dir.join("index.html");
             fs::write(&index_path, index_content)?;
@@ -234,13 +195,13 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
     // Generate macro documentation
     match args.format {
         DocsFormat::Markdown => {
-            let macros_content = generate_macros_markdown();
+            let macros_content = generate_macros_markdown(&builtin_macros);
             let macros_path = output_dir.join("macros.md");
             fs::write(&macros_path, macros_content)?;
             println!("  {} macros.md", CHECKMARK);
         }
         DocsFormat::Html => {
-            let macros_content = generate_macros_html();
+            let macros_content = generate_macros_html(&builtin_macros);
             let macros_path = output_dir.join("macros.html");
             fs::write(&macros_path, macros_content)?;
             println!("  {} macros.html", CHECKMARK);
@@ -248,26 +209,21 @@ pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
         DocsFormat::Json => {
             // JSON already includes macros in the overall output, but let's also
             // add a separate macros.json with full metadata
-            let macros_data = get_builtin_macros();
-            let macros_json = serde_json::to_string_pretty(&macros_data)?;
+            let macros_json = serde_json::to_string_pretty(&builtin_macros)?;
             let macros_path = output_dir.join("macros.json");
             fs::write(&macros_path, macros_json)?;
             println!("  {} macros.json", CHECKMARK);
         }
     }
 
-    let macro_count = get_builtin_macros().len();
-    let exposure_count = exposure_entries.len();
-
     println!();
     println!(
-        "Generated docs for {} models ({} with schema, {} without), {} sources, {} exposures, {} macros",
+        "Generated docs for {} models ({} with schema, {} without), {} sources, {} macros",
         models_with_schema + models_without_schema,
         models_with_schema,
         models_without_schema,
         source_entries.len(),
-        exposure_count,
-        macro_count
+        builtin_macros.len()
     );
     println!("Output: {}", output_dir.display());
 
@@ -460,53 +416,12 @@ fn generate_source_markdown(doc: &SourceDoc) -> String {
     md
 }
 
-/// Generate markdown documentation for an exposure
-fn generate_exposure_markdown(doc: &ExposureDoc) -> String {
-    let mut md = String::new();
-
-    // Title
-    md.push_str(&format!("# Exposure: {}\n\n", doc.name));
-
-    // Description
-    if let Some(desc) = &doc.description {
-        md.push_str(&format!("{}\n\n", desc));
-    }
-
-    // Metadata
-    md.push_str(&format!("**Type**: {}\n\n", doc.exposure_type));
-    md.push_str(&format!("**Owner**: {}", doc.owner.name));
-    if let Some(email) = &doc.owner.email {
-        md.push_str(&format!(" ({})", email));
-    }
-    md.push_str("\n\n");
-    md.push_str(&format!("**Maturity**: {}\n\n", doc.maturity));
-
-    if let Some(url) = &doc.url {
-        md.push_str(&format!("**URL**: [{}]({})\n\n", url, url));
-    }
-
-    if !doc.tags.is_empty() {
-        md.push_str(&format!("**Tags**: {}\n\n", doc.tags.join(", ")));
-    }
-
-    // Dependencies
-    if !doc.depends_on.is_empty() {
-        md.push_str("## Depends On\n\n");
-        for model in &doc.depends_on {
-            md.push_str(&format!("- [{}]({}.md)\n", model, model));
-        }
-        md.push('\n');
-    }
-
-    md
-}
-
 /// Generate markdown index file
 fn generate_index_markdown(
     project_name: &str,
     models: &[ModelSummary],
     sources: &[SourceSummary],
-    exposures: &[ExposureSummary],
+    builtin_macros: &[MacroMetadata],
 ) -> String {
     let mut md = String::new();
 
@@ -531,14 +446,7 @@ fn generate_index_markdown(
         ));
     }
 
-    if !exposures.is_empty() {
-        md.push_str(&format!(
-            "**Exposures**: {} (downstream dependencies)\n\n",
-            exposures.len()
-        ));
-    }
-
-    let macro_count = get_builtin_macros().len();
+    let macro_count = builtin_macros.len();
     md.push_str(&format!(
         "**Macros**: {} built-in macros ([view documentation](macros.md))\n\n",
         macro_count
@@ -569,25 +477,6 @@ fn generate_index_markdown(
             md.push_str(&format!(
                 "| [{}](source_{}.md) | {} | {} |\n",
                 source.name, source.name, desc, source.table_count
-            ));
-        }
-        md.push('\n');
-    }
-
-    if !exposures.is_empty() {
-        md.push_str("## Exposures\n\n");
-        md.push_str("| Name | Type | Owner | URL |\n");
-        md.push_str("|------|------|-------|-----|\n");
-
-        for exposure in exposures {
-            let url = exposure
-                .url
-                .as_ref()
-                .map(|u| format!("[Link]({})", u))
-                .unwrap_or_else(|| "-".to_string());
-            md.push_str(&format!(
-                "| [{}](exposure_{}.md) | {} | {} | {} |\n",
-                exposure.name, exposure.name, exposure.exposure_type, exposure.owner, url
             ));
         }
         md.push('\n');
@@ -902,85 +791,12 @@ fn generate_source_html(doc: &SourceDoc) -> String {
     html
 }
 
-/// Generate HTML documentation for an exposure
-fn generate_exposure_html(doc: &ExposureDoc) -> String {
-    let mut html = String::new();
-
-    html.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
-    html.push_str(&format!(
-        "<meta charset=\"UTF-8\">\n<title>Exposure: {}</title>\n",
-        doc.name
-    ));
-    html.push_str(html_styles());
-    html.push_str("</head>\n<body>\n");
-
-    html.push_str("<nav><a href=\"index.html\">\u{2190} Back to Index</a></nav>\n");
-    html.push_str(&format!("<h1>Exposure: {}</h1>\n", doc.name));
-
-    // Description
-    if let Some(desc) = &doc.description {
-        html.push_str(&format!("<p>{}</p>\n", html_escape(desc)));
-    }
-
-    // Metadata
-    html.push_str("<div class=\"metadata\">\n");
-    html.push_str(&format!(
-        "<p><strong>Type:</strong> {}</p>\n",
-        doc.exposure_type
-    ));
-    let owner_str = if let Some(email) = &doc.owner.email {
-        format!("{} ({})", doc.owner.name, email)
-    } else {
-        doc.owner.name.clone()
-    };
-    html.push_str(&format!(
-        "<p><strong>Owner:</strong> {}</p>\n",
-        html_escape(&owner_str)
-    ));
-    html.push_str(&format!(
-        "<p><strong>Maturity:</strong> {}</p>\n",
-        doc.maturity
-    ));
-    if let Some(url) = &doc.url {
-        html.push_str(&format!(
-            "<p><strong>URL:</strong> <a href=\"{}\" target=\"_blank\">{}</a></p>\n",
-            url,
-            html_escape(url)
-        ));
-    }
-    if !doc.tags.is_empty() {
-        let escaped_tags: Vec<String> = doc.tags.iter().map(|t| html_escape(t)).collect();
-        html.push_str(&format!(
-            "<p><strong>Tags:</strong> {}</p>\n",
-            escaped_tags.join(", ")
-        ));
-    }
-    html.push_str("</div>\n");
-
-    // Dependencies
-    if !doc.depends_on.is_empty() {
-        html.push_str("<h2>Depends On</h2>\n");
-        html.push_str("<ul>\n");
-        for model in &doc.depends_on {
-            html.push_str(&format!(
-                "<li><a href=\"{}.html\">{}</a></li>\n",
-                url_encode_path(model),
-                html_escape(model)
-            ));
-        }
-        html.push_str("</ul>\n");
-    }
-
-    html.push_str("</body>\n</html>\n");
-    html
-}
-
 /// Generate HTML index file
 fn generate_index_html(
     project_name: &str,
     models: &[ModelSummary],
     sources: &[SourceSummary],
-    exposures: &[ExposureSummary],
+    builtin_macros: &[MacroMetadata],
 ) -> String {
     let mut html = String::new();
 
@@ -1014,14 +830,7 @@ fn generate_index_html(
         ));
     }
 
-    if !exposures.is_empty() {
-        html.push_str(&format!(
-            "<p><strong>Exposures:</strong> {} (downstream dependencies)</p>\n",
-            exposures.len()
-        ));
-    }
-
-    let macro_count = get_builtin_macros().len();
+    let macro_count = builtin_macros.len();
     html.push_str(&format!(
         "<p><strong>Macros:</strong> {} built-in macros (<a href=\"macros.html\">view documentation</a>)</p>\n",
         macro_count
@@ -1067,28 +876,6 @@ fn generate_index_html(
                 html_escape(&source.name),
                 html_escape(desc),
                 source.table_count
-            ));
-        }
-        html.push_str("</tbody></table>\n");
-    }
-
-    if !exposures.is_empty() {
-        html.push_str("<h2>Exposures</h2>\n");
-        html.push_str("<table>\n<thead><tr><th>Name</th><th>Type</th><th>Owner</th><th>URL</th></tr></thead>\n<tbody>\n");
-
-        for exposure in exposures {
-            let url = exposure
-                .url
-                .as_ref()
-                .map(|u| format!("<a href=\"{}\" target=\"_blank\">Link</a>", html_escape(u)))
-                .unwrap_or_else(|| "-".to_string());
-            html.push_str(&format!(
-                "<tr><td><a href=\"exposure_{}.html\">{}</a></td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
-                url_encode_path(&exposure.name),
-                html_escape(&exposure.name),
-                html_escape(&exposure.exposure_type),
-                html_escape(&exposure.owner),
-                url
             ));
         }
         html.push_str("</tbody></table>\n");
@@ -1244,7 +1031,7 @@ fn format_category_title(category: &str) -> String {
 }
 
 /// Generate markdown documentation for built-in macros
-fn generate_macros_markdown() -> String {
+fn generate_macros_markdown(builtin_macros: &[MacroMetadata]) -> String {
     let mut md = String::new();
 
     md.push_str("# Built-in Macros\n\n");
@@ -1254,7 +1041,7 @@ fn generate_macros_markdown() -> String {
 
     // Get all macros grouped by category
     let categories = get_macro_categories();
-    let all_macros = get_builtin_macros();
+    let all_macros = builtin_macros;
 
     for category in &categories {
         let category_macros: Vec<&MacroMetadata> = all_macros
@@ -1302,7 +1089,7 @@ fn generate_macros_markdown() -> String {
 }
 
 /// Generate HTML documentation for built-in macros
-fn generate_macros_html() -> String {
+fn generate_macros_html(builtin_macros: &[MacroMetadata]) -> String {
     let mut html = String::new();
 
     html.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
@@ -1331,10 +1118,9 @@ fn generate_macros_html() -> String {
 
     // Get all macros grouped by category
     let categories = get_macro_categories();
-    let all_macros = get_builtin_macros();
 
     for category in &categories {
-        let category_macros: Vec<&MacroMetadata> = all_macros
+        let category_macros: Vec<&MacroMetadata> = builtin_macros
             .iter()
             .filter(|m| &m.category == category)
             .collect();

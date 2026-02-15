@@ -182,7 +182,6 @@ pub fn make_ctx_with_schemas(yaml_schemas: HashMap<ModelName, Arc<RelSchema>>) -
         tests: vec![],
         singular_tests: vec![],
         sources: vec![],
-        exposures: vec![],
         functions: vec![],
     });
     let dag = ModelDag::build(&HashMap::new()).unwrap();
@@ -199,7 +198,6 @@ pub fn make_ctx_with_dag(dep_map: &HashMap<String, Vec<String>>) -> AnalysisCont
         tests: vec![],
         singular_tests: vec![],
         sources: vec![],
-        exposures: vec![],
         functions: vec![],
     });
     let dag = ModelDag::build(dep_map).unwrap();

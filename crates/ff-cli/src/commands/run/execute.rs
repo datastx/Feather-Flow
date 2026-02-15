@@ -100,18 +100,19 @@ async fn execute_materialization(
 ///
 /// Returns a `ModelRunResult` with the outcome. Callers handle state-file updates
 /// because the sequential and parallel paths have different timing requirements.
-async fn run_single_model(
+pub(crate) async fn run_single_model(
     db: &Arc<dyn Database>,
     name: &str,
     compiled: &CompiledModel,
     full_refresh: bool,
     wap_schema: Option<&str>,
 ) -> ModelRunResult {
-    let qualified_name = quote_qualified(&build_qualified_name(compiled.schema.as_deref(), name));
+    let qualified_name = build_qualified_name(compiled.schema.as_deref(), name);
+    let quoted_name = quote_qualified(&qualified_name);
 
     let model_start = Instant::now();
 
-    if let Err(e) = execute_hooks(db, &compiled.pre_hook, &qualified_name).await {
+    if let Err(e) = execute_hooks(db, &compiled.pre_hook, &quoted_name).await {
         let duration = model_start.elapsed();
         println!(
             "  \u{2717} {} (pre-hook) - {} [{}ms]",
@@ -178,7 +179,7 @@ async fn run_single_model(
 
     match result {
         Ok(_) => {
-            if let Err(e) = execute_hooks(db, &compiled.post_hook, &qualified_name).await {
+            if let Err(e) = execute_hooks(db, &compiled.post_hook, &quoted_name).await {
                 let duration = model_start.elapsed();
                 println!(
                     "  \u{2717} {} (post-hook) - {} [{}ms]",
@@ -290,19 +291,36 @@ pub(super) async fn execute_models_with_state(
     Ok((run_results, success_count, failure_count, stopped_early))
 }
 
-/// Get all transitive dependents of a model
+/// Build a reverse dependency map: for each model, list all models that depend on it.
+fn build_reverse_deps(
+    compiled_models: &HashMap<String, CompiledModel>,
+) -> HashMap<&str, Vec<&str>> {
+    let mut reverse_deps: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (name, compiled) in compiled_models {
+        for dep in &compiled.dependencies {
+            reverse_deps
+                .entry(dep.as_str())
+                .or_default()
+                .push(name.as_str());
+        }
+    }
+    reverse_deps
+}
+
+/// Get all transitive dependents of a model using a pre-built reverse dependency map.
 fn get_transitive_dependents(
     model_name: &str,
-    compiled_models: &HashMap<String, CompiledModel>,
+    reverse_deps: &HashMap<&str, Vec<&str>>,
 ) -> HashSet<String> {
     let mut dependents = HashSet::new();
-    let mut to_check = vec![model_name.to_string()];
+    let mut to_check = vec![model_name];
 
     while let Some(current) = to_check.pop() {
-        for (name, compiled) in compiled_models {
-            if compiled.dependencies.contains(&current) && !dependents.contains(name) {
-                dependents.insert(name.clone());
-                to_check.push(name.clone());
+        if let Some(children) = reverse_deps.get(current) {
+            for child in children {
+                if dependents.insert((*child).to_string()) {
+                    to_check.push(child);
+                }
             }
         }
     }
@@ -320,6 +338,7 @@ async fn execute_models_sequential(
     let mut run_results: Vec<ModelRunResult> = Vec::new();
     let mut stopped_early = false;
     let mut failed_models: HashSet<String> = HashSet::new();
+    let reverse_deps = build_reverse_deps(ctx.compiled_models);
 
     let executable_models: Vec<&String> = ctx
         .execution_order
@@ -398,7 +417,7 @@ async fn execute_models_sequential(
             failure_count += 1;
 
             if is_wap {
-                let dependents = get_transitive_dependents(name, ctx.compiled_models);
+                let dependents = get_transitive_dependents(name, &reverse_deps);
                 for dep in &dependents {
                     failed_models.insert(dep.clone());
                 }
@@ -455,7 +474,7 @@ async fn execute_models_sequential(
 async fn execute_model_task(
     db: Arc<dyn Database>,
     name: String,
-    compiled: CompiledModel,
+    compiled: Arc<CompiledModel>,
     full_refresh: bool,
     wap_schema: Option<String>,
     fail_fast: bool,
@@ -578,10 +597,11 @@ async fn execute_models_parallel(
                 continue;
             }
 
+            let compiled = Arc::new(compiled.clone());
             set.spawn(execute_model_task(
                 db,
                 name,
-                compiled.clone(),
+                compiled,
                 ctx.args.full_refresh,
                 ctx.wap_schema.map(String::from),
                 ctx.args.fail_fast,

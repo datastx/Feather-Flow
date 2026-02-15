@@ -77,7 +77,7 @@ struct TestRunContext<'a> {
     failures_dir: &'a Option<Arc<std::path::PathBuf>>,
     json_mode: bool,
     custom_registry: &'a Arc<CustomTestRegistry>,
-    macro_paths: &'a [std::path::PathBuf],
+    custom_test_env: &'a minijinja::Environment<'static>,
 }
 
 impl std::fmt::Debug for TestRunContext<'_> {
@@ -270,6 +270,7 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
 
     let counters = Arc::new(TestCounters::new());
     let output_lock = Arc::new(Mutex::new(()));
+    let custom_test_env = build_custom_test_env(&macro_paths);
 
     let ctx = TestRunContext {
         db: &db,
@@ -279,7 +280,7 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
         failures_dir: &failures_dir,
         json_mode,
         custom_registry: &custom_registry,
-        macro_paths: &macro_paths,
+        custom_test_env: &custom_test_env,
     };
 
     if thread_count > 1 {
@@ -355,7 +356,7 @@ async fn run_tests_sequential(
             schema_test,
             qualified_name,
             ctx.custom_registry,
-            ctx.macro_paths,
+            ctx.custom_test_env,
         );
         let result = runner.run_test(&generated).await;
 
@@ -421,7 +422,7 @@ async fn run_tests_parallel(
                 schema_test,
                 &qualified_name,
                 ctx.custom_registry,
-                ctx.macro_paths,
+                ctx.custom_test_env,
             );
             ((*schema_test).clone(), qualified_name, generated)
         })
@@ -429,7 +430,7 @@ async fn run_tests_parallel(
 
     let schema_test_futures: Vec<_> = generated_tests
         .into_iter()
-        .map(|(schema_test, _qualified_name, generated)| {
+        .map(|(schema_test, _, generated)| {
             let db = ctx.db.clone();
             let failures_dir = ctx.failures_dir.clone();
             let counters = Arc::clone(counters);
@@ -770,15 +771,10 @@ async fn store_test_failures(test_name: &str, sql: &str, failures_dir: &std::pat
     }
 }
 
-/// Render a custom test macro, returning the generated SQL.
-fn render_custom_test_macro(
-    macro_info: &ff_jinja::CustomTestMacro,
-    qualified_name: &str,
-    column: &str,
-    name: &str,
-    kwargs: &std::collections::HashMap<String, serde_json::Value>,
+/// Build a minijinja Environment configured with the first valid macro path.
+pub(crate) fn build_custom_test_env(
     macro_paths: &[std::path::PathBuf],
-) -> String {
+) -> minijinja::Environment<'static> {
     let mut env = minijinja::Environment::new();
     for macro_path in macro_paths {
         if macro_path.exists() && macro_path.is_dir() {
@@ -786,9 +782,20 @@ fn render_custom_test_macro(
             break;
         }
     }
+    env
+}
 
+/// Render a custom test macro, returning the generated SQL.
+fn render_custom_test_macro(
+    env: &minijinja::Environment<'_>,
+    macro_info: &ff_jinja::CustomTestMacro,
+    qualified_name: &str,
+    column: &str,
+    name: &str,
+    kwargs: &std::collections::HashMap<String, serde_json::Value>,
+) -> String {
     match ff_jinja::generate_custom_test_sql(
-        &env,
+        env,
         &macro_info.source_file,
         &macro_info.macro_name,
         qualified_name,
@@ -807,22 +814,22 @@ fn render_custom_test_macro(
 ///
 /// For built-in test types, uses the standard generator.
 /// For custom test types, looks up the macro in the registry and renders it.
-fn generate_test_with_custom_support(
+pub(crate) fn generate_test_with_custom_support(
     schema_test: &SchemaTest,
     qualified_name: &str,
     custom_registry: &CustomTestRegistry,
-    macro_paths: &[std::path::PathBuf],
+    env: &minijinja::Environment<'_>,
 ) -> GeneratedTest {
     match &schema_test.test_type {
         TestType::Custom { name, kwargs } => {
             if let Some(macro_info) = custom_registry.get(name) {
                 let sql = render_custom_test_macro(
+                    env,
                     macro_info,
                     qualified_name,
                     &schema_test.column,
                     name,
                     kwargs,
-                    macro_paths,
                 );
                 GeneratedTest::with_custom_sql(schema_test, sql)
             } else {

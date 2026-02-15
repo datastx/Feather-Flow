@@ -51,6 +51,30 @@ pub enum SchemaMismatch {
     },
 }
 
+impl SchemaMismatch {
+    /// Returns `true` for SA01 errors that should block execution.
+    ///
+    /// Only `MissingFromSql` is a hard error — a YAML-declared column that
+    /// doesn't appear in the SQL output means the contract is broken.
+    pub fn is_error(&self) -> bool {
+        matches!(self, SchemaMismatch::MissingFromSql { .. })
+    }
+
+    /// Returns `true` for SA02 warnings that should not block execution.
+    pub fn is_warning(&self) -> bool {
+        !self.is_error()
+    }
+
+    /// Diagnostic code string: `"SA01"` for errors, `"SA02"` for warnings.
+    pub fn code(&self) -> &'static str {
+        if self.is_error() {
+            "SA01"
+        } else {
+            "SA02"
+        }
+    }
+}
+
 impl std::fmt::Display for SchemaMismatch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -133,33 +157,34 @@ pub fn propagate_schemas(
         };
 
         let provider = FeatherFlowProvider::new(&catalog, &registry);
-        match sql_to_plan(sql, &provider) {
-            Ok(plan) => {
-                let inferred_schema = Arc::new(extract_schema_from_plan(&plan));
-
-                // Cross-check with YAML if available
-                let mismatches = if let Some(yaml_schema) = yaml_schemas.get(model_name) {
-                    compare_schemas(yaml_schema, &inferred_schema)
-                } else {
-                    vec![]
-                };
-
-                // Register the inferred schema for downstream models
-                catalog.insert(model_name.clone(), Arc::clone(&inferred_schema));
-
-                model_plans.insert(
-                    model_name.clone(),
-                    ModelPlanResult {
-                        plan,
-                        inferred_schema,
-                        mismatches,
-                    },
-                );
-            }
+        let plan = match sql_to_plan(sql, &provider) {
+            Ok(p) => p,
             Err(e) => {
                 failures.insert(model_name.clone(), e.to_string());
+                continue;
             }
-        }
+        };
+
+        let inferred_schema = Arc::new(extract_schema_from_plan(&plan));
+
+        // Cross-check with YAML if available
+        let mismatches = if let Some(yaml_schema) = yaml_schemas.get(model_name) {
+            compare_schemas(yaml_schema, &inferred_schema)
+        } else {
+            vec![]
+        };
+
+        // Register the inferred schema for downstream models
+        catalog.insert(model_name.clone(), Arc::clone(&inferred_schema));
+
+        model_plans.insert(
+            model_name.clone(),
+            ModelPlanResult {
+                plan,
+                inferred_schema,
+                mismatches,
+            },
+        );
     }
 
     PropagationResult {

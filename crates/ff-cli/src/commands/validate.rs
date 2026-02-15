@@ -521,7 +521,7 @@ fn validate_static_analysis(
     jinja: &JinjaEnvironment,
     external_tables: &HashSet<String>,
     dependencies: &HashMap<String, Vec<String>>,
-    global: &GlobalArgs,
+    _global: &GlobalArgs,
     ctx: &mut ValidationContext,
 ) {
     print!("Running static analysis... ");
@@ -578,17 +578,34 @@ fn validate_static_analysis(
 
     let mut issue_count = 0;
 
+    // Collect issues into vecs first to avoid double-borrow of ctx
+    let mut mismatch_issues: Vec<(String, String, bool)> = Vec::new();
+    let mut failure_issues: Vec<String> = Vec::new();
+
     let (mismatch_count, plan_count, failure_count) = common::report_static_analysis_results(
         result,
         |model_name, mismatch| {
-            ctx.error("SA01", format!("{}: {}", model_name, mismatch), None);
+            mismatch_issues.push((
+                mismatch.code().to_string(),
+                format!("{}: {}", model_name, mismatch),
+                mismatch.is_error(),
+            ));
         },
         |model, err| {
-            if global.verbose {
-                eprintln!("[verbose] Static analysis failed for '{}': {}", model, err);
-            }
+            failure_issues.push(format!("{}: planning failed: {}", model, err));
         },
     );
+
+    for (code, msg, is_error) in mismatch_issues {
+        if is_error {
+            ctx.error(&code, msg, None);
+        } else {
+            ctx.warning(&code, msg, None);
+        }
+    }
+    for msg in failure_issues {
+        ctx.error("SA01", msg, None);
+    }
     issue_count += mismatch_count;
     if issue_count == 0 && failure_count == 0 {
         println!("✓ ({} models analyzed)", plan_count);

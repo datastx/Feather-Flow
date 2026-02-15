@@ -333,7 +333,6 @@ impl From<AppError> for axum::http::StatusCode {
 crates/ff-core/src/
   model/
     mod.rs            # Production code
-    freshness.rs      # Production code
     schema.rs         # Production code
     testing.rs        # Production code
   model_test.rs       # All unit tests for model module
