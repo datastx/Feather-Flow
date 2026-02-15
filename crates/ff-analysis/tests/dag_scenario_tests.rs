@@ -8,8 +8,9 @@ use ff_analysis::{
     DiagnosticCode, Nullability, PlanPassManager, RelSchema, SchemaMismatch, SqlType,
 };
 use std::collections::HashMap;
+use std::sync::Arc;
 
-type SchemaCatalog = HashMap<String, RelSchema>;
+type SchemaCatalog = HashMap<String, Arc<RelSchema>>;
 
 // ── Clean E-Commerce DAG ────────────────────────────────────────────────
 
@@ -18,21 +19,21 @@ fn test_clean_ecommerce_dag() {
     let mut initial: SchemaCatalog = HashMap::new();
     initial.insert(
         "raw_orders".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("customer_id", int32(), Nullability::NotNull),
             make_col("amount", decimal(10, 2), Nullability::Nullable),
             make_col("status", varchar(), Nullability::Nullable),
             make_col("created_at", timestamp(), Nullability::NotNull),
-        ]),
+        ])),
     );
     initial.insert(
         "raw_customers".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::NotNull),
             make_col("email", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo = vec![
@@ -83,10 +84,10 @@ fn test_simple_chain() {
     let mut initial: SchemaCatalog = HashMap::new();
     initial.insert(
         "raw".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("val", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo = vec!["stg".to_string(), "mart".to_string()];
@@ -106,11 +107,11 @@ fn test_diamond_dag() {
     let mut initial: SchemaCatalog = HashMap::new();
     initial.insert(
         "source".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("a_val", varchar(), Nullability::Nullable),
             make_col("b_val", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo = vec![
@@ -151,10 +152,10 @@ fn test_wide_fan_out() {
     let mut initial: SchemaCatalog = HashMap::new();
     initial.insert(
         "source".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("a", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo: Vec<String> = (1..=5).map(|i| format!("model_{i}")).collect();
@@ -175,7 +176,11 @@ fn test_deep_chain() {
     let mut initial: SchemaCatalog = HashMap::new();
     initial.insert(
         "raw".to_string(),
-        RelSchema::new(vec![make_col("id", int32(), Nullability::NotNull)]),
+        Arc::new(RelSchema::new(vec![make_col(
+            "id",
+            int32(),
+            Nullability::NotNull,
+        )])),
     );
 
     let topo: Vec<String> = (1..=10).map(|i| format!("m{i}")).collect();
@@ -197,10 +202,10 @@ fn test_schema_drift_detection() {
     let mut initial: SchemaCatalog = HashMap::new();
     initial.insert(
         "source".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::NotNull),
-        ]),
+        ])),
     );
 
     let topo = vec!["model".to_string()];
@@ -234,10 +239,10 @@ fn test_type_mismatch_in_chain() {
     let mut initial: SchemaCatalog = HashMap::new();
     initial.insert(
         "source".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("amount", decimal(10, 2), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo = vec!["model".to_string()];
@@ -273,17 +278,17 @@ fn test_null_violation_through_left_join() {
     let mut initial: SchemaCatalog = HashMap::new();
     initial.insert(
         "orders".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("cust_id", int32(), Nullability::NotNull),
-        ]),
+        ])),
     );
     initial.insert(
         "customers".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::NotNull),
-        ]),
+        ])),
     );
 
     let topo = vec!["model".to_string()];
@@ -319,10 +324,10 @@ fn test_plan_pass_manager_clean_dag() {
     let mut initial: SchemaCatalog = HashMap::new();
     initial.insert(
         "source".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("val", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo = vec!["m1".to_string()];
@@ -361,18 +366,18 @@ fn test_mixed_diagnostics() {
     let mut initial: SchemaCatalog = HashMap::new();
     initial.insert(
         "orders".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("cust_id", int32(), Nullability::NotNull),
             make_col("amount", float64(), Nullability::Nullable),
-        ]),
+        ])),
     );
     initial.insert(
         "customers".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::NotNull),
-        ]),
+        ])),
     );
 
     let topo = vec!["model".to_string()];
@@ -428,7 +433,7 @@ fn test_all_duckdb_types_propagate() {
     let mut initial: SchemaCatalog = HashMap::new();
     initial.insert(
         "typed_source".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("bool_col", SqlType::Boolean, Nullability::NotNull),
             make_col("int_col", int32(), Nullability::NotNull),
             make_col("bigint_col", int64(), Nullability::NotNull),
@@ -437,7 +442,7 @@ fn test_all_duckdb_types_propagate() {
             make_col("varchar_col", varchar(), Nullability::Nullable),
             make_col("date_col", SqlType::Date, Nullability::Nullable),
             make_col("ts_col", timestamp(), Nullability::NotNull),
-        ]),
+        ])),
     );
 
     let topo = vec!["model".to_string()];

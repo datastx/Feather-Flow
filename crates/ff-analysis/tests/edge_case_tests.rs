@@ -5,8 +5,9 @@ use ff_analysis::propagate_schemas;
 use ff_analysis::sql_to_plan;
 use ff_analysis::{FloatBitWidth, IntBitWidth, Nullability, RelSchema, SqlType, TypedColumn};
 use std::collections::HashMap;
+use std::sync::Arc;
 
-type SchemaCatalog = HashMap<String, RelSchema>;
+type SchemaCatalog = HashMap<String, Arc<RelSchema>>;
 
 fn make_col(name: &str, ty: SqlType, null: Nullability) -> TypedColumn {
     TypedColumn {
@@ -67,29 +68,29 @@ fn standard_catalog() -> SchemaCatalog {
     let mut catalog = HashMap::new();
     catalog.insert(
         "t".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::Nullable),
             make_col("amount", float64(), Nullability::Nullable),
             make_col("active", boolean(), Nullability::NotNull),
             make_col("created_at", timestamp(), Nullability::NotNull),
             make_col("score", decimal(10, 2), Nullability::Nullable),
-        ]),
+        ])),
     );
     catalog.insert(
         "a".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::Nullable),
             make_col("parent_id", int32(), Nullability::Nullable),
-        ]),
+        ])),
     );
     catalog.insert(
         "b".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
     catalog
 }
@@ -251,10 +252,10 @@ fn test_case_sensitive_column_matching_in_propagation() {
     let mut initial: SchemaCatalog = HashMap::new();
     initial.insert(
         "source".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::NotNull),
-        ]),
+        ])),
     );
 
     let topo = vec!["model".to_string()];
@@ -279,11 +280,19 @@ fn test_null_propagation_through_union() {
     let mut initial: SchemaCatalog = HashMap::new();
     initial.insert(
         "nullable_src".to_string(),
-        RelSchema::new(vec![make_col("val", int32(), Nullability::Nullable)]),
+        Arc::new(RelSchema::new(vec![make_col(
+            "val",
+            int32(),
+            Nullability::Nullable,
+        )])),
     );
     initial.insert(
         "not_null_src".to_string(),
-        RelSchema::new(vec![make_col("val", int32(), Nullability::NotNull)]),
+        Arc::new(RelSchema::new(vec![make_col(
+            "val",
+            int32(),
+            Nullability::NotNull,
+        )])),
     );
 
     let topo = vec!["model".to_string()];
@@ -307,7 +316,11 @@ fn test_empty_yaml_columns_no_crash() {
     let mut initial: SchemaCatalog = HashMap::new();
     initial.insert(
         "source".to_string(),
-        RelSchema::new(vec![make_col("id", int32(), Nullability::NotNull)]),
+        Arc::new(RelSchema::new(vec![make_col(
+            "id",
+            int32(),
+            Nullability::NotNull,
+        )])),
     );
 
     let topo = vec!["model".to_string()];
@@ -350,10 +363,10 @@ fn test_50_model_project_completes() {
     let mut initial: SchemaCatalog = HashMap::new();
     initial.insert(
         "raw".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("val", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo: Vec<String> = (1..=50).map(|i| format!("m{i}")).collect();
@@ -388,7 +401,7 @@ fn test_model_with_100_columns() {
         .collect();
 
     let mut initial: SchemaCatalog = HashMap::new();
-    initial.insert("wide_source".to_string(), RelSchema::new(cols));
+    initial.insert("wide_source".to_string(), Arc::new(RelSchema::new(cols)));
 
     let col_list: String = (0..100)
         .map(|i| format!("col_{i}"))

@@ -6,12 +6,14 @@
 use crate::types::{Nullability, TypedColumn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Schema catalog: maps table/model names to known schemas.
 ///
-/// Previously defined in `lowering::mod`; moved here since it is used
-/// by the DataFusion bridge and CLI commands independent of the IR.
-pub type SchemaCatalog = HashMap<String, RelSchema>;
+/// Values are `Arc`-wrapped so that cloning the catalog (e.g. during
+/// schema propagation) is cheap — only the reference count is bumped,
+/// not the column vectors inside each `RelSchema`.
+pub type SchemaCatalog = HashMap<String, Arc<RelSchema>>;
 
 /// Schema of a relational operator's output
 #[derive(Debug, Clone, Serialize, Deserialize)]

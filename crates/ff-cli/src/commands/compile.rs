@@ -611,8 +611,8 @@ fn compute_compiled_path(
         }
     }
 
-    let filename = model_path.file_name().unwrap_or_default().to_string_lossy();
-    output_dir.join(filename.to_string())
+    let filename = model_path.file_name().unwrap_or_default();
+    output_dir.join(filename)
 }
 
 /// Run DataFusion-based static analysis on compiled models

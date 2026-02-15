@@ -5,6 +5,7 @@
 //! and feeds schemas forward for downstream models.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use datafusion_expr::LogicalPlan;
 
@@ -144,7 +145,7 @@ pub fn propagate_schemas(
                 };
 
                 // Register the inferred schema for downstream models
-                catalog.insert(model_name.clone(), inferred_schema.clone());
+                catalog.insert(model_name.clone(), Arc::new(inferred_schema.clone()));
 
                 model_plans.insert(
                     model_name.clone(),

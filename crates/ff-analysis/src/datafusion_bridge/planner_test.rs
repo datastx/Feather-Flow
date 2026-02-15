@@ -3,12 +3,13 @@ use crate::datafusion_bridge::provider::FunctionRegistry;
 use crate::schema::{RelSchema, SchemaCatalog};
 use crate::types::{IntBitWidth, Nullability, SqlType, TypedColumn};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 fn make_catalog() -> SchemaCatalog {
     let mut catalog: SchemaCatalog = HashMap::new();
     catalog.insert(
         "orders".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             TypedColumn {
                 name: "id".to_string(),
                 source_table: None,
@@ -44,11 +45,11 @@ fn make_catalog() -> SchemaCatalog {
                 nullability: Nullability::Nullable,
                 provenance: vec![],
             },
-        ]),
+        ])),
     );
     catalog.insert(
         "customers".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             TypedColumn {
                 name: "id".to_string(),
                 source_table: None,
@@ -65,7 +66,7 @@ fn make_catalog() -> SchemaCatalog {
                 nullability: Nullability::Nullable,
                 provenance: vec![],
             },
-        ]),
+        ])),
     );
     catalog
 }
