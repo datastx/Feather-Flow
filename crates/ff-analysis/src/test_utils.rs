@@ -12,6 +12,7 @@ use ff_core::Project;
 use ff_sql::ProjectLineage;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 // ─── Type constructors ──────────────────────────────────────────────────────
 
@@ -172,7 +173,7 @@ pub fn make_ctx() -> AnalysisContext {
 }
 
 /// Create an `AnalysisContext` with YAML schemas
-pub fn make_ctx_with_schemas(yaml_schemas: HashMap<ModelName, RelSchema>) -> AnalysisContext {
+pub fn make_ctx_with_schemas(yaml_schemas: HashMap<ModelName, Arc<RelSchema>>) -> AnalysisContext {
     let config: ff_core::config::Config = serde_yaml::from_str("name: test_project").unwrap();
     let project = Project::new(ff_core::project::ProjectParts {
         root: PathBuf::from("/tmp/test"),

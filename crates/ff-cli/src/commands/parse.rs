@@ -20,7 +20,7 @@ pub async fn execute(args: &ParseArgs, global: &GlobalArgs) -> Result<()> {
     let jinja = JinjaEnvironment::new(&project.config.vars);
 
     let external_tables: HashSet<String> = project.config.external_tables.iter().cloned().collect();
-    let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
+    let known_models: HashSet<&str> = project.models.keys().map(|k| k.as_str()).collect();
 
     let all_model_names: Vec<String> = project
         .model_names()

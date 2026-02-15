@@ -122,7 +122,7 @@ fn test_categorize_dependencies() {
         "unknown_table".to_string(),
     ]);
 
-    let known_models = HashSet::from(["stg_orders".to_string()]);
+    let known_models = HashSet::from(["stg_orders"]);
     let external_tables = HashSet::from(["raw.orders".to_string()]);
 
     let (model_deps, external_deps) =
@@ -144,7 +144,7 @@ fn test_normalize_table_name() {
 fn test_case_insensitive_model_matching() {
     // SQL references "STG_ORDERS" but model is "stg_orders"
     let deps = HashSet::from(["STG_ORDERS".to_string(), "RAW_DATA".to_string()]);
-    let known_models = HashSet::from(["stg_orders".to_string()]);
+    let known_models = HashSet::from(["stg_orders"]);
     let external_tables = HashSet::from(["raw_data".to_string()]);
 
     let (model_deps, external_deps) =

@@ -60,7 +60,7 @@ pub fn extract_dependencies(statements: &[Statement]) -> HashSet<String> {
 /// Note: Model matching is case-insensitive (DuckDB is case-insensitive by default)
 pub fn categorize_dependencies(
     deps: HashSet<String>,
-    known_models: &HashSet<String>,
+    known_models: &HashSet<&str>,
     external_tables: &HashSet<String>,
 ) -> (Vec<String>, Vec<String>) {
     let (model_deps, external_deps, _unknown) =
@@ -74,7 +74,7 @@ pub fn categorize_dependencies(
 /// Note: Model matching is case-insensitive (DuckDB is case-insensitive by default)
 pub fn categorize_dependencies_with_unknown(
     deps: HashSet<String>,
-    known_models: &HashSet<String>,
+    known_models: &HashSet<&str>,
     external_tables: &HashSet<String>,
 ) -> (Vec<String>, Vec<String>, Vec<String>) {
     let mut model_deps = Vec::new();
@@ -82,8 +82,10 @@ pub fn categorize_dependencies_with_unknown(
     let mut unknown_deps = Vec::new();
 
     // Build lowercase -> original-case map for O(1) case-insensitive lookup
-    let known_models_map: HashMap<String, &String> =
-        known_models.iter().map(|s| (s.to_lowercase(), s)).collect();
+    let known_models_map: HashMap<String, &str> = known_models
+        .iter()
+        .map(|s| (s.to_lowercase(), *s))
+        .collect();
 
     // Pre-compute lowercased external table set for case-insensitive matching
     let external_lower: HashSet<String> =
@@ -96,7 +98,7 @@ pub fn categorize_dependencies_with_unknown(
 
         // Check for case-insensitive model match
         if let Some(original_name) = known_models_map.get(&dep_lower) {
-            model_deps.push((*original_name).clone());
+            model_deps.push(original_name.to_string());
         } else if external_lower.contains(&dep.to_lowercase())
             || external_lower.contains(&dep_lower)
         {

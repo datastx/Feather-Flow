@@ -25,7 +25,7 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
     let template_ctx = common::build_template_context(&project, global.target.as_deref(), false);
     let jinja = JinjaEnvironment::with_context(&project.config.vars, &macro_paths, &template_ctx);
 
-    let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
+    let known_models: HashSet<&str> = project.models.keys().map(|k| k.as_str()).collect();
 
     let external_tables = build_external_tables_lookup(&project);
     let (schema_catalog, yaml_schemas) = build_schema_catalog(&project, &external_tables);
@@ -46,7 +46,7 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
         let raw_deps = extract_dependencies(&stmts);
         let model_deps: Vec<String> = raw_deps
             .into_iter()
-            .filter(|d| known_models.contains(d))
+            .filter(|d| known_models.contains(d.as_str()))
             .collect();
         dep_map.insert(name.to_string(), model_deps);
 
@@ -100,10 +100,10 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
 
     let ctx = AnalysisContext::new(project, dag, yaml_schemas, project_lineage);
 
-    let yaml_string_map: HashMap<String, RelSchema> = ctx
+    let yaml_string_map: HashMap<String, Arc<RelSchema>> = ctx
         .yaml_schemas()
         .iter()
-        .map(|(k, v)| (k.to_string(), v.clone()))
+        .map(|(k, v)| (k.to_string(), Arc::clone(v)))
         .collect();
     let mut plan_catalog: SchemaCatalog = schema_catalog;
     for ext in &external_tables {

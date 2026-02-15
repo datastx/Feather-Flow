@@ -328,7 +328,7 @@ fn test_empty_yaml_columns_no_crash() {
     sql.insert("model".to_string(), "SELECT id FROM source".to_string());
 
     let mut yaml = HashMap::new();
-    yaml.insert("model".to_string(), RelSchema::new(vec![]));
+    yaml.insert("model".to_string(), Arc::new(RelSchema::new(vec![])));
 
     let result = propagate_schemas(&topo, &sql, &yaml, &initial, &[], &[]);
     // Should not crash — mismatches are expected (missing columns)

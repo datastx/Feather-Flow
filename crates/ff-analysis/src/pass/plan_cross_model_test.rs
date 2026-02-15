@@ -28,7 +28,11 @@ fn test_a040_extra_column_in_sql() {
     let mut yaml_schemas = HashMap::new();
     yaml_schemas.insert(
         "test_model".to_string(),
-        RelSchema::new(vec![make_col("id", int32(), Nullability::NotNull)]),
+        Arc::new(RelSchema::new(vec![make_col(
+            "id",
+            int32(),
+            Nullability::NotNull,
+        )])),
     );
 
     let result = propagate_schemas(
@@ -74,10 +78,10 @@ fn test_a040_missing_column_from_sql() {
     let mut yaml_schemas = HashMap::new();
     yaml_schemas.insert(
         "test_model".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let result = propagate_schemas(
@@ -121,10 +125,10 @@ fn test_no_diagnostics_for_matching_schema() {
     let mut yaml_schemas = HashMap::new();
     yaml_schemas.insert(
         "test_model".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let result = propagate_schemas(
@@ -171,10 +175,10 @@ fn test_a040_type_mismatch() {
     let mut yaml_schemas = HashMap::new();
     yaml_schemas.insert(
         "test_model".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("code", int32(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let result = propagate_schemas(
@@ -220,7 +224,11 @@ fn test_a040_multiple_extras() {
     let mut yaml_schemas = HashMap::new();
     yaml_schemas.insert(
         "test_model".to_string(),
-        RelSchema::new(vec![make_col("id", int32(), Nullability::NotNull)]),
+        Arc::new(RelSchema::new(vec![make_col(
+            "id",
+            int32(),
+            Nullability::NotNull,
+        )])),
     );
 
     let result = propagate_schemas(
@@ -267,10 +275,10 @@ fn test_a040_combo_extra_and_missing() {
     let mut yaml_schemas = HashMap::new();
     yaml_schemas.insert(
         "test_model".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("email", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let result = propagate_schemas(
@@ -321,10 +329,10 @@ fn test_a040_compatible_types_no_diagnostic() {
     let mut yaml_schemas = HashMap::new();
     yaml_schemas.insert(
         "test_model".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let result = propagate_schemas(
@@ -374,10 +382,10 @@ fn test_a041_left_join_nullable_vs_yaml_not_null() {
     let mut yaml_schemas = HashMap::new();
     yaml_schemas.insert(
         "test_model".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::NotNull),
-        ]),
+        ])),
     );
 
     let result = propagate_schemas(
@@ -425,10 +433,10 @@ fn test_a041_both_nullable_no_diagnostic() {
     let mut yaml_schemas = HashMap::new();
     yaml_schemas.insert(
         "test_model".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let result = propagate_schemas(
@@ -466,10 +474,10 @@ fn test_a041_both_not_null_no_diagnostic() {
     let mut yaml_schemas = HashMap::new();
     yaml_schemas.insert(
         "test_model".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::NotNull),
-        ]),
+        ])),
     );
 
     let result = propagate_schemas(

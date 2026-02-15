@@ -24,8 +24,8 @@ use crate::types::{Nullability, TypedColumn};
 pub struct ModelPlanResult {
     /// The DataFusion LogicalPlan for this model
     pub plan: LogicalPlan,
-    /// The inferred output schema (from the plan)
-    pub inferred_schema: RelSchema,
+    /// The inferred output schema (from the plan), shared with the catalog
+    pub inferred_schema: Arc<RelSchema>,
     /// Schema mismatches between YAML declaration and inferred output
     pub mismatches: Vec<SchemaMismatch>,
 }
@@ -111,7 +111,7 @@ pub struct PropagationResult {
 pub fn propagate_schemas(
     topo_order: &[String],
     sql_sources: &HashMap<String, String>,
-    yaml_schemas: &HashMap<String, RelSchema>,
+    yaml_schemas: &HashMap<String, Arc<RelSchema>>,
     initial_catalog: &SchemaCatalog,
     user_functions: &[UserFunctionStub],
     user_table_functions: &[UserTableFunctionStub],
@@ -135,7 +135,7 @@ pub fn propagate_schemas(
         let provider = FeatherFlowProvider::new(&catalog, &registry);
         match sql_to_plan(sql, &provider) {
             Ok(plan) => {
-                let inferred_schema = extract_schema_from_plan(&plan);
+                let inferred_schema = Arc::new(extract_schema_from_plan(&plan));
 
                 // Cross-check with YAML if available
                 let mismatches = if let Some(yaml_schema) = yaml_schemas.get(model_name) {
@@ -145,7 +145,7 @@ pub fn propagate_schemas(
                 };
 
                 // Register the inferred schema for downstream models
-                catalog.insert(model_name.clone(), Arc::new(inferred_schema.clone()));
+                catalog.insert(model_name.clone(), Arc::clone(&inferred_schema));
 
                 model_plans.insert(
                     model_name.clone(),

@@ -1910,8 +1910,8 @@ fn test_analysis_propagation_sample_project() {
     let parser = SqlParser::duckdb();
     let jinja = JinjaEnvironment::new(&project.config.vars);
 
-    let known_models: std::collections::HashSet<String> =
-        project.models.keys().map(|k| k.to_string()).collect();
+    let known_models: std::collections::HashSet<&str> =
+        project.models.keys().map(|k| k.as_str()).collect();
 
     // Build schema catalog from YAML + external tables (sources)
     let mut catalog: SchemaCatalog = HashMap::new();
@@ -1981,7 +1981,7 @@ fn test_analysis_propagation_sample_project() {
         let raw_deps = extract_dependencies(&stmts);
         let model_deps: Vec<String> = raw_deps
             .into_iter()
-            .filter(|d| known_models.contains(d))
+            .filter(|d| known_models.contains(d.as_str()))
             .collect();
         dep_map.insert(name.to_string(), model_deps);
         sql_sources.insert(name.to_string(), rendered);
@@ -1990,9 +1990,9 @@ fn test_analysis_propagation_sample_project() {
     let dag = ModelDag::build(&dep_map).unwrap();
     let topo_order = dag.topological_order().unwrap();
 
-    let yaml_schemas: HashMap<String, RelSchema> = catalog
+    let yaml_schemas: HashMap<String, Arc<RelSchema>> = catalog
         .iter()
-        .map(|(k, v)| (k.clone(), v.as_ref().clone()))
+        .map(|(k, v)| (k.clone(), Arc::clone(v)))
         .collect();
     let (user_fn_stubs, user_table_fn_stubs) = ff_analysis::build_user_function_stubs(&project);
     let result = propagate_schemas(
@@ -2048,11 +2048,11 @@ fn build_analysis_pipeline(fixture_path: &str) -> AnalysisPipeline {
     let parser = SqlParser::duckdb();
     let jinja = JinjaEnvironment::new(&project.config.vars);
 
-    let known_models: std::collections::HashSet<String> =
-        project.models.keys().map(|k| k.to_string()).collect();
+    let known_models: std::collections::HashSet<&str> =
+        project.models.keys().map(|k| k.as_str()).collect();
 
     let mut catalog: SchemaCatalog = HashMap::new();
-    let mut yaml_schemas: HashMap<ModelName, RelSchema> = HashMap::new();
+    let mut yaml_schemas: HashMap<ModelName, Arc<RelSchema>> = HashMap::new();
     let mut project_lineage = ProjectLineage::new();
 
     for (name, model) in &project.models {
@@ -2080,8 +2080,8 @@ fn build_analysis_pipeline(fixture_path: &str) -> AnalysisPipeline {
                     }
                 })
                 .collect();
-            let rel_schema = RelSchema::new(columns);
-            catalog.insert(name.to_string(), Arc::new(rel_schema.clone()));
+            let rel_schema = Arc::new(RelSchema::new(columns));
+            catalog.insert(name.to_string(), Arc::clone(&rel_schema));
             yaml_schemas.insert(name.clone(), rel_schema);
         }
     }
@@ -2134,7 +2134,7 @@ fn build_analysis_pipeline(fixture_path: &str) -> AnalysisPipeline {
         let raw_deps = ff_sql::extract_dependencies(&stmts);
         let model_deps: Vec<String> = raw_deps
             .into_iter()
-            .filter(|d| known_models.contains(d))
+            .filter(|d| known_models.contains(d.as_str()))
             .collect();
         dep_map.insert(name.to_string(), model_deps);
         if let Some(stmt) = stmts.first() {
@@ -2149,9 +2149,9 @@ fn build_analysis_pipeline(fixture_path: &str) -> AnalysisPipeline {
     let dag = ModelDag::build(&dep_map).unwrap();
     let topo_order = dag.topological_order().unwrap();
 
-    let yaml_string_map: HashMap<String, RelSchema> = yaml_schemas
+    let yaml_string_map: HashMap<String, Arc<RelSchema>> = yaml_schemas
         .iter()
-        .map(|(k, v)| (k.to_string(), v.clone()))
+        .map(|(k, v)| (k.to_string(), Arc::clone(v)))
         .collect();
 
     let (user_fn_stubs, user_table_fn_stubs) = ff_analysis::build_user_function_stubs(&project);
