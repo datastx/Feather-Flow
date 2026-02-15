@@ -1,4 +1,12 @@
-{{ config(materialized='table', wap='true') }}
+{{ config(
+    materialized='table',
+    wap='true',
+    pre_hook="CREATE TABLE IF NOT EXISTS hook_log (model VARCHAR, hook_type VARCHAR, ts TIMESTAMP DEFAULT current_timestamp)",
+    post_hook=[
+        "INSERT INTO hook_log (model, hook_type) VALUES ('fct_orders', 'post')",
+        "INSERT INTO hook_log (model, hook_type) VALUES ('fct_orders', 'post_2')"
+    ]
+) }}
 
 SELECT
     e.order_id,

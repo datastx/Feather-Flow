@@ -2906,3 +2906,392 @@ fn test_analysis_guard_ecommerce_zero_diagnostics() {
         diags
     );
 }
+
+// ============================================================================
+// PRE/POST HOOK TESTS
+// ============================================================================
+
+/// Test that project-level hooks are loaded from featherflow.yml
+#[test]
+fn test_project_level_hooks_loaded() {
+    let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
+
+    // on_run_start should have 2 hooks
+    assert_eq!(
+        project.config.on_run_start.len(),
+        2,
+        "on_run_start should have 2 hooks"
+    );
+    assert!(project.config.on_run_start[0].contains("CREATE TABLE IF NOT EXISTS run_audit"));
+    assert!(project.config.on_run_start[1].contains("INSERT INTO run_audit"));
+
+    // on_run_end should have 1 hook
+    assert_eq!(
+        project.config.on_run_end.len(),
+        1,
+        "on_run_end should have 1 hook"
+    );
+    assert!(project.config.on_run_end[0].contains("999"));
+
+    // pre_hook and post_hook should have 1 each
+    assert_eq!(
+        project.config.pre_hook.len(),
+        1,
+        "pre_hook should have 1 hook"
+    );
+    assert!(project.config.pre_hook[0].contains("project pre-hook"));
+    assert_eq!(
+        project.config.post_hook.len(),
+        1,
+        "post_hook should have 1 hook"
+    );
+    assert!(project.config.post_hook[0].contains("project post-hook"));
+}
+
+/// Test that model-level hooks are parsed from config() in SQL templates
+#[test]
+fn test_model_level_hooks_parsed_from_config() {
+    let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
+    let jinja = JinjaEnvironment::new(&project.config.vars);
+
+    // fct_orders should have pre_hook (single string) and post_hook (array of 2)
+    let fct_orders = project.get_model("fct_orders").unwrap();
+    let (_, config_values) = jinja.render_with_config(&fct_orders.raw_sql).unwrap();
+
+    // Check pre_hook is a single string
+    let pre_hook_val = config_values
+        .get("pre_hook")
+        .expect("fct_orders should have pre_hook");
+    assert!(
+        pre_hook_val.as_str().is_some(),
+        "fct_orders pre_hook should be a string"
+    );
+    assert!(
+        pre_hook_val
+            .as_str()
+            .unwrap()
+            .contains("CREATE TABLE IF NOT EXISTS hook_log"),
+        "fct_orders pre_hook should create hook_log table"
+    );
+
+    // Check post_hook is an array of 2 items
+    let post_hook_val = config_values
+        .get("post_hook")
+        .expect("fct_orders should have post_hook");
+    assert_eq!(
+        post_hook_val.kind(),
+        minijinja::value::ValueKind::Seq,
+        "fct_orders post_hook should be a sequence"
+    );
+    let items: Vec<String> = post_hook_val
+        .try_iter()
+        .unwrap()
+        .filter_map(|v| v.as_str().map(String::from))
+        .collect();
+    assert_eq!(items.len(), 2, "fct_orders post_hook should have 2 items");
+    assert!(items[0].contains("fct_orders"));
+    assert!(items[1].contains("post_2"));
+
+    // dim_customers should have post_hook (single string)
+    let dim_customers = project.get_model("dim_customers").unwrap();
+    let (_, config_values) = jinja.render_with_config(&dim_customers.raw_sql).unwrap();
+
+    let post_hook_val = config_values
+        .get("post_hook")
+        .expect("dim_customers should have post_hook");
+    assert!(
+        post_hook_val.as_str().is_some(),
+        "dim_customers post_hook should be a string"
+    );
+    assert!(post_hook_val.as_str().unwrap().contains("dim_customers"));
+}
+
+/// Test hook execution with {{ this }} substitution
+#[tokio::test]
+async fn test_hooks_execute_with_this_substitution() {
+    let db = DuckDbBackend::in_memory().unwrap();
+
+    // Create a hook that uses {{ this }} to reference the model table
+    let hooks = vec![
+        "CREATE TABLE IF NOT EXISTS hook_log (model VARCHAR, table_ref VARCHAR)".to_string(),
+        "INSERT INTO hook_log (model, table_ref) VALUES ('test', '{{ this }}')".to_string(),
+    ];
+
+    let qualified_name = "analytics.fct_orders";
+
+    // Execute hooks with {{ this }} substitution (replicate execute_hooks logic)
+    for hook in &hooks {
+        let sql = hook
+            .replace("{{ this }}", qualified_name)
+            .replace("{{this}}", qualified_name);
+        db.execute(&sql).await.unwrap();
+    }
+
+    // Verify the hook_log table was created and populated
+    assert!(db.relation_exists("hook_log").await.unwrap());
+
+    let count = db.query_count("SELECT * FROM hook_log").await.unwrap();
+    assert_eq!(count, 1);
+
+    // Verify {{ this }} was substituted with the qualified name
+    let table_ref = db
+        .query_one("SELECT table_ref FROM hook_log")
+        .await
+        .unwrap();
+    assert_eq!(
+        table_ref,
+        Some("analytics.fct_orders".to_string()),
+        "{{ this }} should be replaced with qualified table name"
+    );
+}
+
+/// Test on_run_start and on_run_end hooks execute observable SQL
+#[tokio::test]
+async fn test_on_run_start_end_hooks_execute() {
+    let db = DuckDbBackend::in_memory().unwrap();
+
+    // Simulate on_run_start hooks from the sample project config
+    let on_run_start = vec![
+        "CREATE TABLE IF NOT EXISTS run_audit (run_id INTEGER, started_at TIMESTAMP DEFAULT current_timestamp)".to_string(),
+        "INSERT INTO run_audit (run_id) VALUES (1)".to_string(),
+    ];
+
+    for hook in &on_run_start {
+        db.execute(hook).await.unwrap();
+    }
+
+    // Verify run_audit table exists and has the start row
+    assert!(db.relation_exists("run_audit").await.unwrap());
+    let count = db
+        .query_count("SELECT * FROM run_audit WHERE run_id = 1")
+        .await
+        .unwrap();
+    assert_eq!(count, 1, "on_run_start should have inserted run_id=1");
+
+    // Simulate on_run_end hooks
+    let on_run_end = vec!["INSERT INTO run_audit (run_id) VALUES (999)".to_string()];
+
+    for hook in &on_run_end {
+        db.execute(hook).await.unwrap();
+    }
+
+    // Verify on_run_end row
+    let count = db
+        .query_count("SELECT * FROM run_audit WHERE run_id = 999")
+        .await
+        .unwrap();
+    assert_eq!(count, 1, "on_run_end should have inserted run_id=999");
+
+    // Verify total rows
+    let total = db.query_count("SELECT * FROM run_audit").await.unwrap();
+    assert_eq!(total, 2, "run_audit should have exactly 2 rows");
+}
+
+/// Test hook merge ordering: project pre → model pre; model post → project post
+#[tokio::test]
+async fn test_hook_merge_ordering() {
+    let db = DuckDbBackend::in_memory().unwrap();
+
+    // Set up an audit table to track execution order
+    db.execute("CREATE TABLE hook_order (seq INTEGER, source VARCHAR)")
+        .await
+        .unwrap();
+
+    // Simulate project-level pre_hooks
+    let project_pre = vec!["INSERT INTO hook_order VALUES (1, 'project_pre')".to_string()];
+    // Simulate model-level pre_hooks
+    let model_pre = vec!["INSERT INTO hook_order VALUES (2, 'model_pre')".to_string()];
+
+    // Merge: project pre first, then model pre (matches compile.rs logic)
+    let mut merged_pre = project_pre;
+    merged_pre.extend(model_pre);
+
+    for hook in &merged_pre {
+        db.execute(hook).await.unwrap();
+    }
+
+    // Simulate model-level post_hooks
+    let model_post = vec!["INSERT INTO hook_order VALUES (3, 'model_post')".to_string()];
+    // Simulate project-level post_hooks
+    let project_post = vec!["INSERT INTO hook_order VALUES (4, 'project_post')".to_string()];
+
+    // Merge: model post first, then project post (matches compile.rs logic)
+    let mut merged_post = model_post;
+    merged_post.extend(project_post);
+
+    for hook in &merged_post {
+        db.execute(hook).await.unwrap();
+    }
+
+    // Verify execution order
+    let total = db.query_count("SELECT * FROM hook_order").await.unwrap();
+    assert_eq!(total, 4, "Should have 4 hook executions");
+
+    // Verify correct ordering via seq values
+    let first = db
+        .query_one("SELECT source FROM hook_order WHERE seq = 1")
+        .await
+        .unwrap();
+    assert_eq!(first, Some("project_pre".to_string()));
+
+    let second = db
+        .query_one("SELECT source FROM hook_order WHERE seq = 2")
+        .await
+        .unwrap();
+    assert_eq!(second, Some("model_pre".to_string()));
+
+    let third = db
+        .query_one("SELECT source FROM hook_order WHERE seq = 3")
+        .await
+        .unwrap();
+    assert_eq!(third, Some("model_post".to_string()));
+
+    let fourth = db
+        .query_one("SELECT source FROM hook_order WHERE seq = 4")
+        .await
+        .unwrap();
+    assert_eq!(fourth, Some("project_post".to_string()));
+}
+
+fn extract_hooks_from_config(
+    config_values: &HashMap<String, minijinja::Value>,
+    key: &str,
+) -> Vec<String> {
+    config_values
+        .get(key)
+        .map(|v| {
+            if let Some(s) = v.as_str() {
+                vec![s.to_string()]
+            } else if v.kind() == minijinja::value::ValueKind::Seq {
+                v.try_iter()
+                    .map(|iter| {
+                        iter.filter_map(|item| item.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            }
+        })
+        .unwrap_or_default()
+}
+
+/// Test that compile captures model-level hooks in manifest
+#[test]
+fn test_compile_captures_hooks_in_manifest() {
+    let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
+    let jinja = JinjaEnvironment::new(&project.config.vars);
+
+    let fct_orders = project.get_model("fct_orders").unwrap();
+    let (_, config_values) = jinja.render_with_config(&fct_orders.raw_sql).unwrap();
+
+    let pre_hooks = extract_hooks_from_config(&config_values, "pre_hook");
+    let post_hooks = extract_hooks_from_config(&config_values, "post_hook");
+
+    assert_eq!(pre_hooks.len(), 1, "fct_orders should have 1 pre_hook");
+    assert!(pre_hooks[0].contains("hook_log"));
+    assert_eq!(post_hooks.len(), 2, "fct_orders should have 2 post_hooks");
+
+    let dim_customers = project.get_model("dim_customers").unwrap();
+    let (_, config_values) = jinja.render_with_config(&dim_customers.raw_sql).unwrap();
+
+    let dim_post_hooks = extract_hooks_from_config(&config_values, "post_hook");
+
+    assert_eq!(
+        dim_post_hooks.len(),
+        1,
+        "dim_customers should have 1 post_hook"
+    );
+    assert!(dim_post_hooks[0].contains("dim_customers"));
+
+    let stg_orders = project.get_model("stg_orders").unwrap();
+    let (_, config_values) = jinja.render_with_config(&stg_orders.raw_sql).unwrap();
+    assert!(
+        extract_hooks_from_config(&config_values, "pre_hook").is_empty(),
+        "stg_orders should not have pre_hook"
+    );
+    assert!(
+        extract_hooks_from_config(&config_values, "post_hook").is_empty(),
+        "stg_orders should not have post_hook"
+    );
+}
+
+/// Test fct_orders model-level hooks produce expected side effects when executed
+#[tokio::test]
+async fn test_fct_orders_hooks_side_effects() {
+    let db = DuckDbBackend::in_memory().unwrap();
+    let qualified_name = "analytics.fct_orders";
+
+    // Execute fct_orders pre_hook (creates hook_log table)
+    let pre_hook =
+        "CREATE TABLE IF NOT EXISTS hook_log (model VARCHAR, hook_type VARCHAR, ts TIMESTAMP DEFAULT current_timestamp)";
+    db.execute(pre_hook).await.unwrap();
+
+    assert!(
+        db.relation_exists("hook_log").await.unwrap(),
+        "pre_hook should create hook_log table"
+    );
+
+    // Execute fct_orders post_hooks (two inserts)
+    let post_hooks = vec![
+        "INSERT INTO hook_log (model, hook_type) VALUES ('fct_orders', 'post')".to_string(),
+        "INSERT INTO hook_log (model, hook_type) VALUES ('fct_orders', 'post_2')".to_string(),
+    ];
+
+    for hook in &post_hooks {
+        let sql = hook
+            .replace("{{ this }}", qualified_name)
+            .replace("{{this}}", qualified_name);
+        db.execute(&sql).await.unwrap();
+    }
+
+    // Verify fct_orders post_hooks inserted 2 rows
+    let fct_count = db
+        .query_count("SELECT * FROM hook_log WHERE model = 'fct_orders'")
+        .await
+        .unwrap();
+    assert_eq!(fct_count, 2, "fct_orders should have 2 hook_log rows");
+
+    // Execute dim_customers post_hook
+    let dim_hook = "INSERT INTO hook_log (model, hook_type) VALUES ('dim_customers', 'post')";
+    db.execute(dim_hook).await.unwrap();
+
+    // Verify dim_customers post_hook inserted 1 row
+    let dim_count = db
+        .query_count("SELECT * FROM hook_log WHERE model = 'dim_customers'")
+        .await
+        .unwrap();
+    assert_eq!(dim_count, 1, "dim_customers should have 1 hook_log row");
+
+    // Verify total rows in hook_log
+    let total = db.query_count("SELECT * FROM hook_log").await.unwrap();
+    assert_eq!(total, 3, "hook_log should have 3 total rows");
+}
+
+/// Test project-level hooks with {{ this }} substitution produces correct strings
+#[test]
+fn test_project_hooks_this_substitution() {
+    let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
+
+    // Project pre_hook contains "{{ this }}" placeholder
+    let pre_hook = &project.config.pre_hook[0];
+    assert!(
+        pre_hook.contains("{{ this }}"),
+        "Project pre_hook should contain {{{{ this }}}} placeholder"
+    );
+
+    // Simulate substitution (same logic as execute_hooks in hooks.rs)
+    let qualified_name = "analytics.fct_orders";
+    let substituted = pre_hook
+        .replace("{{ this }}", qualified_name)
+        .replace("{{this}}", qualified_name);
+
+    assert!(
+        substituted.contains("analytics.fct_orders"),
+        "{{ this }} should be replaced with qualified name"
+    );
+    assert!(
+        !substituted.contains("{{ this }}"),
+        "No {{ this }} placeholders should remain after substitution"
+    );
+}

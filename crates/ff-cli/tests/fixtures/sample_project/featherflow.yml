@@ -17,6 +17,19 @@ database:
   type: duckdb
   path: "target/dev.duckdb"
 
+on_run_start:
+  - "CREATE TABLE IF NOT EXISTS run_audit (run_id INTEGER, started_at TIMESTAMP DEFAULT current_timestamp)"
+  - "INSERT INTO run_audit (run_id) VALUES (1)"
+
+on_run_end:
+  - "INSERT INTO run_audit (run_id) VALUES (999)"
+
+pre_hook:
+  - "-- project pre-hook: {{ this }}"
+
+post_hook:
+  - "-- project post-hook: {{ this }}"
+
 vars:
   start_date: "2024-01-01"
   environment: dev
