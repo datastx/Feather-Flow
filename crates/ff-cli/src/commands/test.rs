@@ -807,7 +807,7 @@ fn render_custom_test_macro(
 ///
 /// For built-in test types, uses the standard generator.
 /// For custom test types, looks up the macro in the registry and renders it.
-fn generate_test_with_custom_support(
+pub(crate) fn generate_test_with_custom_support(
     schema_test: &SchemaTest,
     qualified_name: &str,
     custom_registry: &CustomTestRegistry,

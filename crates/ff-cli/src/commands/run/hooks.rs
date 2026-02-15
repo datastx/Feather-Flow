@@ -18,7 +18,7 @@ use super::compile::CompiledModel;
 ///
 /// If --target is specified (or FF_TARGET env var is set), uses the database config
 /// from that target. Otherwise, uses the base database config.
-pub(super) fn create_database_connection(
+pub(crate) fn create_database_connection(
     project: &Project,
     global: &GlobalArgs,
 ) -> Result<Arc<dyn Database>> {
@@ -35,7 +35,7 @@ pub(super) fn create_database_connection(
 }
 
 /// Create all required schemas before running models
-pub(super) async fn create_schemas(
+pub(crate) async fn create_schemas(
     db: &Arc<dyn Database>,
     compiled_models: &HashMap<String, CompiledModel>,
     global: &GlobalArgs,
@@ -62,7 +62,7 @@ pub(super) async fn create_schemas(
 /// Without this, unqualified table references in SQL (e.g. `FROM raw_customers`)
 /// only resolve against the default `main` schema. By including all model schemas
 /// and the project's default schema, cross-schema references work naturally.
-pub(super) async fn set_search_path(
+pub(crate) async fn set_search_path(
     db: &Arc<dyn Database>,
     compiled_models: &HashMap<String, CompiledModel>,
     project: &Project,

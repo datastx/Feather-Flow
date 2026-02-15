@@ -232,8 +232,8 @@ dev-fresh: ff-seed-full-refresh ff-run-full-refresh ff-function-deploy ff-test #
 ci-e2e: ## End-to-end pipeline test against sample project
 	@echo "=== E2E: clean ==="
 	rm -rf crates/ff-cli/tests/fixtures/sample_project/target
-	@echo "=== E2E: build ==="
-	$(MAKE) build
+	@echo "=== E2E: compile ==="
+	$(MAKE) ff-compile PROJECT_DIR=crates/ff-cli/tests/fixtures/sample_project
 	@echo "=== E2E: seed ==="
 	$(MAKE) ff-seed-full-refresh PROJECT_DIR=crates/ff-cli/tests/fixtures/sample_project
 	@echo "=== E2E: run (builds model tables — table functions not yet deployed) ==="
@@ -244,6 +244,8 @@ ci-e2e: ## End-to-end pipeline test against sample project
 	$(MAKE) ff-run-full-refresh PROJECT_DIR=crates/ff-cli/tests/fixtures/sample_project
 	@echo "=== E2E: test (materialized models) ==="
 	cargo run -p ff-cli -- --project-dir crates/ff-cli/tests/fixtures/sample_project test -n dim_customers,fct_orders,dim_products,rpt_order_volume
+	@echo "=== E2E: build (seed + per-model run/test) ==="
+	cargo run -p ff-cli -- --project-dir crates/ff-cli/tests/fixtures/sample_project build --full-refresh
 	@echo "E2E pipeline passed!"
 
 # =============================================================================

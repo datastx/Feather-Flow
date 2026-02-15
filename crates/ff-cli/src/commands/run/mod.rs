@@ -26,9 +26,10 @@ use std::time::Instant;
 use crate::cli::{GlobalArgs, OutputFormat, RunArgs};
 use crate::commands::common::{self, load_project};
 
-use compile::{determine_execution_order, load_or_compile_models};
+pub(crate) use compile::{determine_execution_order, load_or_compile_models, CompiledModel};
+pub(crate) use execute::run_single_model;
 use execute::{execute_models_with_state, ExecutionContext};
-use hooks::{create_database_connection, create_schemas, set_search_path};
+pub(crate) use hooks::{create_database_connection, create_schemas, set_search_path};
 use state::{compute_config_hash, compute_smart_skips, write_run_results, RunResults};
 
 /// Execute the run command

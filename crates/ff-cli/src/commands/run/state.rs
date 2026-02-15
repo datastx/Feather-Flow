@@ -16,12 +16,12 @@ use super::compile::CompiledModel;
 
 /// Run result for a single model
 #[derive(Debug, Clone, Serialize)]
-pub(super) struct ModelRunResult {
-    pub(super) model: String,
-    pub(super) status: RunStatus,
-    pub(super) materialization: String,
-    pub(super) duration_secs: f64,
-    pub(super) error: Option<String>,
+pub(crate) struct ModelRunResult {
+    pub(crate) model: String,
+    pub(crate) status: RunStatus,
+    pub(crate) materialization: String,
+    pub(crate) duration_secs: f64,
+    pub(crate) error: Option<String>,
 }
 
 /// Run results output file format

@@ -100,7 +100,7 @@ async fn execute_materialization(
 ///
 /// Returns a `ModelRunResult` with the outcome. Callers handle state-file updates
 /// because the sequential and parallel paths have different timing requirements.
-async fn run_single_model(
+pub(crate) async fn run_single_model(
     db: &Arc<dyn Database>,
     name: &str,
     compiled: &CompiledModel,

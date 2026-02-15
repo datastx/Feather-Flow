@@ -75,7 +75,7 @@ fn is_cache_valid(project: &Project) -> bool {
 }
 
 /// Load models from cache or compile them fresh
-pub(super) fn load_or_compile_models(
+pub(crate) fn load_or_compile_models(
     project: &Project,
     args: &RunArgs,
     global: &GlobalArgs,
@@ -405,7 +405,7 @@ fn resolve_deferred_dependencies(
 }
 
 /// Determine execution order based on DAG and CLI arguments
-pub(super) fn determine_execution_order(
+pub(crate) fn determine_execution_order(
     compiled_models: &HashMap<String, CompiledModel>,
     project: &Project,
     args: &RunArgs,
