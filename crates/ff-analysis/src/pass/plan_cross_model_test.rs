@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::*;
 use crate::datafusion_bridge::propagation::propagate_schemas;
 use crate::schema::{RelSchema, SchemaCatalog};
@@ -9,10 +11,10 @@ fn test_a040_extra_column_in_sql() {
     let mut initial_catalog: SchemaCatalog = HashMap::new();
     initial_catalog.insert(
         "source".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo_order = vec!["test_model".to_string()];
@@ -54,7 +56,11 @@ fn test_a040_missing_column_from_sql() {
     let mut initial_catalog: SchemaCatalog = HashMap::new();
     initial_catalog.insert(
         "source".to_string(),
-        RelSchema::new(vec![make_col("id", int32(), Nullability::NotNull)]),
+        Arc::new(RelSchema::new(vec![make_col(
+            "id",
+            int32(),
+            Nullability::NotNull,
+        )])),
     );
 
     let topo_order = vec!["test_model".to_string()];
@@ -98,10 +104,10 @@ fn test_no_diagnostics_for_matching_schema() {
     let mut initial_catalog: SchemaCatalog = HashMap::new();
     initial_catalog.insert(
         "source".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo_order = vec!["test_model".to_string()];
@@ -148,10 +154,10 @@ fn test_a040_type_mismatch() {
     let mut initial_catalog: SchemaCatalog = HashMap::new();
     initial_catalog.insert(
         "source".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("code", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo_order = vec!["test_model".to_string()];
@@ -196,11 +202,11 @@ fn test_a040_multiple_extras() {
     let mut initial_catalog: SchemaCatalog = HashMap::new();
     initial_catalog.insert(
         "source".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::Nullable),
             make_col("email", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo_order = vec!["test_model".to_string()];
@@ -244,10 +250,10 @@ fn test_a040_combo_extra_and_missing() {
     let mut initial_catalog: SchemaCatalog = HashMap::new();
     initial_catalog.insert(
         "source".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo_order = vec!["test_model".to_string()];
@@ -298,10 +304,10 @@ fn test_a040_compatible_types_no_diagnostic() {
     let mut initial_catalog: SchemaCatalog = HashMap::new();
     initial_catalog.insert(
         "source".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo_order = vec!["test_model".to_string()];
@@ -344,17 +350,17 @@ fn test_a041_left_join_nullable_vs_yaml_not_null() {
     let mut initial_catalog: SchemaCatalog = HashMap::new();
     initial_catalog.insert(
         "orders".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("customer_id", int32(), Nullability::NotNull),
-        ]),
+        ])),
     );
     initial_catalog.insert(
         "customers".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::NotNull),
-        ]),
+        ])),
     );
 
     let topo_order = vec!["test_model".to_string()];
@@ -403,10 +409,10 @@ fn test_a041_both_nullable_no_diagnostic() {
     let mut initial_catalog: SchemaCatalog = HashMap::new();
     initial_catalog.insert(
         "source".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo_order = vec!["test_model".to_string()];
@@ -444,10 +450,10 @@ fn test_a041_both_not_null_no_diagnostic() {
     let mut initial_catalog: SchemaCatalog = HashMap::new();
     initial_catalog.insert(
         "source".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::NotNull),
-        ]),
+        ])),
     );
 
     let topo_order = vec!["test_model".to_string()];

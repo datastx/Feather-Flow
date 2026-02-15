@@ -198,7 +198,7 @@ pub(crate) fn build_schema_catalog(
             })
             .collect();
         let rel_schema = RelSchema::new(columns);
-        schema_catalog.insert(name.to_string(), rel_schema.clone());
+        schema_catalog.insert(name.to_string(), Arc::new(rel_schema.clone()));
         yaml_schemas.insert(name.clone(), rel_schema);
     }
 
@@ -210,7 +210,7 @@ pub(crate) fn build_schema_catalog(
                 continue;
             }
             if table.columns.is_empty() {
-                schema_catalog.insert(table.name.clone(), RelSchema::empty());
+                schema_catalog.insert(table.name.clone(), Arc::new(RelSchema::empty()));
             } else {
                 let columns: Vec<TypedColumn> = table
                     .columns
@@ -226,7 +226,7 @@ pub(crate) fn build_schema_catalog(
                         }
                     })
                     .collect();
-                schema_catalog.insert(table.name.clone(), RelSchema::new(columns));
+                schema_catalog.insert(table.name.clone(), Arc::new(RelSchema::new(columns)));
             }
         }
     }
@@ -234,7 +234,7 @@ pub(crate) fn build_schema_catalog(
     // Add remaining external tables with empty schemas
     for ext in external_tables {
         if !schema_catalog.contains_key(ext) {
-            schema_catalog.insert(ext.clone(), RelSchema::empty());
+            schema_catalog.insert(ext.clone(), Arc::new(RelSchema::empty()));
         }
     }
 

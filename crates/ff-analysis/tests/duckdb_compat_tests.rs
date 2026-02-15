@@ -5,8 +5,9 @@ use ff_analysis::propagate_schemas;
 use ff_analysis::sql_to_plan;
 use ff_analysis::{FloatBitWidth, IntBitWidth, Nullability, RelSchema, SqlType, TypedColumn};
 use std::collections::HashMap;
+use std::sync::Arc;
 
-type SchemaCatalog = HashMap<String, RelSchema>;
+type SchemaCatalog = HashMap<String, Arc<RelSchema>>;
 
 fn make_col(name: &str, ty: SqlType, null: Nullability) -> TypedColumn {
     TypedColumn {
@@ -61,22 +62,22 @@ fn standard_catalog() -> SchemaCatalog {
     let mut catalog = HashMap::new();
     catalog.insert(
         "orders".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("customer_id", int32(), Nullability::NotNull),
             make_col("amount", decimal(10, 2), Nullability::Nullable),
             make_col("status", varchar(), Nullability::Nullable),
             make_col("created_at", timestamp(), Nullability::NotNull),
             make_col("is_active", boolean(), Nullability::NotNull),
-        ]),
+        ])),
     );
     catalog.insert(
         "customers".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::NotNull),
             make_col("email", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
     catalog
 }
@@ -410,10 +411,10 @@ fn test_propagation_with_cast_shorthand() {
     let mut initial: SchemaCatalog = HashMap::new();
     initial.insert(
         "source".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("amount", float64(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo_order = vec!["model".to_string()];
@@ -444,10 +445,10 @@ fn test_propagation_with_duckdb_function() {
     let mut initial: SchemaCatalog = HashMap::new();
     initial.insert(
         "events".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("ts", timestamp(), Nullability::NotNull),
-        ]),
+        ])),
     );
 
     let topo_order = vec!["model".to_string()];

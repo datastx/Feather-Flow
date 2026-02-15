@@ -1,5 +1,6 @@
 use super::*;
 use crate::test_utils::*;
+use std::sync::Arc;
 
 #[test]
 fn test_linear_chain_propagation() {
@@ -7,10 +8,10 @@ fn test_linear_chain_propagation() {
     let mut initial_catalog: SchemaCatalog = HashMap::new();
     initial_catalog.insert(
         "source_a".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo_order = vec!["stg_a".to_string()];
@@ -48,11 +49,11 @@ fn test_multi_step_propagation() {
     let mut initial_catalog: SchemaCatalog = HashMap::new();
     initial_catalog.insert(
         "raw_orders".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("amount", int32(), Nullability::Nullable),
             make_col("status", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo_order = vec!["stg_orders".to_string(), "mart_orders".to_string()];
@@ -92,10 +93,10 @@ fn test_diamond_dag_propagation() {
     let mut initial_catalog: SchemaCatalog = HashMap::new();
     initial_catalog.insert(
         "source".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("val", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo_order = vec![
@@ -136,10 +137,10 @@ fn test_schema_mismatch_detection() {
     let mut initial_catalog: SchemaCatalog = HashMap::new();
     initial_catalog.insert(
         "source".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo_order = vec!["test_model".to_string()];
@@ -219,11 +220,11 @@ fn test_fan_out_propagation() {
     let mut initial_catalog: SchemaCatalog = HashMap::new();
     initial_catalog.insert(
         "source".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::Nullable),
             make_col("amount", float64(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo_order = vec!["model_a".to_string(), "model_b".to_string()];
@@ -263,17 +264,17 @@ fn test_fan_in_propagation() {
     let mut initial_catalog: SchemaCatalog = HashMap::new();
     initial_catalog.insert(
         "source_a".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("val_a", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
     initial_catalog.insert(
         "source_b".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("val_b", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo_order = vec!["final_model".to_string()];
@@ -303,13 +304,13 @@ fn test_column_narrowing() {
     let mut initial_catalog: SchemaCatalog = HashMap::new();
     initial_catalog.insert(
         "wide_source".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("a", int32(), Nullability::NotNull),
             make_col("b", int32(), Nullability::NotNull),
             make_col("c", int32(), Nullability::NotNull),
             make_col("d", int32(), Nullability::NotNull),
             make_col("e", int32(), Nullability::NotNull),
-        ]),
+        ])),
     );
 
     let topo_order = vec!["narrow_model".to_string()];
@@ -340,7 +341,11 @@ fn test_column_rename_via_alias() {
     let mut initial_catalog: SchemaCatalog = HashMap::new();
     initial_catalog.insert(
         "source".to_string(),
-        RelSchema::new(vec![make_col("old_name", varchar(), Nullability::Nullable)]),
+        Arc::new(RelSchema::new(vec![make_col(
+            "old_name",
+            varchar(),
+            Nullability::Nullable,
+        )])),
     );
 
     let topo_order = vec!["renamed".to_string()];
@@ -371,10 +376,10 @@ fn test_deep_chain_propagation() {
     let mut initial_catalog: SchemaCatalog = HashMap::new();
     initial_catalog.insert(
         "raw".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("val", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo_order: Vec<String> = (1..=5).map(|i| format!("model_{}", i)).collect();
@@ -414,7 +419,11 @@ fn test_upstream_failure_isolation() {
     let mut initial_catalog: SchemaCatalog = HashMap::new();
     initial_catalog.insert(
         "source".to_string(),
-        RelSchema::new(vec![make_col("id", int32(), Nullability::NotNull)]),
+        Arc::new(RelSchema::new(vec![make_col(
+            "id",
+            int32(),
+            Nullability::NotNull,
+        )])),
     );
 
     let topo_order = vec!["bad_model".to_string(), "good_model".to_string()];
@@ -470,11 +479,11 @@ fn test_aggregate_type_preservation() {
     let mut initial_catalog: SchemaCatalog = HashMap::new();
     initial_catalog.insert(
         "source".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("amount", decimal(10, 2), Nullability::Nullable),
             make_col("created_at", date(), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo_order = vec!["agg_model".to_string()];
@@ -526,10 +535,10 @@ fn test_coalesce_type_preservation() {
     let mut initial_catalog: SchemaCatalog = HashMap::new();
     initial_catalog.insert(
         "source".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("amount", decimal(10, 2), Nullability::Nullable),
-        ]),
+        ])),
     );
 
     let topo_order = vec!["coalesce_model".to_string()];

@@ -8,6 +8,7 @@ use ff_core::dag::ModelDag;
 use ff_jinja::JinjaEnvironment;
 use ff_sql::{extract_column_lineage, extract_dependencies, ProjectLineage, SqlParser};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::cli::{AnalyzeArgs, AnalyzeOutput, AnalyzeSeverity, GlobalArgs};
 use crate::commands::common::{
@@ -99,7 +100,7 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
 
     let ctx = AnalysisContext::new(project, dag, yaml_schemas, project_lineage);
 
-    let yaml_string_map: SchemaCatalog = ctx
+    let yaml_string_map: HashMap<String, RelSchema> = ctx
         .yaml_schemas()
         .iter()
         .map(|(k, v)| (k.to_string(), v.clone()))
@@ -107,7 +108,7 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
     let mut plan_catalog: SchemaCatalog = schema_catalog;
     for ext in &external_tables {
         if !plan_catalog.contains_key(ext) {
-            plan_catalog.insert(ext.clone(), RelSchema::empty());
+            plan_catalog.insert(ext.clone(), Arc::new(RelSchema::empty()));
         }
     }
 

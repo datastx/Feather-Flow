@@ -12,6 +12,7 @@ use ff_sql::{extract_dependencies, SqlParser};
 use ff_test::{generator::GeneratedTest, TestRunner};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use tempfile::tempdir;
 
 /// Test loading the sample project
@@ -1930,7 +1931,7 @@ fn test_analysis_propagation_sample_project() {
                     }
                 })
                 .collect();
-            catalog.insert(name.to_string(), RelSchema::new(columns));
+            catalog.insert(name.to_string(), Arc::new(RelSchema::new(columns)));
         }
     }
 
@@ -1941,7 +1942,7 @@ fn test_analysis_propagation_sample_project() {
                 continue;
             }
             if table.columns.is_empty() {
-                catalog.insert(table.name.clone(), RelSchema::empty());
+                catalog.insert(table.name.clone(), Arc::new(RelSchema::empty()));
             } else {
                 let columns: Vec<TypedColumn> = table
                     .columns
@@ -1954,14 +1955,14 @@ fn test_analysis_propagation_sample_project() {
                         provenance: vec![],
                     })
                     .collect();
-                catalog.insert(table.name.clone(), RelSchema::new(columns));
+                catalog.insert(table.name.clone(), Arc::new(RelSchema::new(columns)));
             }
         }
     }
     // Add remaining external tables with empty schemas
     for ext in &project.config.external_tables {
         if !catalog.contains_key(ext) {
-            catalog.insert(ext.clone(), RelSchema::empty());
+            catalog.insert(ext.clone(), Arc::new(RelSchema::empty()));
         }
     }
 
@@ -1989,7 +1990,10 @@ fn test_analysis_propagation_sample_project() {
     let dag = ModelDag::build(&dep_map).unwrap();
     let topo_order = dag.topological_order().unwrap();
 
-    let yaml_schemas: SchemaCatalog = catalog.clone();
+    let yaml_schemas: HashMap<String, RelSchema> = catalog
+        .iter()
+        .map(|(k, v)| (k.clone(), v.as_ref().clone()))
+        .collect();
     let (user_fn_stubs, user_table_fn_stubs) = ff_analysis::build_user_function_stubs(&project);
     let result = propagate_schemas(
         &topo_order,
@@ -2077,7 +2081,7 @@ fn build_analysis_pipeline(fixture_path: &str) -> AnalysisPipeline {
                 })
                 .collect();
             let rel_schema = RelSchema::new(columns);
-            catalog.insert(name.to_string(), rel_schema.clone());
+            catalog.insert(name.to_string(), Arc::new(rel_schema.clone()));
             yaml_schemas.insert(name.clone(), rel_schema);
         }
     }
@@ -2088,7 +2092,7 @@ fn build_analysis_pipeline(fixture_path: &str) -> AnalysisPipeline {
                 continue;
             }
             if table.columns.is_empty() {
-                catalog.insert(table.name.clone(), RelSchema::empty());
+                catalog.insert(table.name.clone(), Arc::new(RelSchema::empty()));
             } else {
                 let columns: Vec<TypedColumn> = table
                     .columns
@@ -2111,7 +2115,7 @@ fn build_analysis_pipeline(fixture_path: &str) -> AnalysisPipeline {
                         }
                     })
                     .collect();
-                catalog.insert(table.name.clone(), RelSchema::new(columns));
+                catalog.insert(table.name.clone(), Arc::new(RelSchema::new(columns)));
             }
         }
     }
@@ -2145,7 +2149,7 @@ fn build_analysis_pipeline(fixture_path: &str) -> AnalysisPipeline {
     let dag = ModelDag::build(&dep_map).unwrap();
     let topo_order = dag.topological_order().unwrap();
 
-    let yaml_string_map: SchemaCatalog = yaml_schemas
+    let yaml_string_map: HashMap<String, RelSchema> = yaml_schemas
         .iter()
         .map(|(k, v)| (k.to_string(), v.clone()))
         .collect();

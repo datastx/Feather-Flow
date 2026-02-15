@@ -5,24 +5,25 @@ use crate::schema::{RelSchema, SchemaCatalog};
 use crate::test_utils::{int32, make_col, varchar};
 use crate::types::Nullability;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 fn make_catalog() -> SchemaCatalog {
     let mut catalog: SchemaCatalog = HashMap::new();
     catalog.insert(
         "orders".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("customer_id", int32(), Nullability::Nullable),
             make_col("amount", int32(), Nullability::Nullable),
             make_col("status", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
     catalog.insert(
         "customers".to_string(),
-        RelSchema::new(vec![
+        Arc::new(RelSchema::new(vec![
             make_col("id", int32(), Nullability::NotNull),
             make_col("name", varchar(), Nullability::Nullable),
-        ]),
+        ])),
     );
     catalog
 }

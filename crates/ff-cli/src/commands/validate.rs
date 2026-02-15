@@ -427,36 +427,9 @@ fn validate_schemas(
         let Some(schema) = &model.schema else {
             continue;
         };
+        let file_path = model.path.with_extension("yml").display().to_string();
         for column in &schema.columns {
-            if let Some(refs) = &column.references {
-                if !known_models.contains(refs.model.as_str()) {
-                    ctx.warning(
-                        "W004",
-                        format!(
-                            "Column '{}' references unknown model '{}' in model '{}'",
-                            column.name, refs.model, name
-                        ),
-                        Some(model.path.with_extension("yml").display().to_string()),
-                    );
-                    schema_issues += 1;
-                }
-            }
-
-            for test in &column.tests {
-                if let Some(warning) = check_test_type_compatibility(
-                    test,
-                    &column.data_type.to_uppercase(),
-                    &column.name,
-                    name,
-                ) {
-                    ctx.warning(
-                        "W005",
-                        warning,
-                        Some(model.path.with_extension("yml").display().to_string()),
-                    );
-                    schema_issues += 1;
-                }
-            }
+            schema_issues += check_column_schema(column, name, known_models, &file_path, ctx);
         }
     }
 
@@ -725,6 +698,45 @@ fn validate_contracts(
     }
 
     Ok(())
+}
+
+/// Check a single column for reference validity (W004) and test-type compatibility (W005).
+fn check_column_schema(
+    column: &ff_core::model::SchemaColumnDef,
+    model_name: &str,
+    known_models: &HashSet<String>,
+    file_path: &str,
+    ctx: &mut ValidationContext,
+) -> usize {
+    let mut issues = 0;
+
+    if let Some(refs) = &column.references {
+        if !known_models.contains(refs.model.as_str()) {
+            ctx.warning(
+                "W004",
+                format!(
+                    "Column '{}' references unknown model '{}' in model '{}'",
+                    column.name, refs.model, model_name
+                ),
+                Some(file_path.to_string()),
+            );
+            issues += 1;
+        }
+    }
+
+    for test in &column.tests {
+        if let Some(warning) = check_test_type_compatibility(
+            test,
+            &column.data_type.to_uppercase(),
+            &column.name,
+            model_name,
+        ) {
+            ctx.warning("W005", warning, Some(file_path.to_string()));
+            issues += 1;
+        }
+    }
+
+    issues
 }
 
 /// Check a single column for governance violations (G001/G002/G003).

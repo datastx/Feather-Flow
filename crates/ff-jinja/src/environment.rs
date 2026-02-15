@@ -165,7 +165,7 @@ impl<'a> JinjaEnvironment<'a> {
         let config = self
             .config_capture
             .lock()
-            .map_err(|e| JinjaError::Internal(format!("config mutex poisoned: {e}")))?
+            .unwrap_or_else(|p| p.into_inner())
             .clone();
         Ok((rendered, config))
     }
@@ -184,14 +184,15 @@ impl<'a> JinjaEnvironment<'a> {
         template: &str,
         model: Option<&ModelContext>,
     ) -> JinjaResult<String> {
-        // Clear previous captures
+        // Clear previous captures (recover from poisoning — these are process-local
+        // and the next lines clear stale data anyway)
         self.config_capture
             .lock()
-            .map_err(|e| JinjaError::Internal(format!("config mutex poisoned: {e}")))?
+            .unwrap_or_else(|p| p.into_inner())
             .clear();
         self.warning_capture
             .lock()
-            .map_err(|e| JinjaError::Internal(format!("warning mutex poisoned: {e}")))?
+            .unwrap_or_else(|p| p.into_inner())
             .clear();
 
         let ctx = RenderContext {
