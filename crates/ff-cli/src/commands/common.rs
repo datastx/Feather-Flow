@@ -36,7 +36,7 @@ impl std::error::Error for ExitCode {}
 /// Status for model run / compile operations.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum RunStatus {
+pub(crate) enum RunStatus {
     Success,
     Error,
     Skipped,
@@ -55,7 +55,7 @@ impl fmt::Display for RunStatus {
 /// Status for schema test results.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum TestStatus {
+pub(crate) enum TestStatus {
     Pass,
     Fail,
     Error,
@@ -82,10 +82,8 @@ pub(crate) fn parse_hooks_from_config(
         .get(key)
         .map(|v| {
             if let Some(s) = v.as_str() {
-                // Single string hook
                 vec![s.to_string()]
             } else if v.kind() == minijinja::value::ValueKind::Seq {
-                // Array of hooks
                 v.try_iter()
                     .map(|iter| {
                         iter.filter_map(|item| item.as_str().map(String::from))
@@ -318,8 +316,10 @@ pub(crate) fn build_project_dag(
 pub(crate) struct StaticAnalysisOutput {
     /// The propagation result from DataFusion
     pub result: ff_analysis::PropagationResult,
-    /// Whether any schema-mismatch errors were found
+    /// Whether any schema-mismatch errors were found (after applying overrides)
     pub has_errors: bool,
+    /// User-configured severity overrides for SA codes
+    pub overrides: ff_analysis::SeverityOverrides,
 }
 
 /// Run the shared static analysis pipeline (schema catalog + propagation).
@@ -332,8 +332,9 @@ pub(crate) fn run_static_analysis_pipeline(
     topo_order: &[String],
     external_tables: &HashSet<String>,
 ) -> Result<StaticAnalysisOutput> {
-    use ff_analysis::propagate_schemas;
+    use ff_analysis::{propagate_schemas, OverriddenSeverity, SeverityOverrides};
 
+    let overrides = SeverityOverrides::from_config(&project.config.analysis.severity_overrides);
     let (schema_catalog, yaml_schemas) = build_schema_catalog(project, external_tables);
 
     let filtered_order: Vec<String> = topo_order
@@ -352,18 +353,30 @@ pub(crate) fn run_static_analysis_pipeline(
         &filtered_order,
         sql_sources,
         &yaml_string_map,
-        &schema_catalog,
+        schema_catalog,
         &user_fn_stubs,
         &user_table_fn_stubs,
     );
 
+    // Compute has_errors respecting severity overrides for SA codes
     let has_errors = !result.failures.is_empty()
-        || result
-            .model_plans
-            .values()
-            .any(|pr| pr.mismatches.iter().any(|m| m.is_error()));
+        || result.model_plans.values().any(|pr| {
+            pr.mismatches.iter().any(|m| {
+                let sa_code = m.code();
+                match overrides.get_for_sa(sa_code) {
+                    Some(OverriddenSeverity::Off) => false,
+                    Some(OverriddenSeverity::Level(ff_analysis::Severity::Error)) => true,
+                    Some(OverriddenSeverity::Level(_)) => false,
+                    None => m.is_error(),
+                }
+            })
+        });
 
-    Ok(StaticAnalysisOutput { result, has_errors })
+    Ok(StaticAnalysisOutput {
+        result,
+        has_errors,
+        overrides,
+    })
 }
 
 /// Report static analysis results: mismatches and failures.
@@ -372,13 +385,17 @@ pub(crate) fn run_static_analysis_pipeline(
 /// Returns `(mismatch_count, plan_count, failure_count)`.
 ///
 /// The `on_mismatch` callback is called for each schema mismatch with
-/// `(model_name, &SchemaMismatch)`. The `on_failure` callback is called
+/// `(model_name, &SchemaMismatch, is_error)`. The `is_error` flag reflects
+/// severity overrides when provided. The `on_failure` callback is called
 /// for each model that failed planning with `(model_name, error_message)`.
 pub(crate) fn report_static_analysis_results(
     result: &ff_analysis::PropagationResult,
-    mut on_mismatch: impl FnMut(&str, &ff_analysis::SchemaMismatch),
+    overrides: &ff_analysis::SeverityOverrides,
+    mut on_mismatch: impl FnMut(&str, &ff_analysis::SchemaMismatch, bool),
     mut on_failure: impl FnMut(&str, &str),
 ) -> (usize, usize, usize) {
+    use ff_analysis::OverriddenSeverity;
+
     let mut mismatch_count = 0;
 
     // Sort model names for deterministic output ordering
@@ -388,7 +405,23 @@ pub(crate) fn report_static_analysis_results(
     for model_name in model_names {
         let plan_result = &result.model_plans[model_name];
         for mismatch in &plan_result.mismatches {
-            on_mismatch(model_name, mismatch);
+            let sa_code = mismatch.code();
+            match overrides.get_for_sa(sa_code) {
+                Some(OverriddenSeverity::Off) => {
+                    // Suppress this diagnostic entirely
+                    continue;
+                }
+                Some(OverriddenSeverity::Level(ff_analysis::Severity::Error)) => {
+                    on_mismatch(model_name, mismatch, true);
+                }
+                Some(OverriddenSeverity::Level(_)) => {
+                    // Info or Warning — not an error
+                    on_mismatch(model_name, mismatch, false);
+                }
+                None => {
+                    on_mismatch(model_name, mismatch, mismatch.is_error());
+                }
+            }
             mismatch_count += 1;
         }
     }
@@ -452,9 +485,10 @@ pub(crate) fn run_pre_execution_analysis(
 
     let (_, plan_count, failure_count) = report_static_analysis_results(
         result,
-        |model_name, mismatch| {
+        &output.overrides,
+        |model_name, mismatch, is_error| {
             if !quiet {
-                let label = if mismatch.is_error() { "error" } else { "warn" };
+                let label = if is_error { "error" } else { "warn" };
                 eprintln!("  [{label}] {model_name}: {mismatch}");
             }
         },

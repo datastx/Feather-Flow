@@ -136,11 +136,11 @@ pub fn propagate_schemas(
     topo_order: &[String],
     sql_sources: &HashMap<String, String>,
     yaml_schemas: &HashMap<String, Arc<RelSchema>>,
-    initial_catalog: &SchemaCatalog,
+    initial_catalog: SchemaCatalog,
     user_functions: &[UserFunctionStub],
     user_table_functions: &[UserTableFunctionStub],
 ) -> PropagationResult {
-    let mut catalog = initial_catalog.clone();
+    let mut catalog = initial_catalog;
     let mut model_plans: HashMap<String, ModelPlanResult> =
         HashMap::with_capacity(topo_order.len());
     let mut failures: HashMap<String, String> = HashMap::new();
@@ -160,7 +160,7 @@ pub fn propagate_schemas(
         let plan = match sql_to_plan(sql, &provider) {
             Ok(p) => p,
             Err(e) => {
-                failures.insert(model_name.clone(), e.to_string());
+                failures.insert(model_name.clone(), format!("model '{}': {}", model_name, e));
                 continue;
             }
         };

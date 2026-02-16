@@ -302,6 +302,7 @@ impl Selector {
     fn matches_double_star(path_str: &str, pattern: &str) -> bool {
         let parts: Vec<&str> = pattern.split("**").collect();
         if parts.len() != 2 {
+            log::warn!("Malformed path selector '{}': multiple '**' segments are not supported, falling back to substring match", pattern);
             return path_str.contains(pattern);
         }
 

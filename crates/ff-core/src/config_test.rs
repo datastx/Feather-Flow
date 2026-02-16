@@ -307,25 +307,108 @@ fn test_resolve_target_none_when_not_set() {
 }
 
 #[test]
-fn test_project_hooks_default_empty() {
-    let config: Config = serde_yaml::from_str("name: test").unwrap();
-    assert!(config.pre_hook.is_empty());
-    assert!(config.post_hook.is_empty());
-}
-
-#[test]
-fn test_project_hooks_parsing() {
+fn test_project_level_pre_hook_post_hook_rejected() {
     let yaml = r#"
 name: test_project
 pre_hook:
   - "CREATE SCHEMA IF NOT EXISTS staging"
+"#;
+    let result: Result<Config, _> = serde_yaml::from_str(yaml);
+    assert!(
+        result.is_err(),
+        "pre_hook should be rejected at project level"
+    );
+
+    let yaml = r#"
+name: test_project
 post_hook:
   - "ANALYZE {{ this }}"
-  - "GRANT SELECT ON {{ this }} TO analyst"
+"#;
+    let result: Result<Config, _> = serde_yaml::from_str(yaml);
+    assert!(
+        result.is_err(),
+        "post_hook should be rejected at project level"
+    );
+}
+
+#[test]
+fn test_analysis_severity_overrides_default_empty() {
+    let config: Config = serde_yaml::from_str("name: test").unwrap();
+    assert!(config.analysis.severity_overrides.is_empty());
+}
+
+#[test]
+fn test_analysis_severity_overrides_parsing() {
+    let yaml = r#"
+name: test_project
+analysis:
+  severity_overrides:
+    A020: warning
+    A032: off
+    SA02: error
+    A010: info
 "#;
     let config: Config = serde_yaml::from_str(yaml).unwrap();
-    assert_eq!(config.pre_hook.len(), 1);
-    assert_eq!(config.post_hook.len(), 2);
-    assert!(config.pre_hook[0].contains("CREATE SCHEMA"));
-    assert!(config.post_hook[0].contains("ANALYZE"));
+    assert_eq!(config.analysis.severity_overrides.len(), 4);
+    assert_eq!(
+        config.analysis.severity_overrides["A020"],
+        ConfigSeverity::Warning
+    );
+    assert_eq!(
+        config.analysis.severity_overrides["A032"],
+        ConfigSeverity::Off
+    );
+    assert_eq!(
+        config.analysis.severity_overrides["SA02"],
+        ConfigSeverity::Error
+    );
+    assert_eq!(
+        config.analysis.severity_overrides["A010"],
+        ConfigSeverity::Info
+    );
+}
+
+#[test]
+fn test_analysis_severity_overrides_rejects_unknown_code() {
+    let yaml = r#"
+name: test_project
+analysis:
+  severity_overrides:
+    BOGUS: warning
+"#;
+    let config: Config = serde_yaml::from_str(yaml).unwrap();
+    let result = config.validate();
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Unknown diagnostic code 'BOGUS'"));
+    assert!(err.contains("Valid codes:"));
+}
+
+#[test]
+fn test_analysis_severity_overrides_all_valid_codes_accepted() {
+    let yaml = r#"
+name: test_project
+analysis:
+  severity_overrides:
+    A002: info
+    A003: warning
+    A004: error
+    A005: off
+    A010: info
+    A011: warning
+    A012: error
+    A020: off
+    A030: info
+    A032: warning
+    A033: error
+    A040: off
+    A041: info
+    SA01: warning
+    SA02: error
+"#;
+    let config: Config = serde_yaml::from_str(yaml).unwrap();
+    // validate() is called inside Config::load, but we can call it explicitly
+    // by going through from_str + validate
+    assert!(config.validate().is_ok());
+    assert_eq!(config.analysis.severity_overrides.len(), 15);
 }

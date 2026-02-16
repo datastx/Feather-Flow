@@ -92,11 +92,9 @@ pub fn categorize_dependencies_with_unknown(
         external_tables.iter().map(|t| t.to_lowercase()).collect();
 
     for dep in deps {
-        // Normalize the dependency name for comparison
         let dep_normalized = normalize_table_name(&dep);
         let dep_lower = dep_normalized.to_lowercase();
 
-        // Check for case-insensitive model match
         if let Some(original_name) = known_models_map.get(&dep_lower) {
             model_deps.push(original_name.to_string());
         } else if external_lower.contains(&dep.to_lowercase())

@@ -67,7 +67,8 @@ pub(crate) fn make_is_incremental_fn(
 pub(crate) fn make_this_fn(
     qualified_name: String,
 ) -> impl Fn() -> String + Send + Sync + Clone + 'static {
-    move || qualified_name.clone()
+    let shared: Arc<str> = qualified_name.into();
+    move || shared.to_string()
 }
 
 /// Create the config() function that captures model configuration
@@ -188,9 +189,10 @@ pub(crate) fn minijinja_value_to_json(val: &Value) -> serde_json::Value {
         ValueKind::Undefined | ValueKind::None => serde_json::Value::Null,
         ValueKind::Bool => serde_json::Value::Bool(val.is_true()),
         ValueKind::Number => {
-            if let Ok(i) = i64::try_from(val.clone()) {
+            let owned = val.clone();
+            if let Ok(i) = i64::try_from(owned.clone()) {
                 serde_json::Value::Number(i.into())
-            } else if let Ok(f) = f64::try_from(val.clone()) {
+            } else if let Ok(f) = f64::try_from(owned) {
                 serde_json::Number::from_f64(f)
                     .map(serde_json::Value::Number)
                     .unwrap_or(serde_json::Value::Null)

@@ -428,7 +428,7 @@ fn test_propagation_with_cast_shorthand() {
         &topo_order,
         &sql_sources,
         &HashMap::new(),
-        &initial,
+        initial.clone(),
         &[],
         &[],
     );
@@ -462,7 +462,7 @@ fn test_propagation_with_duckdb_function() {
         &topo_order,
         &sql_sources,
         &HashMap::new(),
-        &initial,
+        initial.clone(),
         &[],
         &[],
     );

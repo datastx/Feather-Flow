@@ -162,14 +162,6 @@ fn load_from_manifest(
             // Get model schema from project if available
             let model_schema = project.get_model(name).and_then(|m| m.schema.clone());
 
-            // Merge project-level hooks with manifest (model-level) hooks
-            // Project pre_hooks run BEFORE model pre_hooks
-            let mut pre_hook = project.config.pre_hook.clone();
-            pre_hook.extend(manifest_model.pre_hook.clone());
-            // Model post_hooks run BEFORE project post_hooks
-            let mut post_hook = manifest_model.post_hook.clone();
-            post_hook.extend(project.config.post_hook.clone());
-
             compiled_models.insert(
                 name.clone(),
                 CompiledModel {
@@ -184,8 +176,8 @@ fn load_from_manifest(
                     unique_key: manifest_model.unique_key.clone(),
                     incremental_strategy: manifest_model.incremental_strategy,
                     on_schema_change: manifest_model.on_schema_change,
-                    pre_hook,
-                    post_hook,
+                    pre_hook: manifest_model.pre_hook.clone(),
+                    post_hook: manifest_model.post_hook.clone(),
                     model_schema,
                     query_comment,
                     wap: manifest_model.wap.unwrap_or(false),
@@ -288,13 +280,9 @@ fn compile_all_models(
                 (None, None, None)
             };
 
-        // Parse hooks from config and merge with project-level hooks
-        // Project pre_hooks run BEFORE model pre_hooks
-        let mut pre_hook = project.config.pre_hook.clone();
-        pre_hook.extend(parse_hooks_from_config(&config_values, "pre_hook"));
-        // Model post_hooks run BEFORE project post_hooks
-        let mut post_hook = parse_hooks_from_config(&config_values, "post_hook");
-        post_hook.extend(project.config.post_hook.clone());
+        // Parse model-level hooks from config()
+        let pre_hook = parse_hooks_from_config(&config_values, "pre_hook");
+        let post_hook = parse_hooks_from_config(&config_values, "post_hook");
 
         // Get model schema for contract validation
         let model_schema = model.schema.clone();

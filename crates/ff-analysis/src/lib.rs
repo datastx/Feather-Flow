@@ -17,7 +17,10 @@ pub mod test_utils;
 pub use context::AnalysisContext;
 pub use error::{AnalysisError, AnalysisResult};
 pub use pass::plan_pass::{DagPlanPass, PlanPass, PlanPassManager};
-pub use pass::{Diagnostic, DiagnosticCode, Severity};
+pub use pass::{
+    apply_severity_overrides, Diagnostic, DiagnosticCode, OverriddenSeverity, Severity,
+    SeverityOverrides,
+};
 pub use schema::{RelSchema, SchemaCatalog};
 pub use types::{parse_sql_type, FloatBitWidth, IntBitWidth, Nullability, SqlType, TypedColumn};
 

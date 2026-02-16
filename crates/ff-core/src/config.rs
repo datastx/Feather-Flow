@@ -86,18 +86,14 @@ pub struct Config {
     #[serde(default)]
     pub on_run_end: Vec<String>,
 
-    /// SQL hooks to execute before each model runs (applied to all models)
-    #[serde(default)]
-    pub pre_hook: Vec<String>,
-
-    /// SQL hooks to execute after each model runs (applied to all models)
-    #[serde(default)]
-    pub post_hook: Vec<String>,
-
     /// Named target configurations (e.g., dev, staging, prod)
     /// Each target can override database settings and variables
     #[serde(default)]
     pub targets: HashMap<String, TargetConfig>,
+
+    /// Analysis diagnostic configuration
+    #[serde(default)]
+    pub analysis: AnalysisConfig,
 
     /// Data classification governance settings
     #[serde(default)]
@@ -329,6 +325,19 @@ impl Config {
             });
         }
 
+        // Validate diagnostic code keys in severity_overrides
+        for code in self.analysis.severity_overrides.keys() {
+            if !VALID_DIAGNOSTIC_CODES.contains(&code.as_str()) {
+                return Err(CoreError::ConfigInvalid {
+                    message: format!(
+                        "Unknown diagnostic code '{}' in analysis.severity_overrides. Valid codes: {}",
+                        code,
+                        VALID_DIAGNOSTIC_CODES.join(", ")
+                    ),
+                });
+            }
+        }
+
         Ok(())
     }
 
@@ -510,6 +519,37 @@ impl std::fmt::Display for Dialect {
         }
     }
 }
+
+/// Severity level for analysis diagnostic overrides
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConfigSeverity {
+    /// Informational — no action required
+    Info,
+    /// Warning — potential issue worth reviewing
+    Warning,
+    /// Error — likely bug or incorrect behavior
+    Error,
+    /// Disabled — suppress the diagnostic entirely
+    Off,
+}
+
+/// Analysis configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AnalysisConfig {
+    /// Override default severities for specific diagnostic codes.
+    ///
+    /// Keys are diagnostic code strings (e.g. "A020", "SA01").
+    /// Values are severity levels: info, warning, error, or off.
+    #[serde(default)]
+    pub severity_overrides: HashMap<String, ConfigSeverity>,
+}
+
+/// Valid diagnostic codes that can be overridden in `analysis.severity_overrides`
+const VALID_DIAGNOSTIC_CODES: &[&str] = &[
+    "A002", "A003", "A004", "A005", "A010", "A011", "A012", "A020", "A030", "A032", "A033", "A040",
+    "A041", "SA01", "SA02",
+];
 
 /// Data classification governance settings
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

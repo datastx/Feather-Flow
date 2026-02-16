@@ -1987,7 +1987,7 @@ fn build_analysis_pipeline(fixture_path: &str) -> AnalysisPipeline {
         &topo_order,
         &sql_sources,
         &yaml_string_map,
-        &catalog,
+        catalog,
         &user_fn_stubs,
         &user_table_fn_stubs,
     );
@@ -2752,20 +2752,6 @@ fn test_project_level_hooks_loaded() {
         "on_run_end should have 1 hook"
     );
     assert!(project.config.on_run_end[0].contains("999"));
-
-    // pre_hook and post_hook should have 1 each
-    assert_eq!(
-        project.config.pre_hook.len(),
-        1,
-        "pre_hook should have 1 hook"
-    );
-    assert!(project.config.pre_hook[0].contains("project pre-hook"));
-    assert_eq!(
-        project.config.post_hook.len(),
-        1,
-        "post_hook should have 1 hook"
-    );
-    assert!(project.config.post_hook[0].contains("project post-hook"));
 }
 
 /// Test that model-level hooks are parsed from config() in SQL templates
@@ -3088,21 +3074,13 @@ async fn test_fct_orders_hooks_side_effects() {
     assert_eq!(total, 3, "hook_log should have 3 total rows");
 }
 
-/// Test project-level hooks with {{ this }} substitution produces correct strings
+/// Test {{ this }} substitution in hooks (using model-level hooks from config())
 #[test]
-fn test_project_hooks_this_substitution() {
-    let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
-
-    // Project pre_hook contains "{{ this }}" placeholder
-    let pre_hook = &project.config.pre_hook[0];
-    assert!(
-        pre_hook.contains("{{ this }}"),
-        "Project pre_hook should contain {{{{ this }}}} placeholder"
-    );
-
-    // Simulate substitution (same logic as execute_hooks in hooks.rs)
+fn test_hooks_this_substitution() {
+    // Simulate a hook string with {{ this }} placeholder
+    let hook = "-- post-hook: {{ this }}";
     let qualified_name = "analytics.fct_orders";
-    let substituted = pre_hook
+    let substituted = hook
         .replace("{{ this }}", qualified_name)
         .replace("{{this}}", qualified_name);
 
@@ -3113,5 +3091,97 @@ fn test_project_hooks_this_substitution() {
     assert!(
         !substituted.contains("{{ this }}"),
         "No {{ this }} placeholders should remain after substitution"
+    );
+}
+
+// ============================================================================
+// SEVERITY OVERRIDE TESTS
+// ============================================================================
+
+/// Test that apply_severity_overrides suppresses diagnostics with Off
+#[test]
+fn test_severity_overrides_suppress_diagnostics() {
+    use ff_analysis::{apply_severity_overrides, SeverityOverrides};
+    use ff_core::config::ConfigSeverity;
+
+    let pipeline = build_analysis_pipeline("tests/fixtures/sa_join_fail_cross_join");
+    let diags = run_single_pass(&pipeline, "plan_join_keys");
+
+    // Verify A032 is present before overrides
+    let a032_before = diagnostics_with_code(&diags, ff_analysis::DiagnosticCode::A032);
+    assert!(
+        !a032_before.is_empty(),
+        "Expected A032 before overrides, got none"
+    );
+
+    // Apply override: suppress A032
+    let mut config_map = HashMap::new();
+    config_map.insert("A032".to_string(), ConfigSeverity::Off);
+    let overrides = SeverityOverrides::from_config(&config_map);
+    let filtered = apply_severity_overrides(diags, &overrides);
+
+    // A032 should be gone
+    let a032_after = diagnostics_with_code(&filtered, ff_analysis::DiagnosticCode::A032);
+    assert!(
+        a032_after.is_empty(),
+        "A032 should be suppressed with Off override, got {}: {:#?}",
+        a032_after.len(),
+        a032_after
+    );
+}
+
+/// Test that apply_severity_overrides promotes severity
+#[test]
+fn test_severity_overrides_promote_severity() {
+    use ff_analysis::{apply_severity_overrides, Severity, SeverityOverrides};
+    use ff_core::config::ConfigSeverity;
+
+    let pipeline = build_analysis_pipeline("tests/fixtures/sa_unused_fail_extra_columns");
+    let diags = run_single_pass(&pipeline, "plan_unused_columns");
+
+    // Verify A020 diagnostics exist at Info level
+    let a020_before = diagnostics_with_code(&diags, ff_analysis::DiagnosticCode::A020);
+    assert!(!a020_before.is_empty(), "Expected A020 diagnostics");
+    assert!(
+        a020_before.iter().all(|d| d.severity == Severity::Info),
+        "A020 should default to Info severity"
+    );
+
+    // Promote A020 to Error
+    let mut config_map = HashMap::new();
+    config_map.insert("A020".to_string(), ConfigSeverity::Error);
+    let overrides = SeverityOverrides::from_config(&config_map);
+    let promoted = apply_severity_overrides(diags, &overrides);
+
+    let a020_after = diagnostics_with_code(&promoted, ff_analysis::DiagnosticCode::A020);
+    assert!(!a020_after.is_empty(), "A020 should still be present");
+    assert!(
+        a020_after.iter().all(|d| d.severity == Severity::Error),
+        "A020 should be promoted to Error severity"
+    );
+}
+
+/// Test that empty overrides don't change diagnostics
+#[test]
+fn test_severity_overrides_empty_is_noop() {
+    use ff_analysis::{apply_severity_overrides, SeverityOverrides};
+
+    let pipeline = build_analysis_pipeline("tests/fixtures/sa_join_fail_cross_join");
+    let diags = run_single_pass(&pipeline, "plan_join_keys");
+    let original_count = diags.len();
+    let original_severities: Vec<_> = diags.iter().map(|d| d.severity).collect();
+
+    let overrides = SeverityOverrides::default();
+    let result = apply_severity_overrides(diags, &overrides);
+
+    assert_eq!(
+        result.len(),
+        original_count,
+        "Empty overrides should not change diagnostic count"
+    );
+    let result_severities: Vec<_> = result.iter().map(|d| d.severity).collect();
+    assert_eq!(
+        result_severities, original_severities,
+        "Empty overrides should not change severities"
     );
 }

@@ -62,48 +62,45 @@ pub fn inline_ephemeral_ctes(
     let mut seen: HashSet<&str> = HashSet::new();
 
     for dep in model_deps {
-        if let Some(ephemeral_sql) = ephemeral_deps.get(dep) {
-            if seen.contains(dep.as_str()) {
-                continue;
-            }
-            seen.insert(dep);
-
-            // Clean trailing semicolons before parsing
-            let clean_sql = ephemeral_sql.trim().trim_end_matches(';').trim();
-
-            let stmts =
-                Parser::parse_sql(&dialect, clean_sql).map_err(|e| SqlError::InlineError {
-                    model_name: dep.clone(),
-                    reason: format!("parse error: {e}"),
-                })?;
-            let Some(first_stmt) = stmts.into_iter().next() else {
-                return Err(SqlError::InlineError {
-                    model_name: dep.clone(),
-                    reason: "SQL parsed to empty statement list".to_string(),
-                });
-            };
-            let Statement::Query(ephemeral_query) = first_stmt else {
-                return Err(SqlError::InlineError {
-                    model_name: dep.clone(),
-                    reason: format!(
-                        "expected a SELECT query, got {}",
-                        statement_kind(&first_stmt)
-                    ),
-                });
-            };
-
-            new_ctes.push(Cte {
-                alias: TableAlias {
-                    name: Ident::with_quote('"', dep),
-                    columns: vec![],
-                    explicit: false,
-                },
-                query: ephemeral_query,
-                from: None,
-                materialized: None,
-                closing_paren_token: AttachedToken::empty(),
-            });
+        let Some(ephemeral_sql) = ephemeral_deps.get(dep) else {
+            continue;
+        };
+        if !seen.insert(dep.as_str()) {
+            continue;
         }
+
+        let clean_sql = ephemeral_sql.trim().trim_end_matches(';').trim();
+        let stmts = Parser::parse_sql(&dialect, clean_sql).map_err(|e| SqlError::InlineError {
+            model_name: dep.clone(),
+            reason: format!("parse error: {e}"),
+        })?;
+        let Some(first_stmt) = stmts.into_iter().next() else {
+            return Err(SqlError::InlineError {
+                model_name: dep.clone(),
+                reason: "SQL parsed to empty statement list".to_string(),
+            });
+        };
+        let Statement::Query(ephemeral_query) = first_stmt else {
+            return Err(SqlError::InlineError {
+                model_name: dep.clone(),
+                reason: format!(
+                    "expected a SELECT query, got {}",
+                    statement_kind(&first_stmt)
+                ),
+            });
+        };
+
+        new_ctes.push(Cte {
+            alias: TableAlias {
+                name: Ident::with_quote('"', dep),
+                columns: vec![],
+                explicit: false,
+            },
+            query: ephemeral_query,
+            from: None,
+            materialized: None,
+            closing_paren_token: AttachedToken::empty(),
+        });
     }
 
     if new_ctes.is_empty() {
@@ -215,36 +212,34 @@ fn collect_ephemeral_recursive<F, G>(
     G: Fn(&str) -> Option<String>,
 {
     for dep in deps {
-        if visited.contains(dep) {
+        if !visited.insert(dep.clone()) {
             continue;
         }
-        visited.insert(dep.clone());
-
-        if is_ephemeral(dep) {
-            // First, recursively process this ephemeral model's dependencies
-            if let Some(nested_deps) = model_deps.get(dep) {
-                collect_ephemeral_recursive(
-                    nested_deps,
-                    model_deps,
-                    is_ephemeral,
-                    get_compiled_sql,
-                    ephemeral_sql,
-                    order,
-                    visited,
-                );
-            }
-
-            // Then add this ephemeral model — warn if compiled SQL is missing
-            if let Some(sql) = get_compiled_sql(dep) {
-                ephemeral_sql.insert(dep.clone(), sql);
-                order.push(dep.clone());
-            } else {
-                log::warn!(
-                    "Ephemeral model '{}' has no compiled SQL — it will not be inlined",
-                    dep
-                );
-            }
+        if !is_ephemeral(dep) {
+            continue;
         }
+
+        if let Some(nested_deps) = model_deps.get(dep) {
+            collect_ephemeral_recursive(
+                nested_deps,
+                model_deps,
+                is_ephemeral,
+                get_compiled_sql,
+                ephemeral_sql,
+                order,
+                visited,
+            );
+        }
+
+        let Some(sql) = get_compiled_sql(dep) else {
+            log::warn!(
+                "Ephemeral model '{}' has no compiled SQL — it will not be inlined",
+                dep
+            );
+            continue;
+        };
+        ephemeral_sql.insert(dep.clone(), sql);
+        order.push(dep.clone());
     }
 }
 

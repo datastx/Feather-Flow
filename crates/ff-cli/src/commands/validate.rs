@@ -584,11 +584,12 @@ fn validate_static_analysis(
 
     let (mismatch_count, plan_count, failure_count) = common::report_static_analysis_results(
         result,
-        |model_name, mismatch| {
+        &output.overrides,
+        |model_name, mismatch, is_error| {
             mismatch_issues.push((
                 mismatch.code().to_string(),
                 format!("{}: {}", model_name, mismatch),
-                mismatch.is_error(),
+                is_error,
             ));
         },
         |model, err| {

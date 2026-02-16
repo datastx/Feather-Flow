@@ -8,8 +8,10 @@ pub mod plan_pass;
 pub(crate) mod plan_type_inference;
 pub(crate) mod plan_unused_columns;
 
+use ff_core::config::ConfigSeverity;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 /// Strongly-typed diagnostic codes emitted by analysis passes.
 ///
@@ -108,3 +110,77 @@ pub(crate) fn should_run_pass(name: &str, filter: Option<&[String]>) -> bool {
         None => true,
     }
 }
+
+/// Resolved severity for a diagnostic code override.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverriddenSeverity {
+    /// Override to a specific severity level
+    Level(Severity),
+    /// Suppress the diagnostic entirely
+    Off,
+}
+
+/// User-configured severity overrides for diagnostic codes.
+///
+/// Built from `Config.analysis.severity_overrides` and used to remap or
+/// suppress diagnostics after passes have run.
+#[derive(Debug, Clone, Default)]
+pub struct SeverityOverrides {
+    overrides: HashMap<String, OverriddenSeverity>,
+}
+
+impl SeverityOverrides {
+    /// Build overrides from the config map.
+    pub fn from_config(config_map: &HashMap<String, ConfigSeverity>) -> Self {
+        let overrides = config_map
+            .iter()
+            .map(|(code, sev)| {
+                let resolved = match sev {
+                    ConfigSeverity::Info => OverriddenSeverity::Level(Severity::Info),
+                    ConfigSeverity::Warning => OverriddenSeverity::Level(Severity::Warning),
+                    ConfigSeverity::Error => OverriddenSeverity::Level(Severity::Error),
+                    ConfigSeverity::Off => OverriddenSeverity::Off,
+                };
+                (code.clone(), resolved)
+            })
+            .collect();
+        Self { overrides }
+    }
+
+    /// Look up an override for a `DiagnosticCode` (e.g. `A020`).
+    pub fn get_for_code(&self, code: DiagnosticCode) -> Option<OverriddenSeverity> {
+        // DiagnosticCode's Debug representation matches the config keys (e.g. "A020")
+        self.overrides.get(&format!("{:?}", code)).copied()
+    }
+
+    /// Look up an override for an SA-code string (e.g. `"SA01"`, `"SA02"`).
+    pub fn get_for_sa(&self, code: &str) -> Option<OverriddenSeverity> {
+        self.overrides.get(code).copied()
+    }
+}
+
+/// Apply severity overrides to a list of diagnostics.
+///
+/// - `Off` overrides remove the diagnostic from the output.
+/// - `Level(s)` overrides change the diagnostic's severity to `s`.
+/// - Diagnostics without overrides are passed through unchanged.
+pub fn apply_severity_overrides(
+    diagnostics: Vec<Diagnostic>,
+    overrides: &SeverityOverrides,
+) -> Vec<Diagnostic> {
+    diagnostics
+        .into_iter()
+        .filter_map(|mut d| match overrides.get_for_code(d.code) {
+            Some(OverriddenSeverity::Off) => None,
+            Some(OverriddenSeverity::Level(s)) => {
+                d.severity = s;
+                Some(d)
+            }
+            None => Some(d),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+#[path = "severity_override_test.rs"]
+mod severity_override_tests;
