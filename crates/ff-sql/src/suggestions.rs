@@ -121,7 +121,6 @@ fn analyze_query(query: &Query, suggestions: &mut ModelSuggestions) {
 
 /// Analyze a SELECT statement for suggestions
 fn analyze_select(select: &Select, suggestions: &mut ModelSuggestions) {
-    // Collect output columns
     let mut output_columns: HashSet<String> = HashSet::new();
     for item in &select.projection {
         match item {
@@ -152,25 +151,23 @@ fn analyze_select(select: &Select, suggestions: &mut ModelSuggestions) {
 
 /// Analyze table joins for not_null suggestions
 fn analyze_table_joins(table: &TableWithJoins, suggestions: &mut ModelSuggestions) {
-    // Get columns used in join conditions
     for join in &table.joins {
-        if let JoinOperator::Join(constraint)
-        | JoinOperator::Inner(constraint)
-        | JoinOperator::Left(constraint)
-        | JoinOperator::LeftOuter(constraint)
-        | JoinOperator::Right(constraint)
-        | JoinOperator::RightOuter(constraint)
-        | JoinOperator::FullOuter(constraint) = &join.join_operator
-        {
-            if let JoinConstraint::On(expr) = constraint {
-                let columns = extract_columns_from_expr(expr);
-                for col in columns {
-                    suggestions.add_suggestion(&col, TestSuggestion::NotNull);
-                }
+        let constraint = match &join.join_operator {
+            JoinOperator::Join(c)
+            | JoinOperator::Inner(c)
+            | JoinOperator::Left(c)
+            | JoinOperator::LeftOuter(c)
+            | JoinOperator::Right(c)
+            | JoinOperator::RightOuter(c)
+            | JoinOperator::FullOuter(c) => Some(c),
+            _ => None,
+        };
+        if let Some(JoinConstraint::On(expr)) = constraint {
+            for col in extract_columns_from_expr(expr) {
+                suggestions.add_suggestion(&col, TestSuggestion::NotNull);
             }
         }
 
-        // Recursively analyze nested joins
         if let TableFactor::NestedJoin {
             table_with_joins, ..
         } = &join.relation
@@ -192,7 +189,6 @@ fn analyze_expression_for_suggestions(
             op,
             sqlparser::ast::BinaryOperator::Divide | sqlparser::ast::BinaryOperator::Minus
         ) {
-            // Check if this involves amount-like columns
             let left_cols = extract_columns_from_expr(left);
             let right_cols = extract_columns_from_expr(right);
             for col in left_cols.iter().chain(right_cols.iter()) {
@@ -299,31 +295,38 @@ fn extract_columns_from_expr(expr: &Expr) -> Vec<String> {
             columns.extend(extract_columns_from_expr(inner));
         }
         Expr::Function(func) => {
-            if let sqlparser::ast::FunctionArguments::List(args) = &func.args {
-                for arg in &args.args {
-                    match arg {
-                        sqlparser::ast::FunctionArg::Unnamed(
-                            sqlparser::ast::FunctionArgExpr::Expr(e),
-                        )
-                        | sqlparser::ast::FunctionArg::Named {
-                            arg: sqlparser::ast::FunctionArgExpr::Expr(e),
-                            ..
-                        }
-                        | sqlparser::ast::FunctionArg::ExprNamed {
-                            arg: sqlparser::ast::FunctionArgExpr::Expr(e),
-                            ..
-                        } => {
-                            columns.extend(extract_columns_from_expr(e));
-                        }
-                        _ => {}
-                    }
-                }
-            }
+            extract_columns_from_function_args(&func.args, &mut columns);
         }
         _ => {}
     }
 
     columns
+}
+
+/// Extract column references from function arguments
+fn extract_columns_from_function_args(
+    args: &sqlparser::ast::FunctionArguments,
+    columns: &mut Vec<String>,
+) {
+    let sqlparser::ast::FunctionArguments::List(arg_list) = args else {
+        return;
+    };
+    for arg in &arg_list.args {
+        match arg {
+            sqlparser::ast::FunctionArg::Unnamed(sqlparser::ast::FunctionArgExpr::Expr(e))
+            | sqlparser::ast::FunctionArg::Named {
+                arg: sqlparser::ast::FunctionArgExpr::Expr(e),
+                ..
+            }
+            | sqlparser::ast::FunctionArg::ExprNamed {
+                arg: sqlparser::ast::FunctionArgExpr::Expr(e),
+                ..
+            } => {
+                columns.extend(extract_columns_from_expr(e));
+            }
+            _ => {}
+        }
+    }
 }
 
 #[cfg(test)]

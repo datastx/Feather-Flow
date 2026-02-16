@@ -86,31 +86,19 @@ pub async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()> {
         skip_static_analysis: args.skip_static_analysis,
     };
 
-    // Create query comment context if enabled
-    let comment_ctx = if project.config.query_comment.enabled {
-        let target = ff_core::config::Config::resolve_target(global.target.as_deref());
-        Some(ff_core::query_comment::QueryCommentContext::new(
-            &project.config.name,
-            target.as_deref(),
-        ))
-    } else {
-        None
-    };
+    let comment_ctx =
+        common::build_query_comment_context(&project.config, global.target.as_deref());
 
     let compiled_models = load_or_compile_models(&project, &run_args, global, comment_ctx.as_ref())
         .context("Failed to compile models")?;
 
-    // Static analysis gate
-    if !args.skip_static_analysis {
-        let has_errors =
-            common::run_pre_execution_analysis(&project, &compiled_models, global, quiet)?;
-        if has_errors {
-            if !quiet {
-                eprintln!("Static analysis found errors. Use --skip-static-analysis to bypass.");
-            }
-            return Err(ExitCode(1).into());
-        }
-    }
+    common::run_static_analysis_gate(
+        &project,
+        &compiled_models,
+        global,
+        args.skip_static_analysis,
+        quiet,
+    )?;
 
     let execution_order = determine_execution_order(&compiled_models, &project, &run_args, global)?;
 
@@ -135,23 +123,14 @@ pub async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()> {
 
     set_search_path(&db, &compiled_models, &project, wap_schema, global).await?;
 
-    // Execute on-run-start hooks
-    if !project.config.on_run_start.is_empty() {
-        if global.verbose {
-            eprintln!(
-                "[verbose] Executing {} on-run-start hooks",
-                project.config.on_run_start.len()
-            );
-        }
-        for hook in &project.config.on_run_start {
-            if let Err(e) = db.execute(hook).await {
-                if !quiet {
-                    println!("  \u{2717} on-run-start hook failed: {}", e);
-                }
-                return Err(anyhow::anyhow!("on-run-start hook failed: {}", e));
-            }
-        }
-    }
+    common::execute_hooks(
+        db.as_ref(),
+        &project.config.on_run_start,
+        "on-run-start",
+        global.verbose,
+        quiet,
+    )
+    .await?;
 
     // Set up test infrastructure
     let merged_vars = project.config.get_merged_vars(target.as_deref());
@@ -308,22 +287,16 @@ pub async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
-    // Execute on-run-end hooks
-    if !project.config.on_run_end.is_empty() {
-        if global.verbose {
-            eprintln!(
-                "[verbose] Executing {} on-run-end hooks",
-                project.config.on_run_end.len()
-            );
-        }
-        for hook in &project.config.on_run_end {
-            if let Err(e) = db.execute(hook).await {
-                if !quiet {
-                    println!("  \u{2717} on-run-end hook failed: {}", e);
-                }
-                eprintln!("Warning: on-run-end hook failed: {}", e);
-            }
-        }
+    if let Err(e) = common::execute_hooks(
+        db.as_ref(),
+        &project.config.on_run_end,
+        "on-run-end",
+        global.verbose,
+        quiet,
+    )
+    .await
+    {
+        eprintln!("Warning: {}", e);
     }
 
     // ── Summary ─────────────────────────────────────────────────────────

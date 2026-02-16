@@ -43,7 +43,7 @@ fn test_schema_test_with_config() {
     let test = SchemaTest {
         test_type: TestType::Unique,
         column: "id".to_string(),
-        model: "users".to_string(),
+        model: crate::model_name::ModelName::new("users"),
         config: TestConfig {
             severity: TestSeverity::Warn,
             ..Default::default()

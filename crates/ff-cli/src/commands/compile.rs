@@ -85,18 +85,9 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
     let mut project = load_project(global)?;
     let json_mode = args.output == OutputFormat::Json;
 
-    // Resolve target from CLI flag or FF_TARGET env var
     let target = Config::resolve_target(global.target.as_deref());
-
-    // Create query comment context if enabled
-    let comment_ctx = if project.config.query_comment.enabled {
-        Some(ff_core::query_comment::QueryCommentContext::new(
-            &project.config.name,
-            target.as_deref(),
-        ))
-    } else {
-        None
-    };
+    let comment_ctx =
+        common::build_query_comment_context(&project.config, global.target.as_deref());
 
     // Get vars merged with target overrides, then merge with CLI --vars
     let base_vars = project.config.get_merged_vars(target.as_deref());

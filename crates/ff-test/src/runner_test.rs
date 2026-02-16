@@ -13,7 +13,7 @@ async fn test_unique_pass() {
     let test = GeneratedTest::from_schema_test(&SchemaTest {
         test_type: TestType::Unique,
         column: "id".to_string(),
-        model: "test_table".to_string(),
+        model: ff_core::model_name::ModelName::new("test_table"),
         config: Default::default(),
     });
 
@@ -36,7 +36,7 @@ async fn test_unique_fail() {
     let test = GeneratedTest::from_schema_test(&SchemaTest {
         test_type: TestType::Unique,
         column: "id".to_string(),
-        model: "test_table".to_string(),
+        model: ff_core::model_name::ModelName::new("test_table"),
         config: Default::default(),
     });
 
@@ -60,7 +60,7 @@ async fn test_not_null_pass() {
     let test = GeneratedTest::from_schema_test(&SchemaTest {
         test_type: TestType::NotNull,
         column: "name".to_string(),
-        model: "test_table".to_string(),
+        model: ff_core::model_name::ModelName::new("test_table"),
         config: Default::default(),
     });
 
@@ -82,7 +82,7 @@ async fn test_not_null_fail() {
     let test = GeneratedTest::from_schema_test(&SchemaTest {
         test_type: TestType::NotNull,
         column: "name".to_string(),
-        model: "test_table".to_string(),
+        model: ff_core::model_name::ModelName::new("test_table"),
         config: Default::default(),
     });
 
@@ -107,13 +107,13 @@ async fn test_summary() {
         SchemaTest {
             test_type: TestType::Unique,
             column: "id".to_string(),
-            model: "t".to_string(),
+            model: ff_core::model_name::ModelName::new("t"),
             config: Default::default(),
         },
         SchemaTest {
             test_type: TestType::NotNull,
             column: "name".to_string(),
-            model: "t".to_string(),
+            model: ff_core::model_name::ModelName::new("t"),
             config: Default::default(),
         },
     ];

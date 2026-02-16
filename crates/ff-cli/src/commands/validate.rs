@@ -662,40 +662,40 @@ fn validate_contracts(
         let Some(schema) = &model.schema else {
             continue;
         };
-        if let Some(contract) = &schema.contract {
-            models_with_contracts += 1;
-            if contract.enforced {
-                enforced_count += 1;
-            }
+        let Some(contract) = &schema.contract else {
+            continue;
+        };
 
-            let file_path = model.path.with_extension("yml").display().to_string();
+        models_with_contracts += 1;
+        if contract.enforced {
+            enforced_count += 1;
+        }
 
-            // Validate contract structure
-            if schema.columns.is_empty() {
+        let file_path = model.path.with_extension("yml").display().to_string();
+
+        if schema.columns.is_empty() {
+            ctx.warning(
+                "C006",
+                format!(
+                    "Model '{}' has contract defined but no columns specified",
+                    name
+                ),
+                Some(file_path.clone()),
+            );
+            contract_warnings += 1;
+        }
+
+        if let Some(ref manifest) = reference_manifest {
+            if manifest.get_model(name).is_none() {
                 ctx.warning(
-                    "C006",
+                    "C005",
                     format!(
-                        "Model '{}' has contract defined but no columns specified",
+                        "Model '{}' has contract but not found in reference manifest (new model?)",
                         name
                     ),
-                    Some(file_path.clone()),
+                    Some(model.path.display().to_string()),
                 );
                 contract_warnings += 1;
-            }
-
-            // If we have a reference manifest, verify model exists
-            if let Some(ref manifest) = reference_manifest {
-                if manifest.get_model(name).is_none() {
-                    ctx.warning(
-                        "C005",
-                        format!(
-                            "Model '{}' has contract but not found in reference manifest (new model?)",
-                            name
-                        ),
-                        Some(model.path.display().to_string()),
-                    );
-                    contract_warnings += 1;
-                }
             }
         }
     }

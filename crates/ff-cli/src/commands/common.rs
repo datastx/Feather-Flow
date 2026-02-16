@@ -540,7 +540,6 @@ pub(crate) fn calculate_column_widths(headers: &[&str], rows: &[Vec<String>]) ->
 pub(crate) fn print_table(headers: &[&str], rows: &[Vec<String>]) {
     let widths = calculate_column_widths(headers, rows);
 
-    // Print header
     let header_parts: Vec<String> = headers
         .iter()
         .zip(&widths)
@@ -548,11 +547,9 @@ pub(crate) fn print_table(headers: &[&str], rows: &[Vec<String>]) {
         .collect();
     println!("{}", header_parts.join("  "));
 
-    // Print separator
     let sep_parts: Vec<String> = widths.iter().map(|&w| "-".repeat(w)).collect();
     println!("{}", sep_parts.join("  "));
 
-    // Print rows
     for row in rows {
         let row_parts: Vec<String> = row
             .iter()
@@ -824,4 +821,71 @@ pub(crate) fn build_qualification_map(
     }
 
     map
+}
+
+/// Build a [`ff_core::query_comment::QueryCommentContext`] when query comments
+/// are enabled in the project config, returning `None` otherwise.
+pub(crate) fn build_query_comment_context(
+    config: &Config,
+    target: Option<&str>,
+) -> Option<ff_core::query_comment::QueryCommentContext> {
+    if !config.query_comment.enabled {
+        return None;
+    }
+    let resolved_target = Config::resolve_target(target);
+    Some(ff_core::query_comment::QueryCommentContext::new(
+        &config.name,
+        resolved_target.as_deref(),
+    ))
+}
+
+/// Run the static analysis gate before model execution.
+///
+/// Returns `Ok(())` if analysis passes or is skipped, or an `ExitCode(1)`
+/// error if blocking diagnostics are found.
+pub(crate) fn run_static_analysis_gate(
+    project: &Project,
+    compiled_models: &HashMap<String, super::run::CompiledModel>,
+    global: &GlobalArgs,
+    skip: bool,
+    quiet: bool,
+) -> Result<()> {
+    if skip {
+        return Ok(());
+    }
+    let has_errors = run_pre_execution_analysis(project, compiled_models, global, quiet)?;
+    if has_errors {
+        if !quiet {
+            eprintln!("Static analysis found errors. Use --skip-static-analysis to bypass.");
+        }
+        return Err(ExitCode(1).into());
+    }
+    Ok(())
+}
+
+/// Execute a list of SQL hooks against the database.
+///
+/// Logs verbose output and returns an error on the first hook failure.
+pub(crate) async fn execute_hooks(
+    db: &dyn Database,
+    hooks: &[String],
+    hook_type: &str,
+    verbose: bool,
+    quiet: bool,
+) -> Result<()> {
+    if hooks.is_empty() {
+        return Ok(());
+    }
+    if verbose {
+        eprintln!("[verbose] Executing {} {} hooks", hooks.len(), hook_type);
+    }
+    for hook in hooks {
+        if let Err(e) = db.execute(hook).await {
+            if !quiet {
+                println!("  \u{2717} {} hook failed: {}", hook_type, e);
+            }
+            return Err(anyhow::anyhow!("{} hook failed: {}", hook_type, e));
+        }
+    }
+    Ok(())
 }

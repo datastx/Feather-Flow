@@ -145,21 +145,26 @@ pub fn arrow_to_sql_type(arrow_type: &ArrowDataType) -> SqlType {
                 .collect();
             SqlType::Struct(sql_fields)
         }
-        ArrowDataType::Map(field, _) => {
-            if let ArrowDataType::Struct(entries) = field.data_type() {
-                if entries.len() == 2 {
-                    let key = arrow_to_sql_type(entries[0].data_type());
-                    let value = arrow_to_sql_type(entries[1].data_type());
-                    return SqlType::Map {
-                        key: Box::new(key),
-                        value: Box::new(value),
-                    };
-                }
-            }
-            SqlType::Unknown("MAP".to_string())
-        }
+        ArrowDataType::Map(field, _) => parse_map_type(field),
         ArrowDataType::Null => SqlType::Unknown("NULL".to_string()),
         _ => SqlType::Unknown(format!("{arrow_type:?}")),
+    }
+}
+
+/// Parse an Arrow Map field into `SqlType::Map` when the inner struct has exactly
+/// two entries (key, value); otherwise fall back to `SqlType::Unknown`.
+fn parse_map_type(field: &arrow::datatypes::Field) -> SqlType {
+    let ArrowDataType::Struct(entries) = field.data_type() else {
+        return SqlType::Unknown("MAP".to_string());
+    };
+    if entries.len() != 2 {
+        return SqlType::Unknown("MAP".to_string());
+    }
+    let key = arrow_to_sql_type(entries[0].data_type());
+    let value = arrow_to_sql_type(entries[1].data_type());
+    SqlType::Map {
+        key: Box::new(key),
+        value: Box::new(value),
     }
 }
 
