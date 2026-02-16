@@ -3,6 +3,8 @@
 use sqlparser::ast::{visit_relations, Query, Statement, With};
 use std::collections::{HashMap, HashSet};
 
+use crate::dialect::{ResolvedIdent, SqlDialect};
+
 /// Extract CTE names from a WITH clause
 fn extract_cte_names(with: &With) -> HashSet<String> {
     with.cte_tables
@@ -124,6 +126,120 @@ pub fn categorize_dependencies_with_unknown(
 fn normalize_table_name(name: &str) -> &str {
     // Safety: str::split() always yields at least one element
     name.split('.').next_back().unwrap_or(name)
+}
+
+// ---------------------------------------------------------------------------
+// Dialect-aware extraction — resolves identifiers using dialect case rules
+// ---------------------------------------------------------------------------
+
+/// Extract all table references from SQL statements with dialect-aware case
+/// resolution.
+///
+/// Like [`extract_dependencies`] but each returned [`ResolvedIdent`] carries
+/// per-part [`CaseSensitivity`] metadata and has its identifier values folded
+/// according to the dialect's rules (e.g. Snowflake folds unquoted idents to
+/// UPPER CASE, PostgreSQL to lower case, DuckDB preserves as-is).
+///
+/// Quoted identifiers (e.g. `"MyTable"`) are always marked case-sensitive and
+/// their values are preserved exactly.
+pub fn extract_dependencies_resolved(
+    statements: &[Statement],
+    dialect: &dyn SqlDialect,
+) -> Vec<ResolvedIdent> {
+    let all_cte_names: HashSet<String> = statements
+        .iter()
+        .flat_map(get_cte_names)
+        .map(|n| n.to_lowercase())
+        .collect();
+
+    let mut deps: Vec<ResolvedIdent> = Vec::new();
+    let mut seen = HashSet::new();
+
+    for stmt in statements {
+        let _ = visit_relations(stmt, |relation| {
+            let resolved = dialect.resolve_object_name(relation);
+
+            // Filter out CTEs (check the last part, which is the table name)
+            let table_part_lower = resolved.table_part().value.to_lowercase();
+            if all_cte_names.contains(&table_part_lower) {
+                return std::ops::ControlFlow::<()>::Continue(());
+            }
+
+            // Dedup by resolved name
+            if seen.insert(resolved.name.clone()) {
+                deps.push(resolved);
+            }
+            std::ops::ControlFlow::<()>::Continue(())
+        });
+    }
+
+    deps
+}
+
+/// Categorize resolved dependencies into models, external tables, and unknown.
+///
+/// Like [`categorize_dependencies_with_unknown`] but respects case sensitivity
+/// from quoted identifiers. Case-sensitive (quoted) identifiers require exact
+/// matches; case-insensitive (unquoted) identifiers match via lowercased
+/// comparison as before.
+///
+/// Returns `(model_deps, external_deps, unknown_deps)`.
+pub fn categorize_dependencies_resolved(
+    deps: Vec<ResolvedIdent>,
+    known_models: &HashSet<&str>,
+    external_tables: &HashSet<String>,
+) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let mut model_deps = Vec::new();
+    let mut external_deps = Vec::new();
+    let mut unknown_deps = Vec::new();
+
+    // Build lookup maps
+    // For case-insensitive matching: lowercase → original
+    let known_models_lower: HashMap<String, &str> = known_models
+        .iter()
+        .map(|s| (s.to_lowercase(), *s))
+        .collect();
+    // For case-sensitive matching: exact name → original
+    let known_models_exact: HashSet<&str> = known_models.iter().copied().collect();
+
+    let external_lower: HashSet<String> =
+        external_tables.iter().map(|t| t.to_lowercase()).collect();
+
+    for dep in deps {
+        let table_part = dep.table_part();
+
+        if dep.is_case_sensitive {
+            // Quoted identifier: require exact match
+            if known_models_exact.contains(table_part.value.as_str()) {
+                model_deps.push(table_part.value.clone());
+            } else if external_tables.contains(&dep.name) {
+                external_deps.push(dep.name.clone());
+            } else {
+                unknown_deps.push(dep.name.clone());
+                external_deps.push(dep.name.clone());
+            }
+        } else {
+            // Unquoted identifier: case-insensitive matching (existing behavior)
+            let dep_lower = table_part.value.to_lowercase();
+
+            if let Some(original_name) = known_models_lower.get(&dep_lower) {
+                model_deps.push(original_name.to_string());
+            } else if external_lower.contains(&dep.name.to_lowercase())
+                || external_lower.contains(&dep_lower)
+            {
+                external_deps.push(dep.name.clone());
+            } else {
+                unknown_deps.push(dep.name.clone());
+                external_deps.push(dep.name.clone());
+            }
+        }
+    }
+
+    model_deps.sort();
+    external_deps.sort();
+    unknown_deps.sort();
+
+    (model_deps, external_deps, unknown_deps)
 }
 
 #[cfg(test)]

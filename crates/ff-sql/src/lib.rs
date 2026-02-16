@@ -14,9 +14,15 @@ pub mod qualify;
 pub mod suggestions;
 pub mod validator;
 
-pub use dialect::{DuckDbDialect, SnowflakeDialect, SqlDialect};
+pub use dialect::{
+    CaseSensitivity, DuckDbDialect, ResolvedIdent, ResolvedPart, SnowflakeDialect, SqlDialect,
+    UnquotedCaseBehavior,
+};
 pub use error::SqlError;
-pub use extractor::{categorize_dependencies, extract_dependencies};
+pub use extractor::{
+    categorize_dependencies, categorize_dependencies_resolved, extract_dependencies,
+    extract_dependencies_resolved,
+};
 pub use inline::{collect_ephemeral_dependencies, inline_ephemeral_ctes};
 pub use lineage::{
     extract_column_lineage, ColumnLineage, ColumnRef, ExprType, LineageEdge, ModelLineage,
