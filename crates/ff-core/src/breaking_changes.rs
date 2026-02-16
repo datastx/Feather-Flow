@@ -76,18 +76,18 @@ impl BreakingChangeType {
 #[derive(Debug, Clone)]
 pub struct BreakingChange {
     /// Model name where the change was detected
-    pub model: String,
+    pub model: ModelName,
     /// Type of breaking change
     pub change_type: BreakingChangeType,
     /// Models that depend on this model (potentially affected)
-    pub downstream_models: Vec<String>,
+    pub downstream_models: Vec<ModelName>,
 }
 
 impl BreakingChange {
     /// Create a new breaking change
     pub fn new(model: &str, change_type: BreakingChangeType) -> Self {
         Self {
-            model: model.to_string(),
+            model: ModelName::new(model),
             change_type,
             downstream_models: Vec::new(),
         }
@@ -95,7 +95,7 @@ impl BreakingChange {
 
     /// Add downstream models that might be affected
     pub fn with_downstream(mut self, downstream: &[String]) -> Self {
-        self.downstream_models = downstream.to_vec();
+        self.downstream_models = downstream.iter().map(ModelName::new).collect();
         self
     }
 }
@@ -106,7 +106,7 @@ pub struct BreakingChangeReport {
     /// All detected breaking changes
     pub changes: Vec<BreakingChange>,
     /// Models that were added (informational, not breaking)
-    pub models_added: Vec<String>,
+    pub models_added: Vec<ModelName>,
     /// Columns that were added (informational, not breaking)
     pub columns_added: HashMap<String, Vec<String>>,
 }
@@ -133,7 +133,10 @@ impl BreakingChangeReport {
 
     /// Get all changes for a specific model
     pub fn changes_for_model(&self, model: &str) -> Vec<&BreakingChange> {
-        self.changes.iter().filter(|c| c.model == model).collect()
+        self.changes
+            .iter()
+            .filter(|c| c.model.as_ref() == model)
+            .collect()
     }
 
     /// Add a breaking change
@@ -142,7 +145,7 @@ impl BreakingChangeReport {
     }
 
     /// Add a model addition (not breaking)
-    pub fn add_new_model(&mut self, model: String) {
+    pub fn add_new_model(&mut self, model: ModelName) {
         self.models_added.push(model);
     }
 
@@ -164,10 +167,8 @@ pub fn detect_breaking_changes(
 ) -> BreakingChangeReport {
     let mut report = BreakingChangeReport::new();
 
-    // Build reverse dependency map for downstream impact analysis
     let downstream_map = build_downstream_map(current_models);
 
-    // Check for removed models
     for model_name in previous.models.keys() {
         if !current_models.contains_key(model_name.as_str()) {
             let downstream = downstream_map
@@ -181,7 +182,6 @@ pub fn detect_breaking_changes(
         }
     }
 
-    // Check for changes in existing models
     for (model_name, prev_model) in &previous.models {
         if let Some(curr_model) = current_models.get(model_name.as_str()) {
             let downstream = downstream_map
@@ -189,7 +189,6 @@ pub fn detect_breaking_changes(
                 .map(|v| v.as_slice())
                 .unwrap_or_default();
 
-            // Check materialization change
             if prev_model.materialized != curr_model.materialized {
                 report.add_change(
                     BreakingChange::new(
@@ -219,7 +218,6 @@ pub fn detect_breaking_changes(
                 }
             }
 
-            // Check for column changes (if we have schema information)
             if let (Some(prev_schema), Some(curr_schema)) = (
                 previous_schemas.get(model_name.as_str()),
                 current_schemas.get(model_name.as_str()),
@@ -238,7 +236,7 @@ pub fn detect_breaking_changes(
     // Check for new models (informational)
     for model_name in current_models.keys() {
         if !previous.models.contains_key(model_name.as_str()) {
-            report.add_new_model(model_name.to_string());
+            report.add_new_model(model_name.clone());
         }
     }
 
@@ -284,7 +282,6 @@ fn compare_schemas(
         .map(|c| (c.name.as_str(), c.data_type.as_str()))
         .collect();
 
-    // Check for removed columns
     for col_name in prev_cols.keys() {
         if !curr_cols.contains_key(col_name) {
             report.add_change(
@@ -318,7 +315,6 @@ fn compare_schemas(
         }
     }
 
-    // Check for new columns (informational)
     for col_name in curr_cols.keys() {
         if !prev_cols.contains_key(col_name) {
             report.add_new_column(model_name, col_name.to_string());

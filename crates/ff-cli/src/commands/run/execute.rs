@@ -650,42 +650,42 @@ async fn execute_models_parallel(
     let final_failure = failure_count.load(Ordering::SeqCst);
     let final_stopped = stopped.load(Ordering::SeqCst);
 
-    // Update state file with results (need to do this after parallel execution)
     for result in &final_results {
-        if matches!(result.status, RunStatus::Success) {
-            if let Some(compiled) = ctx.compiled_models.get(&result.model) {
-                let qualified_name =
-                    build_qualified_name(compiled.schema.as_deref(), &result.model);
-                let row_count = match ctx
-                    .db
-                    .query_count(&format!(
-                        "SELECT 1 FROM {}",
-                        quote_qualified(&qualified_name)
-                    ))
-                    .await
-                {
-                    Ok(count) => Some(count),
-                    Err(e) => {
-                        eprintln!(
-                            "[warn] Failed to get row count for {}: {}",
-                            qualified_name, e
-                        );
-                        None
-                    }
-                };
-                if let Err(e) = update_state_for_model(
-                    state_file,
-                    &result.model,
-                    compiled,
-                    ctx.compiled_models,
-                    row_count,
-                ) {
-                    eprintln!(
-                        "[warn] Failed to update state for '{}': {}",
-                        result.model, e
-                    );
-                }
+        if !matches!(result.status, RunStatus::Success) {
+            continue;
+        }
+        let Some(compiled) = ctx.compiled_models.get(&result.model) else {
+            continue;
+        };
+        let qualified_name = build_qualified_name(compiled.schema.as_deref(), &result.model);
+        let row_count = match ctx
+            .db
+            .query_count(&format!(
+                "SELECT 1 FROM {}",
+                quote_qualified(&qualified_name)
+            ))
+            .await
+        {
+            Ok(count) => Some(count),
+            Err(e) => {
+                eprintln!(
+                    "[warn] Failed to get row count for {}: {}",
+                    qualified_name, e
+                );
+                None
             }
+        };
+        if let Err(e) = update_state_for_model(
+            state_file,
+            &result.model,
+            compiled,
+            ctx.compiled_models,
+            row_count,
+        ) {
+            eprintln!(
+                "[warn] Failed to update state for '{}': {}",
+                result.model, e
+            );
         }
     }
 

@@ -161,24 +161,7 @@ pub(crate) fn yaml_to_json(yaml: &serde_yaml::Value) -> serde_json::Value {
     match yaml {
         serde_yaml::Value::Null => serde_json::Value::Null,
         serde_yaml::Value::Bool(b) => serde_json::Value::Bool(*b),
-        serde_yaml::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                serde_json::Value::Number(serde_json::Number::from(i))
-            } else if let Some(f) = n.as_f64() {
-                match serde_json::Number::from_f64(f) {
-                    Some(num) => serde_json::Value::Number(num),
-                    None => {
-                        log::warn!(
-                            "YAML number {} is NaN or Infinity; converting to JSON null",
-                            f
-                        );
-                        serde_json::Value::Null
-                    }
-                }
-            } else {
-                serde_json::Value::Null
-            }
-        }
+        serde_yaml::Value::Number(n) => convert_yaml_number(n),
         serde_yaml::Value::String(s) => serde_json::Value::String(s.clone()),
         serde_yaml::Value::Sequence(seq) => {
             serde_json::Value::Array(seq.iter().map(yaml_to_json).collect())
@@ -225,20 +208,43 @@ pub(crate) fn minijinja_value_to_json(val: &Value) -> serde_json::Value {
                 .unwrap_or_default();
             serde_json::Value::Array(items)
         }
-        ValueKind::Map => {
-            let mut map = serde_json::Map::new();
-            if let Ok(keys) = val.try_iter() {
-                for key in keys {
-                    let key_str = key.as_str().unwrap_or_default().to_string();
-                    if let Ok(v) = val.get_item(&key) {
-                        map.insert(key_str, minijinja_value_to_json(&v));
-                    }
-                }
-            }
-            serde_json::Value::Object(map)
-        }
+        ValueKind::Map => build_json_map(val),
         _ => serde_json::Value::String(val.to_string()),
     }
+}
+
+/// Convert a YAML number to a JSON value, handling NaN/Infinity gracefully.
+fn convert_yaml_number(n: &serde_yaml::Number) -> serde_json::Value {
+    if let Some(i) = n.as_i64() {
+        return serde_json::Value::Number(serde_json::Number::from(i));
+    }
+    if let Some(f) = n.as_f64() {
+        return match serde_json::Number::from_f64(f) {
+            Some(num) => serde_json::Value::Number(num),
+            None => {
+                log::warn!(
+                    "YAML number {} is NaN or Infinity; converting to JSON null",
+                    f
+                );
+                serde_json::Value::Null
+            }
+        };
+    }
+    serde_json::Value::Null
+}
+
+/// Convert a minijinja map value to a JSON object.
+fn build_json_map(val: &Value) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    if let Ok(keys) = val.try_iter() {
+        for key in keys {
+            let key_str = key.as_str().unwrap_or_default().to_string();
+            if let Ok(v) = val.get_item(&key) {
+                map.insert(key_str, minijinja_value_to_json(&v));
+            }
+        }
+    }
+    serde_json::Value::Object(map)
 }
 
 /// Create the `env(name, default?)` function to read environment variables.

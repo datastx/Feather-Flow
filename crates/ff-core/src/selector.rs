@@ -32,7 +32,7 @@ pub enum TraversalDepth {
 
 /// State comparison type
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StateType {
+pub(crate) enum StateType {
     /// Models that have been modified (SQL changed)
     Modified,
     /// Models that are new (not in reference manifest)
@@ -41,7 +41,7 @@ pub enum StateType {
 
 /// Parsed selector type
 #[derive(Debug, Clone)]
-pub enum SelectorType {
+pub(crate) enum SelectorType {
     /// Model name with optional ancestor/descendant depth
     Model {
         name: String,
@@ -431,7 +431,6 @@ impl Selector {
 
     /// Check if a model has been modified compared to reference
     fn is_model_modified(current: &Model, reference: &crate::manifest::ManifestModel) -> bool {
-        // Compare by checking if dependencies changed
         let current_deps: HashSet<String> =
             current.depends_on.iter().map(|m| m.to_string()).collect();
         let ref_deps: HashSet<String> =
@@ -448,20 +447,17 @@ impl Selector {
             }
         }
 
-        // Compare schema
         let current_schema = current.config.schema.as_deref();
         if current_schema != reference.schema.as_deref() {
             return true;
         }
 
-        // Compare tags
         let current_tags: HashSet<_> = current.config.tags.iter().collect();
         let ref_tags: HashSet<_> = reference.tags.iter().collect();
         if current_tags != ref_tags {
             return true;
         }
 
-        // Compare SQL content via checksum if available in the manifest
         if let Some(ref ref_checksum) = reference.sql_checksum {
             let current_checksum = current.sql_checksum();
             if current_checksum != *ref_checksum {
@@ -513,53 +509,7 @@ fn parse_model_selector(s: &str) -> CoreResult<(TraversalDepth, TraversalDepth, 
             TraversalDepth::None,
             parts[0].to_string(),
         )),
-        // One '+' → either prefix or suffix
-        2 => {
-            let (left, right) = (parts[0], parts[1]);
-            if left.is_empty() && !right.is_empty() {
-                // +model
-                Ok((
-                    TraversalDepth::Unlimited,
-                    TraversalDepth::None,
-                    right.to_string(),
-                ))
-            } else if !left.is_empty() && right.is_empty() {
-                // Could be "model+" or "N+"
-                if left.chars().all(|c| c.is_ascii_digit()) {
-                    Err(CoreError::InvalidSelector {
-                        selector: s.to_string(),
-                        reason: "model name cannot be empty".to_string(),
-                    })
-                } else {
-                    // model+
-                    Ok((
-                        TraversalDepth::None,
-                        TraversalDepth::Unlimited,
-                        left.to_string(),
-                    ))
-                }
-            } else if !left.is_empty() && !right.is_empty() {
-                // N+model or model+N
-                if left.chars().all(|c| c.is_ascii_digit()) {
-                    let depth = parse_depth(left, s, "before")?;
-                    Ok((depth, TraversalDepth::None, right.to_string()))
-                } else if right.chars().all(|c| c.is_ascii_digit()) {
-                    let depth = parse_depth(right, s, "after")?;
-                    Ok((TraversalDepth::None, depth, left.to_string()))
-                } else {
-                    Err(CoreError::InvalidSelector {
-                        selector: s.to_string(),
-                        reason: "ambiguous selector: expected N+model or model+N".to_string(),
-                    })
-                }
-            } else {
-                // both empty → just "+"
-                Err(CoreError::InvalidSelector {
-                    selector: s.to_string(),
-                    reason: "model name cannot be empty".to_string(),
-                })
-            }
-        }
+        2 => parse_two_part_selector(parts[0], parts[1], s),
         // Two '+' → three parts
         3 => {
             let (left, middle, right) = (parts[0], parts[1], parts[2]);
@@ -576,6 +526,57 @@ fn parse_model_selector(s: &str) -> CoreResult<(TraversalDepth, TraversalDepth, 
         _ => Err(CoreError::InvalidSelector {
             selector: s.to_string(),
             reason: "too many '+' characters in selector".to_string(),
+        }),
+    }
+}
+
+/// Parse a selector with exactly one `+`, yielding `(left, right)`.
+fn parse_two_part_selector(
+    left: &str,
+    right: &str,
+    s: &str,
+) -> CoreResult<(TraversalDepth, TraversalDepth, String)> {
+    match (left.is_empty(), right.is_empty()) {
+        // +model
+        (true, false) => Ok((
+            TraversalDepth::Unlimited,
+            TraversalDepth::None,
+            right.to_string(),
+        )),
+        // model+ or N+ (error if purely numeric)
+        (false, true) => {
+            if left.chars().all(|c| c.is_ascii_digit()) {
+                Err(CoreError::InvalidSelector {
+                    selector: s.to_string(),
+                    reason: "model name cannot be empty".to_string(),
+                })
+            } else {
+                Ok((
+                    TraversalDepth::None,
+                    TraversalDepth::Unlimited,
+                    left.to_string(),
+                ))
+            }
+        }
+        // N+model or model+N
+        (false, false) => {
+            if left.chars().all(|c| c.is_ascii_digit()) {
+                let depth = parse_depth(left, s, "before")?;
+                Ok((depth, TraversalDepth::None, right.to_string()))
+            } else if right.chars().all(|c| c.is_ascii_digit()) {
+                let depth = parse_depth(right, s, "after")?;
+                Ok((TraversalDepth::None, depth, left.to_string()))
+            } else {
+                Err(CoreError::InvalidSelector {
+                    selector: s.to_string(),
+                    reason: "ambiguous selector: expected N+model or model+N".to_string(),
+                })
+            }
+        }
+        // both empty → just "+"
+        (true, true) => Err(CoreError::InvalidSelector {
+            selector: s.to_string(),
+            reason: "model name cannot be empty".to_string(),
         }),
     }
 }

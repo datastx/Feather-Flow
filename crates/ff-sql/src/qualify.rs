@@ -57,21 +57,7 @@ pub fn qualify_table_references(
 
     for stmt in &mut statements {
         let _ = visit_relations_mut(stmt, |name: &mut ObjectName| {
-            // Only qualify single-part names (bare references)
-            if name.0.len() == 1 {
-                if let Some(ObjectNamePart::Identifier(ident)) = name.0.first() {
-                    let bare = ident.value.to_lowercase();
-                    if let Some(qualified) = qualification_map.get(&bare) {
-                        let mut parts = Vec::with_capacity(3);
-                        if let Some(ref db) = qualified.database {
-                            parts.push(ObjectNamePart::Identifier(Ident::new(db)));
-                        }
-                        parts.push(ObjectNamePart::Identifier(Ident::new(&qualified.schema)));
-                        parts.push(ObjectNamePart::Identifier(Ident::new(&qualified.table)));
-                        name.0 = parts;
-                    }
-                }
-            }
+            qualify_single_name(name, qualification_map);
             std::ops::ControlFlow::<()>::Continue(())
         });
     }
@@ -81,6 +67,30 @@ pub fn qualify_table_references(
         .map(|s| s.to_string())
         .collect::<Vec<_>>()
         .join(";\n"))
+}
+
+/// Qualify a single-part (bare) table name using the qualification map.
+///
+/// Only rewrites names with exactly one part. Already-qualified names are
+/// left unchanged.
+fn qualify_single_name(name: &mut ObjectName, map: &HashMap<String, QualifiedRef>) {
+    if name.0.len() != 1 {
+        return;
+    }
+    let Some(ObjectNamePart::Identifier(ident)) = name.0.first() else {
+        return;
+    };
+    let bare = ident.value.to_lowercase();
+    let Some(qualified) = map.get(&bare) else {
+        return;
+    };
+    let mut parts = Vec::with_capacity(3);
+    if let Some(ref db) = qualified.database {
+        parts.push(ObjectNamePart::Identifier(Ident::new(db)));
+    }
+    parts.push(ObjectNamePart::Identifier(Ident::new(&qualified.schema)));
+    parts.push(ObjectNamePart::Identifier(Ident::new(&qualified.table)));
+    name.0 = parts;
 }
 
 #[cfg(test)]

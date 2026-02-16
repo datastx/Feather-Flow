@@ -163,43 +163,48 @@ async fn show_columns(db: &dyn Database, seeds: &[&Seed], verbose: bool) -> Resu
             eprintln!("[verbose] Inferring schema for: {}", path_str);
         }
 
-        match db.infer_csv_schema(&path_str).await {
-            Ok(schema) => {
-                println!("{}:", seed.name);
-
-                let type_overrides = seed.column_types();
-
-                for (col_name, inferred_type) in &schema {
-                    if let Some(override_type) = type_overrides.get(col_name) {
-                        println!(
-                            "  {} {} (overridden from {})",
-                            col_name, override_type, inferred_type
-                        );
-                    } else {
-                        println!("  {} {}", col_name, inferred_type);
-                    }
-                }
-
-                if let Some(config) = &seed.config {
-                    let mut config_notes = Vec::new();
-                    if let Some(schema) = &config.schema {
-                        config_notes.push(format!("schema: {}", schema));
-                    }
-                    if config.delimiter != ',' {
-                        config_notes.push(format!("delimiter: {:?}", config.delimiter));
-                    }
-                    if !config_notes.is_empty() {
-                        println!("  [{}]", config_notes.join(", "));
-                    }
-                }
-
-                println!();
-            }
+        let schema = match db.infer_csv_schema(&path_str).await {
+            Ok(s) => s,
             Err(e) => {
                 println!("{}: Error - {}\n", seed.name, e);
+                continue;
             }
-        }
+        };
+
+        display_seed_schema(&seed.name, &schema, seed);
     }
 
     Ok(())
+}
+
+/// Display inferred schema for a single seed, noting any type overrides.
+fn display_seed_schema(name: &str, schema: &[(String, String)], seed: &Seed) {
+    println!("{}:", name);
+
+    let type_overrides = seed.column_types();
+    for (col_name, inferred_type) in schema {
+        if let Some(override_type) = type_overrides.get(col_name) {
+            println!(
+                "  {} {} (overridden from {})",
+                col_name, override_type, inferred_type
+            );
+        } else {
+            println!("  {} {}", col_name, inferred_type);
+        }
+    }
+
+    if let Some(config) = &seed.config {
+        let mut config_notes = Vec::new();
+        if let Some(s) = &config.schema {
+            config_notes.push(format!("schema: {}", s));
+        }
+        if config.delimiter != ',' {
+            config_notes.push(format!("delimiter: {:?}", config.delimiter));
+        }
+        if !config_notes.is_empty() {
+            println!("  [{}]", config_notes.join(", "));
+        }
+    }
+
+    println!();
 }

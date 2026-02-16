@@ -91,19 +91,17 @@ impl Project {
 
     /// Check if a model reference is to a non-latest version and return a warning if so
     pub fn check_version_warning(&self, reference: &str) -> Option<String> {
-        if let Some(model) = self.models.get(reference) {
-            if model.is_versioned() {
-                let base_name = model.get_base_name();
-                if let Some((latest_name, _)) = self.get_latest_version(base_name) {
-                    if latest_name != reference {
-                        return Some(format!(
-                            "Warning: '{}' is not the latest version. Latest is '{}'.",
-                            reference, latest_name
-                        ));
-                    }
-                }
-            }
+        let model = self.models.get(reference)?;
+        if !model.is_versioned() {
+            return None;
         }
-        None
+        let base_name = model.get_base_name();
+        let (latest_name, _) = self.get_latest_version(base_name)?;
+        (latest_name != reference).then(|| {
+            format!(
+                "Warning: '{}' is not the latest version. Latest is '{}'.",
+                reference, latest_name
+            )
+        })
     }
 }

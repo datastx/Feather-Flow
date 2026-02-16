@@ -230,23 +230,17 @@ impl ProjectLineage {
 
     /// Resolve cross-model edges by matching source tables to known models
     pub fn resolve_edges(&mut self, known_models: &HashSet<&str>) {
-        let mut new_edges = Vec::new();
-
-        for (target_model, lineage) in &self.models {
-            for col_lineage in &lineage.columns {
-                for source_ref in &col_lineage.source_columns {
-                    if let Some(edge) = resolve_single_edge(
-                        target_model,
-                        lineage,
-                        col_lineage,
-                        source_ref,
-                        known_models,
-                    ) {
-                        new_edges.push(edge);
-                    }
-                }
-            }
-        }
+        let new_edges: Vec<_> = self
+            .models
+            .iter()
+            .flat_map(|(target, lineage)| {
+                lineage.columns.iter().flat_map(move |cl| {
+                    cl.source_columns.iter().filter_map(move |sr| {
+                        resolve_single_edge(target, lineage, cl, sr, known_models)
+                    })
+                })
+            })
+            .collect();
 
         self.edges.extend(new_edges);
     }
@@ -531,10 +525,10 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
                 let resolved_table = lineage
                     .table_aliases
                     .get(&table_name)
-                    .cloned()
-                    .unwrap_or(table_name.clone());
+                    .map(|s| s.as_str())
+                    .unwrap_or(&table_name);
 
-                let col_ref = ColumnRef::qualified(&resolved_table, &col_name);
+                let col_ref = ColumnRef::qualified(resolved_table, &col_name);
                 ColumnLineage::direct(&col_name, col_ref)
             } else {
                 let col_name = idents

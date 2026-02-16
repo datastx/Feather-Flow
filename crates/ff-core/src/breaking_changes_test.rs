@@ -47,10 +47,10 @@ fn test_detect_model_removal() {
         report.changes[0].change_type,
         BreakingChangeType::ModelRemoved
     ));
-    assert_eq!(report.changes[0].model, "model_a");
+    assert_eq!(report.changes[0].model.as_ref(), "model_a");
     assert!(report.changes[0]
         .downstream_models
-        .contains(&"model_b".to_string()));
+        .contains(&ModelName::new("model_b")));
 }
 
 #[test]
@@ -89,7 +89,7 @@ fn test_detect_new_model() {
     let report = detect_breaking_changes_simple(&previous, &current);
 
     assert!(!report.has_breaking_changes());
-    assert!(report.models_added.contains(&"model_b".to_string()));
+    assert!(report.models_added.contains(&ModelName::new("model_b")));
 }
 
 #[test]

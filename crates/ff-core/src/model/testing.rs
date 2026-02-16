@@ -1,6 +1,7 @@
 //! Test types and parsing for model schema tests
 
 use crate::error::CoreError;
+use crate::model_name::ModelName;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -66,7 +67,7 @@ pub struct SchemaTest {
     pub column: String,
 
     /// Model name
-    pub model: String,
+    pub model: ModelName,
 
     /// Test configuration (severity, where, limit, etc.)
     #[serde(default)]

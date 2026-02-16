@@ -70,11 +70,9 @@ impl<'a> JinjaEnvironment<'a> {
             .map(|(k, v): (&String, &serde_yaml::Value)| (k.clone(), yaml_to_json(v)))
             .collect();
 
-        // Register core functions
         env.add_function("config", make_config_fn(config_capture.clone()));
         env.add_function("var", make_var_fn(json_vars));
 
-        // Register new utility functions
         env.add_function("env", make_env_fn());
         env.add_function("log", make_log_fn());
         env.add_function("error", make_error_fn());
@@ -84,10 +82,8 @@ impl<'a> JinjaEnvironment<'a> {
         env.add_function("to_json", to_json_fn.clone());
         env.add_filter("to_json", to_json_fn);
 
-        // Register built-in macros
         register_builtins(&mut env);
 
-        // Set static context variables as globals
         if let Some(ctx) = template_context {
             env.add_global("project_name", Value::from(ctx.project_name.clone()));
             env.add_global("target", Value::from_serialize(&ctx.target));

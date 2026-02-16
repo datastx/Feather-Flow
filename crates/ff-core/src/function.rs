@@ -96,7 +96,7 @@ pub struct FunctionConfig {
 
 /// YAML schema for a function definition file
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FunctionSchema {
+pub(crate) struct FunctionSchema {
     /// Must be "functions"
     pub kind: FunctionKind,
 
@@ -199,7 +199,6 @@ impl FunctionDef {
                 details: e.to_string(),
             })?;
 
-        // Validate function name is a valid SQL identifier
         if !is_valid_sql_identifier(&schema.name) {
             return Err(CoreError::FunctionInvalidName {
                 name: schema.name.clone(),
@@ -207,7 +206,6 @@ impl FunctionDef {
             });
         }
 
-        // Validate arg names are unique
         let mut seen_args = std::collections::HashSet::new();
         for arg in &schema.args {
             if !seen_args.insert(&arg.name) {
@@ -242,7 +240,6 @@ impl FunctionDef {
             }
         }
 
-        // Find matching SQL file
         let sql_path = yaml_path.with_extension("sql");
         if !sql_path.exists() {
             return Err(CoreError::FunctionMissingSqlFile {

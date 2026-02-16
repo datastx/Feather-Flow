@@ -29,7 +29,7 @@ impl SchemaYml {
                         tests.push(SchemaTest {
                             test_type,
                             column: column_def.name.clone(),
-                            model: model_def.name.clone(),
+                            model: crate::model_name::ModelName::new(&model_def.name),
                             config: TestConfig::default(),
                         });
                     }

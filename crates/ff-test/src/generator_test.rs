@@ -84,7 +84,7 @@ fn test_generated_test_name() {
     let schema_test = SchemaTest {
         test_type: TestType::Unique,
         column: "order_id".to_string(),
-        model: "stg_orders".to_string(),
+        model: ff_core::model_name::ModelName::new("stg_orders"),
         config: Default::default(),
     };
 
@@ -100,7 +100,7 @@ fn test_generated_test_accepted_values() {
             quote: true,
         },
         column: "status".to_string(),
-        model: "orders".to_string(),
+        model: ff_core::model_name::ModelName::new("orders"),
         config: Default::default(),
     };
 
@@ -133,7 +133,7 @@ fn test_generated_test_relationship() {
             field: Some("id".to_string()),
         },
         column: "customer_id".to_string(),
-        model: "orders".to_string(),
+        model: ff_core::model_name::ModelName::new("orders"),
         config: Default::default(),
     };
 
@@ -155,7 +155,7 @@ fn test_generated_test_relationship_default_field() {
             field: None,
         },
         column: "user_id".to_string(),
-        model: "posts".to_string(),
+        model: ff_core::model_name::ModelName::new("posts"),
         config: Default::default(),
     };
 
@@ -173,7 +173,7 @@ fn test_generated_test_relationship_qualified() {
             field: Some("customer_id".to_string()),
         },
         column: "customer_id".to_string(),
-        model: "fct_orders".to_string(),
+        model: ff_core::model_name::ModelName::new("fct_orders"),
         config: Default::default(),
     };
 
@@ -192,7 +192,7 @@ fn test_generated_test_relationship_qualified_with_refs() {
             field: Some("customer_id".to_string()),
         },
         column: "customer_id".to_string(),
-        model: "fct_orders".to_string(),
+        model: ff_core::model_name::ModelName::new("fct_orders"),
         config: Default::default(),
     };
 

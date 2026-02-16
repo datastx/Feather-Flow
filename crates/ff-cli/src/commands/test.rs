@@ -100,7 +100,10 @@ fn generate_source_tests(sources: &[SourceFile]) -> Vec<SchemaTest> {
                     // Use the same parsing logic as model tests
                     if let Some(test_type) = parse_test_definition(test_def) {
                         tests.push(SchemaTest {
-                            model: format!("{}.{}", source.schema, table.name),
+                            model: ff_core::model_name::ModelName::new(format!(
+                                "{}.{}",
+                                source.schema, table.name
+                            )),
                             column: column.name.clone(),
                             test_type,
                             config: ff_core::model::TestConfig::default(),
@@ -192,7 +195,7 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
         .filter(|t| {
             model_filter
                 .as_ref()
-                .map(|f| f.contains(&t.model))
+                .map(|f| f.contains(t.model.as_str()))
                 .unwrap_or(true)
         })
         .collect();
@@ -355,9 +358,9 @@ async fn run_tests_sequential(
 
         let qualified_name = ctx
             .model_qualified_names
-            .get(&schema_test.model)
+            .get(schema_test.model.as_str())
             .map(|s| s.as_str())
-            .unwrap_or(&schema_test.model);
+            .unwrap_or(schema_test.model.as_str());
 
         let generated = generate_test_with_custom_support(
             schema_test,
@@ -422,9 +425,9 @@ async fn run_tests_parallel(
         .map(|schema_test| {
             let qualified_name = ctx
                 .model_qualified_names
-                .get(&schema_test.model)
+                .get(schema_test.model.as_str())
                 .cloned()
-                .unwrap_or_else(|| schema_test.model.clone());
+                .unwrap_or_else(|| schema_test.model.to_string());
             let generated = generate_test_with_custom_support(
                 schema_test,
                 &qualified_name,
@@ -582,7 +585,7 @@ async fn process_schema_test_result(
         name: result.name.clone(),
         status,
         test_type: format!("{:?}", schema_test.test_type),
-        model: Some(schema_test.model.clone()),
+        model: Some(schema_test.model.to_string()),
         column: Some(schema_test.column.clone()),
         failure_count: result.failure_count,
         duration_secs: result.duration.as_secs_f64(),

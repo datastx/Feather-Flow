@@ -157,32 +157,31 @@ impl<'a> TestRunner<'a> {
     pub async fn run_test(&self, test: &GeneratedTest) -> TestResult {
         let start = Instant::now();
 
-        match self.db.query_count(&test.sql).await {
-            Ok(count) => {
-                let duration = start.elapsed();
-                if count == 0 {
-                    TestResult::pass(test, duration)
-                } else {
-                    // Fetch sample failing rows (up to 5)
-                    let sample_failures = match self.db.query_sample_rows(&test.sql, 5).await {
-                        Ok(rows) => rows,
-                        Err(e) => {
-                            log::warn!(
-                                "Failed to fetch sample failures for test '{}': {}",
-                                test.name,
-                                e
-                            );
-                            Vec::new()
-                        }
-                    };
-                    TestResult::fail(test, count, sample_failures, duration)
-                }
-            }
+        let count = match self.db.query_count(&test.sql).await {
+            Ok(c) => c,
             Err(e) => {
-                let duration = start.elapsed();
-                TestResult::error(test, e.to_string(), duration)
+                return TestResult::error(test, e.to_string(), start.elapsed());
             }
+        };
+
+        let duration = start.elapsed();
+        if count == 0 {
+            return TestResult::pass(test, duration);
         }
+
+        let sample_failures = self
+            .db
+            .query_sample_rows(&test.sql, 5)
+            .await
+            .unwrap_or_else(|e| {
+                log::warn!(
+                    "Failed to fetch sample failures for test '{}': {}",
+                    test.name,
+                    e
+                );
+                Vec::new()
+            });
+        TestResult::fail(test, count, sample_failures, duration)
     }
 
     /// Run multiple tests

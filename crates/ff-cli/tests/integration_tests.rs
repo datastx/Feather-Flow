@@ -203,7 +203,7 @@ async fn test_unique_constraint_pass() {
     let test = GeneratedTest::from_schema_test(&ff_core::model::SchemaTest {
         test_type: ff_core::model::TestType::Unique,
         column: "id".to_string(),
-        model: "test_table".to_string(),
+        model: ff_core::model_name::ModelName::new("test_table"),
         config: Default::default(),
     });
 
@@ -226,7 +226,7 @@ async fn test_unique_constraint_fail() {
     let test = GeneratedTest::from_schema_test(&ff_core::model::SchemaTest {
         test_type: ff_core::model::TestType::Unique,
         column: "id".to_string(),
-        model: "test_table".to_string(),
+        model: ff_core::model_name::ModelName::new("test_table"),
         config: Default::default(),
     });
 
@@ -250,7 +250,7 @@ async fn test_not_null_constraint() {
     let test = GeneratedTest::from_schema_test(&ff_core::model::SchemaTest {
         test_type: ff_core::model::TestType::NotNull,
         column: "name".to_string(),
-        model: "test_table".to_string(),
+        model: ff_core::model_name::ModelName::new("test_table"),
         config: Default::default(),
     });
 
@@ -1426,8 +1426,8 @@ fn test_load_deferred_manifest() {
             schema: Some("staging".to_string()),
             tags: vec![],
             depends_on: vec![],
-            external_deps: vec!["raw_customers".to_string()],
-            referenced_tables: vec!["raw_customers".to_string()],
+            external_deps: vec![ff_core::table_name::TableName::new("raw_customers")],
+            referenced_tables: vec![ff_core::table_name::TableName::new("raw_customers")],
             unique_key: None,
             incremental_strategy: None,
             on_schema_change: None,
@@ -1480,8 +1480,8 @@ fn test_defer_dependency_resolution() {
             schema: None,
             tags: vec![],
             depends_on: vec![],
-            external_deps: vec!["raw_customers".to_string()],
-            referenced_tables: vec!["raw_customers".to_string()],
+            external_deps: vec![ff_core::table_name::TableName::new("raw_customers")],
+            referenced_tables: vec![ff_core::table_name::TableName::new("raw_customers")],
             unique_key: None,
             incremental_strategy: None,
             on_schema_change: None,
@@ -1502,8 +1502,8 @@ fn test_defer_dependency_resolution() {
             schema: None,
             tags: vec![],
             depends_on: vec![],
-            external_deps: vec!["raw_orders".to_string()],
-            referenced_tables: vec!["raw_orders".to_string()],
+            external_deps: vec![ff_core::table_name::TableName::new("raw_orders")],
+            referenced_tables: vec![ff_core::table_name::TableName::new("raw_orders")],
             unique_key: None,
             incremental_strategy: None,
             on_schema_change: None,
@@ -1552,8 +1552,8 @@ fn test_defer_missing_upstream_detection() {
             schema: None,
             tags: vec![],
             depends_on: vec![],
-            external_deps: vec!["raw_customers".to_string()],
-            referenced_tables: vec!["raw_customers".to_string()],
+            external_deps: vec![ff_core::table_name::TableName::new("raw_customers")],
+            referenced_tables: vec![ff_core::table_name::TableName::new("raw_customers")],
             unique_key: None,
             incremental_strategy: None,
             on_schema_change: None,
@@ -1595,7 +1595,7 @@ fn test_defer_transitive_dependencies() {
             tags: vec![],
             depends_on: vec![ModelName::new("raw_products")],
             external_deps: vec![],
-            referenced_tables: vec!["raw_products".to_string()],
+            referenced_tables: vec![ff_core::table_name::TableName::new("raw_products")],
             unique_key: None,
             incremental_strategy: None,
             on_schema_change: None,
@@ -1617,7 +1617,7 @@ fn test_defer_transitive_dependencies() {
             tags: vec![],
             depends_on: vec![ModelName::new("stg_products")],
             external_deps: vec![],
-            referenced_tables: vec!["stg_products".to_string()],
+            referenced_tables: vec![ff_core::table_name::TableName::new("stg_products")],
             unique_key: None,
             incremental_strategy: None,
             on_schema_change: None,

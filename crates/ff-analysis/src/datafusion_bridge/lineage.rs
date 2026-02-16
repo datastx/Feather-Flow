@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use datafusion_expr::{Expr, LogicalPlan};
 
 /// How a column is used in producing the output
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineageKind {
     /// Direct column reference (e.g. `SELECT a FROM t`)
     Copy,
@@ -67,13 +67,13 @@ fn collect_expr_edges(
         if sources.is_empty() {
             continue;
         }
-        let kind = kind_override.clone().unwrap_or_else(|| classify_expr(expr));
+        let kind = kind_override.unwrap_or_else(|| classify_expr(expr));
         for (table, column) in sources {
             edges.push(ColumnLineageEdge {
                 output_column: output_name.clone(),
                 source_table: table,
                 source_column: column,
-                kind: kind.clone(),
+                kind,
             });
         }
     }
@@ -171,74 +171,16 @@ fn classify_expr(expr: &Expr) -> LineageKind {
     }
 }
 
-/// Collect all column references from an expression
+/// Collect all column references from an expression as `(table, name)` pairs.
 fn collect_column_refs(expr: &Expr, refs: &mut Vec<(String, String)>) {
-    match expr {
-        Expr::Column(col) => {
-            let table = col
-                .relation
-                .as_ref()
-                .map(|r| r.to_string())
-                .unwrap_or_default();
-            refs.push((table, col.name.clone()));
-        }
-        Expr::Alias(alias) => {
-            collect_column_refs(&alias.expr, refs);
-        }
-        Expr::BinaryExpr(bin) => {
-            collect_column_refs(&bin.left, refs);
-            collect_column_refs(&bin.right, refs);
-        }
-        Expr::ScalarFunction(func) => {
-            for arg in &func.args {
-                collect_column_refs(arg, refs);
-            }
-        }
-        Expr::AggregateFunction(func) => {
-            for arg in &func.params.args {
-                collect_column_refs(arg, refs);
-            }
-        }
-        Expr::Case(case) => {
-            if let Some(ref operand) = case.expr {
-                collect_column_refs(operand, refs);
-            }
-            for (when, then) in &case.when_then_expr {
-                collect_column_refs(when, refs);
-                collect_column_refs(then, refs);
-            }
-            if let Some(ref else_expr) = case.else_expr {
-                collect_column_refs(else_expr, refs);
-            }
-        }
-        Expr::Cast(cast) => {
-            collect_column_refs(&cast.expr, refs);
-        }
-        Expr::TryCast(cast) => {
-            collect_column_refs(&cast.expr, refs);
-        }
-        Expr::IsNull(inner) | Expr::IsNotNull(inner) | Expr::Not(inner) | Expr::Negative(inner) => {
-            collect_column_refs(inner, refs);
-        }
-        Expr::Between(between) => {
-            collect_column_refs(&between.expr, refs);
-            collect_column_refs(&between.low, refs);
-            collect_column_refs(&between.high, refs);
-        }
-        Expr::Like(like) => {
-            collect_column_refs(&like.expr, refs);
-            collect_column_refs(&like.pattern, refs);
-        }
-        Expr::InList(in_list) => {
-            collect_column_refs(&in_list.expr, refs);
-            for item in &in_list.list {
-                collect_column_refs(item, refs);
-            }
-        }
-        _ => {
-            // For other expression types, we don't recurse further
-        }
-    }
+    crate::pass::expr_utils::walk_expr_columns(expr, &mut |col| {
+        let table = col
+            .relation
+            .as_ref()
+            .map(|r| r.to_string())
+            .unwrap_or_default();
+        refs.push((table, col.name.clone()));
+    });
 }
 
 /// Deduplicate lineage edges, keeping the first occurrence per (output, source) pair

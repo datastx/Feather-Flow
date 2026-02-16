@@ -322,7 +322,7 @@ impl GeneratedTest {
     fn build(test: &SchemaTest, sql: String) -> Self {
         Self {
             name: format!("{}_{}__{}", test.test_type, test.model, test.column),
-            model: test.model.clone(),
+            model: test.model.to_string(),
             column: test.column.clone(),
             test_type: test.test_type.clone(),
             severity: test.config.severity,

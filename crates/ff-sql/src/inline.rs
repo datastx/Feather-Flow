@@ -58,7 +58,6 @@ pub fn inline_ephemeral_ctes(
 
     let dialect = DuckDbDialect {};
 
-    // ---- Build CTE AST nodes in dependency order ----
     let mut new_ctes: Vec<Cte> = Vec::new();
     let mut seen: HashSet<&str> = HashSet::new();
 
@@ -111,7 +110,6 @@ pub fn inline_ephemeral_ctes(
         return Ok(sql.to_string());
     }
 
-    // ---- Parse the target SQL ----
     let trimmed_sql = sql.trim().trim_end_matches(';').trim();
     let mut stmts =
         Parser::parse_sql(&dialect, trimmed_sql).map_err(|e| SqlError::InlineError {
@@ -126,10 +124,8 @@ pub fn inline_ephemeral_ctes(
         });
     };
 
-    // Inject CTEs into the query's WITH clause
     match query.with.as_mut() {
         Some(with) => {
-            // Prepend new CTEs before existing ones
             new_ctes.append(&mut with.cte_tables);
             with.cte_tables = new_ctes;
         }

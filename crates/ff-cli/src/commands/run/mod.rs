@@ -41,16 +41,8 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
 
     let db = create_database_connection(&project, global)?;
 
-    // Create query comment context if enabled
-    let comment_ctx = if project.config.query_comment.enabled {
-        let target = ff_core::config::Config::resolve_target(global.target.as_deref());
-        Some(ff_core::query_comment::QueryCommentContext::new(
-            &project.config.name,
-            target.as_deref(),
-        ))
-    } else {
-        None
-    };
+    let comment_ctx =
+        common::build_query_comment_context(&project.config, global.target.as_deref());
 
     let mut compiled_models = load_or_compile_models(&project, args, global, comment_ctx.as_ref())?;
 
@@ -74,17 +66,13 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
-    // Static analysis gate: validate SQL models before execution
-    if !args.skip_static_analysis {
-        let has_errors =
-            common::run_pre_execution_analysis(&project, &compiled_models, global, json_mode)?;
-        if has_errors {
-            if !json_mode {
-                eprintln!("Static analysis found errors. Use --skip-static-analysis to bypass.");
-            }
-            return Err(crate::commands::common::ExitCode(1).into());
-        }
-    }
+    common::run_static_analysis_gate(
+        &project,
+        &compiled_models,
+        global,
+        args.skip_static_analysis,
+        json_mode,
+    )?;
 
     // Smart build: filter out unchanged models
     let smart_skipped: HashSet<String> = if args.smart {
@@ -204,20 +192,15 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
 
     set_search_path(&db, &compiled_models, &project, wap_schema, global).await?;
 
-    // Execute on-run-start hooks (skip if resuming)
-    if previous_run_state.is_none() && !project.config.on_run_start.is_empty() {
-        if global.verbose {
-            eprintln!(
-                "[verbose] Executing {} on-run-start hooks",
-                project.config.on_run_start.len()
-            );
-        }
-        for hook in &project.config.on_run_start {
-            if let Err(e) = db.execute(hook).await {
-                println!("  \u{2717} on-run-start hook failed: {}", e);
-                return Err(anyhow::anyhow!("on-run-start hook failed: {}", e));
-            }
-        }
+    if previous_run_state.is_none() {
+        common::execute_hooks(
+            db.as_ref(),
+            &project.config.on_run_start,
+            "on-run-start",
+            global.verbose,
+            false,
+        )
+        .await?;
     }
 
     let state_path = project.target_dir().join("state.json");
@@ -261,20 +244,17 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         eprintln!("Warning: Failed to save state file: {}", e);
     }
 
-    // Execute on-run-end hooks (even if models failed, unless we stopped early with --fail-fast)
-    if !project.config.on_run_end.is_empty() && !stopped_early {
-        if global.verbose {
-            eprintln!(
-                "[verbose] Executing {} on-run-end hooks",
-                project.config.on_run_end.len()
-            );
-        }
-        for hook in &project.config.on_run_end {
-            if let Err(e) = db.execute(hook).await {
-                println!("  \u{2717} on-run-end hook failed: {}", e);
-                // Don't fail the entire run for on-run-end hook failures, just warn
-                eprintln!("Warning: on-run-end hook failed: {}", e);
-            }
+    if !stopped_early {
+        if let Err(e) = common::execute_hooks(
+            db.as_ref(),
+            &project.config.on_run_end,
+            "on-run-end",
+            global.verbose,
+            false,
+        )
+        .await
+        {
+            eprintln!("Warning: {}", e);
         }
     }
 

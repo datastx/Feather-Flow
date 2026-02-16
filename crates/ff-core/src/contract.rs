@@ -4,6 +4,7 @@
 //! match their defined schema contracts.
 
 use crate::model::{ColumnConstraint, ModelSchema};
+use crate::model_name::ModelName;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -11,7 +12,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContractViolation {
     /// The model that has the violation
-    pub model: String,
+    pub model: ModelName,
     /// Type of violation
     pub violation_type: ViolationType,
     /// Human-readable description
@@ -39,10 +40,10 @@ pub enum ViolationType {
 }
 
 /// Result of validating a schema contract
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContractValidationResult {
     /// The model that was validated
-    pub model: String,
+    pub model: ModelName,
     /// Whether the contract was enforced (errors vs warnings)
     pub enforced: bool,
     /// List of violations found
@@ -53,9 +54,9 @@ pub struct ContractValidationResult {
 
 impl ContractValidationResult {
     /// Create a new result
-    pub fn new(model: impl Into<String>, enforced: bool) -> Self {
+    pub fn new(model: &str, enforced: bool) -> Self {
         Self {
-            model: model.into(),
+            model: ModelName::new(model),
             enforced,
             violations: Vec::new(),
             passed: true,
@@ -113,7 +114,6 @@ pub fn validate_contract(
         .map(|(name, dtype)| (name.to_lowercase(), dtype.as_str()))
         .collect();
 
-    // Check each contracted column
     for column_def in &schema.columns {
         let column_lower = column_def.name.to_lowercase();
 
@@ -131,7 +131,6 @@ pub fn validate_contract(
                 );
             }
             Some(actual_type) => {
-                // Check type compatibility
                 if !types_compatible(&column_def.data_type, actual_type) {
                     result.add_violation(
                         ViolationType::TypeMismatch {

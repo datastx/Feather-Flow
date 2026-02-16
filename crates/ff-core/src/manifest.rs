@@ -4,6 +4,7 @@ use crate::config::{IncrementalStrategy, Materialization, OnSchemaChange};
 use crate::model::Model;
 use crate::model_name::ModelName;
 use crate::source::SourceFile;
+use crate::table_name::TableName;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -52,10 +53,10 @@ pub struct ManifestModel {
     pub depends_on: Vec<ModelName>,
 
     /// Dependencies on external tables
-    pub external_deps: Vec<String>,
+    pub external_deps: Vec<TableName>,
 
     /// All tables referenced in the SQL
-    pub referenced_tables: Vec<String>,
+    pub referenced_tables: Vec<TableName>,
 
     /// Unique key column(s) for incremental models
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -297,8 +298,12 @@ impl Manifest {
             schema: model.target_schema(default_schema).map(String::from),
             tags,
             depends_on: model.depends_on.iter().cloned().collect(),
-            external_deps: model.external_deps.iter().map(|t| t.to_string()).collect(),
-            referenced_tables: model.all_dependencies().into_iter().collect(),
+            external_deps: model.external_deps.iter().cloned().collect(),
+            referenced_tables: model
+                .all_dependencies()
+                .into_iter()
+                .map(TableName::new)
+                .collect(),
             unique_key,
             incremental_strategy,
             on_schema_change,

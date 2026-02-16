@@ -147,7 +147,7 @@ impl ModelSchema {
                     tests.push(SchemaTest {
                         test_type,
                         column: column.name.clone(),
-                        model: model_name.to_string(),
+                        model: crate::model_name::ModelName::new(model_name),
                         config: TestConfig::default(),
                     });
                 }

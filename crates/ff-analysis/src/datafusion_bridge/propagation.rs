@@ -167,14 +167,12 @@ pub fn propagate_schemas(
 
         let inferred_schema = Arc::new(extract_schema_from_plan(&plan));
 
-        // Cross-check with YAML if available
         let mismatches = if let Some(yaml_schema) = yaml_schemas.get(model_name) {
             compare_schemas(yaml_schema, &inferred_schema)
         } else {
             vec![]
         };
 
-        // Register the inferred schema for downstream models
         catalog.insert(model_name.clone(), Arc::clone(&inferred_schema));
 
         model_plans.insert(
