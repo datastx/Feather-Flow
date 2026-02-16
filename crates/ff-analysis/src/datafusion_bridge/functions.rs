@@ -16,32 +16,37 @@ use datafusion_expr::{
 
 /// Register all DuckDB scalar UDFs
 pub(crate) fn duckdb_scalar_udfs() -> Vec<Arc<ScalarUDF>> {
+    let ts = DataType::Timestamp(arrow::datatypes::TimeUnit::Microsecond, None);
+    let date = DataType::Date32;
+
     vec![
-        // Date/time functions
-        make_scalar(
+        // Date/time functions (accept both Timestamp and Date)
+        make_overloaded_scalar(
             "date_trunc",
-            vec![
-                DataType::Utf8,
-                DataType::Timestamp(arrow::datatypes::TimeUnit::Microsecond, None),
+            &[
+                (vec![DataType::Utf8, ts.clone()], ts.clone()),
+                (vec![DataType::Utf8, date.clone()], date.clone()),
             ],
-            DataType::Timestamp(arrow::datatypes::TimeUnit::Microsecond, None),
         ),
-        make_scalar(
+        make_overloaded_scalar(
             "date_part",
-            vec![
-                DataType::Utf8,
-                DataType::Timestamp(arrow::datatypes::TimeUnit::Microsecond, None),
+            &[
+                (vec![DataType::Utf8, ts.clone()], DataType::Int64),
+                (vec![DataType::Utf8, date.clone()], DataType::Int64),
             ],
-            DataType::Int64,
         ),
-        make_scalar(
+        make_overloaded_scalar(
             "date_diff",
-            vec![
-                DataType::Utf8,
-                DataType::Timestamp(arrow::datatypes::TimeUnit::Microsecond, None),
-                DataType::Timestamp(arrow::datatypes::TimeUnit::Microsecond, None),
+            &[
+                (
+                    vec![DataType::Utf8, ts.clone(), ts.clone()],
+                    DataType::Int64,
+                ),
+                (
+                    vec![DataType::Utf8, date.clone(), date.clone()],
+                    DataType::Int64,
+                ),
             ],
-            DataType::Int64,
         ),
         make_scalar(
             "date_add",
@@ -156,6 +161,75 @@ pub(crate) fn duckdb_scalar_udfs() -> Vec<Arc<ScalarUDF>> {
             vec![DataType::Utf8, DataType::Utf8],
             DataType::Utf8,
         ),
+        // Standard SQL string functions
+        make_scalar("lower", vec![DataType::Utf8], DataType::Utf8),
+        make_scalar("upper", vec![DataType::Utf8], DataType::Utf8),
+        make_scalar("trim", vec![DataType::Utf8], DataType::Utf8),
+        make_scalar("ltrim", vec![DataType::Utf8], DataType::Utf8),
+        make_scalar("rtrim", vec![DataType::Utf8], DataType::Utf8),
+        make_scalar("length", vec![DataType::Utf8], DataType::Int64),
+        make_scalar("char_length", vec![DataType::Utf8], DataType::Int64),
+        make_scalar("character_length", vec![DataType::Utf8], DataType::Int64),
+        make_scalar(
+            "replace",
+            vec![DataType::Utf8, DataType::Utf8, DataType::Utf8],
+            DataType::Utf8,
+        ),
+        make_scalar(
+            "substring",
+            vec![DataType::Utf8, DataType::Int64, DataType::Int64],
+            DataType::Utf8,
+        ),
+        make_scalar(
+            "left",
+            vec![DataType::Utf8, DataType::Int64],
+            DataType::Utf8,
+        ),
+        make_scalar(
+            "right",
+            vec![DataType::Utf8, DataType::Int64],
+            DataType::Utf8,
+        ),
+        make_scalar(
+            "lpad",
+            vec![DataType::Utf8, DataType::Int64, DataType::Utf8],
+            DataType::Utf8,
+        ),
+        make_scalar(
+            "rpad",
+            vec![DataType::Utf8, DataType::Int64, DataType::Utf8],
+            DataType::Utf8,
+        ),
+        make_scalar("reverse", vec![DataType::Utf8], DataType::Utf8),
+        make_scalar(
+            "repeat",
+            vec![DataType::Utf8, DataType::Int64],
+            DataType::Utf8,
+        ),
+        make_scalar(
+            "starts_with",
+            vec![DataType::Utf8, DataType::Utf8],
+            DataType::Boolean,
+        ),
+        make_scalar(
+            "ends_with",
+            vec![DataType::Utf8, DataType::Utf8],
+            DataType::Boolean,
+        ),
+        make_scalar("ascii", vec![DataType::Utf8], DataType::Int64),
+        make_scalar("chr", vec![DataType::Int64], DataType::Utf8),
+        make_scalar("bit_length", vec![DataType::Utf8], DataType::Int64),
+        make_scalar("octet_length", vec![DataType::Utf8], DataType::Int64),
+        make_scalar(
+            "position",
+            vec![DataType::Utf8, DataType::Utf8],
+            DataType::Int64,
+        ),
+        make_scalar(
+            "translate",
+            vec![DataType::Utf8, DataType::Utf8, DataType::Utf8],
+            DataType::Utf8,
+        ),
     ]
 }
 
@@ -194,6 +268,24 @@ fn make_scalar(name: &str, args: Vec<DataType>, ret: DataType) -> Arc<ScalarUDF>
     Arc::new(ScalarUDF::from(StubScalarUDF {
         name: name.to_string(),
         signature: Signature::new(TypeSignature::Exact(args), Volatility::Immutable),
+        return_type: ret,
+    }))
+}
+
+/// Create a scalar UDF with multiple overloaded signatures via `TypeSignature::OneOf`
+fn make_overloaded_scalar(name: &str, overloads: &[(Vec<DataType>, DataType)]) -> Arc<ScalarUDF> {
+    let sigs: Vec<TypeSignature> = overloads
+        .iter()
+        .map(|(args, _)| TypeSignature::Exact(args.clone()))
+        .collect();
+    // Use the return type of the first overload as the default
+    let ret = overloads
+        .first()
+        .map(|(_, r)| r.clone())
+        .unwrap_or(DataType::Utf8);
+    Arc::new(ScalarUDF::from(StubScalarUDF {
+        name: name.to_string(),
+        signature: Signature::new(TypeSignature::OneOf(sigs), Volatility::Immutable),
         return_type: ret,
     }))
 }

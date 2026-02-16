@@ -241,13 +241,27 @@ fn validate_sql_syntax(
         }
 
         let deps = ff_sql::extract_dependencies(&stmts);
-        let (model_deps, _, unknown_deps) = ff_sql::extractor::categorize_dependencies_with_unknown(
-            deps,
+        let (mut model_deps, _, unknown_deps) =
+            ff_sql::extractor::categorize_dependencies_with_unknown(
+                deps,
+                known_models,
+                external_tables,
+            );
+
+        // Resolve table function references (same as compile.rs) to avoid
+        // false W003 warnings for known functions like table-valued UDFs.
+        let (func_model_deps, remaining_unknown) = common::resolve_function_dependencies(
+            &unknown_deps,
+            project,
+            parser,
             known_models,
             external_tables,
         );
+        model_deps.extend(func_model_deps);
+        model_deps.sort();
+        model_deps.dedup();
 
-        for unknown in &unknown_deps {
+        for unknown in &remaining_unknown {
             ctx.warning(
                 "W003",
                 format!(

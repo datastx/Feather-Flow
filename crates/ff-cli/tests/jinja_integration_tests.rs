@@ -213,7 +213,7 @@ fn test_sample_project_all_models_compile() {
 const JINJA_FIXTURE: &str = "tests/fixtures/jinja_template_project";
 
 #[test]
-fn test_jinja_user_macro_import() {
+fn test_jinja_user_macro_auto_import() {
     let tmp = compile_to_tempdir(JINJA_FIXTURE);
     let sql = read_compiled_model(&tmp, "stg_events");
 
@@ -229,10 +229,10 @@ fn test_jinja_user_macro_import() {
         "compiled SQL should not contain raw macro name, got:\n{}",
         sql
     );
-    // Import directive should be gone
+    // No Jinja syntax should remain in compiled output
     assert!(
-        !sql.contains("{% from"),
-        "compiled SQL should not contain {{% from %}} import, got:\n{}",
+        !sql.contains("{{"),
+        "compiled SQL should not contain Jinja expression tags, got:\n{}",
         sql
     );
 }
@@ -685,12 +685,12 @@ fn test_jinja_error_undefined_var() {
 }
 
 #[test]
-fn test_jinja_error_missing_import() {
+fn test_jinja_error_undefined_macro() {
     let (stdout, _stderr, success) = compile_with_args(ERROR_FIXTURE, &[]);
 
     assert!(
         !success,
-        "compile should fail when a model imports from a missing file"
+        "compile should fail when a model calls an undefined macro"
     );
 
     assert!(

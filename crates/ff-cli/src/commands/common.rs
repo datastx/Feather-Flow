@@ -217,11 +217,19 @@ pub(crate) fn build_schema_catalog(
                     .iter()
                     .map(|col| {
                         let sql_type = parse_sql_type(&col.data_type);
+                        let has_not_null = col.tests.iter().any(|t| {
+                            matches!(t, ff_core::model::TestDefinition::Simple(s) if s == "not_null")
+                        });
+                        let nullability = if has_not_null {
+                            Nullability::NotNull
+                        } else {
+                            Nullability::Unknown
+                        };
                         TypedColumn {
                             name: col.name.clone(),
                             source_table: None,
                             sql_type,
-                            nullability: Nullability::Unknown,
+                            nullability,
                             provenance: vec![],
                         }
                     })

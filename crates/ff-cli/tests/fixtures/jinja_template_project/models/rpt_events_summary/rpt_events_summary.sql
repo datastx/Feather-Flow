@@ -1,7 +1,5 @@
 {{ config(materialized='table') }}
 
-{% from "utils.sql" import format_event_type %}
-
 SELECT
     {{ format_event_type('event_type') }} AS event_type_clean,
     COUNT(*) AS event_count,

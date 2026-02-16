@@ -110,12 +110,10 @@ fn test_macro_loading() {
     )
     .unwrap();
 
-    // Create environment with macro path
+    // Create environment with macro path — macros auto-registered, no import needed
     let env = JinjaEnvironment::with_macros(&HashMap::new(), std::slice::from_ref(&macros_dir));
 
-    // Test using the macro
-    let template = r#"{% from "utils.sql" import cents_to_dollars %}
-SELECT {{ cents_to_dollars("amount_cents") }} AS amount_dollars FROM orders"#;
+    let template = r#"SELECT {{ cents_to_dollars("amount_cents") }} AS amount_dollars FROM orders"#;
 
     let result = env.render(template).unwrap();
     assert!(result.contains("(amount_cents / 100.0) AS amount_dollars"));
@@ -139,8 +137,8 @@ fn test_macro_with_multiple_imports() {
 
     let env = JinjaEnvironment::with_macros(&HashMap::new(), &[macros_dir]);
 
-    let template = r#"{% from "utils.sql" import cents_to_dollars, safe_divide %}
-SELECT
+    // No explicit import — both macros auto-registered
+    let template = r#"SELECT
   {{ cents_to_dollars("price") }} AS price_dollars,
   {{ safe_divide("revenue", "count") }} AS avg_revenue
 FROM sales"#;
@@ -201,8 +199,8 @@ fn test_macros_with_vars() {
 
     let env = JinjaEnvironment::with_macros(&vars, &[macros_dir]);
 
-    let template = r#"{% from "filters.sql" import date_filter %}
-SELECT * FROM orders WHERE {{ date_filter("created_at", var("start_date"), var("end_date")) }}"#;
+    // No explicit import — auto-registered from filters.sql
+    let template = r#"SELECT * FROM orders WHERE {{ date_filter("created_at", var("start_date"), var("end_date")) }}"#;
 
     let result = env.render(template).unwrap();
     assert!(result.contains("created_at BETWEEN '2024-01-01' AND '2024-12-31'"));
@@ -572,4 +570,85 @@ fn test_render_with_config_and_model() {
         .unwrap();
     assert_eq!(rendered, "test_model");
     assert_eq!(config.get("materialized").unwrap().as_str(), Some("table"));
+}
+
+// ===== Auto-registration tests =====
+
+#[test]
+fn test_macro_auto_registration() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new().unwrap();
+    let macros_dir = temp.path().join("macros");
+    fs::create_dir(&macros_dir).unwrap();
+
+    fs::write(
+        macros_dir.join("helpers.sql"),
+        r#"{% macro greet(name) %}Hello, {{ name }}!{% endmacro %}
+{% macro farewell(name) %}Goodbye, {{ name }}!{% endmacro %}"#,
+    )
+    .unwrap();
+
+    let env = JinjaEnvironment::with_macros(&HashMap::new(), &[macros_dir]);
+
+    // Both macros should be available without any import statement
+    let result = env
+        .render(r#"{{ greet("world") }} {{ farewell("world") }}"#)
+        .unwrap();
+    assert_eq!(result, "Hello, world! Goodbye, world!");
+}
+
+#[test]
+fn test_macro_auto_registration_multiple_files() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new().unwrap();
+    let macros_dir = temp.path().join("macros");
+    fs::create_dir(&macros_dir).unwrap();
+
+    fs::write(
+        macros_dir.join("math.sql"),
+        r#"{% macro double(x) %}({{ x }} * 2){% endmacro %}"#,
+    )
+    .unwrap();
+
+    fs::write(
+        macros_dir.join("strings.sql"),
+        r#"{% macro upper(col) %}UPPER({{ col }}){% endmacro %}"#,
+    )
+    .unwrap();
+
+    let env = JinjaEnvironment::with_macros(&HashMap::new(), &[macros_dir]);
+
+    // Macros from different files should all be available
+    let result = env
+        .render(r#"SELECT {{ double("price") }}, {{ upper("name") }}"#)
+        .unwrap();
+    assert!(result.contains("(price * 2)"));
+    assert!(result.contains("UPPER(name)"));
+}
+
+#[test]
+fn test_macro_explicit_import_still_works() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new().unwrap();
+    let macros_dir = temp.path().join("macros");
+    fs::create_dir(&macros_dir).unwrap();
+
+    fs::write(
+        macros_dir.join("utils.sql"),
+        r#"{% macro greet(name) %}Hi, {{ name }}{% endmacro %}"#,
+    )
+    .unwrap();
+
+    let env = JinjaEnvironment::with_macros(&HashMap::new(), &[macros_dir]);
+
+    // Explicit import should still work (duplicate import is fine in minijinja)
+    let template = r#"{% from "utils.sql" import greet %}{{ greet("Alice") }}"#;
+    let result = env.render(template).unwrap();
+    assert_eq!(result, "Hi, Alice");
 }
