@@ -28,8 +28,8 @@ pub async fn execute(args: &ParseArgs, global: &GlobalArgs) -> Result<()> {
         .map(String::from)
         .collect();
 
-    let mut all_deps: Vec<ModelDeps> = Vec::new();
-    let mut dep_map: HashMap<String, Vec<String>> = HashMap::new();
+    let mut all_deps: Vec<ModelDeps> = Vec::with_capacity(all_model_names.len());
+    let mut dep_map: HashMap<String, Vec<String>> = HashMap::with_capacity(all_model_names.len());
 
     for name in &all_model_names {
         let model = project

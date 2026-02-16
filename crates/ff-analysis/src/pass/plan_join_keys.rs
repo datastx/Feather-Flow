@@ -8,6 +8,7 @@ use datafusion_expr::{Expr, ExprSchemable, LogicalPlan};
 use crate::context::AnalysisContext;
 use crate::datafusion_bridge::types::arrow_to_sql_type;
 
+use super::expr_utils::expr_display_name;
 use super::plan_pass::PlanPass;
 use super::{Diagnostic, DiagnosticCode, Severity};
 
@@ -43,7 +44,6 @@ fn walk_for_joins(model: &str, plan: &LogicalPlan, diags: &mut Vec<Diagnostic>) 
             walk_for_joins(model, &join.right, diags);
 
             if join.on.is_empty() && join.filter.is_none() {
-                // No condition at all — effectively a cross join
                 diags.push(Diagnostic {
                     code: DiagnosticCode::A032,
                     severity: Severity::Info,
@@ -56,41 +56,8 @@ fn walk_for_joins(model: &str, plan: &LogicalPlan, diags: &mut Vec<Diagnostic>) 
                 return;
             }
 
-            // A030: Check equi-join key type mismatches
-            for (left_key, right_key) in &join.on {
-                let left_schema = join.left.schema();
-                let right_schema = join.right.schema();
+            check_equi_join_types(model, join, diags);
 
-                let left_type = left_key.get_type(left_schema.as_ref()).ok();
-                let right_type = right_key.get_type(right_schema.as_ref()).ok();
-
-                if let (Some(lt), Some(rt)) = (left_type, right_type) {
-                    let l_sql = arrow_to_sql_type(&lt);
-                    let r_sql = arrow_to_sql_type(&rt);
-
-                    if !l_sql.is_compatible_with(&r_sql) {
-                        let left_desc = expr_display_name(left_key);
-                        let right_desc = expr_display_name(right_key);
-                        diags.push(Diagnostic {
-                            code: DiagnosticCode::A030,
-                            severity: Severity::Warning,
-                            message: format!(
-                                "Join key type mismatch: '{}' ({}) = '{}' ({})",
-                                left_desc,
-                                l_sql.display_name(),
-                                right_desc,
-                                r_sql.display_name()
-                            ),
-                            model: model.to_string(),
-                            column: None,
-                            hint: Some("Add explicit CASTs to ensure matching types".to_string()),
-                            pass_name: "plan_join_keys".into(),
-                        });
-                    }
-                }
-            }
-
-            // A033: Non-equi join conditions (present in join.filter)
             if let Some(ref filter_expr) = join.filter {
                 check_non_equi_condition(model, filter_expr, diags);
             }
@@ -101,6 +68,44 @@ fn walk_for_joins(model: &str, plan: &LogicalPlan, diags: &mut Vec<Diagnostic>) 
                 walk_for_joins(model, input, diags);
             }
         }
+    }
+}
+
+/// Check equi-join key pairs for type mismatches (A030)
+fn check_equi_join_types(
+    model: &str,
+    join: &datafusion_expr::logical_plan::Join,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let left_schema = join.left.schema();
+    let right_schema = join.right.schema();
+
+    for (left_key, right_key) in &join.on {
+        let left_type = left_key.get_type(left_schema.as_ref()).ok();
+        let right_type = right_key.get_type(right_schema.as_ref()).ok();
+        let (Some(lt), Some(rt)) = (left_type, right_type) else {
+            continue;
+        };
+        let l_sql = arrow_to_sql_type(&lt);
+        let r_sql = arrow_to_sql_type(&rt);
+        if l_sql.is_compatible_with(&r_sql) {
+            continue;
+        }
+        diags.push(Diagnostic {
+            code: DiagnosticCode::A030,
+            severity: Severity::Warning,
+            message: format!(
+                "Join key type mismatch: '{}' ({}) = '{}' ({})",
+                expr_display_name(left_key),
+                l_sql.display_name(),
+                expr_display_name(right_key),
+                r_sql.display_name()
+            ),
+            model: model.to_string(),
+            column: None,
+            hint: Some("Add explicit CASTs to ensure matching types".to_string()),
+            pass_name: "plan_join_keys".into(),
+        });
     }
 }
 
@@ -134,19 +139,5 @@ fn check_non_equi_condition(model: &str, expr: &Expr, diags: &mut Vec<Diagnostic
         _ => {
             // Non-binary expression in join filter — unusual
         }
-    }
-}
-
-/// Get a human-readable name for a join key expression
-fn expr_display_name(expr: &Expr) -> String {
-    match expr {
-        Expr::Column(col) => {
-            if let Some(ref relation) = col.relation {
-                format!("{}.{}", relation, col.name)
-            } else {
-                col.name.clone()
-            }
-        }
-        _ => expr.schema_name().to_string(),
     }
 }

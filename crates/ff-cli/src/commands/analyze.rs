@@ -31,7 +31,7 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
     let (schema_catalog, yaml_schemas) = build_schema_catalog(&project, &external_tables);
 
     // Render SQL, extract dependencies and lineage in a single pass
-    let mut dep_map: HashMap<String, Vec<String>> = HashMap::new();
+    let mut dep_map: HashMap<String, Vec<String>> = HashMap::with_capacity(project.models.len());
     let mut project_lineage = ProjectLineage::new();
     for (name, model) in &project.models {
         let Ok(rendered) = jinja.render(&model.raw_sql) else {

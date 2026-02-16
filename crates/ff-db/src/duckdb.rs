@@ -372,6 +372,26 @@ impl DuckDbBackend {
         let conn = self.lock_conn()?;
         relation_exists_on(&conn, name)
     }
+
+    /// Shared implementation for `query_sample_rows` and `query_rows`
+    fn query_rows_raw(&self, sql: &str, limit: usize) -> DbResult<Vec<Vec<String>>> {
+        let conn = self.lock_conn()?;
+        let limited_sql = format!("SELECT * FROM ({}) AS subq LIMIT {}", sql, limit);
+
+        let mut stmt = conn.prepare(&limited_sql)?;
+        let mut rows = Vec::new();
+        let mut result_rows = stmt.query([])?;
+        let column_count = result_rows.as_ref().map_or(0, |r| r.column_count());
+
+        while let Some(row) = result_rows.next()? {
+            let values: Vec<String> = (0..column_count)
+                .map(|i| extract_cell_as_string(row, i))
+                .collect();
+            rows.push(values);
+        }
+
+        Ok(rows)
+    }
 }
 
 #[async_trait]
@@ -393,41 +413,12 @@ impl DatabaseCore for DuckDbBackend {
     }
 
     async fn query_sample_rows(&self, sql: &str, limit: usize) -> DbResult<Vec<String>> {
-        let conn = self.lock_conn()?;
-        let limited_sql = format!("SELECT * FROM ({}) AS subq LIMIT {}", sql, limit);
-
-        let mut stmt = conn.prepare(&limited_sql)?;
-        let mut rows: Vec<String> = Vec::new();
-        let mut result_rows = stmt.query([])?;
-        let column_count = result_rows.as_ref().map_or(0, |r| r.column_count());
-
-        while let Some(row) = result_rows.next()? {
-            let values: Vec<String> = (0..column_count)
-                .map(|i| extract_cell_as_string(row, i))
-                .collect();
-            rows.push(values.join(", "));
-        }
-
-        Ok(rows)
+        let raw = self.query_rows_raw(sql, limit)?;
+        Ok(raw.into_iter().map(|row| row.join(", ")).collect())
     }
 
     async fn query_rows(&self, sql: &str, limit: usize) -> DbResult<Vec<Vec<String>>> {
-        let conn = self.lock_conn()?;
-        let limited_sql = format!("SELECT * FROM ({}) AS subq LIMIT {}", sql, limit);
-
-        let mut stmt = conn.prepare(&limited_sql)?;
-        let mut rows: Vec<Vec<String>> = Vec::new();
-        let mut result_rows = stmt.query([])?;
-        let column_count = result_rows.as_ref().map_or(0, |r| r.column_count());
-
-        while let Some(row) = result_rows.next()? {
-            let values: Vec<String> = (0..column_count)
-                .map(|i| extract_cell_as_string(row, i))
-                .collect();
-            rows.push(values);
-        }
-
-        Ok(rows)
+        self.query_rows_raw(sql, limit)
     }
 
     async fn query_one(&self, sql: &str) -> DbResult<Option<String>> {

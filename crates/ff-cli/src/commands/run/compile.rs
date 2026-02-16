@@ -212,7 +212,7 @@ fn compile_all_models(
     let external_tables: HashSet<String> = common::build_external_tables_lookup(project);
     let known_models: HashSet<&str> = project.models.keys().map(|k| k.as_str()).collect();
 
-    let mut compiled_models = HashMap::new();
+    let mut compiled_models = HashMap::with_capacity(model_names.len());
 
     for name in model_names {
         let model = project

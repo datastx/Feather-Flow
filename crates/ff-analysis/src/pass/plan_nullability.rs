@@ -68,29 +68,47 @@ impl PlanPass for PlanNullability {
             }
         }
 
-        if let Some(yaml_schema) = ctx.model_schema(model_name) {
-            for col in &yaml_schema.columns {
-                if col.nullability == Nullability::NotNull && nullable_from_join.contains(&col.name)
-                {
-                    diagnostics.push(Diagnostic {
-                        code: DiagnosticCode::A011,
-                        severity: Severity::Warning,
-                        message: format!(
-                            "Column '{}' is declared NOT NULL in YAML but becomes nullable after JOIN",
-                            col.name
-                        ),
-                        model: model_name.to_string(),
-                        column: Some(col.name.clone()),
-                        hint: Some("Add a COALESCE or filter to ensure NOT NULL".to_string()),
-                        pass_name: "plan_nullability".into(),
-                    });
-                }
-            }
-        }
+        check_yaml_nullability_conflicts(model_name, ctx, &nullable_from_join, &mut diagnostics);
 
         check_redundant_null_checks(model_name, plan, &mut diagnostics);
 
         diagnostics
+    }
+}
+
+/// Check YAML NOT NULL declarations against join-nullable columns (A011)
+fn check_yaml_nullability_conflicts(
+    model_name: &str,
+    ctx: &AnalysisContext,
+    nullable_from_join: &HashSet<String>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let Some(yaml_schema) = ctx.model_schema(model_name) else {
+        return;
+    };
+    for col in &yaml_schema.columns {
+        if col.nullability != Nullability::NotNull || !nullable_from_join.contains(&col.name) {
+            continue;
+        }
+        diagnostics.push(Diagnostic {
+            code: DiagnosticCode::A011,
+            severity: Severity::Warning,
+            message: format!(
+                "Column '{}' is declared NOT NULL in YAML but becomes nullable after JOIN",
+                col.name
+            ),
+            model: model_name.to_string(),
+            column: Some(col.name.clone()),
+            hint: Some("Add a COALESCE or filter to ensure NOT NULL".to_string()),
+            pass_name: "plan_nullability".into(),
+        });
+    }
+}
+
+/// Insert all field names from a plan's schema into the nullable set
+fn insert_schema_fields(plan: &LogicalPlan, nullable: &mut HashSet<String>) {
+    for field in plan.schema().fields() {
+        nullable.insert(field.name().clone());
     }
 }
 
@@ -101,18 +119,14 @@ fn collect_join_nullable_columns(plan: &LogicalPlan, nullable: &mut HashSet<Stri
             collect_join_nullable_columns(&join.left, nullable);
             collect_join_nullable_columns(&join.right, nullable);
 
-            let nullable_side = match join.join_type {
-                JoinType::Left => Some(vec![&join.right]),
-                JoinType::Right => Some(vec![&join.left]),
-                JoinType::Full => Some(vec![&join.left, &join.right]),
-                _ => None,
-            };
-            if let Some(sides) = nullable_side {
-                for side in sides {
-                    for field in side.schema().fields() {
-                        nullable.insert(field.name().clone());
-                    }
+            match join.join_type {
+                JoinType::Left => insert_schema_fields(&join.right, nullable),
+                JoinType::Right => insert_schema_fields(&join.left, nullable),
+                JoinType::Full => {
+                    insert_schema_fields(&join.left, nullable);
+                    insert_schema_fields(&join.right, nullable);
                 }
+                _ => {}
             }
         }
         _ => {

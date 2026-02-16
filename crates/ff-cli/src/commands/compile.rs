@@ -149,16 +149,18 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
     }
 
     let project_root = project.root.clone();
-    let mut dependencies: HashMap<String, Vec<String>> = HashMap::new();
-    let mut compile_results: Vec<ModelCompileResult> = Vec::new();
+    let model_count = all_model_names.len();
+    let mut dependencies: HashMap<String, Vec<String>> = HashMap::with_capacity(model_count);
+    let mut compile_results: Vec<ModelCompileResult> = Vec::with_capacity(model_count);
     let mut success_count = 0;
     let mut failure_count = 0;
 
     let default_materialization = project.config.materialization;
 
     // Phase 1: compile models
-    let mut compiled_models: Vec<CompileOutput> = Vec::new();
-    let mut materializations: HashMap<String, Materialization> = HashMap::new();
+    let mut compiled_models: Vec<CompileOutput> = Vec::with_capacity(model_count);
+    let mut materializations: HashMap<String, Materialization> =
+        HashMap::with_capacity(model_count);
 
     let compile_ctx = CompileContext {
         jinja: &jinja,
