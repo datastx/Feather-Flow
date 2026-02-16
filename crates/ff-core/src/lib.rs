@@ -40,12 +40,14 @@ pub use function::{
 };
 pub use function_name::FunctionName;
 pub use manifest::Manifest;
-pub use model::{ColumnConstraint, DataClassification, Model, ModelSchema, SchemaContract};
+pub use model::{
+    ColumnConstraint, DataClassification, Model, ModelKind, ModelSchema, SchemaContract,
+};
 pub use model_name::ModelName;
 pub use project::{Project, ProjectParts};
 pub use query_comment::{QueryCommentContext, QueryCommentMetadata};
 pub use run_state::{CompletedModel, FailedModel, RunState, RunStateSummary, RunStatus};
-pub use seed::{Seed, SeedConfig};
+pub use seed::Seed;
 pub use selector::{apply_selectors, Selector, TraversalDepth};
 pub use source::{SourceFile, SourceTable};
 pub use state::{ModelState, ModelStateConfig, StateFile};

@@ -65,6 +65,21 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
         });
     }
 
+    for seed in &project.seeds {
+        model_info.push(ModelInfo {
+            name: seed.name.clone(),
+            resource_type: "seed".to_string(),
+            path: Some(seed.path.display().to_string()),
+            materialized: None,
+            schema: seed
+                .schema
+                .clone()
+                .or_else(|| project.config.schema.clone()),
+            model_deps: Vec::new(),
+            external_deps: Vec::new(),
+        });
+    }
+
     for source in &project.sources {
         for table in &source.tables {
             let source_name = format!("{}.{}", source.name, table.name);
@@ -221,6 +236,7 @@ fn print_table(models: &[&ModelInfo]) {
     common::print_table(&headers, &rows);
 
     let model_count = models.iter().filter(|m| m.resource_type == "model").count();
+    let seed_count = models.iter().filter(|m| m.resource_type == "seed").count();
     let source_count = models
         .iter()
         .filter(|m| m.resource_type == "source")
@@ -232,6 +248,9 @@ fn print_table(models: &[&ModelInfo]) {
 
     println!();
     let mut parts = vec![format!("{} models", model_count)];
+    if seed_count > 0 {
+        parts.push(format!("{} seeds", seed_count));
+    }
     if source_count > 0 {
         parts.push(format!("{} sources", source_count));
     }

@@ -37,7 +37,6 @@ pub async fn execute(args: &InitArgs) -> Result<()> {
         "",
         "models",
         "models/my_first_model",
-        "seeds",
         "sources",
         "macros",
         "tests",
@@ -58,7 +57,6 @@ pub async fn execute(args: &InitArgs) -> Result<()> {
 version: "1.0.0"
 
 model_paths: ["models"]
-seed_paths: ["seeds"]
 source_paths: ["sources"]
 macro_paths: ["macros"]
 test_paths: ["tests"]
@@ -160,7 +158,6 @@ returns:
     println!("  Created featherflow.yml");
     println!("  Created models/my_first_model/my_first_model.sql");
     println!("  Created models/my_first_model/my_first_model.yml");
-    println!("  Created seeds/");
     println!("  Created sources/");
     println!("  Created macros/");
     println!("  Created tests/");

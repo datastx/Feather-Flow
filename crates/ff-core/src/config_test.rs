@@ -8,7 +8,6 @@ name: test_project
     let config: Config = serde_yaml::from_str(yaml).unwrap();
     assert_eq!(config.name, "test_project");
     assert_eq!(config.model_paths, vec!["models"]);
-    assert_eq!(config.seed_paths, vec!["seeds"]);
     assert_eq!(config.macro_paths, vec!["macros"]);
     assert_eq!(config.source_paths, vec!["sources"]);
     assert_eq!(config.target_path, "target");
@@ -20,7 +19,6 @@ fn test_parse_full_config() {
 name: my_analytics_project
 version: "1.0.0"
 model_paths: ["models"]
-seed_paths: ["seeds"]
 macro_paths: ["macros", "shared_macros"]
 source_paths: ["sources"]
 target_path: "target"

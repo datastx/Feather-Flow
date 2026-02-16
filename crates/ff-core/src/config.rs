@@ -22,10 +22,6 @@ pub struct Config {
     #[serde(default = "default_model_paths")]
     pub model_paths: Vec<String>,
 
-    /// Directories containing seed CSV files
-    #[serde(default = "default_seed_paths")]
-    pub seed_paths: Vec<String>,
-
     /// Directories containing macro files
     #[serde(default = "default_macro_paths")]
     pub macro_paths: Vec<String>,
@@ -234,10 +230,6 @@ fn default_model_paths() -> Vec<String> {
     vec!["models".to_string()]
 }
 
-fn default_seed_paths() -> Vec<String> {
-    vec!["seeds".to_string()]
-}
-
 fn default_macro_paths() -> Vec<String> {
     vec!["macros".to_string()]
 }
@@ -364,11 +356,6 @@ impl Config {
     /// Get absolute model paths relative to a project root
     pub fn model_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
         Self::paths_absolute(&self.model_paths, root)
-    }
-
-    /// Get absolute seed paths relative to a project root
-    pub fn seed_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
-        Self::paths_absolute(&self.seed_paths, root)
     }
 
     /// Get absolute macro paths relative to a project root

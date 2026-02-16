@@ -3,8 +3,10 @@
 use crate::config::Config;
 use crate::error::{CoreError, CoreResult};
 use crate::function::discover_functions;
-use crate::model::{Model, SingularTest};
+use crate::model::schema::ModelKind;
+use crate::model::{Model, ModelSchema, SingularTest};
 use crate::model_name::ModelName;
+use crate::seed::Seed;
 use crate::source::discover_sources;
 use std::collections::HashMap;
 use std::path::Path;
@@ -33,7 +35,7 @@ impl Project {
             log::warn!("'external_tables' is deprecated. Use source_paths and source files (kind: sources) instead.");
         }
 
-        let models = Self::discover_models(&root, &config)?;
+        let (models, seeds) = Self::discover_models(&root, &config)?;
 
         let source_paths = config.source_paths_absolute(&root);
         let sources = discover_sources(&source_paths)?;
@@ -52,6 +54,7 @@ impl Project {
             root,
             config,
             models,
+            seeds,
             tests,
             singular_tests,
             sources,
@@ -59,29 +62,43 @@ impl Project {
         }))
     }
 
-    /// Discover all SQL model files in the project using flat directory-per-model layout
+    /// Discover all model and seed directories in the project using flat directory-per-resource layout
     ///
-    /// Each model lives in `models/<model_name>/<model_name>.sql + .yml`.
-    /// Loose SQL files at the root of a model_path are rejected.
-    fn discover_models(root: &Path, config: &Config) -> CoreResult<HashMap<ModelName, Model>> {
+    /// Each resource lives in `models/<name>/<name>.sql + .yml` (model) or
+    /// `models/<name>/<name>.csv + .yml` (seed, with `kind: seed` in YAML).
+    /// Loose files at the root of a model_path are rejected.
+    fn discover_models(
+        root: &Path,
+        config: &Config,
+    ) -> CoreResult<(HashMap<ModelName, Model>, Vec<Seed>)> {
         let mut models = HashMap::new();
+        let mut seeds = Vec::new();
 
         for model_path in config.model_paths_absolute(root) {
             if !model_path.exists() {
                 continue;
             }
 
-            Self::discover_models_flat(&model_path, &mut models)?;
+            Self::discover_models_flat(&model_path, &mut models, &mut seeds)?;
         }
 
-        Ok(models)
+        // Sort seeds by name for consistent ordering
+        seeds.sort_by(|a, b| a.name.cmp(&b.name));
+
+        Ok((models, seeds))
     }
 
-    /// Discover models using flat directory-per-model layout
+    /// Discover models and seeds using flat directory-per-resource layout
     ///
     /// Direct children of the models root MUST be directories. Each directory
-    /// must contain exactly one `.sql` file whose stem matches the directory name.
-    fn discover_models_flat(dir: &Path, models: &mut HashMap<ModelName, Model>) -> CoreResult<()> {
+    /// must contain exactly one `.sql` file (model) or one `.csv` file (seed),
+    /// whose stem matches the directory name. A 1:1 YAML schema file is required.
+    /// Seeds are identified by `kind: seed` in their YAML.
+    fn discover_models_flat(
+        dir: &Path,
+        models: &mut HashMap<ModelName, Model>,
+        seeds: &mut Vec<Seed>,
+    ) -> CoreResult<()> {
         for entry in std::fs::read_dir(dir).map_err(|e| CoreError::IoWithPath {
             path: dir.display().to_string(),
             source: e,
@@ -93,10 +110,13 @@ impl Project {
             let path = entry.path();
 
             if !path.is_dir() {
-                if path.extension().is_some_and(|e| e == "sql") {
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if ext == "sql" || ext == "csv" {
                     return Err(CoreError::InvalidModelDirectory {
                         path: path.display().to_string(),
-                        reason: "loose .sql files are not allowed at the model root — each model must be in its own directory (models/<name>/<name>.sql)".to_string(),
+                        reason: format!(
+                            "loose .{ext} files are not allowed at the model root — each resource must be in its own directory (models/<name>/<name>.{ext})"
+                        ),
                     });
                 }
                 continue;
@@ -127,46 +147,64 @@ impl Project {
                 .filter(|p| p.extension().is_some_and(|e| e == "sql"))
                 .collect();
 
-            if sql_files.is_empty() {
-                return Err(CoreError::InvalidModelDirectory {
-                    path: path.display().to_string(),
-                    reason: "directory contains no .sql files".to_string(),
-                });
-            }
+            let csv_files: Vec<&std::path::PathBuf> = all_visible_files
+                .iter()
+                .filter(|p| p.extension().is_some_and(|e| e == "csv"))
+                .collect();
 
-            if sql_files.len() > 1 {
-                return Err(CoreError::InvalidModelDirectory {
-                    path: path.display().to_string(),
-                    reason: format!(
-                        "directory contains {} .sql files (expected exactly 1)",
-                        sql_files.len()
-                    ),
-                });
-            }
-
-            let sql_path = sql_files[0];
-            let sql_stem = match sql_path.file_stem().and_then(|s| s.to_str()) {
-                Some(stem) if !stem.is_empty() => stem.to_string(),
+            // Determine resource type based on files present
+            let (data_path, is_seed) = match (sql_files.len(), csv_files.len()) {
+                (1, 0) => (sql_files[0], false),
+                (0, 1) => (csv_files[0], true),
+                (0, 0) => {
+                    return Err(CoreError::InvalidModelDirectory {
+                        path: path.display().to_string(),
+                        reason: "directory contains no .sql or .csv files".to_string(),
+                    });
+                }
+                (s, 0) if s > 1 => {
+                    return Err(CoreError::InvalidModelDirectory {
+                        path: path.display().to_string(),
+                        reason: format!("directory contains {} .sql files (expected exactly 1)", s),
+                    });
+                }
+                (0, c) if c > 1 => {
+                    return Err(CoreError::InvalidModelDirectory {
+                        path: path.display().to_string(),
+                        reason: format!("directory contains {} .csv files (expected exactly 1)", c),
+                    });
+                }
                 _ => {
                     return Err(CoreError::InvalidModelDirectory {
-                        path: sql_path.display().to_string(),
-                        reason: "SQL file name is not valid UTF-8".to_string(),
+                        path: path.display().to_string(),
+                        reason: "directory contains both .sql and .csv files — each directory must contain exactly one data file".to_string(),
                     });
                 }
             };
 
-            if sql_stem != dir_name {
+            let data_stem = match data_path.file_stem().and_then(|s| s.to_str()) {
+                Some(stem) if !stem.is_empty() => stem.to_string(),
+                _ => {
+                    return Err(CoreError::InvalidModelDirectory {
+                        path: data_path.display().to_string(),
+                        reason: "file name is not valid UTF-8".to_string(),
+                    });
+                }
+            };
+
+            if data_stem != dir_name {
                 return Err(CoreError::ModelDirectoryMismatch {
                     directory: dir_name,
-                    sql_file: sql_stem,
+                    sql_file: data_stem,
                 });
             }
 
+            // Check for extra files (only .sql/.csv + .yml/.yaml are allowed)
             let extra_files: Vec<String> = all_visible_files
                 .iter()
                 .filter(|p| {
                     let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-                    ext != "sql" && ext != "yml" && ext != "yaml"
+                    ext != "sql" && ext != "csv" && ext != "yml" && ext != "yaml"
                 })
                 .map(|p| {
                     p.file_name()
@@ -183,15 +221,67 @@ impl Project {
                 });
             }
 
-            let model = Model::from_file(sql_path.clone())?;
+            if is_seed {
+                // Load YAML to confirm kind: seed and build Seed from it
+                let yml_path = data_path.with_extension("yml");
+                let yaml_path = data_path.with_extension("yaml");
 
-            if models.contains_key(model.name.as_str()) {
-                return Err(CoreError::DuplicateModel {
-                    name: model.name.to_string(),
-                });
+                let schema = if yml_path.exists() {
+                    ModelSchema::load(&yml_path)?
+                } else if yaml_path.exists() {
+                    ModelSchema::load(&yaml_path)?
+                } else {
+                    return Err(CoreError::MissingSchemaFile {
+                        model: dir_name,
+                        expected_path: yml_path.display().to_string(),
+                    });
+                };
+
+                if schema.kind != ModelKind::Seed {
+                    return Err(CoreError::InvalidModelDirectory {
+                        path: path.display().to_string(),
+                        reason: format!(
+                            "directory contains a .csv file but YAML declares kind: {} (expected kind: seed)",
+                            schema.kind
+                        ),
+                    });
+                }
+
+                let seed = Seed::from_schema(data_path.to_path_buf(), &schema)?;
+                seeds.push(seed);
+            } else {
+                // Peek at YAML to ensure kind is not seed for a SQL directory
+                let yml_path = data_path.with_extension("yml");
+                let yaml_path = data_path.with_extension("yaml");
+
+                let schema_path = if yml_path.exists() {
+                    Some(&yml_path)
+                } else if yaml_path.exists() {
+                    Some(&yaml_path)
+                } else {
+                    None
+                };
+
+                if let Some(sp) = schema_path {
+                    let schema = ModelSchema::load(sp)?;
+                    if schema.kind == ModelKind::Seed {
+                        return Err(CoreError::InvalidModelDirectory {
+                            path: path.display().to_string(),
+                            reason: "directory contains a .sql file but YAML declares kind: seed (expected kind: model or no kind field)".to_string(),
+                        });
+                    }
+                }
+
+                let model = Model::from_file(data_path.clone())?;
+
+                if models.contains_key(model.name.as_str()) {
+                    return Err(CoreError::DuplicateModel {
+                        name: model.name.to_string(),
+                    });
+                }
+
+                models.insert(model.name.clone(), model);
             }
-
-            models.insert(model.name.clone(), model);
         }
 
         Ok(())
