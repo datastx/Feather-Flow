@@ -223,7 +223,6 @@ fn compile_all_models(
                 &external_tables,
             );
 
-        // Resolve table function transitive dependencies
         let (func_model_deps, _) = common::resolve_function_dependencies(
             &unknown_deps,
             project,
@@ -275,14 +274,11 @@ fn compile_all_models(
                 (None, None, None)
             };
 
-        // Parse model-level hooks from config()
         let pre_hook = parse_hooks_from_config(&config_values, "pre_hook");
         let post_hook = parse_hooks_from_config(&config_values, "post_hook");
 
-        // Get model schema for contract validation
         let model_schema = model.schema.clone();
 
-        // Resolve WAP from config() or YAML
         let wap = config_values
             .get("wap")
             .map(|v| {
@@ -350,28 +346,27 @@ fn resolve_deferred_dependencies(
     let selected_set: HashSet<String> = selected_models.iter().cloned().collect();
     let mut deferred_models: HashSet<String> = HashSet::new();
 
-    // Find all upstream dependencies that are not in the selected set
     for model_name in selected_models {
-        if let Some(compiled) = compiled_models.get(model_name) {
-            for dep in &compiled.dependencies {
-                if !selected_set.contains(dep) {
-                    // This dependency is not selected - need to defer it
-                    // Check if it exists in the deferred manifest
-                    if deferred_manifest.get_model(dep).is_some() {
-                        if !deferred_models.contains(dep) {
-                            deferred_models.insert(dep.clone());
-                            if global.verbose {
-                                eprintln!("[verbose] Deferring {} to production manifest", dep);
-                            }
-                        }
-                    } else {
-                        anyhow::bail!(
-                            "Model '{}' not found in deferred manifest. It is required by: {}",
-                            dep,
-                            model_name
-                        );
-                    }
-                }
+        let Some(compiled) = compiled_models.get(model_name) else {
+            continue;
+        };
+        for dep in &compiled.dependencies {
+            if selected_set.contains(dep) {
+                continue;
+            }
+            if deferred_models.contains(dep) {
+                continue;
+            }
+            if deferred_manifest.get_model(dep).is_none() {
+                anyhow::bail!(
+                    "Model '{}' not found in deferred manifest. It is required by: {}",
+                    dep,
+                    model_name
+                );
+            }
+            deferred_models.insert(dep.clone());
+            if global.verbose {
+                eprintln!("[verbose] Deferring {} to production manifest", dep);
             }
         }
     }

@@ -78,7 +78,6 @@ impl PlanPassManager {
     ) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
 
-        // Run model-level passes
         for name in model_order {
             if let Some(result) = models.get(name) {
                 for pass in &self.model_passes {
@@ -90,7 +89,6 @@ impl PlanPassManager {
             }
         }
 
-        // Run DAG-level passes
         for pass in &self.dag_passes {
             if !super::should_run_pass(pass.name(), pass_filter) {
                 continue;

@@ -182,7 +182,6 @@ where
     let mut order: Vec<String> = Vec::new();
     let mut visited: HashSet<String> = HashSet::new();
 
-    // Get direct dependencies
     if let Some(deps) = model_deps.get(model_name) {
         collect_ephemeral_recursive(
             deps,

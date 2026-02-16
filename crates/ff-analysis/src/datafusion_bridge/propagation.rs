@@ -221,7 +221,6 @@ fn extract_schema_from_plan(plan: &LogicalPlan) -> RelSchema {
 fn compare_schemas(yaml: &RelSchema, inferred: &RelSchema) -> Vec<SchemaMismatch> {
     let mut mismatches = Vec::new();
 
-    // Check for columns in SQL output but not in YAML
     for inferred_col in &inferred.columns {
         if yaml.find_column(&inferred_col.name).is_none() {
             mismatches.push(SchemaMismatch::ExtraInSql {
@@ -230,7 +229,6 @@ fn compare_schemas(yaml: &RelSchema, inferred: &RelSchema) -> Vec<SchemaMismatch
         }
     }
 
-    // Check for columns in YAML but not in SQL output
     for yaml_col in &yaml.columns {
         match inferred.find_column(&yaml_col.name) {
             None => {
@@ -239,7 +237,6 @@ fn compare_schemas(yaml: &RelSchema, inferred: &RelSchema) -> Vec<SchemaMismatch
                 });
             }
             Some(inferred_col) => {
-                // Check type compatibility
                 if !yaml_col.sql_type.is_compatible_with(&inferred_col.sql_type) {
                     mismatches.push(SchemaMismatch::TypeMismatch {
                         column: yaml_col.name.clone(),
@@ -248,7 +245,6 @@ fn compare_schemas(yaml: &RelSchema, inferred: &RelSchema) -> Vec<SchemaMismatch
                     });
                 }
 
-                // Check nullability
                 let yaml_nullable = !matches!(yaml_col.nullability, Nullability::NotNull);
                 let inferred_nullable = !matches!(inferred_col.nullability, Nullability::NotNull);
                 if !yaml_nullable && inferred_nullable {

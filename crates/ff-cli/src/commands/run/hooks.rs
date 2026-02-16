@@ -2,7 +2,9 @@
 
 use anyhow::{Context, Result};
 use ff_core::config::Config;
-use ff_core::contract::{validate_contract, ContractValidationResult, ViolationType};
+use ff_core::contract::{
+    validate_contract, ContractValidationResult, ContractViolation, ViolationType,
+};
 use ff_core::model::ModelSchema;
 use ff_core::Project;
 use ff_db::Database;
@@ -133,13 +135,9 @@ pub(super) async fn execute_hooks(
 
 /// Returns `true` if `sql` contains only line comments (`--`) and whitespace.
 fn is_comment_only(sql: &str) -> bool {
-    for line in sql.lines() {
-        let trimmed = line.trim();
-        if !trimmed.is_empty() && !trimmed.starts_with("--") {
-            return false;
-        }
-    }
-    true
+    sql.lines()
+        .map(str::trim)
+        .all(|line| line.is_empty() || line.starts_with("--"))
 }
 
 /// Validate schema contract for a model after execution.
@@ -154,7 +152,6 @@ pub(super) async fn validate_model_contract(
     model_schema: Option<&ModelSchema>,
     verbose: bool,
 ) -> Result<Option<ContractValidationResult>> {
-    // Check if model has a schema with contract
     let schema = match model_schema {
         Some(s) if s.contract.is_some() => s,
         _ => return Ok(None), // No contract to validate
@@ -164,50 +161,18 @@ pub(super) async fn validate_model_contract(
         eprintln!("[verbose] Validating contract for model: {}", model_name);
     }
 
-    // Get actual table schema from database
     let actual_columns = db
         .get_table_schema(qualified_name)
         .await
         .context("Failed to get schema for contract validation")?;
 
-    // Validate the contract
     let result = validate_contract(model_name, schema, &actual_columns);
 
-    // Log violations
+    let severity = if result.enforced { "ERROR" } else { "WARN" };
     for violation in &result.violations {
-        let severity = if result.enforced { "ERROR" } else { "WARN" };
-        match &violation.violation_type {
-            ViolationType::MissingColumn { column } => {
-                eprintln!(
-                    "    [{}] Contract violation: missing column '{}'",
-                    severity, column
-                );
-            }
-            ViolationType::TypeMismatch {
-                column,
-                expected,
-                actual,
-            } => {
-                eprintln!(
-                    "    [{}] Contract violation: column '{}' type mismatch (expected {}, got {})",
-                    severity, column, expected, actual
-                );
-            }
-            ViolationType::ExtraColumn { column } => {
-                if verbose {
-                    eprintln!("    [INFO] Extra column '{}' not in contract", column);
-                }
-            }
-            ViolationType::ConstraintNotMet { column, constraint } => {
-                eprintln!(
-                    "    [{}] Contract violation: column '{}' constraint {:?} not met",
-                    severity, column, constraint
-                );
-            }
-        }
+        log_contract_violation(violation, severity, verbose);
     }
 
-    // If contract is enforced and has violations (excluding extra columns), fail
     if result.enforced && !result.passed {
         let violation_count = result
             .violations
@@ -221,4 +186,35 @@ pub(super) async fn validate_model_contract(
     }
 
     Ok(Some(result))
+}
+
+fn log_contract_violation(violation: &ContractViolation, severity: &str, verbose: bool) {
+    match &violation.violation_type {
+        ViolationType::MissingColumn { column } => {
+            eprintln!(
+                "    [{}] Contract violation: missing column '{}'",
+                severity, column
+            );
+        }
+        ViolationType::TypeMismatch {
+            column,
+            expected,
+            actual,
+        } => {
+            eprintln!(
+                "    [{}] Contract violation: column '{}' type mismatch (expected {}, got {})",
+                severity, column, expected, actual
+            );
+        }
+        ViolationType::ExtraColumn { column } if verbose => {
+            eprintln!("    [INFO] Extra column '{}' not in contract", column);
+        }
+        ViolationType::ExtraColumn { .. } => {}
+        ViolationType::ConstraintNotMet { column, constraint } => {
+            eprintln!(
+                "    [{}] Contract violation: column '{}' constraint {:?} not met",
+                severity, column, constraint
+            );
+        }
+    }
 }

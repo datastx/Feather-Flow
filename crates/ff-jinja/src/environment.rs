@@ -68,7 +68,6 @@ impl<'a> JinjaEnvironment<'a> {
         let config_capture: ConfigCapture = Arc::new(Mutex::new(HashMap::new()));
         let warning_capture: WarningCapture = Arc::new(Mutex::new(Vec::new()));
 
-        // Convert YAML vars to JSON for the var function
         let json_vars: HashMap<String, serde_json::Value> = vars
             .iter()
             .map(|(k, v): (&String, &serde_yaml::Value)| (k.clone(), yaml_to_json(v)))
@@ -278,11 +277,9 @@ impl JinjaEnvironment<'_> {
         let (mut env, config_capture, warning_capture, macro_preamble) =
             Self::init_common(vars, macro_paths, None);
 
-        // Register is_incremental() function
         let is_incremental_fn = make_is_incremental_fn(incremental_state);
         env.add_function("is_incremental", is_incremental_fn);
 
-        // Register this variable (the current model's qualified name)
         let this_fn = make_this_fn(qualified_name.to_string());
         env.add_function("this", this_fn);
 
@@ -358,15 +355,10 @@ fn build_macro_preamble(paths: &[PathBuf]) -> String {
         }
     }
 
-    let mut preamble = String::new();
-    for (file, names) in &file_macros {
-        preamble.push_str(&format!(
-            "{{%- from \"{}\" import {} -%}}",
-            file,
-            names.join(", ")
-        ));
-    }
-    preamble
+    file_macros
+        .iter()
+        .map(|(file, names)| format!("{{%- from \"{}\" import {} -%}}", file, names.join(", ")))
+        .collect()
 }
 
 /// Register all built-in macros with the Jinja environment

@@ -87,7 +87,6 @@ pub fn categorize_dependencies_with_unknown(
         .map(|s| (s.to_lowercase(), *s))
         .collect();
 
-    // Pre-compute lowercased external table set for case-insensitive matching
     let external_lower: HashSet<String> =
         external_tables.iter().map(|t| t.to_lowercase()).collect();
 

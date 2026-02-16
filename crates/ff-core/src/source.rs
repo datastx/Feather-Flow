@@ -197,8 +197,14 @@ struct SourceKindProbe {
 
 /// Recursively discover source files in a directory
 fn discover_sources_recursive(dir: &Path, sources: &mut Vec<SourceFile>) -> CoreResult<()> {
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
+    for entry in std::fs::read_dir(dir).map_err(|e| CoreError::IoWithPath {
+        path: dir.display().to_string(),
+        source: e,
+    })? {
+        let entry = entry.map_err(|e| CoreError::IoWithPath {
+            path: dir.display().to_string(),
+            source: e,
+        })?;
         let path = entry.path();
 
         if path.is_dir() {

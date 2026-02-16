@@ -61,13 +61,8 @@ pub struct ColumnRef {
 }
 
 impl ColumnRef {
-    /// Create a new column reference
-    pub fn new(table: Option<String>, column: String) -> Self {
-        Self { table, column }
-    }
-
     /// Create from a simple column name
-    pub fn simple(column: &str) -> Self {
+    pub(crate) fn simple(column: &str) -> Self {
         Self {
             table: None,
             column: column.to_string(),
@@ -75,7 +70,7 @@ impl ColumnRef {
     }
 
     /// Create from table.column
-    pub fn qualified(table: &str, column: &str) -> Self {
+    pub(crate) fn qualified(table: &str, column: &str) -> Self {
         Self {
             table: Some(table.to_string()),
             column: column.to_string(),
@@ -107,7 +102,7 @@ pub struct ColumnLineage {
 
 impl ColumnLineage {
     /// Create a new column lineage entry
-    pub fn new(output_column: &str) -> Self {
+    pub(crate) fn new(output_column: &str) -> Self {
         Self {
             output_column: output_column.to_string(),
             source_columns: HashSet::new(),
@@ -117,7 +112,7 @@ impl ColumnLineage {
     }
 
     /// Create a direct column reference (pass-through)
-    pub fn direct(output_column: &str, source: ColumnRef) -> Self {
+    pub(crate) fn direct(output_column: &str, source: ColumnRef) -> Self {
         let mut lineage = Self::new(output_column);
         lineage.source_columns.insert(source);
         lineage.is_direct = true;
@@ -126,7 +121,7 @@ impl ColumnLineage {
     }
 
     /// Create from a function call
-    pub fn from_function(output_column: &str, sources: HashSet<ColumnRef>) -> Self {
+    pub(crate) fn from_function(output_column: &str, sources: HashSet<ColumnRef>) -> Self {
         Self {
             output_column: output_column.to_string(),
             source_columns: sources,
@@ -136,7 +131,7 @@ impl ColumnLineage {
     }
 
     /// Create from a literal value
-    pub fn literal(output_column: &str) -> Self {
+    pub(crate) fn literal(output_column: &str) -> Self {
         Self {
             output_column: output_column.to_string(),
             source_columns: HashSet::new(),
@@ -161,7 +156,7 @@ pub struct ModelLineage {
 
 impl ModelLineage {
     /// Create a new model lineage
-    pub fn new(model_name: &str) -> Self {
+    pub(crate) fn new(model_name: &str) -> Self {
         Self {
             model_name: model_name.to_string(),
             columns: Vec::new(),
@@ -171,20 +166,14 @@ impl ModelLineage {
     }
 
     /// Add a column lineage
-    pub fn add_column(&mut self, lineage: ColumnLineage) {
+    pub(crate) fn add_column(&mut self, lineage: ColumnLineage) {
         self.columns.push(lineage);
     }
 
+    #[cfg(test)]
     /// Get column lineage by name
-    pub fn get_column(&self, name: &str) -> Option<&ColumnLineage> {
+    pub(crate) fn get_column(&self, name: &str) -> Option<&ColumnLineage> {
         self.columns.iter().find(|c| c.output_column == name)
-    }
-
-    /// Get all source columns for a given output column
-    pub fn get_sources(&self, output_column: &str) -> HashSet<ColumnRef> {
-        self.get_column(output_column)
-            .map(|c| c.source_columns.clone())
-            .unwrap_or_default()
     }
 }
 
@@ -270,38 +259,24 @@ impl ProjectLineage {
         column_classifications: &HashMap<String, HashMap<String, String>>,
     ) {
         for edge in &mut self.edges {
-            if let Some(model_cols) = column_classifications.get(&edge.source_model) {
-                if let Some(cls) = model_cols.get(&edge.source_column) {
-                    edge.classification = Some(cls.clone());
-                }
+            let cls = column_classifications
+                .get(&edge.source_model)
+                .and_then(|model_cols| model_cols.get(&edge.source_column));
+            if let Some(cls) = cls {
+                edge.classification = Some(cls.clone());
             }
         }
-    }
-
-    /// Get all edges flowing into a model that have a specific classification
-    pub fn classified_inputs<'a>(
-        &'a self,
-        model: &str,
-        classification: &str,
-    ) -> Vec<&'a LineageEdge> {
-        self.edges
-            .iter()
-            .filter(|e| {
-                e.target_model == model && e.classification.as_deref() == Some(classification)
-            })
-            .collect()
     }
 
     /// Generate DOT graph output for visualization
     pub fn to_dot(&self) -> String {
         let mut dot = String::from("digraph lineage {\n  rankdir=LR;\n  node [shape=record];\n\n");
 
-        // Create nodes for each model with columns
         for (name, lineage) in &self.models {
-            let cols: Vec<String> = lineage
+            let cols: Vec<&str> = lineage
                 .columns
                 .iter()
-                .map(|c| c.output_column.clone())
+                .map(|c| c.output_column.as_str())
                 .collect();
             let label = format!("{}|{}", name, cols.join("\\l"));
             dot.push_str(&format!("  \"{}\" [label=\"{{{}}}\"];\n", name, label));
@@ -309,7 +284,6 @@ impl ProjectLineage {
 
         dot.push('\n');
 
-        // Create edges
         for edge in &self.edges {
             let style = if edge.is_direct {
                 ""
@@ -585,7 +559,6 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
                 sources.extend(op_lineage.source_columns);
             }
 
-            // Extract from conditions and results (now CaseWhen structs)
             for case_when in conditions {
                 let cond_lineage = extract_lineage_from_expr(&case_when.condition, lineage);
                 sources.extend(cond_lineage.source_columns);

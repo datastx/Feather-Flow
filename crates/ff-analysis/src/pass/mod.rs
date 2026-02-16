@@ -1,7 +1,7 @@
 //! Pass infrastructure — composable analysis passes over DataFusion LogicalPlans
 
 pub(crate) mod expr_utils;
-pub mod plan_cross_model;
+pub(crate) mod plan_cross_model;
 pub(crate) mod plan_join_keys;
 pub(crate) mod plan_nullability;
 pub mod plan_pass;

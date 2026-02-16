@@ -148,7 +148,6 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
 
     let default_materialization = project.config.materialization;
 
-    // Phase 1: compile models
     let mut compiled_models: Vec<CompileOutput> = Vec::with_capacity(model_count);
     let mut materializations: HashMap<String, Materialization> =
         HashMap::with_capacity(model_count);
@@ -236,7 +235,6 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
-    // Qualify table references: rewrite bare names to 3-part database.schema.table
     let compiled_schemas: HashMap<String, Option<String>> = compiled_models
         .iter()
         .map(|m| {
@@ -261,7 +259,6 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
-    // Phase 2: inline ephemeral deps and write files
     let ephemeral_sql: HashMap<String, String> = compiled_models
         .iter()
         .filter(|m| m.materialization == Materialization::Ephemeral)

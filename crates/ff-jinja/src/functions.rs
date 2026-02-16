@@ -88,7 +88,6 @@ pub(crate) fn make_config_fn(
             )
         })?;
 
-        // Capture all keyword arguments
         for key in kwargs.args() {
             let value = kwargs.get::<Value>(key).map_err(|e| {
                 Error::new(

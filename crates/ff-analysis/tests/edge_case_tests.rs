@@ -1,8 +1,8 @@
 //! Error handling, edge case, and regression guard tests (Sections 14 & 16)
 
-use ff_analysis::datafusion_bridge::provider::{FeatherFlowProvider, FunctionRegistry};
 use ff_analysis::propagate_schemas;
 use ff_analysis::sql_to_plan;
+use ff_analysis::{FeatherFlowProvider, FunctionRegistry};
 use ff_analysis::{FloatBitWidth, IntBitWidth, Nullability, RelSchema, SqlType, TypedColumn};
 use std::collections::HashMap;
 use std::sync::Arc;
