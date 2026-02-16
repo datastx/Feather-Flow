@@ -5,7 +5,7 @@ pub mod testing;
 
 // Re-export all public types to preserve existing `ff_core::model::*` paths
 pub use schema::{
-    ColumnConstraint, ColumnReference, DataClassification, ModelSchema, SchemaColumnDef,
+    ColumnConstraint, ColumnReference, DataClassification, ModelKind, ModelSchema, SchemaColumnDef,
     SchemaContract,
 };
 pub use testing::{

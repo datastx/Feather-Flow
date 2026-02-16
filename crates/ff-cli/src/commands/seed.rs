@@ -1,7 +1,7 @@
 //! Seed command implementation
 
 use anyhow::{Context, Result};
-use ff_core::seed::{discover_seeds, Seed};
+use ff_core::seed::Seed;
 use ff_core::sql_utils::quote_qualified;
 use ff_db::{CsvLoadOptions, Database};
 
@@ -14,11 +14,10 @@ pub async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
 
     let db = common::create_database_connection(&project.config, global.target.as_deref())?;
 
-    let seed_paths = project.config.seed_paths_absolute(&project.root);
-    let all_seeds = discover_seeds(&seed_paths)?;
+    let all_seeds = &project.seeds;
 
     if all_seeds.is_empty() {
-        println!("No seed files found in seed_paths.");
+        println!("No seed files found in model_paths.");
         return Ok(());
     }
 
@@ -49,9 +48,8 @@ pub async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
 
     if global.verbose {
         eprintln!(
-            "[verbose] Loading {} seeds from paths: {:?}",
+            "[verbose] Loading {} seeds from model_paths",
             enabled_seeds.len(),
-            project.config.seed_paths
         );
     }
 
@@ -101,16 +99,11 @@ pub async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
                 success_count += 1;
                 total_rows += row_count;
 
-                let config_info = if seed.config.is_some() {
-                    " (configured)"
-                } else {
-                    ""
-                };
-                println!("  ✓ {} ({} rows){}", table_name, row_count, config_info);
+                println!("  \u{2713} {} ({} rows)", table_name, row_count);
             }
             Err(e) => {
                 failure_count += 1;
-                println!("  ✗ {} - {}", table_name, e);
+                println!("  \u{2717} {} - {}", table_name, e);
             }
         }
     }
@@ -126,17 +119,11 @@ pub async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
 }
 
 fn log_seed_config(seed: &Seed) {
-    let Some(config) = &seed.config else {
-        return;
-    };
-    if !config.column_types.is_empty() {
-        eprintln!(
-            "[verbose]   Column type overrides: {:?}",
-            config.column_types
-        );
+    if !seed.column_types.is_empty() {
+        eprintln!("[verbose]   Column type overrides: {:?}", seed.column_types);
     }
-    if config.delimiter != ',' {
-        eprintln!("[verbose]   Delimiter: {:?}", config.delimiter);
+    if seed.delimiter != ',' {
+        eprintln!("[verbose]   Delimiter: {:?}", seed.delimiter);
     }
 }
 
@@ -193,17 +180,15 @@ fn display_seed_schema(name: &str, schema: &[(String, String)], seed: &Seed) {
         }
     }
 
-    if let Some(config) = &seed.config {
-        let mut config_notes = Vec::new();
-        if let Some(s) = &config.schema {
-            config_notes.push(format!("schema: {}", s));
-        }
-        if config.delimiter != ',' {
-            config_notes.push(format!("delimiter: {:?}", config.delimiter));
-        }
-        if !config_notes.is_empty() {
-            println!("  [{}]", config_notes.join(", "));
-        }
+    let mut config_notes = Vec::new();
+    if let Some(s) = &seed.schema {
+        config_notes.push(format!("schema: {}", s));
+    }
+    if seed.delimiter != ',' {
+        config_notes.push(format!("delimiter: {:?}", seed.delimiter));
+    }
+    if !config_notes.is_empty() {
+        println!("  [{}]", config_notes.join(", "));
     }
 
     println!();

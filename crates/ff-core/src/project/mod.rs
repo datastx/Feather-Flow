@@ -8,6 +8,7 @@ use crate::function::FunctionDef;
 use crate::function_name::FunctionName;
 use crate::model::{Model, SchemaTest, SingularTest};
 use crate::model_name::ModelName;
+use crate::seed::Seed;
 use crate::source::SourceFile;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -24,6 +25,8 @@ pub struct ProjectParts {
     pub config: Config,
     /// Models discovered in the project
     pub models: HashMap<ModelName, Model>,
+    /// Seeds discovered in the project (kind: seed directories)
+    pub seeds: Vec<Seed>,
     /// Schema tests from YAML files
     pub tests: Vec<SchemaTest>,
     /// Singular tests (standalone SQL test files)
@@ -45,6 +48,9 @@ pub struct Project {
 
     /// Models discovered in the project
     pub models: HashMap<ModelName, Model>,
+
+    /// Seeds discovered in the project (kind: seed directories in model_paths)
+    pub seeds: Vec<Seed>,
 
     /// Schema tests from model YAML files
     pub tests: Vec<SchemaTest>,
@@ -77,6 +83,7 @@ impl Project {
             root: parts.root,
             config: parts.config,
             models: parts.models,
+            seeds: parts.seeds,
             tests: parts.tests,
             singular_tests: parts.singular_tests,
             sources: parts.sources,

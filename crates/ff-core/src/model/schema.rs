@@ -5,6 +5,26 @@ use crate::error::CoreError;
 use crate::model_name::ModelName;
 use serde::{Deserialize, Serialize};
 
+/// The kind of resource described by a model directory
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelKind {
+    /// A SQL model (default) — directory contains a `.sql` file
+    #[default]
+    Model,
+    /// A CSV seed — directory contains a `.csv` file
+    Seed,
+}
+
+impl std::fmt::Display for ModelKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ModelKind::Model => write!(f, "model"),
+            ModelKind::Seed => write!(f, "seed"),
+        }
+    }
+}
+
 /// Schema metadata for a single model (from 1:1 .yml file)
 ///
 /// This follows the 1:1 naming convention where each model's schema file
@@ -18,6 +38,10 @@ use serde::{Deserialize, Serialize};
 pub struct ModelSchema {
     /// Schema format version
     pub version: u32,
+
+    /// Resource kind: `model` (default) or `seed`
+    #[serde(default)]
+    pub kind: ModelKind,
 
     /// Model name (optional, must match SQL file if provided)
     #[serde(default)]
@@ -54,6 +78,59 @@ pub struct ModelSchema {
     /// Deprecation message to show users (e.g., "Use fct_orders_v2 instead")
     #[serde(default)]
     pub deprecation_message: Option<String>,
+
+    // ── Seed-specific fields (only relevant when kind: seed) ─────────
+    /// Override target schema for seed loading (kind: seed only)
+    #[serde(default)]
+    pub schema: Option<String>,
+
+    /// Force column quoting for seed CSV (kind: seed only)
+    #[serde(default)]
+    pub quote_columns: bool,
+
+    /// Override inferred types for specific columns (kind: seed only).
+    /// Key: column name, Value: SQL type (e.g., "VARCHAR", "INTEGER")
+    #[serde(default)]
+    pub column_types: std::collections::HashMap<String, String>,
+
+    /// CSV delimiter for seed loading (kind: seed only, default: ',')
+    #[serde(default = "default_delimiter")]
+    pub delimiter: char,
+
+    /// Enable/disable this seed (kind: seed only, default: true)
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+fn default_delimiter() -> char {
+    ','
+}
+
+fn default_enabled() -> bool {
+    true
+}
+
+impl Default for ModelSchema {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            kind: ModelKind::default(),
+            name: None,
+            description: None,
+            owner: None,
+            meta: std::collections::HashMap::new(),
+            tags: Vec::new(),
+            contract: None,
+            columns: Vec::new(),
+            deprecated: false,
+            deprecation_message: None,
+            schema: None,
+            quote_columns: false,
+            column_types: std::collections::HashMap::new(),
+            delimiter: default_delimiter(),
+            enabled: default_enabled(),
+        }
+    }
 }
 
 /// Data contract definition for enforcing schema stability

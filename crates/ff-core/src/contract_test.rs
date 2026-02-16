@@ -3,12 +3,6 @@ use crate::model::{SchemaColumnDef, SchemaContract};
 
 fn make_schema(columns: Vec<(&str, &str)>, enforced: bool) -> ModelSchema {
     ModelSchema {
-        version: 1,
-        name: None,
-        description: None,
-        owner: None,
-        meta: std::collections::HashMap::new(),
-        tags: vec![],
         contract: Some(SchemaContract { enforced }),
         columns: columns
             .into_iter()
@@ -23,8 +17,7 @@ fn make_schema(columns: Vec<(&str, &str)>, enforced: bool) -> ModelSchema {
                 classification: None,
             })
             .collect(),
-        deprecated: false,
-        deprecation_message: None,
+        ..Default::default()
     }
 }
 

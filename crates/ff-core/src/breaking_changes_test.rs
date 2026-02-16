@@ -104,12 +104,6 @@ fn test_detect_column_removal() {
     let prev_schemas: HashMap<String, ModelSchema> = [(
         "model_a".to_string(),
         ModelSchema {
-            version: 1,
-            name: None,
-            description: None,
-            owner: None,
-            meta: std::collections::HashMap::new(),
-            tags: Vec::new(),
             columns: vec![
                 SchemaColumnDef {
                     name: "id".to_string(),
@@ -132,9 +126,7 @@ fn test_detect_column_removal() {
                     classification: None,
                 },
             ],
-            contract: None,
-            deprecated: false,
-            deprecation_message: None,
+            ..Default::default()
         },
     )]
     .into_iter()
@@ -143,12 +135,6 @@ fn test_detect_column_removal() {
     let curr_schemas: HashMap<String, ModelSchema> = [(
         "model_a".to_string(),
         ModelSchema {
-            version: 1,
-            name: None,
-            description: None,
-            owner: None,
-            meta: std::collections::HashMap::new(),
-            tags: Vec::new(),
             columns: vec![SchemaColumnDef {
                 name: "id".to_string(),
                 data_type: "INTEGER".to_string(),
@@ -159,9 +145,7 @@ fn test_detect_column_removal() {
                 references: None,
                 classification: None,
             }],
-            contract: None,
-            deprecated: false,
-            deprecation_message: None,
+            ..Default::default()
         },
     )]
     .into_iter()
@@ -188,12 +172,6 @@ fn test_detect_type_change() {
     let prev_schemas: HashMap<String, ModelSchema> = [(
         "model_a".to_string(),
         ModelSchema {
-            version: 1,
-            name: None,
-            description: None,
-            owner: None,
-            meta: std::collections::HashMap::new(),
-            tags: Vec::new(),
             columns: vec![SchemaColumnDef {
                 name: "amount".to_string(),
                 data_type: "INTEGER".to_string(),
@@ -204,9 +182,7 @@ fn test_detect_type_change() {
                 references: None,
                 classification: None,
             }],
-            contract: None,
-            deprecated: false,
-            deprecation_message: None,
+            ..Default::default()
         },
     )]
     .into_iter()
@@ -215,12 +191,6 @@ fn test_detect_type_change() {
     let curr_schemas: HashMap<String, ModelSchema> = [(
         "model_a".to_string(),
         ModelSchema {
-            version: 1,
-            name: None,
-            description: None,
-            owner: None,
-            meta: std::collections::HashMap::new(),
-            tags: Vec::new(),
             columns: vec![SchemaColumnDef {
                 name: "amount".to_string(),
                 data_type: "DECIMAL(10,2)".to_string(),
@@ -231,9 +201,7 @@ fn test_detect_type_change() {
                 references: None,
                 classification: None,
             }],
-            contract: None,
-            deprecated: false,
-            deprecation_message: None,
+            ..Default::default()
         },
     )]
     .into_iter()
