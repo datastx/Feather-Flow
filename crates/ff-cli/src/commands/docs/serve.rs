@@ -160,10 +160,19 @@ pub async fn execute(args: &DocsServeArgs, global: &GlobalArgs) -> Result<()> {
         .await
         .with_context(|| format!("Failed to bind to {}:{}", args.host, args.port))?;
     axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
         .await
         .context("HTTP server error")?;
 
     Ok(())
+}
+
+/// Wait for Ctrl+C, then print a shutdown message.
+async fn shutdown_signal() {
+    tokio::signal::ctrl_c()
+        .await
+        .expect("failed to install Ctrl+C handler");
+    println!("\nShutting down gracefully...");
 }
 
 /// Build all pre-computed state from the project

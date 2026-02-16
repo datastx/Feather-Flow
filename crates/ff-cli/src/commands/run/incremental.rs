@@ -60,69 +60,70 @@ async fn handle_schema_changes(
     compiled: &CompiledModel,
     on_schema_change: OnSchemaChange,
 ) -> ff_db::error::DbResult<()> {
-    // Get existing table schema
     let existing_schema = db.get_table_schema(table_name).await?;
     let existing_columns: std::collections::HashSet<String> = existing_schema
         .iter()
         .map(|(name, _)| name.to_lowercase())
         .collect();
 
-    // Get new query schema (use clean SQL without comment for describe)
     let new_schema = db.describe_query(&compiled.sql).await?;
     let new_columns: std::collections::HashMap<String, String> = new_schema
         .iter()
         .map(|(name, typ)| (name.to_lowercase(), typ.clone()))
         .collect();
 
-    // Find columns that are in new but not in existing
     let added_columns: Vec<(String, String)> = new_schema
         .iter()
         .filter(|(name, _)| !existing_columns.contains(&name.to_lowercase()))
         .map(|(name, typ)| (name.clone(), typ.clone()))
         .collect();
 
-    // Find columns that are in existing but not in new
     let removed_columns: Vec<String> = existing_schema
         .iter()
         .filter(|(name, _)| !new_columns.contains_key(&name.to_lowercase()))
         .map(|(name, _)| name.clone())
         .collect();
 
-    let has_changes = !added_columns.is_empty() || !removed_columns.is_empty();
+    if added_columns.is_empty() && removed_columns.is_empty() {
+        return Ok(());
+    }
 
-    if has_changes {
-        match on_schema_change {
-            OnSchemaChange::Fail => {
-                let mut msg = String::from("Schema change detected: ");
-                if !added_columns.is_empty() {
-                    msg.push_str(&format!(
-                        "new columns: {}; ",
-                        added_columns
-                            .iter()
-                            .map(|(n, t)| format!("{} ({})", n, t))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ));
-                }
-                if !removed_columns.is_empty() {
-                    msg.push_str(&format!("removed columns: {}", removed_columns.join(", ")));
-                }
-                return Err(ff_db::DbError::ExecutionError(msg));
-            }
-            OnSchemaChange::AppendNewColumns => {
-                // Add new columns to existing table
-                if !added_columns.is_empty() {
-                    db.add_columns(table_name, &added_columns).await?;
-                }
-                // Note: removed columns are ignored in append_new_columns mode
-            }
-            OnSchemaChange::Ignore => {
-                // Do nothing - handled by outer condition
+    match on_schema_change {
+        OnSchemaChange::Fail => {
+            let msg = format_schema_change_message(&added_columns, &removed_columns);
+            return Err(ff_db::DbError::ExecutionError(msg));
+        }
+        OnSchemaChange::AppendNewColumns => {
+            if !added_columns.is_empty() {
+                db.add_columns(table_name, &added_columns).await?;
             }
         }
+        OnSchemaChange::Ignore => {}
     }
 
     Ok(())
+}
+
+/// Build an error message describing which columns were added or removed.
+fn format_schema_change_message(
+    added_columns: &[(String, String)],
+    removed_columns: &[String],
+) -> String {
+    let mut msg = String::from("Schema change detected: ");
+    if !added_columns.is_empty() {
+        msg.push_str(&format!(
+            "new columns: {}; ",
+            added_columns
+                .iter()
+                .map(|(n, t)| format!("{} ({})", n, t))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !removed_columns.is_empty() {
+        msg.push_str(&format!("removed columns: {}", removed_columns.join(", ")));
+    }
+    msg
 }
 
 /// Execute the incremental strategy (append, merge, or delete+insert)

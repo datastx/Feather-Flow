@@ -16,6 +16,7 @@ wap_schema: wap_staging
 database:
   type: duckdb
   path: "target/dev.duckdb"
+  name: main
 
 on_run_start:
   - "CREATE TABLE IF NOT EXISTS run_audit (run_id INTEGER, started_at TIMESTAMP DEFAULT current_timestamp)"

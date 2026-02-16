@@ -284,8 +284,25 @@ pub(crate) fn build_project_dag(
             }
         };
         let deps = ff_sql::extract_dependencies(&stmts);
-        let (model_deps, _) =
-            ff_sql::extractor::categorize_dependencies(deps, &known_models, &external_tables);
+        let (mut model_deps, _, unknown_deps) =
+            ff_sql::extractor::categorize_dependencies_with_unknown(
+                deps,
+                &known_models,
+                &external_tables,
+            );
+
+        // Resolve table function transitive dependencies
+        let (func_model_deps, _) = resolve_function_dependencies(
+            &unknown_deps,
+            project,
+            &parser,
+            &known_models,
+            &external_tables,
+        );
+        model_deps.extend(func_model_deps);
+        model_deps.sort();
+        model_deps.dedup();
+
         dependencies.insert(name.to_string(), model_deps);
     }
 
@@ -651,4 +668,160 @@ pub(crate) async fn set_project_search_path(
         .context("Failed to set search_path")?;
 
     Ok(())
+}
+
+/// Resolve table function references in a model's dependency list.
+///
+/// When a dependency matches a known table function, parse the function's
+/// SQL body and extract its model dependencies (transitively). Returns
+/// `(additional_model_deps, remaining_unknown)` — the additional model deps
+/// discovered through functions, plus any truly-unknown dependencies that
+/// are not a model, source, or function.
+pub(crate) fn resolve_function_dependencies(
+    unknown_deps: &[String],
+    project: &Project,
+    parser: &ff_sql::SqlParser,
+    known_models: &HashSet<&str>,
+    external_tables: &HashSet<String>,
+) -> (Vec<String>, Vec<String>) {
+    let mut additional_model_deps = Vec::new();
+    let mut remaining_unknown = Vec::new();
+    let mut visited_functions: HashSet<String> = HashSet::new();
+
+    for dep in unknown_deps {
+        let dep_lower = dep.to_lowercase();
+        if let Some(func) = project.get_function(&dep_lower) {
+            if func.function_type == ff_core::function::FunctionType::Table {
+                extract_function_deps(
+                    func,
+                    project,
+                    parser,
+                    known_models,
+                    external_tables,
+                    &mut additional_model_deps,
+                    &mut visited_functions,
+                );
+            }
+            // Scalar or table — either way it's a known function, not unknown
+        } else {
+            remaining_unknown.push(dep.clone());
+        }
+    }
+
+    additional_model_deps.sort();
+    additional_model_deps.dedup();
+    (additional_model_deps, remaining_unknown)
+}
+
+/// Recursively extract model dependencies from a function's SQL body.
+fn extract_function_deps(
+    func: &ff_core::function::FunctionDef,
+    project: &Project,
+    parser: &ff_sql::SqlParser,
+    known_models: &HashSet<&str>,
+    external_tables: &HashSet<String>,
+    additional_deps: &mut Vec<String>,
+    visited: &mut HashSet<String>,
+) {
+    let func_name = func.name.to_string();
+    if !visited.insert(func_name) {
+        return; // Already processed (prevents infinite recursion)
+    }
+
+    let Ok(stmts) = parser.parse(&func.sql_body) else {
+        return; // Can't parse function SQL — skip silently
+    };
+
+    let deps = ff_sql::extract_dependencies(&stmts);
+    let (model_deps, _, nested_unknown) = ff_sql::extractor::categorize_dependencies_with_unknown(
+        deps,
+        known_models,
+        external_tables,
+    );
+
+    additional_deps.extend(model_deps);
+
+    // Recurse into any nested table function references
+    for unknown in &nested_unknown {
+        let unknown_lower = unknown.to_lowercase();
+        if let Some(nested_func) = project.get_function(&unknown_lower) {
+            if nested_func.function_type == ff_core::function::FunctionType::Table {
+                extract_function_deps(
+                    nested_func,
+                    project,
+                    parser,
+                    known_models,
+                    external_tables,
+                    additional_deps,
+                    visited,
+                );
+            }
+        }
+    }
+}
+
+/// Build a map from bare table names to qualified references.
+///
+/// Models in the default database produce 2-part names (`schema.table`).
+/// Source tables with an explicit database different from the project default
+/// produce 3-part names (`database.schema.table`).
+pub(crate) fn build_qualification_map(
+    project: &Project,
+    compiled_schemas: &HashMap<String, Option<String>>,
+) -> HashMap<String, ff_sql::qualify::QualifiedRef> {
+    use ff_sql::qualify::QualifiedRef;
+
+    let db_name = &project.config.database.name;
+    let default_schema = project.config.schema.as_deref().unwrap_or("main");
+    let mut map = HashMap::new();
+
+    // Models: bare_name → schema.name (default database, 2-part)
+    for (name, schema) in compiled_schemas {
+        let schema = schema.as_deref().unwrap_or(default_schema);
+        map.insert(
+            name.to_lowercase(),
+            QualifiedRef {
+                database: None,
+                schema: schema.to_string(),
+                table: name.clone(),
+            },
+        );
+    }
+
+    // Source tables: use 3-part only when the source targets a different database
+    for source in &project.sources {
+        let source_db = source.database.as_deref().unwrap_or(db_name);
+        let cross_db = source_db != db_name;
+        for table in &source.tables {
+            let actual_name = table.identifier.as_ref().unwrap_or(&table.name);
+            let database = if cross_db {
+                Some(source_db.to_string())
+            } else {
+                None
+            };
+            map.insert(
+                table.name.to_lowercase(),
+                QualifiedRef {
+                    database: database.clone(),
+                    schema: source.schema.clone(),
+                    table: actual_name.clone(),
+                },
+            );
+            // Also register by identifier if different from logical name
+            if let Some(ref ident) = table.identifier {
+                if ident != &table.name {
+                    map.insert(
+                        ident.to_lowercase(),
+                        QualifiedRef {
+                            database,
+                            schema: source.schema.clone(),
+                            table: ident.clone(),
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    map
 }

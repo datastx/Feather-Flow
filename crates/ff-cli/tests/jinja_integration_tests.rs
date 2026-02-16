@@ -449,8 +449,8 @@ fn test_jinja_plain_sql_passthrough() {
         sql
     );
     assert!(
-        sql.contains("FROM raw_events"),
-        "plain SQL should contain FROM clause, got:\n{}",
+        sql.contains("raw_events"),
+        "plain SQL should reference raw_events, got:\n{}",
         sql
     );
     assert!(
@@ -478,7 +478,7 @@ fn test_jinja_config_only_stripped() {
         sql
     );
     assert!(
-        sql.contains("FROM raw_events"),
+        sql.contains("raw_events"),
         "FROM clause should survive, got:\n{}",
         sql
     );

@@ -3,6 +3,7 @@ version: 1
 
 name: raw_ecommerce
 description: "Raw e-commerce data from CSV seed files"
+database: main
 schema: analytics
 
 tables:

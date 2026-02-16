@@ -245,6 +245,33 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
+    // Qualify table references: rewrite bare names to 3-part database.schema.table
+    let compiled_schemas: HashMap<String, Option<String>> = compiled_models
+        .iter()
+        .map(|m| {
+            let schema = project
+                .get_model(&m.name)
+                .and_then(|model| model.config.schema.clone())
+                .or_else(|| project.config.schema.clone());
+            (m.name.clone(), schema)
+        })
+        .collect();
+    let qualification_map = common::build_qualification_map(&project, &compiled_schemas);
+
+    for compiled in &mut compiled_models {
+        match ff_sql::qualify_table_references(&compiled.sql, &qualification_map) {
+            Ok(qualified) => compiled.sql = qualified,
+            Err(e) => {
+                if global.verbose {
+                    eprintln!(
+                        "[verbose] Failed to qualify references in {}: {}",
+                        compiled.name, e
+                    );
+                }
+            }
+        }
+    }
+
     // Phase 2: inline ephemeral deps and write files
     let ephemeral_sql: HashMap<String, String> = compiled_models
         .iter()
@@ -449,43 +476,58 @@ fn compile_model_phase1(
     name: &str,
     ctx: &CompileContext<'_>,
 ) -> Result<CompileOutput> {
-    // Build model context and render from an immutable borrow first
-    let (rendered, config_values) = {
+    // Immutable borrow block: render + parse + extract deps + resolve functions
+    let (rendered, config_values, model_deps, ext_deps) = {
         let model = project
             .get_model(name)
             .with_context(|| format!("Model not found: {}", name))?;
         let model_ctx = common::build_model_context(model, project);
-        ctx.jinja
+        let (rendered, config_values) = ctx
+            .jinja
             .render_with_config_and_model(&model.raw_sql, Some(&model_ctx))
-            .with_context(|| format!("Failed to render template for model: {}", name))?
+            .with_context(|| format!("Failed to render template for model: {}", name))?;
+
+        let statements = ctx
+            .parser
+            .parse(&rendered)
+            .with_context(|| format!("Failed to parse SQL for model: {}", name))?;
+
+        // Reject CTEs and derived tables -- each transform must be its own model
+        ff_sql::validate_no_complex_queries(&statements)
+            .map_err(|e| anyhow::anyhow!("{}", e))
+            .with_context(|| format!("Model '{}' uses forbidden SQL constructs", name))?;
+
+        let deps = extract_dependencies(&statements);
+        let km: HashSet<&str> = ctx.known_models.iter().map(|s| s.as_str()).collect();
+        let (mut model_deps, ext_deps, unknown_deps) =
+            ff_sql::extractor::categorize_dependencies_with_unknown(deps, &km, ctx.external_tables);
+
+        // Resolve table function transitive dependencies
+        let (func_model_deps, remaining_unknown) = common::resolve_function_dependencies(
+            &unknown_deps,
+            project,
+            ctx.parser,
+            &km,
+            ctx.external_tables,
+        );
+        model_deps.extend(func_model_deps);
+        model_deps.sort();
+        model_deps.dedup();
+
+        for unknown in &remaining_unknown {
+            eprintln!(
+                "Warning: Unknown dependency '{}' in model '{}'. Not defined as a model or source.",
+                unknown, name
+            );
+        }
+
+        (rendered, config_values, model_deps, ext_deps)
     };
 
-    // Now get mutable access for updating the model
+    // Mutable borrow: apply results to model
     let model = project
         .get_model_mut(name)
         .with_context(|| format!("Model not found: {}", name))?;
-
-    let statements = ctx
-        .parser
-        .parse(&rendered)
-        .with_context(|| format!("Failed to parse SQL for model: {}", name))?;
-
-    // Reject CTEs and derived tables -- each transform must be its own model
-    ff_sql::validate_no_complex_queries(&statements)
-        .map_err(|e| anyhow::anyhow!("{}", e))
-        .with_context(|| format!("Model '{}' uses forbidden SQL constructs", name))?;
-
-    let deps = extract_dependencies(&statements);
-    let km: HashSet<&str> = ctx.known_models.iter().map(|s| s.as_str()).collect();
-    let (model_deps, ext_deps, unknown_deps) =
-        ff_sql::extractor::categorize_dependencies_with_unknown(deps, &km, ctx.external_tables);
-
-    for unknown in &unknown_deps {
-        eprintln!(
-            "Warning: Unknown dependency '{}' in model '{}'. Not defined as a model or source.",
-            unknown, name
-        );
-    }
 
     model.compiled_sql = Some(rendered.clone());
     model.depends_on = model_deps

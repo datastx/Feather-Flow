@@ -97,8 +97,8 @@ pub async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()> {
         None
     };
 
-    let compiled_models =
-        load_or_compile_models(&project, &run_args, global, comment_ctx.as_ref())?;
+    let compiled_models = load_or_compile_models(&project, &run_args, global, comment_ctx.as_ref())
+        .context("Failed to compile models")?;
 
     // Static analysis gate
     if !args.skip_static_analysis {
