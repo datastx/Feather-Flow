@@ -141,7 +141,7 @@ pub(crate) fn json_to_minijinja_value(json: &serde_json::Value) -> Value {
                 Value::from(n.to_string())
             }
         }
-        serde_json::Value::String(s) => Value::from(s.clone()),
+        serde_json::Value::String(s) => Value::from(s.as_str()),
         serde_json::Value::Array(arr) => {
             let values: Vec<Value> = arr.iter().map(json_to_minijinja_value).collect();
             Value::from(values)

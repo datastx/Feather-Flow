@@ -11,7 +11,7 @@ use sqlparser::ast::{
 use std::collections::{HashMap, HashSet};
 
 /// Expression type for a lineage column
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ExprType {
     /// Unknown or unrecognized expression
@@ -355,7 +355,7 @@ fn resolve_single_edge(
         target_model: target_model.to_string(),
         target_column: col_lineage.output_column.clone(),
         is_direct: col_lineage.is_direct,
-        expr_type: col_lineage.expr_type.clone(),
+        expr_type: col_lineage.expr_type,
         classification: None,
     })
 }

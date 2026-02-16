@@ -124,9 +124,9 @@ pub fn categorize_dependencies_with_unknown(
 
 /// Normalize a table name by taking only the last component
 /// This handles cases like "schema.table" -> "table" for model matching
-fn normalize_table_name(name: &str) -> String {
+fn normalize_table_name(name: &str) -> &str {
     // Safety: str::split() always yields at least one element
-    name.split('.').next_back().unwrap_or(name).to_string()
+    name.split('.').next_back().unwrap_or(name)
 }
 
 #[cfg(test)]

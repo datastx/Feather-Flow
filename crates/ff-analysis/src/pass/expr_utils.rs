@@ -63,3 +63,21 @@ pub(crate) fn collect_column_refs(expr: &Expr, cols: &mut HashSet<String>) {
         _ => {}
     }
 }
+
+/// Get a human-readable display name for a DataFusion expression.
+///
+/// For columns, includes the optional table qualifier (`table.column`).
+/// For aliases, returns the alias name. Falls back to `schema_name()`.
+pub(crate) fn expr_display_name(expr: &Expr) -> String {
+    match expr {
+        Expr::Column(col) => {
+            if let Some(ref relation) = col.relation {
+                format!("{}.{}", relation, col.name)
+            } else {
+                col.name.clone()
+            }
+        }
+        Expr::Alias(alias) => alias.name.clone(),
+        _ => expr.schema_name().to_string(),
+    }
+}

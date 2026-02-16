@@ -51,30 +51,56 @@ pub fn extract_column_lineage(model_name: &str, plan: &LogicalPlan) -> ModelColu
     }
 }
 
+/// Collect lineage edges for a list of expressions.
+///
+/// When `kind_override` is `Some`, all edges use that kind; otherwise the kind
+/// is inferred from each expression via [`classify_expr`].
+fn collect_expr_edges(
+    exprs: &[Expr],
+    kind_override: Option<LineageKind>,
+    edges: &mut Vec<ColumnLineageEdge>,
+) {
+    for expr in exprs {
+        let output_name = expr_output_name(expr);
+        let mut sources = Vec::new();
+        collect_column_refs(expr, &mut sources);
+        if sources.is_empty() {
+            continue;
+        }
+        let kind = kind_override.clone().unwrap_or_else(|| classify_expr(expr));
+        for (table, column) in sources {
+            edges.push(ColumnLineageEdge {
+                output_column: output_name.clone(),
+                source_table: table,
+                source_column: column,
+                kind: kind.clone(),
+            });
+        }
+    }
+}
+
+/// Collect Inspect-kind edges from join key pairs
+fn collect_join_inspect_edges(on: &[(Expr, Expr)], edges: &mut Vec<ColumnLineageEdge>) {
+    for (left_key, right_key) in on {
+        let mut sources = Vec::new();
+        collect_column_refs(left_key, &mut sources);
+        collect_column_refs(right_key, &mut sources);
+        for (table, column) in sources {
+            edges.push(ColumnLineageEdge {
+                output_column: String::new(),
+                source_table: table,
+                source_column: column,
+                kind: LineageKind::Inspect,
+            });
+        }
+    }
+}
+
 /// Walk the LogicalPlan tree to collect lineage edges
 fn walk_plan(plan: &LogicalPlan, edges: &mut Vec<ColumnLineageEdge>) {
     match plan {
         LogicalPlan::Projection(proj) => {
-            for expr in &proj.expr {
-                let output_name = expr_output_name(expr);
-                let mut sources = Vec::new();
-                collect_column_refs(expr, &mut sources);
-
-                if sources.is_empty() {
-                    // Literal or constant — no lineage
-                    continue;
-                }
-
-                let kind = classify_expr(expr);
-                for (table, column) in sources {
-                    edges.push(ColumnLineageEdge {
-                        output_column: output_name.clone(),
-                        source_table: table,
-                        source_column: column,
-                        kind: kind.clone(),
-                    });
-                }
-            }
+            collect_expr_edges(&proj.expr, None, edges);
             walk_plan(proj.input.as_ref(), edges);
         }
         LogicalPlan::Filter(filter) => {
@@ -92,54 +118,13 @@ fn walk_plan(plan: &LogicalPlan, edges: &mut Vec<ColumnLineageEdge>) {
             walk_plan(filter.input.as_ref(), edges);
         }
         LogicalPlan::Join(join) => {
-            // Join keys are Inspect
-            for (left_key, right_key) in &join.on {
-                let mut left_sources = Vec::new();
-                let mut right_sources = Vec::new();
-                collect_column_refs(left_key, &mut left_sources);
-                collect_column_refs(right_key, &mut right_sources);
-                for (table, column) in left_sources.into_iter().chain(right_sources) {
-                    edges.push(ColumnLineageEdge {
-                        output_column: String::new(),
-                        source_table: table,
-                        source_column: column,
-                        kind: LineageKind::Inspect,
-                    });
-                }
-            }
+            collect_join_inspect_edges(&join.on, edges);
             walk_plan(join.left.as_ref(), edges);
             walk_plan(join.right.as_ref(), edges);
         }
         LogicalPlan::Aggregate(agg) => {
-            // GROUP BY keys
-            for expr in &agg.group_expr {
-                let output_name = expr_output_name(expr);
-                let mut sources = Vec::new();
-                collect_column_refs(expr, &mut sources);
-                let kind = classify_expr(expr);
-                for (table, column) in sources {
-                    edges.push(ColumnLineageEdge {
-                        output_column: output_name.clone(),
-                        source_table: table,
-                        source_column: column,
-                        kind: kind.clone(),
-                    });
-                }
-            }
-            // Aggregate expressions are Transform
-            for expr in &agg.aggr_expr {
-                let output_name = expr_output_name(expr);
-                let mut sources = Vec::new();
-                collect_column_refs(expr, &mut sources);
-                for (table, column) in sources {
-                    edges.push(ColumnLineageEdge {
-                        output_column: output_name.clone(),
-                        source_table: table,
-                        source_column: column,
-                        kind: LineageKind::Transform,
-                    });
-                }
-            }
+            collect_expr_edges(&agg.group_expr, None, edges);
+            collect_expr_edges(&agg.aggr_expr, Some(LineageKind::Transform), edges);
             walk_plan(agg.input.as_ref(), edges);
         }
         LogicalPlan::SubqueryAlias(alias) => {
@@ -256,16 +241,16 @@ fn collect_column_refs(expr: &Expr, refs: &mut Vec<(String, String)>) {
     }
 }
 
-/// Deduplicate lineage edges, keeping the strongest kind per (output, source) pair
+/// Deduplicate lineage edges, keeping the first occurrence per (output, source) pair
 pub fn deduplicate_edges(edges: &[ColumnLineageEdge]) -> Vec<ColumnLineageEdge> {
-    let mut seen: HashSet<(String, String, String)> = HashSet::new();
-    let mut result = Vec::new();
+    let mut seen: HashSet<(&str, &str, &str)> = HashSet::with_capacity(edges.len());
+    let mut result = Vec::with_capacity(edges.len());
 
     for edge in edges {
         let key = (
-            edge.output_column.clone(),
-            edge.source_table.clone(),
-            edge.source_column.clone(),
+            edge.output_column.as_str(),
+            edge.source_table.as_str(),
+            edge.source_column.as_str(),
         );
         if seen.insert(key) {
             result.push(edge.clone());

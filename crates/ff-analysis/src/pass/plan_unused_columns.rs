@@ -39,49 +39,51 @@ impl DagPlanPass for PlanUnusedColumns {
         sorted_names.sort();
 
         for model_name in sorted_names {
-            let result = &models[model_name];
-
-            // Get output columns from the plan schema
-            let output_columns: Vec<String> = result
-                .plan
-                .schema()
-                .fields()
-                .iter()
-                .map(|f| f.name().clone())
-                .collect();
-
-            // Check if this model has downstream dependents
-            let dependents = ctx.dag().dependents(model_name);
-            if dependents.is_empty() {
-                // Terminal model — skip, it's a final output
-                continue;
-            }
-
-            // Collect all columns consumed by downstream models from this model
-            let consumed = collect_consumed_columns(model_name, &dependents, models, ctx);
-
-            // A020: Column produced but never consumed
-            for col_name in &output_columns {
-                if !consumed.contains(&col_name.to_lowercase()) {
-                    diagnostics.push(Diagnostic {
-                        code: DiagnosticCode::A020,
-                        severity: Severity::Info,
-                        message: format!(
-                            "Column '{}' produced but never used by any downstream model",
-                            col_name
-                        ),
-                        model: model_name.clone(),
-                        column: Some(col_name.clone()),
-                        hint: Some(
-                            "Consider removing this column to simplify the model".to_string(),
-                        ),
-                        pass_name: "plan_unused_columns".into(),
-                    });
-                }
-            }
+            check_model_unused_columns(model_name, models, ctx, &mut diagnostics);
         }
 
         diagnostics
+    }
+}
+
+/// Check a single model for columns produced but never consumed downstream (A020)
+fn check_model_unused_columns(
+    model_name: &str,
+    models: &HashMap<String, ModelPlanResult>,
+    ctx: &AnalysisContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let result = &models[model_name];
+    let output_columns: Vec<String> = result
+        .plan
+        .schema()
+        .fields()
+        .iter()
+        .map(|f| f.name().clone())
+        .collect();
+
+    let dependents = ctx.dag().dependents(model_name);
+    if dependents.is_empty() {
+        return;
+    }
+
+    let consumed = collect_consumed_columns(model_name, &dependents, models, ctx);
+    for col_name in &output_columns {
+        if consumed.contains(&col_name.to_lowercase()) {
+            continue;
+        }
+        diagnostics.push(Diagnostic {
+            code: DiagnosticCode::A020,
+            severity: Severity::Info,
+            message: format!(
+                "Column '{}' produced but never used by any downstream model",
+                col_name
+            ),
+            model: model_name.to_string(),
+            column: Some(col_name.clone()),
+            hint: Some("Consider removing this column to simplify the model".to_string()),
+            pass_name: "plan_unused_columns".into(),
+        });
     }
 }
 

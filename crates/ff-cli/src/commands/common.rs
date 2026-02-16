@@ -167,8 +167,10 @@ pub(crate) fn build_schema_catalog(
 ) {
     use ff_analysis::{parse_sql_type, Nullability, RelSchema, TypedColumn};
 
-    let mut schema_catalog: ff_analysis::SchemaCatalog = HashMap::new();
-    let mut yaml_schemas: HashMap<ff_core::ModelName, Arc<RelSchema>> = HashMap::new();
+    let mut schema_catalog: ff_analysis::SchemaCatalog =
+        HashMap::with_capacity(project.models.len());
+    let mut yaml_schemas: HashMap<ff_core::ModelName, Arc<RelSchema>> =
+        HashMap::with_capacity(project.models.len());
 
     for (name, model) in &project.models {
         let Some(schema) = &model.schema else {
@@ -263,7 +265,8 @@ pub(crate) fn build_project_dag(
     let external_tables = build_external_tables_lookup(project);
     let known_models: HashSet<&str> = project.models.keys().map(|k| k.as_str()).collect();
 
-    let mut dependencies: HashMap<String, Vec<String>> = HashMap::new();
+    let mut dependencies: HashMap<String, Vec<String>> =
+        HashMap::with_capacity(project.models.len());
 
     for (name, model) in &project.models {
         let rendered = match jinja.render(&model.raw_sql) {

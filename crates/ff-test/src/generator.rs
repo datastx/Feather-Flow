@@ -318,33 +318,27 @@ pub struct GeneratedTest {
 }
 
 impl GeneratedTest {
-    /// Create a generated test from a schema test (applies `TestConfig` options)
-    pub fn from_schema_test(test: &SchemaTest) -> Self {
-        let sql = generate_test_sql(test);
-        let name = format!("{}_{}__{}", test.test_type, test.model, test.column);
-
+    /// Build a `GeneratedTest` from common `SchemaTest` fields and a pre-built SQL string
+    fn build(test: &SchemaTest, sql: String) -> Self {
         Self {
+            name: format!("{}_{}__{}", test.test_type, test.model, test.column),
             model: test.model.clone(),
             column: test.column.clone(),
             test_type: test.test_type.clone(),
-            sql,
-            name,
             severity: test.config.severity,
+            sql,
         }
+    }
+
+    /// Create a generated test from a schema test (applies `TestConfig` options)
+    pub fn from_schema_test(test: &SchemaTest) -> Self {
+        let sql = generate_test_sql(test);
+        Self::build(test, sql)
     }
 
     /// Create a generated test with custom SQL (for custom test macros)
     pub fn with_custom_sql(test: &SchemaTest, sql: String) -> Self {
-        let name = format!("{}_{}__{}", test.test_type, test.model, test.column);
-
-        Self {
-            model: test.model.clone(),
-            column: test.column.clone(),
-            test_type: test.test_type.clone(),
-            sql,
-            name,
-            severity: test.config.severity,
-        }
+        Self::build(test, sql)
     }
 
     /// Create a generated test with a qualified model name (schema.model)
@@ -352,16 +346,7 @@ impl GeneratedTest {
         let base_sql =
             generate_sql_for_test_type(&test.test_type, qualified_name, &test.column, None);
         let sql = apply_test_config(&base_sql, &test.config);
-        let name = format!("{}_{}__{}", test.test_type, test.model, test.column);
-
-        Self {
-            model: test.model.clone(),
-            column: test.column.clone(),
-            test_type: test.test_type.clone(),
-            sql,
-            name,
-            severity: test.config.severity,
-        }
+        Self::build(test, sql)
     }
 
     /// Create a generated test with qualified names for both source and referenced tables
@@ -380,16 +365,7 @@ impl GeneratedTest {
             Some(&ref_table_resolver),
         );
         let sql = apply_test_config(&base_sql, &test.config);
-        let name = format!("{}_{}__{}", test.test_type, test.model, test.column);
-
-        Self {
-            model: test.model.clone(),
-            column: test.column.clone(),
-            test_type: test.test_type.clone(),
-            sql,
-            name,
-            severity: test.config.severity,
-        }
+        Self::build(test, sql)
     }
 }
 

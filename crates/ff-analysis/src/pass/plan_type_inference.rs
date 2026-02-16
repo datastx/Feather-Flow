@@ -12,6 +12,7 @@ use crate::context::AnalysisContext;
 use crate::datafusion_bridge::types::arrow_to_sql_type;
 use crate::types::SqlType;
 
+use super::expr_utils::expr_display_name;
 use super::plan_pass::PlanPass;
 use super::{Diagnostic, DiagnosticCode, Severity};
 
@@ -159,20 +160,22 @@ fn check_aggregate_type(
     }
 
     for arg in &agg_func.params.args {
-        if let Ok(dt) = arg.get_type(input_plan.schema().as_ref()) {
-            if is_string_type(&dt) {
-                let col_name = expr_display_name(expr);
-                diags.push(Diagnostic {
-                    code: DiagnosticCode::A004,
-                    severity: Severity::Warning,
-                    message: format!("{}() applied to string column '{}'", func_name, col_name),
-                    model: model.to_string(),
-                    column: Some(col_name),
-                    hint: Some("Ensure the column is numeric, or add a CAST".to_string()),
-                    pass_name: "plan_type_inference".into(),
-                });
-            }
+        let Ok(dt) = arg.get_type(input_plan.schema().as_ref()) else {
+            continue;
+        };
+        if !is_string_type(&dt) {
+            continue;
         }
+        let col_name = expr_display_name(expr);
+        diags.push(Diagnostic {
+            code: DiagnosticCode::A004,
+            severity: Severity::Warning,
+            message: format!("{}() applied to string column '{}'", func_name, col_name),
+            model: model.to_string(),
+            column: Some(col_name),
+            hint: Some("Ensure the column is numeric, or add a CAST".to_string()),
+            pass_name: "plan_type_inference".into(),
+        });
     }
 }
 
@@ -257,13 +260,4 @@ fn is_lossy_cast(source: &SqlType, target: &SqlType) -> bool {
             | (SqlType::String { .. }, SqlType::Timestamp)
             | (SqlType::Timestamp, SqlType::Date)
     )
-}
-
-/// Get a human-readable name for an expression
-fn expr_display_name(expr: &Expr) -> String {
-    match expr {
-        Expr::Column(col) => col.name.clone(),
-        Expr::Alias(alias) => alias.name.clone(),
-        _ => expr.schema_name().to_string(),
-    }
 }
