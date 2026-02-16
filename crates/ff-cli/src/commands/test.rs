@@ -230,7 +230,11 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
                 errors: 0,
                 results: vec![],
             };
-            println!("{}", serde_json::to_string_pretty(&empty_result)?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&empty_result)
+                    .context("Failed to serialize test results")?
+            );
         } else {
             println!("No tests to run.");
         }
@@ -306,7 +310,10 @@ pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
             errors: final_errors,
             results,
         };
-        println!("{}", serde_json::to_string_pretty(&output)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&output).context("Failed to serialize test results")?
+        );
     } else {
         println!();
         if final_warned > 0 {

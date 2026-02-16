@@ -105,6 +105,7 @@ pub(crate) fn load_or_compile_models(
             global.target.as_deref(),
             comment_ctx,
         )
+        .context("Failed to load models from manifest cache")
     } else {
         if global.verbose && !args.no_cache {
             eprintln!("[verbose] Cache invalid or missing, recompiling");
@@ -228,8 +229,24 @@ fn compile_all_models(
             .with_context(|| format!("Failed to parse SQL for model: {}", name))?;
 
         let deps = extract_dependencies(&statements);
-        let (model_deps, _) =
-            ff_sql::extractor::categorize_dependencies(deps, &known_models, &external_tables);
+        let (mut model_deps, _, unknown_deps) =
+            ff_sql::extractor::categorize_dependencies_with_unknown(
+                deps,
+                &known_models,
+                &external_tables,
+            );
+
+        // Resolve table function transitive dependencies
+        let (func_model_deps, _) = common::resolve_function_dependencies(
+            &unknown_deps,
+            project,
+            &parser,
+            &known_models,
+            &external_tables,
+        );
+        model_deps.extend(func_model_deps);
+        model_deps.sort();
+        model_deps.dedup();
 
         let mat = config_values
             .get("materialized")

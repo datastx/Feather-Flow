@@ -52,7 +52,27 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         None
     };
 
-    let compiled_models = load_or_compile_models(&project, args, global, comment_ctx.as_ref())?;
+    let mut compiled_models = load_or_compile_models(&project, args, global, comment_ctx.as_ref())?;
+
+    // Qualify table references: rewrite bare names to 3-part database.schema.table
+    {
+        let compiled_schemas: std::collections::HashMap<String, Option<String>> = compiled_models
+            .iter()
+            .map(|(name, cm)| (name.clone(), cm.schema.clone()))
+            .collect();
+        let qualification_map = common::build_qualification_map(&project, &compiled_schemas);
+
+        for (name, compiled) in &mut compiled_models {
+            match ff_sql::qualify_table_references(&compiled.sql, &qualification_map) {
+                Ok(qualified) => compiled.sql = qualified,
+                Err(e) => {
+                    if global.verbose {
+                        eprintln!("[verbose] Failed to qualify references in {}: {}", name, e);
+                    }
+                }
+            }
+        }
+    }
 
     // Static analysis gate: validate SQL models before execution
     if !args.skip_static_analysis {

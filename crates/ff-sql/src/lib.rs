@@ -10,6 +10,7 @@ pub mod extractor;
 pub mod inline;
 pub mod lineage;
 pub mod parser;
+pub mod qualify;
 pub mod suggestions;
 pub mod validator;
 
@@ -22,6 +23,7 @@ pub use lineage::{
     ProjectLineage,
 };
 pub use parser::SqlParser;
+pub use qualify::qualify_table_references;
 pub use suggestions::{suggest_tests, ColumnSuggestions, ModelSuggestions, TestSuggestion};
 pub use validator::validate_no_complex_queries;
 

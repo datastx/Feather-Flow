@@ -3,6 +3,7 @@
 use crate::error::{CoreError, CoreResult};
 use crate::serde_helpers::default_true;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -148,7 +149,7 @@ impl std::fmt::Display for DbType {
 }
 
 /// Database connection configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
     /// Database type (duckdb or snowflake)
     #[serde(rename = "type", default)]
@@ -157,6 +158,24 @@ pub struct DatabaseConfig {
     /// Database path (for DuckDB file-based or :memory:)
     #[serde(default = "default_db_path")]
     pub path: String,
+
+    /// Logical database name for fully-qualified references (default: "main")
+    #[serde(default = "default_db_name")]
+    pub name: String,
+}
+
+impl Default for DatabaseConfig {
+    fn default() -> Self {
+        Self {
+            db_type: DbType::default(),
+            path: default_db_path(),
+            name: default_db_name(),
+        }
+    }
+}
+
+fn default_db_name() -> String {
+    "main".to_string()
 }
 
 /// Materialization type for models
@@ -424,8 +443,14 @@ impl Config {
             .or(self.wap_schema.as_deref())
     }
 
-    /// Get merged variables, with target overrides taking precedence
-    pub fn get_merged_vars(&self, target: Option<&str>) -> HashMap<String, serde_yaml::Value> {
+    /// Get merged variables, with target overrides taking precedence.
+    ///
+    /// Returns a borrowed reference when no target overrides apply,
+    /// avoiding an unnecessary clone of the base vars map.
+    pub fn get_merged_vars(
+        &self,
+        target: Option<&str>,
+    ) -> Cow<'_, HashMap<String, serde_yaml::Value>> {
         let target_config = target.and_then(|name| self.targets.get(name));
         match target_config.filter(|tc| !tc.vars.is_empty()) {
             Some(tc) => {
@@ -433,9 +458,9 @@ impl Config {
                 for (key, value) in &tc.vars {
                     vars.insert(key.clone(), value.clone());
                 }
-                vars
+                Cow::Owned(vars)
             }
-            None => self.vars.clone(),
+            None => Cow::Borrowed(&self.vars),
         }
     }
 

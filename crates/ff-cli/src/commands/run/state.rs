@@ -14,13 +14,18 @@ use crate::commands::common::{self, CommandResults, RunStatus};
 
 use super::compile::CompiledModel;
 
-/// Run result for a single model
+/// Run result for a single model.
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ModelRunResult {
+    /// Model name
     pub(crate) model: String,
+    /// Execution outcome
     pub(crate) status: RunStatus,
+    /// Materialization strategy used (view, table, incremental, ephemeral)
     pub(crate) materialization: String,
+    /// Wall-clock execution time in seconds
     pub(crate) duration_secs: f64,
+    /// Error message if the model failed, `None` on success
     pub(crate) error: Option<String>,
 }
 

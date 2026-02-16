@@ -11,7 +11,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
-use tokio::sync::Semaphore;
+use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 use tokio::task::JoinSet;
 
 use crate::cli::{OutputFormat, RunArgs};
@@ -40,11 +40,35 @@ fn create_progress_bar(count: usize, quiet: bool, output: &OutputFormat) -> Opti
     }
 }
 
-/// Build a schema-qualified name from an optional schema and a model name.
+/// Build a qualified name from an optional database, optional schema, and a model name.
 fn build_qualified_name(schema: Option<&str>, name: &str) -> String {
     match schema {
         Some(s) => format!("{}.{}", s, name),
         None => name.to_string(),
+    }
+}
+
+/// Format a human-readable status line for a completed model run.
+///
+/// Callers are responsible for printing the result — this keeps `run_single_model`
+/// free of I/O so the parallel path can serialize output through a lock.
+fn format_model_status(result: &ModelRunResult) -> String {
+    let ms = (result.duration_secs * 1000.0) as u64;
+    match result.status {
+        RunStatus::Success => {
+            format!(
+                "  \u{2713} {} ({}) [{}ms]",
+                result.model, result.materialization, ms
+            )
+        }
+        RunStatus::Error => {
+            let err = result.error.as_deref().unwrap_or("unknown error");
+            format!("  \u{2717} {} - {} [{}ms]", result.model, err, ms)
+        }
+        RunStatus::Skipped => {
+            let reason = result.error.as_deref().unwrap_or("skipped");
+            format!("  - {} ({})", result.model, reason)
+        }
     }
 }
 
@@ -60,12 +84,17 @@ fn recover_mutex<T>(lock: &Mutex<T>) -> MutexGuard<'_, T> {
     })
 }
 
-/// Shared context for model execution that groups related parameters
+/// Shared context for model execution that groups related parameters.
 pub(super) struct ExecutionContext<'a> {
+    /// Database connection handle
     pub(super) db: &'a Arc<dyn Database>,
+    /// All compiled models keyed by name
     pub(super) compiled_models: &'a HashMap<String, CompiledModel>,
+    /// Models to execute in topological order
     pub(super) execution_order: &'a [String],
+    /// CLI arguments controlling execution behavior
     pub(super) args: &'a RunArgs,
+    /// Optional WAP staging schema name
     pub(super) wap_schema: Option<&'a str>,
 }
 
@@ -114,12 +143,6 @@ pub(crate) async fn run_single_model(
 
     if let Err(e) = execute_hooks(db, &compiled.pre_hook, &quoted_name).await {
         let duration = model_start.elapsed();
-        println!(
-            "  \u{2717} {} (pre-hook) - {} [{}ms]",
-            name,
-            e,
-            duration.as_millis()
-        );
         return ModelRunResult {
             model: name.to_string(),
             status: RunStatus::Error,
@@ -181,12 +204,6 @@ pub(crate) async fn run_single_model(
         Ok(_) => {
             if let Err(e) = execute_hooks(db, &compiled.post_hook, &quoted_name).await {
                 let duration = model_start.elapsed();
-                println!(
-                    "  \u{2717} {} (post-hook) - {} [{}ms]",
-                    name,
-                    e,
-                    duration.as_millis()
-                );
                 return ModelRunResult {
                     model: name.to_string(),
                     status: RunStatus::Error,
@@ -206,28 +223,16 @@ pub(crate) async fn run_single_model(
             .await
             {
                 let duration = model_start.elapsed();
-                println!(
-                    "  \u{2717} {} (contract) - {} [{}ms]",
-                    name,
-                    contract_error,
-                    duration.as_millis()
-                );
                 return ModelRunResult {
                     model: name.to_string(),
                     status: RunStatus::Error,
                     materialization: compiled.materialization.to_string(),
                     duration_secs: duration.as_secs_f64(),
-                    error: Some(contract_error.to_string()),
+                    error: Some(format!("contract failed: {}", contract_error)),
                 };
             }
 
             let duration = model_start.elapsed();
-            println!(
-                "  \u{2713} {} ({}) [{}ms]",
-                name,
-                compiled.materialization,
-                duration.as_millis()
-            );
             ModelRunResult {
                 model: name.to_string(),
                 status: RunStatus::Success,
@@ -238,7 +243,6 @@ pub(crate) async fn run_single_model(
         }
         Err(e) => {
             let duration = model_start.elapsed();
-            println!("  \u{2717} {} - {} [{}ms]", name, e, duration.as_millis());
             ModelRunResult {
                 model: name.to_string(),
                 status: RunStatus::Error,
@@ -335,7 +339,7 @@ async fn execute_models_sequential(
 ) -> (Vec<ModelRunResult>, usize, usize, bool) {
     let mut success_count = 0;
     let mut failure_count = 0;
-    let mut run_results: Vec<ModelRunResult> = Vec::new();
+    let mut run_results: Vec<ModelRunResult> = Vec::with_capacity(ctx.execution_order.len());
     let mut stopped_early = false;
     let mut failed_models: HashSet<String> = HashSet::new();
     let reverse_deps = build_reverse_deps(ctx.compiled_models);
@@ -366,14 +370,15 @@ async fn execute_models_sequential(
 
         if failed_models.contains(name) {
             failure_count += 1;
-            println!("  - {} (skipped: upstream WAP failure)", name);
-            run_results.push(ModelRunResult {
+            let skipped = ModelRunResult {
                 model: name.clone(),
                 status: RunStatus::Skipped,
                 materialization: compiled.materialization.to_string(),
                 duration_secs: 0.0,
                 error: Some("skipped: upstream WAP failure".to_string()),
-            });
+            };
+            println!("{}", format_model_status(&skipped));
+            run_results.push(skipped);
             continue;
         }
 
@@ -404,6 +409,8 @@ async fn execute_models_sequential(
             ctx.wap_schema,
         )
         .await;
+
+        println!("{}", format_model_status(&model_result));
 
         let is_error = matches!(model_result.status, RunStatus::Error);
         let is_wap = compiled.wap
@@ -485,6 +492,7 @@ async fn execute_model_task(
     stopped: Arc<AtomicBool>,
     completed: Arc<Mutex<HashSet<String>>>,
     progress: Option<Arc<ProgressBar>>,
+    output_lock: Arc<AsyncMutex<()>>,
 ) {
     // Semaphore was closed -- treat as cancellation
     let Ok(_permit) = semaphore.acquire().await else {
@@ -499,11 +507,20 @@ async fn execute_model_task(
         run_single_model(&db, &name, &compiled, full_refresh, wap_schema.as_deref()).await;
 
     let is_error = matches!(model_result.status, RunStatus::Error);
+
+    // Print status under lock to prevent interleaved output
+    {
+        let _guard = output_lock.lock().await;
+        println!("{}", format_model_status(&model_result));
+        if is_error && fail_fast {
+            println!("\n  Stopping due to --fail-fast");
+        }
+    }
+
     if is_error {
         failure_count.fetch_add(1, Ordering::SeqCst);
         if fail_fast {
             stopped.store(true, Ordering::SeqCst);
-            println!("\n  Stopping due to --fail-fast");
         }
     } else {
         success_count.fetch_add(1, Ordering::SeqCst);
@@ -524,10 +541,11 @@ async fn execute_models_parallel(
 ) -> (Vec<ModelRunResult>, usize, usize, bool) {
     let success_count = Arc::new(AtomicUsize::new(0));
     let failure_count = Arc::new(AtomicUsize::new(0));
-    let run_results = Arc::new(Mutex::new(Vec::new()));
+    let run_results = Arc::new(Mutex::new(Vec::with_capacity(ctx.execution_order.len())));
     let stopped = Arc::new(AtomicBool::new(false));
     let semaphore = Arc::new(Semaphore::new(ctx.args.threads));
     let completed = Arc::new(Mutex::new(HashSet::new()));
+    let output_lock = Arc::new(AsyncMutex::new(()));
     let levels = compute_execution_levels(ctx.execution_order, ctx.compiled_models);
 
     let executable_count = ctx
@@ -612,6 +630,7 @@ async fn execute_models_parallel(
                 Arc::clone(&stopped),
                 Arc::clone(&completed),
                 progress.clone(),
+                Arc::clone(&output_lock),
             ));
         }
 

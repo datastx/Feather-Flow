@@ -5,26 +5,37 @@ use ff_core::source::SourceFile;
 use ff_sql::{extract_column_lineage, suggest_tests, SqlParser};
 use serde::Serialize;
 
-/// Model documentation data for JSON output
+/// Model documentation data for JSON output.
 #[derive(Debug, Serialize)]
 pub(crate) struct ModelDoc {
+    /// Model name
     pub name: String,
+    /// Human-readable description from YAML schema
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Model owner
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
+    /// Owning team
     #[serde(skip_serializing_if = "Option::is_none")]
     pub team: Option<String>,
+    /// Contact info
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contact: Option<String>,
+    /// Tags from YAML schema
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    /// Materialization strategy (view, table, incremental, ephemeral)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub materialized: Option<String>,
+    /// Target schema for the materialized relation
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
+    /// Column definitions from YAML schema
     pub columns: Vec<ColumnDoc>,
+    /// Internal model dependencies
     pub depends_on: Vec<String>,
+    /// External table dependencies
     pub external_deps: Vec<String>,
     /// Column-level lineage extracted from SQL AST
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -48,26 +59,35 @@ pub(crate) struct TestSuggestionDoc {
     pub reason: String,
 }
 
-/// Column documentation data
+/// Column documentation data.
 #[derive(Debug, Serialize)]
 pub(crate) struct ColumnDoc {
+    /// Column name
     pub name: String,
+    /// SQL data type
     pub data_type: String,
+    /// Human-readable description
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Whether this column is a primary key
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub primary_key: bool,
+    /// Test names applied to this column
     pub tests: Vec<String>,
+    /// Foreign key reference to another model's column
     #[serde(skip_serializing_if = "Option::is_none")]
     pub references: Option<ColumnRefDoc>,
+    /// Data governance classification (e.g., pii, sensitive, public)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub classification: Option<String>,
 }
 
-/// Column reference documentation data
+/// Column reference documentation data.
 #[derive(Debug, Serialize)]
 pub(crate) struct ColumnRefDoc {
+    /// Referenced model name
     pub model: String,
+    /// Referenced column name
     pub column: String,
 }
 
@@ -84,56 +104,76 @@ pub(crate) struct ColumnLineageDoc {
     pub expr_type: String, // Serialized as string for JSON docs output
 }
 
-/// Model summary for index
+/// Model summary for the docs index page.
 #[derive(Debug, Serialize)]
 pub(crate) struct ModelSummary {
+    /// Model name
     pub name: String,
+    /// Human-readable description
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Model owner
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
+    /// Whether a YAML schema file exists
     pub has_schema: bool,
 }
 
-/// Source documentation data for JSON output
+/// Source documentation data for JSON output.
 #[derive(Debug, Serialize)]
 pub(crate) struct SourceDoc {
+    /// Source name
     pub name: String,
+    /// Human-readable description
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Database schema containing the source tables
     pub schema: String,
+    /// Source owner
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
+    /// Tags from source YAML
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    /// Tables within this source
     pub tables: Vec<SourceTableDoc>,
 }
 
-/// Source table documentation data
+/// Source table documentation data.
 #[derive(Debug, Serialize)]
 pub(crate) struct SourceTableDoc {
+    /// Table name
     pub name: String,
+    /// Human-readable description
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Columns defined for this table
     pub columns: Vec<SourceColumnDoc>,
 }
 
-/// Source column documentation data
+/// Source column documentation data.
 #[derive(Debug, Serialize)]
 pub(crate) struct SourceColumnDoc {
+    /// Column name
     pub name: String,
+    /// SQL data type
     pub data_type: String,
+    /// Human-readable description
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Test names applied to this column
     pub tests: Vec<String>,
 }
 
-/// Source summary for index
+/// Source summary for the docs index page.
 #[derive(Debug, Serialize)]
 pub(crate) struct SourceSummary {
+    /// Source name
     pub name: String,
+    /// Human-readable description
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Number of tables in this source
     pub table_count: usize,
 }
 
