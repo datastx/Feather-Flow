@@ -6,7 +6,6 @@ use ff_analysis::{
     SchemaCatalog, Severity, SeverityOverrides,
 };
 use ff_core::dag::ModelDag;
-use ff_jinja::JinjaEnvironment;
 use ff_sql::{extract_column_lineage, extract_dependencies, ProjectLineage, SqlParser};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -22,9 +21,7 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
 
     let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
         .context("Invalid SQL dialect")?;
-    let macro_paths = project.config.macro_paths_absolute(&project.root);
-    let template_ctx = common::build_template_context(&project, global.target.as_deref(), false);
-    let jinja = JinjaEnvironment::with_context(&project.config.vars, &macro_paths, &template_ctx);
+    let jinja = common::build_jinja_env_with_context(&project, global.target.as_deref(), false);
 
     let known_models: HashSet<&str> = project.models.keys().map(|k| k.as_str()).collect();
 

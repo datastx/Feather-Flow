@@ -1,7 +1,6 @@
 //! Run-operation command implementation - execute standalone SQL operations
 
 use anyhow::{Context, Result};
-use ff_jinja::JinjaEnvironment;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -13,8 +12,7 @@ pub async fn execute(args: &RunOperationArgs, global: &GlobalArgs) -> Result<()>
     let start_time = Instant::now();
     let project = load_project(global)?;
 
-    let macro_paths = project.config.macro_paths_absolute(&project.root);
-    let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
+    let jinja = common::build_jinja_env(&project);
 
     let macro_args: HashMap<String, serde_json::Value> = if let Some(args_json) = &args.args {
         serde_json::from_str(args_json).context("Invalid JSON in --args")?
