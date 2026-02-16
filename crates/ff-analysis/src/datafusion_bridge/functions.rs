@@ -15,7 +15,7 @@ use datafusion_expr::{
 };
 
 /// Register all DuckDB scalar UDFs
-pub fn duckdb_scalar_udfs() -> Vec<Arc<ScalarUDF>> {
+pub(crate) fn duckdb_scalar_udfs() -> Vec<Arc<ScalarUDF>> {
     vec![
         // Date/time functions
         make_scalar(
@@ -163,7 +163,7 @@ pub fn duckdb_scalar_udfs() -> Vec<Arc<ScalarUDF>> {
 ///
 /// Includes standard SQL aggregates (SUM, AVG, etc.) that DataFusion's
 /// planning-only context does not provide by default, plus DuckDB-specific ones.
-pub fn duckdb_aggregate_udfs() -> Vec<Arc<AggregateUDF>> {
+pub(crate) fn duckdb_aggregate_udfs() -> Vec<Arc<AggregateUDF>> {
     vec![
         // Standard SQL aggregates (type-preserving: return type matches input type)
         make_type_preserving_aggregate("sum"),
@@ -237,7 +237,11 @@ fn make_aggregate(name: &str, input: DataType, ret: DataType) -> Arc<AggregateUD
 /// Converts SQL type strings to Arrow types and registers a stub with the given
 /// name and signature. This allows DataFusion to plan queries that call user-defined
 /// functions without actually executing them.
-pub fn make_user_scalar_udf(name: &str, arg_types: &[String], return_type: &str) -> Arc<ScalarUDF> {
+pub(crate) fn make_user_scalar_udf(
+    name: &str,
+    arg_types: &[String],
+    return_type: &str,
+) -> Arc<ScalarUDF> {
     use crate::datafusion_bridge::types::sql_type_to_arrow;
     use crate::types::parse_sql_type;
 

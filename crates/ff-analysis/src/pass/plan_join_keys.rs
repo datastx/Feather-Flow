@@ -111,33 +111,26 @@ fn check_equi_join_types(
 
 /// Check if a join filter contains non-equi conditions (A033)
 fn check_non_equi_condition(model: &str, expr: &Expr, diags: &mut Vec<Diagnostic>) {
-    match expr {
-        Expr::BinaryExpr(bin) => {
-            use datafusion_expr::Operator;
-            match bin.op {
-                Operator::And => {
-                    // Recurse into AND branches
-                    check_non_equi_condition(model, &bin.left, diags);
-                    check_non_equi_condition(model, &bin.right, diags);
-                }
-                Operator::Eq => {
-                    // Equi condition — fine, no diagnostic
-                }
-                other => {
-                    diags.push(Diagnostic {
-                        code: DiagnosticCode::A033,
-                        severity: Severity::Info,
-                        message: format!("Non-equi join condition detected (operator: {})", other),
-                        model: model.to_string(),
-                        column: None,
-                        hint: Some("Non-equi joins may have performance implications".to_string()),
-                        pass_name: "plan_join_keys".into(),
-                    });
-                }
-            }
+    let Expr::BinaryExpr(bin) = expr else {
+        return;
+    };
+    use datafusion_expr::Operator;
+    match bin.op {
+        Operator::And => {
+            check_non_equi_condition(model, &bin.left, diags);
+            check_non_equi_condition(model, &bin.right, diags);
         }
-        _ => {
-            // Non-binary expression in join filter — unusual
+        Operator::Eq => {}
+        other => {
+            diags.push(Diagnostic {
+                code: DiagnosticCode::A033,
+                severity: Severity::Info,
+                message: format!("Non-equi join condition detected (operator: {})", other),
+                model: model.to_string(),
+                column: None,
+                hint: Some("Non-equi joins may have performance implications".to_string()),
+                pass_name: "plan_join_keys".into(),
+            });
         }
     }
 }

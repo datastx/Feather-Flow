@@ -2,7 +2,8 @@
 
 use anyhow::{Context, Result};
 use ff_analysis::{
-    propagate_schemas, AnalysisContext, PlanPassManager, RelSchema, SchemaCatalog, Severity,
+    apply_severity_overrides, propagate_schemas, AnalysisContext, PlanPassManager, RelSchema,
+    SchemaCatalog, Severity, SeverityOverrides,
 };
 use ff_core::dag::ModelDag;
 use ff_jinja::JinjaEnvironment;
@@ -98,6 +99,9 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
         .filter(|n| sql_sources.contains_key(n))
         .collect();
 
+    let severity_overrides =
+        SeverityOverrides::from_config(&project.config.analysis.severity_overrides);
+
     let ctx = AnalysisContext::new(project, dag, yaml_schemas, project_lineage);
 
     let yaml_string_map: HashMap<String, Arc<RelSchema>> = ctx
@@ -118,7 +122,7 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
         &order,
         &sql_sources,
         &yaml_string_map,
-        &plan_catalog,
+        plan_catalog,
         &user_fn_stubs,
         &user_table_fn_stubs,
     );
@@ -146,6 +150,9 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
         &ctx,
         pass_filter.as_deref(),
     );
+
+    // Apply user-configured severity overrides before min-severity filtering
+    let diagnostics = apply_severity_overrides(diagnostics, &severity_overrides);
 
     let min_severity = match args.severity {
         AnalyzeSeverity::Info => Severity::Info,

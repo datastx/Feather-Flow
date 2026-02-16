@@ -68,23 +68,23 @@ fn check_model_unused_columns(
     }
 
     let consumed = collect_consumed_columns(model_name, &dependents, models, ctx);
-    for col_name in &output_columns {
-        if consumed.contains(&col_name.to_lowercase()) {
-            continue;
-        }
-        diagnostics.push(Diagnostic {
-            code: DiagnosticCode::A020,
-            severity: Severity::Info,
-            message: format!(
-                "Column '{}' produced but never used by any downstream model",
-                col_name
-            ),
-            model: model_name.to_string(),
-            column: Some(col_name.clone()),
-            hint: Some("Consider removing this column to simplify the model".to_string()),
-            pass_name: "plan_unused_columns".into(),
-        });
-    }
+    diagnostics.extend(
+        output_columns
+            .iter()
+            .filter(|col_name| !consumed.contains(&col_name.to_lowercase()))
+            .map(|col_name| Diagnostic {
+                code: DiagnosticCode::A020,
+                severity: Severity::Info,
+                message: format!(
+                    "Column '{}' produced but never used by any downstream model",
+                    col_name
+                ),
+                model: model_name.to_string(),
+                column: Some(col_name.clone()),
+                hint: Some("Consider removing this column to simplify the model".to_string()),
+                pass_name: "plan_unused_columns".into(),
+            }),
+    );
 }
 
 /// Collect all column names from `source_model` that are referenced by downstream models

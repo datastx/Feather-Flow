@@ -25,7 +25,7 @@ fn test_linear_chain_propagation() {
         &topo_order,
         &sql_sources,
         &HashMap::new(),
-        &initial_catalog,
+        initial_catalog.clone(),
         &[],
         &[],
     );
@@ -71,7 +71,7 @@ fn test_multi_step_propagation() {
         &topo_order,
         &sql_sources,
         &HashMap::new(),
-        &initial_catalog,
+        initial_catalog.clone(),
         &[],
         &[],
     );
@@ -122,7 +122,7 @@ fn test_diamond_dag_propagation() {
         &topo_order,
         &sql_sources,
         &HashMap::new(),
-        &initial_catalog,
+        initial_catalog.clone(),
         &[],
         &[],
     );
@@ -164,7 +164,7 @@ fn test_schema_mismatch_detection() {
         &topo_order,
         &sql_sources,
         &yaml_schemas,
-        &initial_catalog,
+        initial_catalog.clone(),
         &[],
         &[],
     );
@@ -203,7 +203,7 @@ fn test_plan_failure_recorded() {
         &topo_order,
         &sql_sources,
         &HashMap::new(),
-        &initial_catalog,
+        initial_catalog.clone(),
         &[],
         &[],
     );
@@ -242,7 +242,7 @@ fn test_fan_out_propagation() {
         &topo_order,
         &sql_sources,
         &HashMap::new(),
-        &initial_catalog,
+        initial_catalog.clone(),
         &[],
         &[],
     );
@@ -288,7 +288,7 @@ fn test_fan_in_propagation() {
         &topo_order,
         &sql_sources,
         &HashMap::new(),
-        &initial_catalog,
+        initial_catalog.clone(),
         &[],
         &[],
     );
@@ -324,7 +324,7 @@ fn test_column_narrowing() {
         &topo_order,
         &sql_sources,
         &HashMap::new(),
-        &initial_catalog,
+        initial_catalog.clone(),
         &[],
         &[],
     );
@@ -359,7 +359,7 @@ fn test_column_rename_via_alias() {
         &topo_order,
         &sql_sources,
         &HashMap::new(),
-        &initial_catalog,
+        initial_catalog.clone(),
         &[],
         &[],
     );
@@ -396,7 +396,7 @@ fn test_deep_chain_propagation() {
         &topo_order,
         &sql_sources,
         &HashMap::new(),
-        &initial_catalog,
+        initial_catalog.clone(),
         &[],
         &[],
     );
@@ -441,7 +441,7 @@ fn test_upstream_failure_isolation() {
         &topo_order,
         &sql_sources,
         &HashMap::new(),
-        &initial_catalog,
+        initial_catalog.clone(),
         &[],
         &[],
     );
@@ -464,7 +464,7 @@ fn test_missing_sql_source_skipped() {
         &topo_order,
         &sql_sources,
         &HashMap::new(),
-        &initial_catalog,
+        initial_catalog.clone(),
         &[],
         &[],
     );
@@ -498,7 +498,7 @@ fn test_aggregate_type_preservation() {
         &topo_order,
         &sql_sources,
         &HashMap::new(),
-        &initial_catalog,
+        initial_catalog.clone(),
         &[],
         &[],
     );
@@ -552,7 +552,7 @@ fn test_coalesce_type_preservation() {
         &topo_order,
         &sql_sources,
         &HashMap::new(),
-        &initial_catalog,
+        initial_catalog.clone(),
         &[],
         &[],
     );

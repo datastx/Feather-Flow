@@ -253,12 +253,10 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
         match ff_sql::qualify_table_references(&compiled.sql, &qualification_map) {
             Ok(qualified) => compiled.sql = qualified,
             Err(e) => {
-                if global.verbose {
-                    eprintln!(
-                        "[verbose] Failed to qualify references in {}: {}",
-                        compiled.name, e
-                    );
-                }
+                eprintln!(
+                    "Warning: Failed to qualify table references in '{}': {}",
+                    compiled.name, e
+                );
             }
         }
     }
@@ -690,9 +688,10 @@ fn run_static_analysis(
 
     let (_, plan_count, failure_count) = common::report_static_analysis_results(
         result,
-        |model_name, mismatch| {
+        &output.overrides,
+        |model_name, mismatch, is_error| {
             if !json_mode {
-                let label = if mismatch.is_error() { "error" } else { "warn" };
+                let label = if is_error { "error" } else { "warn" };
                 eprintln!("  [{label}] {model_name}: {mismatch}");
             }
         },

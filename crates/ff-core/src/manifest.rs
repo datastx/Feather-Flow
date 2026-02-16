@@ -195,9 +195,11 @@ impl Manifest {
     fn test_definition_name(t: &crate::model::TestDefinition) -> String {
         match t {
             crate::model::TestDefinition::Simple(name) => name.clone(),
-            crate::model::TestDefinition::Parameterized(map) => {
-                map.keys().next().cloned().unwrap_or_default()
-            }
+            crate::model::TestDefinition::Parameterized(map) => map
+                .keys()
+                .next()
+                .cloned()
+                .expect("parameterized test must have at least one key"),
         }
     }
 

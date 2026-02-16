@@ -441,12 +441,12 @@ fn extract_lineage_from_select(select: &Select, lineage: &mut ModelLineage) {
             SelectItem::Wildcard(_) => {
                 let mut col_lineage = ColumnLineage::new("*");
                 col_lineage.expr_type = ExprType::Wildcard;
-                let tables: Vec<&String> = lineage.source_tables.iter().collect();
-                for table in tables {
-                    col_lineage
-                        .source_columns
-                        .insert(ColumnRef::qualified(table, "*"));
-                }
+                col_lineage.source_columns.extend(
+                    lineage
+                        .source_tables
+                        .iter()
+                        .map(|table| ColumnRef::qualified(table, "*")),
+                );
                 lineage.add_column(col_lineage);
             }
         }

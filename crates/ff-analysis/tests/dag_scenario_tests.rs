@@ -57,7 +57,7 @@ fn test_clean_ecommerce_dag() {
             .to_string(),
     );
 
-    let result = propagate_schemas(&topo, &sql, &HashMap::new(), &initial, &[], &[]);
+    let result = propagate_schemas(&topo, &sql, &HashMap::new(), initial.clone(), &[], &[]);
     assert!(
         result.failures.is_empty(),
         "Clean e-commerce DAG should have no failures: {:?}",
@@ -95,7 +95,7 @@ fn test_simple_chain() {
     sql.insert("stg".to_string(), "SELECT id, val FROM raw".to_string());
     sql.insert("mart".to_string(), "SELECT id FROM stg".to_string());
 
-    let result = propagate_schemas(&topo, &sql, &HashMap::new(), &initial, &[], &[]);
+    let result = propagate_schemas(&topo, &sql, &HashMap::new(), initial.clone(), &[], &[]);
     assert!(result.failures.is_empty());
     assert_eq!(result.model_plans["mart"].inferred_schema.columns.len(), 1);
 }
@@ -134,7 +134,7 @@ fn test_diamond_dag() {
             .to_string(),
     );
 
-    let result = propagate_schemas(&topo, &sql, &HashMap::new(), &initial, &[], &[]);
+    let result = propagate_schemas(&topo, &sql, &HashMap::new(), initial.clone(), &[], &[]);
     assert!(result.failures.is_empty());
     assert_eq!(
         result.model_plans["merge_model"]
@@ -164,7 +164,7 @@ fn test_wide_fan_out() {
         sql.insert(format!("model_{i}"), "SELECT id, a FROM source".to_string());
     }
 
-    let result = propagate_schemas(&topo, &sql, &HashMap::new(), &initial, &[], &[]);
+    let result = propagate_schemas(&topo, &sql, &HashMap::new(), initial.clone(), &[], &[]);
     assert!(result.failures.is_empty());
     assert_eq!(result.model_plans.len(), 5);
 }
@@ -190,7 +190,7 @@ fn test_deep_chain() {
         sql.insert(format!("m{i}"), format!("SELECT id FROM m{}", i - 1));
     }
 
-    let result = propagate_schemas(&topo, &sql, &HashMap::new(), &initial, &[], &[]);
+    let result = propagate_schemas(&topo, &sql, &HashMap::new(), initial.clone(), &[], &[]);
     assert!(result.failures.is_empty());
     assert_eq!(result.model_plans.len(), 10);
 }
@@ -225,7 +225,7 @@ fn test_schema_drift_detection() {
         ])),
     );
 
-    let result = propagate_schemas(&topo, &sql, &yaml, &initial, &[], &[]);
+    let result = propagate_schemas(&topo, &sql, &yaml, initial.clone(), &[], &[]);
     assert!(result.failures.is_empty());
 
     let model = &result.model_plans["model"];
@@ -261,7 +261,7 @@ fn test_type_mismatch_in_chain() {
         ])),
     );
 
-    let result = propagate_schemas(&topo, &sql, &yaml, &initial, &[], &[]);
+    let result = propagate_schemas(&topo, &sql, &yaml, initial.clone(), &[], &[]);
     let model = &result.model_plans["model"];
     assert!(
         model.mismatches.iter().any(|m| {
@@ -307,7 +307,7 @@ fn test_null_violation_through_left_join() {
         ])),
     );
 
-    let result = propagate_schemas(&topo, &sql, &yaml, &initial, &[], &[]);
+    let result = propagate_schemas(&topo, &sql, &yaml, initial.clone(), &[], &[]);
     let model = &result.model_plans["model"];
     assert!(
         model.mismatches.iter().any(|m| {
@@ -343,7 +343,7 @@ fn test_plan_pass_manager_clean_dag() {
         ])),
     );
 
-    let result = propagate_schemas(&topo, &sql, &yaml, &initial, &[], &[]);
+    let result = propagate_schemas(&topo, &sql, &yaml, initial.clone(), &[], &[]);
     let ctx = make_ctx();
     let pass_mgr = PlanPassManager::with_defaults();
     let diags = pass_mgr.run(&topo, &result.model_plans, &ctx, None);
@@ -400,7 +400,7 @@ fn test_mixed_diagnostics() {
         ])),
     );
 
-    let result = propagate_schemas(&topo, &sql, &yaml, &initial, &[], &[]);
+    let result = propagate_schemas(&topo, &sql, &yaml, initial.clone(), &[], &[]);
     let model = &result.model_plans["model"];
 
     // Expect exactly 2 mismatches: MissingFromSql("status") and NullabilityMismatch("name")
@@ -452,7 +452,7 @@ fn test_all_duckdb_types_propagate() {
         "SELECT bool_col, int_col, bigint_col, float_col, decimal_col, varchar_col, date_col, ts_col FROM typed_source".to_string(),
     );
 
-    let result = propagate_schemas(&topo, &sql, &HashMap::new(), &initial, &[], &[]);
+    let result = propagate_schemas(&topo, &sql, &HashMap::new(), initial.clone(), &[], &[]);
     assert!(
         result.failures.is_empty(),
         "All types should propagate: {:?}",

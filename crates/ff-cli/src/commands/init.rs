@@ -74,6 +74,11 @@ database:
 
 vars:
   environment: dev
+
+# analysis:
+#   severity_overrides:
+#     A020: warning    # promote unused columns from info to warning
+#     A032: off        # disable cross join diagnostics
 "#,
         name = safe_name,
         db_path = safe_db_path,

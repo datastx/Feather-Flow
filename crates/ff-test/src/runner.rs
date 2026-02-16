@@ -40,19 +40,26 @@ pub struct TestResult {
 }
 
 impl TestResult {
-    /// Create a passed test result
-    pub fn pass(test: &GeneratedTest, duration: Duration) -> Self {
+    fn from_test(test: &GeneratedTest, duration: Duration) -> Self {
         Self {
             name: test.name.clone(),
             model: test.model.clone(),
             column: test.column.clone(),
             test_type: test.test_type.clone(),
-            passed: true,
+            passed: false,
             failure_count: 0,
             sample_failures: Vec::new(),
             duration,
             error: None,
             severity: test.severity,
+        }
+    }
+
+    /// Create a passed test result
+    pub fn pass(test: &GeneratedTest, duration: Duration) -> Self {
+        Self {
+            passed: true,
+            ..Self::from_test(test, duration)
         }
     }
 
@@ -64,32 +71,17 @@ impl TestResult {
         duration: Duration,
     ) -> Self {
         Self {
-            name: test.name.clone(),
-            model: test.model.clone(),
-            column: test.column.clone(),
-            test_type: test.test_type.clone(),
-            passed: false,
             failure_count,
             sample_failures,
-            duration,
-            error: None,
-            severity: test.severity,
+            ..Self::from_test(test, duration)
         }
     }
 
     /// Create an error test result
     pub fn error(test: &GeneratedTest, error: String, duration: Duration) -> Self {
         Self {
-            name: test.name.clone(),
-            model: test.model.clone(),
-            column: test.column.clone(),
-            test_type: test.test_type.clone(),
-            passed: false,
-            failure_count: 0,
-            sample_failures: Vec::new(),
-            duration,
             error: Some(error),
-            severity: test.severity,
+            ..Self::from_test(test, duration)
         }
     }
 }
