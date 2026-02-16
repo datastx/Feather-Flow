@@ -160,9 +160,8 @@ impl StateFile {
         current_schema_checksum: Option<&str>,
         current_input_checksums: &HashMap<String, String>,
     ) -> bool {
-        let state = match self.models.get(name) {
-            Some(s) => s,
-            None => return true,
+        let Some(state) = self.models.get(name) else {
+            return true;
         };
 
         if state.checksum != current_sql_checksum {

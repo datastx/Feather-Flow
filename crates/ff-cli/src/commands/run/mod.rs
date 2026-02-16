@@ -46,7 +46,6 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
 
     let mut compiled_models = load_or_compile_models(&project, args, global, comment_ctx.as_ref())?;
 
-    // Qualify table references: rewrite bare names to 3-part database.schema.table
     {
         let compiled_schemas: std::collections::HashMap<String, Option<String>> = compiled_models
             .iter()

@@ -168,9 +168,10 @@ pub async fn execute(args: &DocsServeArgs, global: &GlobalArgs) -> Result<()> {
 
 /// Wait for Ctrl+C, then print a shutdown message.
 async fn shutdown_signal() {
-    tokio::signal::ctrl_c()
-        .await
-        .expect("failed to install Ctrl+C handler");
+    if let Err(e) = tokio::signal::ctrl_c().await {
+        eprintln!("Failed to install Ctrl+C handler: {}", e);
+        return;
+    }
     println!("\nShutting down gracefully...");
 }
 

@@ -103,7 +103,6 @@ fn collect_consumed_columns(
         }
     }
 
-    // Also walk downstream plans to find column references
     for dep_name in dependents {
         if let Some(dep_result) = models.get(dep_name) {
             collect_column_refs_from_plan(&dep_result.plan, &mut consumed);

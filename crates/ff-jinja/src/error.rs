@@ -9,7 +9,7 @@ pub enum JinjaError {
     #[error("[J001] Jinja render error: {0}")]
     RenderError(String),
 
-    /// Template render error with source (J001)
+    /// Template render error with source chain (J001)
     #[error("[J001] Jinja render error: {0}")]
     RenderErrorSource(#[source] minijinja::Error),
 

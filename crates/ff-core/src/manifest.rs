@@ -199,7 +199,7 @@ impl Manifest {
                 .keys()
                 .next()
                 .cloned()
-                .expect("parameterized test must have at least one key"),
+                .unwrap_or_else(|| "unknown_test".to_string()),
         }
     }
 

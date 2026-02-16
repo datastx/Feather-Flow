@@ -262,11 +262,9 @@ fn default_dialect() -> Dialect {
     Dialect::DuckDb
 }
 
-/// Default database path (in-memory)
-pub const DEFAULT_DB_PATH: &str = ":memory:";
+const DEFAULT_DB_PATH: &str = ":memory:";
 
-/// Default target/output directory name
-pub const DEFAULT_TARGET_DIR: &str = "target";
+const DEFAULT_TARGET_DIR: &str = "target";
 
 fn default_db_path() -> String {
     DEFAULT_DB_PATH.to_string()

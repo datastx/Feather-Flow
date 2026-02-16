@@ -13,6 +13,10 @@ pub enum DbError {
     #[error("[D002] SQL execution failed: {0}")]
     ExecutionError(String),
 
+    /// DuckDB driver error with preserved source chain (D002)
+    #[error("[D002] SQL execution failed")]
+    DuckDb(#[source] duckdb::Error),
+
     /// Table not found (D003)
     #[error("[D003] Table or view not found: {0}")]
     TableNotFound(String),
@@ -39,19 +43,18 @@ pub type DbResult<T> = Result<T, DbError>;
 
 impl From<duckdb::Error> for DbError {
     fn from(err: duckdb::Error) -> Self {
-        // Classify DuckDB errors by inspecting the error message.
-        // duckdb::Error does not expose structured variants, so string
-        // matching is the only reliable approach. We use narrow patterns
-        // to avoid misclassifying function/type/schema errors.
         let msg = err.to_string();
-        if msg.contains("Table with name")
-            || msg.contains("View with name")
-            || msg.contains("Table or view with name")
-            || (msg.contains("Catalog Error") && msg.contains("Table") && msg.contains("not found"))
-        {
+        if is_table_not_found(&msg) {
             DbError::TableNotFound(msg)
         } else {
-            DbError::ExecutionError(msg)
+            DbError::DuckDb(err)
         }
     }
+}
+
+fn is_table_not_found(msg: &str) -> bool {
+    msg.contains("Table with name")
+        || msg.contains("View with name")
+        || msg.contains("Table or view with name")
+        || (msg.contains("Catalog Error") && msg.contains("Table") && msg.contains("not found"))
 }

@@ -95,8 +95,9 @@ impl ModelSuggestions {
             .push(suggestion);
     }
 
+    #[cfg(test)]
     /// Get suggestions for a column
-    pub fn get_suggestions(&self, column: &str) -> Option<&ColumnSuggestions> {
+    pub(crate) fn get_suggestions(&self, column: &str) -> Option<&ColumnSuggestions> {
         self.columns.get(column)
     }
 }
@@ -131,19 +132,16 @@ fn analyze_select(select: &Select, suggestions: &mut ModelSuggestions) {
             }
             SelectItem::ExprWithAlias { alias, expr } => {
                 output_columns.insert(alias.value.clone());
-                // Also analyze the expression for patterns
                 analyze_expression_for_suggestions(expr, &alias.value, suggestions);
             }
             _ => {}
         }
     }
 
-    // Analyze JOIN conditions for not_null suggestions
     for table in &select.from {
         analyze_table_joins(table, suggestions);
     }
 
-    // Analyze column names for pattern-based suggestions
     for col in &output_columns {
         analyze_column_name(col, suggestions);
     }

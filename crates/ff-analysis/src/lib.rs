@@ -5,7 +5,7 @@
 //! and schema propagation infrastructure.
 
 pub(crate) mod context;
-pub mod datafusion_bridge;
+pub(crate) mod datafusion_bridge;
 pub(crate) mod error;
 pub(crate) mod pass;
 pub mod schema;
@@ -34,5 +34,6 @@ pub use datafusion_bridge::propagation::{
     propagate_schemas, ModelPlanResult, PropagationResult, SchemaMismatch,
 };
 pub use datafusion_bridge::provider::{
-    build_user_function_stubs, FunctionRegistry, UserFunctionStub, UserTableFunctionStub,
+    build_user_function_stubs, FeatherFlowProvider, FunctionRegistry, UserFunctionStub,
+    UserTableFunctionStub,
 };

@@ -415,8 +415,14 @@ struct YamlKindProbe {
 
 /// Recursively discover function files in a directory
 fn discover_functions_recursive(dir: &Path, functions: &mut Vec<FunctionDef>) -> CoreResult<()> {
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
+    for entry in std::fs::read_dir(dir).map_err(|e| CoreError::IoWithPath {
+        path: dir.display().to_string(),
+        source: e,
+    })? {
+        let entry = entry.map_err(|e| CoreError::IoWithPath {
+            path: dir.display().to_string(),
+            source: e,
+        })?;
         let path = entry.path();
 
         if path.is_dir() {

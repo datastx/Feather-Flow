@@ -82,8 +82,14 @@ impl Project {
     /// Direct children of the models root MUST be directories. Each directory
     /// must contain exactly one `.sql` file whose stem matches the directory name.
     fn discover_models_flat(dir: &Path, models: &mut HashMap<ModelName, Model>) -> CoreResult<()> {
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
+        for entry in std::fs::read_dir(dir).map_err(|e| CoreError::IoWithPath {
+            path: dir.display().to_string(),
+            source: e,
+        })? {
+            let entry = entry.map_err(|e| CoreError::IoWithPath {
+                path: dir.display().to_string(),
+                source: e,
+            })?;
             let path = entry.path();
 
             if !path.is_dir() {
@@ -106,7 +112,11 @@ impl Project {
                 }
             };
 
-            let all_visible_files: Vec<std::path::PathBuf> = std::fs::read_dir(&path)?
+            let all_visible_files: Vec<std::path::PathBuf> = std::fs::read_dir(&path)
+                .map_err(|e| CoreError::IoWithPath {
+                    path: path.display().to_string(),
+                    source: e,
+                })?
                 .filter_map(|e| e.ok())
                 .map(|e| e.path())
                 .filter(|p| p.is_file() && !is_hidden_file(p))
@@ -207,8 +217,14 @@ impl Project {
         dir: &Path,
         tests: &mut Vec<SingularTest>,
     ) -> CoreResult<()> {
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
+        for entry in std::fs::read_dir(dir).map_err(|e| CoreError::IoWithPath {
+            path: dir.display().to_string(),
+            source: e,
+        })? {
+            let entry = entry.map_err(|e| CoreError::IoWithPath {
+                path: dir.display().to_string(),
+                source: e,
+            })?;
             let path = entry.path();
 
             if path.is_dir() {

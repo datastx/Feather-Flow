@@ -23,7 +23,7 @@ static DANGEROUS_KEYWORDS_RE: LazyLock<Regex> = LazyLock::new(|| {
 #[derive(Error, Debug)]
 pub enum TestGenError {
     /// Invalid threshold value (NaN or Infinity)
-    #[error("invalid threshold value: {0}")]
+    #[error("[T001] invalid threshold value: {0}")]
     InvalidThreshold(String),
 }
 
@@ -33,7 +33,7 @@ pub type TestGenResult<T> = Result<T, TestGenError>;
 /// Generate SQL for a unique test
 ///
 /// Returns rows that violate the unique constraint (duplicates).
-pub fn generate_unique_test(table: &str, column: &str) -> String {
+pub(crate) fn generate_unique_test(table: &str, column: &str) -> String {
     let qt = quote_qualified(table);
     let qc = quote_ident(column);
     format!("SELECT {qc}, COUNT(*) as cnt\nFROM {qt}\nGROUP BY {qc}\nHAVING COUNT(*) > 1")
@@ -42,7 +42,7 @@ pub fn generate_unique_test(table: &str, column: &str) -> String {
 /// Generate SQL for a not_null test
 ///
 /// Returns rows where the column is NULL.
-pub fn generate_not_null_test(table: &str, column: &str) -> String {
+pub(crate) fn generate_not_null_test(table: &str, column: &str) -> String {
     format!(
         "SELECT * FROM {} WHERE {} IS NULL",
         quote_qualified(table),
@@ -53,7 +53,7 @@ pub fn generate_not_null_test(table: &str, column: &str) -> String {
 /// Generate SQL for a positive test
 ///
 /// Returns rows where the column value is <= 0.
-pub fn generate_positive_test(table: &str, column: &str) -> String {
+pub(crate) fn generate_positive_test(table: &str, column: &str) -> String {
     format!(
         "SELECT * FROM {} WHERE {} <= 0",
         quote_qualified(table),
@@ -64,7 +64,7 @@ pub fn generate_positive_test(table: &str, column: &str) -> String {
 /// Generate SQL for a non_negative test
 ///
 /// Returns rows where the column value is < 0.
-pub fn generate_non_negative_test(table: &str, column: &str) -> String {
+pub(crate) fn generate_non_negative_test(table: &str, column: &str) -> String {
     format!(
         "SELECT * FROM {} WHERE {} < 0",
         quote_qualified(table),
@@ -75,7 +75,7 @@ pub fn generate_non_negative_test(table: &str, column: &str) -> String {
 /// Generate SQL for an accepted_values test
 ///
 /// Returns rows where the column value is not in the allowed list or is NULL.
-pub fn generate_accepted_values_test(
+pub(crate) fn generate_accepted_values_test(
     table: &str,
     column: &str,
     values: &[String],
@@ -116,7 +116,11 @@ pub fn generate_accepted_values_test(
 ///
 /// Returns rows where the column value is less than the threshold.
 /// Returns `Err` if the threshold is NaN or Infinity.
-pub fn generate_min_value_test(table: &str, column: &str, min: f64) -> TestGenResult<String> {
+pub(crate) fn generate_min_value_test(
+    table: &str,
+    column: &str,
+    min: f64,
+) -> TestGenResult<String> {
     if !min.is_finite() {
         return Err(TestGenError::InvalidThreshold(format!(
             "min_value must be finite, got {}",
@@ -135,7 +139,11 @@ pub fn generate_min_value_test(table: &str, column: &str, min: f64) -> TestGenRe
 ///
 /// Returns rows where the column value is greater than the threshold.
 /// Returns `Err` if the threshold is NaN or Infinity.
-pub fn generate_max_value_test(table: &str, column: &str, max: f64) -> TestGenResult<String> {
+pub(crate) fn generate_max_value_test(
+    table: &str,
+    column: &str,
+    max: f64,
+) -> TestGenResult<String> {
     if !max.is_finite() {
         return Err(TestGenError::InvalidThreshold(format!(
             "max_value must be finite, got {}",
@@ -153,7 +161,7 @@ pub fn generate_max_value_test(table: &str, column: &str, max: f64) -> TestGenRe
 /// Generate SQL for a regex test
 ///
 /// Returns rows where the column value does not match the pattern.
-pub fn generate_regex_test(table: &str, column: &str, pattern: &str) -> String {
+pub(crate) fn generate_regex_test(table: &str, column: &str, pattern: &str) -> String {
     format!(
         "SELECT * FROM {} WHERE NOT regexp_matches({}, '{}')",
         quote_qualified(table),
@@ -167,7 +175,7 @@ pub fn generate_regex_test(table: &str, column: &str, pattern: &str) -> String {
 /// Returns rows where the column value does not exist in the referenced table.
 /// This validates referential integrity - every value in `table.column` must
 /// exist in `ref_table.ref_column`.
-pub fn generate_relationship_test(
+pub(crate) fn generate_relationship_test(
     table: &str,
     column: &str,
     ref_table: &str,

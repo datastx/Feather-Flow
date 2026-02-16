@@ -26,14 +26,11 @@ use super::state::{update_state_for_model, ModelRunResult};
 fn create_progress_bar(count: usize, quiet: bool, output: &OutputFormat) -> Option<ProgressBar> {
     if !quiet && *output == OutputFormat::Text {
         let pb = ProgressBar::new(count as u64);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template(
-                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}",
-                )
-                .expect("static progress bar template is valid")
-                .progress_chars("#>-"),
-        );
+        if let Ok(style) = ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}")
+        {
+            pb.set_style(style.progress_chars("#>-"));
+        }
         Some(pb)
     } else {
         None
@@ -561,14 +558,11 @@ async fn execute_models_parallel(
 
     let progress = if !ctx.args.quiet && ctx.args.output == OutputFormat::Text {
         let pb = ProgressBar::new(executable_count as u64);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template(
-                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({msg})",
-                )
-                .expect("static progress bar template is valid")
-                .progress_chars("#>-"),
-        );
+        if let Ok(style) = ProgressStyle::default_bar().template(
+            "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({msg})",
+        ) {
+            pb.set_style(style.progress_chars("#>-"));
+        }
         Some(Arc::new(pb))
     } else {
         None
