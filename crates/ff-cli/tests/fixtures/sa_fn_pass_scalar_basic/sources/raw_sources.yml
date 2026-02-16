@@ -1,0 +1,13 @@
+kind: sources
+version: 1
+
+name: raw_ecommerce
+schema: main
+
+tables:
+  - name: raw_orders
+    columns:
+      - name: id
+        type: INTEGER
+      - name: amount_cents
+        type: BIGINT

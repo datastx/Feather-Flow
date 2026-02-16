@@ -14,8 +14,9 @@ use crate::functions::{
     ConfigCapture, IncrementalState, WarningCapture,
 };
 use minijinja::{Environment, Value};
+use regex::Regex;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -34,6 +35,9 @@ pub struct JinjaEnvironment<'a> {
     env: Environment<'a>,
     config_capture: ConfigCapture,
     warning_capture: WarningCapture,
+    /// Auto-generated `{% from "file.sql" import macro1, macro2 %}` lines
+    /// prepended to every template so user macros are globally available.
+    macro_preamble: String,
 }
 
 impl std::fmt::Debug for JinjaEnvironment<'_> {
@@ -59,7 +63,7 @@ impl<'a> JinjaEnvironment<'a> {
         vars: &HashMap<String, serde_yaml::Value>,
         macro_paths: &[PathBuf],
         template_context: Option<&TemplateContext>,
-    ) -> (Environment<'a>, ConfigCapture, WarningCapture) {
+    ) -> (Environment<'a>, ConfigCapture, WarningCapture, String) {
         let mut env = Environment::new();
         let config_capture: ConfigCapture = Arc::new(Mutex::new(HashMap::new()));
         let warning_capture: WarningCapture = Arc::new(Mutex::new(Vec::new()));
@@ -99,11 +103,12 @@ impl<'a> JinjaEnvironment<'a> {
             .filter(|p| p.exists() && p.is_dir())
             .cloned()
             .collect();
+        let macro_preamble = build_macro_preamble(&valid_paths);
         if !valid_paths.is_empty() {
             env.set_loader(move |name: &str| load_macro_from_paths(name, &valid_paths));
         }
 
-        (env, config_capture, warning_capture)
+        (env, config_capture, warning_capture, macro_preamble)
     }
 
     /// Create a new Jinja environment with variables and macro paths
@@ -111,11 +116,13 @@ impl<'a> JinjaEnvironment<'a> {
     /// This enables loading macros using `{% from "file.sql" import macro_name %}` syntax.
     /// Macro files are loaded from the specified directories.
     pub fn with_macros(vars: &HashMap<String, serde_yaml::Value>, macro_paths: &[PathBuf]) -> Self {
-        let (env, config_capture, warning_capture) = Self::init_common(vars, macro_paths, None);
+        let (env, config_capture, warning_capture, macro_preamble) =
+            Self::init_common(vars, macro_paths, None);
         Self {
             env,
             config_capture,
             warning_capture,
+            macro_preamble,
         }
     }
 
@@ -128,12 +135,13 @@ impl<'a> JinjaEnvironment<'a> {
         macro_paths: &[PathBuf],
         context: &TemplateContext,
     ) -> Self {
-        let (env, config_capture, warning_capture) =
+        let (env, config_capture, warning_capture, macro_preamble) =
             Self::init_common(vars, macro_paths, Some(context));
         Self {
             env,
             config_capture,
             warning_capture,
+            macro_preamble,
         }
     }
 
@@ -195,10 +203,16 @@ impl<'a> JinjaEnvironment<'a> {
             model: model.cloned(),
         };
 
-        let result = self
-            .env
-            .render_str(template, ctx)
-            .map_err(JinjaError::from)?;
+        // Prepend auto-generated import lines so user macros are globally available.
+        let full_template;
+        let source = if self.macro_preamble.is_empty() {
+            template
+        } else {
+            full_template = format!("{}{}", self.macro_preamble, template);
+            &full_template
+        };
+
+        let result = self.env.render_str(source, ctx).map_err(JinjaError::from)?;
 
         Ok(result)
     }
@@ -261,7 +275,8 @@ impl JinjaEnvironment<'_> {
         incremental_state: IncrementalState,
         qualified_name: &str,
     ) -> Self {
-        let (mut env, config_capture, warning_capture) = Self::init_common(vars, macro_paths, None);
+        let (mut env, config_capture, warning_capture, macro_preamble) =
+            Self::init_common(vars, macro_paths, None);
 
         // Register is_incremental() function
         let is_incremental_fn = make_is_incremental_fn(incremental_state);
@@ -275,6 +290,7 @@ impl JinjaEnvironment<'_> {
             env,
             config_capture,
             warning_capture,
+            macro_preamble,
         }
     }
 }
@@ -303,6 +319,54 @@ fn load_macro_from_paths(
         }
     }
     Ok(None)
+}
+
+/// Scan macro files in `paths`, extract `{% macro name( %}` definitions,
+/// and build `{% from "file.sql" import macro1, macro2 %}` lines so every
+/// user macro is available globally without explicit imports.
+fn build_macro_preamble(paths: &[PathBuf]) -> String {
+    let re = Regex::new(r"\{%-?\s*macro\s+(\w+)\s*\(").expect("valid regex");
+
+    // BTreeMap keeps files sorted for deterministic output.
+    let mut file_macros: BTreeMap<String, Vec<String>> = BTreeMap::new();
+
+    for dir in paths {
+        if !dir.is_dir() {
+            continue;
+        }
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("sql") {
+                continue;
+            }
+            let contents = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let names: Vec<String> = re
+                .captures_iter(&contents)
+                .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
+                .collect();
+            if !names.is_empty() {
+                let file_name = entry.file_name().to_string_lossy().to_string();
+                file_macros.insert(file_name, names);
+            }
+        }
+    }
+
+    let mut preamble = String::new();
+    for (file, names) in &file_macros {
+        preamble.push_str(&format!(
+            "{{%- from \"{}\" import {} -%}}",
+            file,
+            names.join(", ")
+        ));
+    }
+    preamble
 }
 
 /// Register all built-in macros with the Jinja environment
