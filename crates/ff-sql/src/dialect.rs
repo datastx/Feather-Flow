@@ -1,12 +1,112 @@
 //! SQL dialect abstraction
+//!
+//! Provides dialect-specific identifier resolution. Unquoted identifiers are
+//! folded to the dialect's default case (e.g. Snowflake → UPPER, PostgreSQL →
+//! lower, DuckDB → preserve as-is). Quoted identifiers are always
+//! case-sensitive and kept verbatim.
 
-use sqlparser::ast::Statement;
+use sqlparser::ast::{Ident, ObjectName, ObjectNamePart, Statement};
 use sqlparser::dialect::{
     Dialect, DuckDbDialect as SqlParserDuckDb, SnowflakeDialect as SqlParserSnowflake,
 };
 use sqlparser::parser::Parser;
+use std::fmt;
 
 use crate::error::{SqlError, SqlResult};
+
+/// How unquoted identifiers are folded by a SQL dialect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnquotedCaseBehavior {
+    /// Fold unquoted identifiers to upper case (e.g. Snowflake, Oracle, DB2).
+    Upper,
+    /// Fold unquoted identifiers to lower case (e.g. PostgreSQL).
+    Lower,
+    /// Preserve the original case of unquoted identifiers (e.g. DuckDB, MySQL).
+    Preserve,
+}
+
+/// Whether an identifier is case-sensitive.
+///
+/// Quoted identifiers (e.g. `"MyTable"`) are always case-sensitive.
+/// Unquoted identifiers are case-insensitive and resolved to the dialect's
+/// default case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CaseSensitivity {
+    /// The identifier was quoted — exact case matters.
+    CaseSensitive,
+    /// The identifier was unquoted — resolved to dialect default case,
+    /// comparisons should be case-insensitive.
+    CaseInsensitive,
+}
+
+/// A single identifier part resolved according to dialect case rules.
+///
+/// The `value` field holds the resolved form: for unquoted identifiers this
+/// is the dialect-default case (e.g. `USERS` on Snowflake, `users` on
+/// PostgreSQL, preserved on DuckDB). For quoted identifiers it is the exact
+/// string inside the quotes.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ResolvedPart {
+    /// The resolved identifier value.
+    pub value: String,
+    /// Whether this part was quoted (case-sensitive) or unquoted.
+    pub sensitivity: CaseSensitivity,
+}
+
+impl fmt::Display for ResolvedPart {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.value)
+    }
+}
+
+/// A fully-resolved table reference with case-sensitivity metadata.
+///
+/// Each part (database, schema, table) carries its own [`CaseSensitivity`].
+/// The `name` field is the dot-joined string representation using resolved
+/// values (no quotes), suitable for display and as a HashMap key when
+/// combined with sensitivity-aware comparison.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ResolvedIdent {
+    /// The individual resolved parts (1–3 parts typically).
+    pub parts: Vec<ResolvedPart>,
+    /// Dot-joined resolved name (e.g. `"ANALYTICS.STG_CUSTOMERS"` on Snowflake).
+    pub name: String,
+    /// `true` if **any** part was quoted (meaning the whole reference
+    /// should be treated as case-sensitive for matching purposes).
+    pub is_case_sensitive: bool,
+}
+
+impl fmt::Display for ResolvedIdent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.name)
+    }
+}
+
+impl ResolvedIdent {
+    /// Build a `ResolvedIdent` from already-resolved parts.
+    pub fn from_parts(parts: Vec<ResolvedPart>) -> Self {
+        let is_case_sensitive = parts
+            .iter()
+            .any(|p| p.sensitivity == CaseSensitivity::CaseSensitive);
+        let name = parts
+            .iter()
+            .map(|p| p.value.as_str())
+            .collect::<Vec<_>>()
+            .join(".");
+        Self {
+            parts,
+            name,
+            is_case_sensitive,
+        }
+    }
+
+    /// Return the last part (the table/object name).
+    pub fn table_part(&self) -> &ResolvedPart {
+        self.parts
+            .last()
+            .expect("ResolvedIdent must have at least one part")
+    }
+}
 
 /// Trait for SQL dialect implementations
 pub trait SqlDialect: Send + Sync {
@@ -32,6 +132,47 @@ pub trait SqlDialect: Send + Sync {
 
     /// Get the dialect name
     fn name(&self) -> &'static str;
+
+    /// How this dialect folds unquoted identifiers.
+    fn unquoted_case_behavior(&self) -> UnquotedCaseBehavior;
+
+    /// Resolve a single sqlparser [`Ident`] according to dialect case rules.
+    ///
+    /// - Quoted idents → kept verbatim, marked [`CaseSensitivity::CaseSensitive`].
+    /// - Unquoted idents → folded per [`Self::unquoted_case_behavior`], marked
+    ///   [`CaseSensitivity::CaseInsensitive`].
+    fn resolve_ident(&self, ident: &Ident) -> ResolvedPart {
+        if ident.quote_style.is_some() {
+            ResolvedPart {
+                value: ident.value.clone(),
+                sensitivity: CaseSensitivity::CaseSensitive,
+            }
+        } else {
+            let value = match self.unquoted_case_behavior() {
+                UnquotedCaseBehavior::Upper => ident.value.to_uppercase(),
+                UnquotedCaseBehavior::Lower => ident.value.to_lowercase(),
+                UnquotedCaseBehavior::Preserve => ident.value.clone(),
+            };
+            ResolvedPart {
+                value,
+                sensitivity: CaseSensitivity::CaseInsensitive,
+            }
+        }
+    }
+
+    /// Resolve a full [`ObjectName`] (e.g. `schema.table`) into a
+    /// [`ResolvedIdent`] with per-part case metadata.
+    fn resolve_object_name(&self, name: &ObjectName) -> ResolvedIdent {
+        let parts: Vec<ResolvedPart> = name
+            .0
+            .iter()
+            .filter_map(|part| match part {
+                ObjectNamePart::Identifier(ident) => Some(self.resolve_ident(ident)),
+                _ => None,
+            })
+            .collect();
+        ResolvedIdent::from_parts(parts)
+    }
 }
 
 /// Parse line and column from sqlparser error message.
@@ -98,6 +239,11 @@ impl SqlDialect for DuckDbDialect {
     fn name(&self) -> &'static str {
         "duckdb"
     }
+
+    fn unquoted_case_behavior(&self) -> UnquotedCaseBehavior {
+        // DuckDB is case-insensitive but preserves the original case
+        UnquotedCaseBehavior::Preserve
+    }
 }
 
 /// Snowflake SQL dialect
@@ -131,6 +277,11 @@ impl SqlDialect for SnowflakeDialect {
 
     fn name(&self) -> &'static str {
         "snowflake"
+    }
+
+    fn unquoted_case_behavior(&self) -> UnquotedCaseBehavior {
+        // Snowflake folds unquoted identifiers to UPPER CASE
+        UnquotedCaseBehavior::Upper
     }
 }
 

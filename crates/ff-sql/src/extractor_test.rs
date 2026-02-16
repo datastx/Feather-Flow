@@ -1,4 +1,5 @@
 use super::*;
+use crate::dialect::{CaseSensitivity, DuckDbDialect, ResolvedIdent, SnowflakeDialect};
 use crate::parser::SqlParser;
 
 fn parse_and_extract(sql: &str) -> HashSet<String> {
@@ -179,4 +180,288 @@ fn test_extract_multiple_joins() {
     assert!(deps.contains("customers"));
     assert!(deps.contains("products"));
     assert_eq!(deps.len(), 3);
+}
+
+// ---------------------------------------------------------------------------
+// Dialect-aware (resolved) extraction tests
+// ---------------------------------------------------------------------------
+
+fn parse_and_extract_resolved(
+    sql: &str,
+    dialect: &dyn crate::dialect::SqlDialect,
+) -> Vec<ResolvedIdent> {
+    let stmts = dialect.parse(sql).unwrap();
+    extract_dependencies_resolved(&stmts, dialect)
+}
+
+fn find_dep<'a>(deps: &'a [ResolvedIdent], name: &str) -> Option<&'a ResolvedIdent> {
+    deps.iter().find(|d| d.name == name)
+}
+
+// -- DuckDB: unquoted preserves case, case-insensitive --
+
+#[test]
+fn test_resolved_duckdb_unquoted_preserves_case() {
+    let dialect = DuckDbDialect::new();
+    let deps = parse_and_extract_resolved("SELECT * FROM Users", &dialect);
+    assert_eq!(deps.len(), 1);
+    assert_eq!(deps[0].name, "Users");
+    assert!(!deps[0].is_case_sensitive);
+    assert_eq!(
+        deps[0].table_part().sensitivity,
+        CaseSensitivity::CaseInsensitive
+    );
+}
+
+#[test]
+fn test_resolved_duckdb_quoted_is_case_sensitive() {
+    let dialect = DuckDbDialect::new();
+    let deps = parse_and_extract_resolved(r#"SELECT * FROM "MyTable""#, &dialect);
+    assert_eq!(deps.len(), 1);
+    assert_eq!(deps[0].name, "MyTable");
+    assert!(deps[0].is_case_sensitive);
+    assert_eq!(
+        deps[0].table_part().sensitivity,
+        CaseSensitivity::CaseSensitive
+    );
+}
+
+#[test]
+fn test_resolved_duckdb_mixed_quoted_unquoted() {
+    let dialect = DuckDbDialect::new();
+    let deps = parse_and_extract_resolved(
+        r#"SELECT * FROM users JOIN "SpecialTable" ON users.id = "SpecialTable".id"#,
+        &dialect,
+    );
+    assert_eq!(deps.len(), 2);
+
+    let users = find_dep(&deps, "users").expect("should find 'users'");
+    assert!(!users.is_case_sensitive);
+
+    let special = find_dep(&deps, "SpecialTable").expect("should find 'SpecialTable'");
+    assert!(special.is_case_sensitive);
+}
+
+#[test]
+fn test_resolved_duckdb_schema_qualified_quoted() {
+    let dialect = DuckDbDialect::new();
+    let deps = parse_and_extract_resolved(r#"SELECT * FROM "MySchema"."MyTable""#, &dialect);
+    assert_eq!(deps.len(), 1);
+    assert_eq!(deps[0].name, "MySchema.MyTable");
+    assert!(deps[0].is_case_sensitive);
+    // Both parts are quoted
+    assert_eq!(deps[0].parts.len(), 2);
+    assert_eq!(deps[0].parts[0].sensitivity, CaseSensitivity::CaseSensitive);
+    assert_eq!(deps[0].parts[1].sensitivity, CaseSensitivity::CaseSensitive);
+}
+
+#[test]
+fn test_resolved_duckdb_schema_qualified_mixed() {
+    let dialect = DuckDbDialect::new();
+    // Unquoted schema, quoted table
+    let deps = parse_and_extract_resolved(r#"SELECT * FROM raw."MyTable""#, &dialect);
+    assert_eq!(deps.len(), 1);
+    assert_eq!(deps[0].name, "raw.MyTable");
+    // The table part is quoted so the whole ref is case-sensitive
+    assert!(deps[0].is_case_sensitive);
+    assert_eq!(
+        deps[0].parts[0].sensitivity,
+        CaseSensitivity::CaseInsensitive
+    );
+    assert_eq!(deps[0].parts[1].sensitivity, CaseSensitivity::CaseSensitive);
+}
+
+// -- Snowflake: unquoted folds to UPPER CASE --
+
+#[test]
+fn test_resolved_snowflake_unquoted_folds_upper() {
+    let dialect = SnowflakeDialect::new();
+    let deps = parse_and_extract_resolved("SELECT * FROM users", &dialect);
+    assert_eq!(deps.len(), 1);
+    // Snowflake folds unquoted "users" to "USERS"
+    assert_eq!(deps[0].name, "USERS");
+    assert!(!deps[0].is_case_sensitive);
+}
+
+#[test]
+fn test_resolved_snowflake_quoted_preserves_case() {
+    let dialect = SnowflakeDialect::new();
+    let deps = parse_and_extract_resolved(r#"SELECT * FROM "myTable""#, &dialect);
+    assert_eq!(deps.len(), 1);
+    // Quoted: exact case preserved
+    assert_eq!(deps[0].name, "myTable");
+    assert!(deps[0].is_case_sensitive);
+}
+
+#[test]
+fn test_resolved_snowflake_mixed_case() {
+    let dialect = SnowflakeDialect::new();
+    let deps = parse_and_extract_resolved(
+        r#"SELECT * FROM orders JOIN "SpecialOrders" ON orders.id = "SpecialOrders".order_id"#,
+        &dialect,
+    );
+    assert_eq!(deps.len(), 2);
+
+    let orders = find_dep(&deps, "ORDERS").expect("should find 'ORDERS' (folded)");
+    assert!(!orders.is_case_sensitive);
+
+    let special = find_dep(&deps, "SpecialOrders").expect("should find 'SpecialOrders'");
+    assert!(special.is_case_sensitive);
+}
+
+#[test]
+fn test_resolved_snowflake_schema_qualified_unquoted() {
+    let dialect = SnowflakeDialect::new();
+    let deps = parse_and_extract_resolved("SELECT * FROM raw.orders", &dialect);
+    assert_eq!(deps.len(), 1);
+    // Both parts folded to upper
+    assert_eq!(deps[0].name, "RAW.ORDERS");
+    assert!(!deps[0].is_case_sensitive);
+}
+
+#[test]
+fn test_resolved_snowflake_three_part_name() {
+    let dialect = SnowflakeDialect::new();
+    let deps = parse_and_extract_resolved("SELECT * FROM mydb.myschema.mytable", &dialect);
+    assert_eq!(deps.len(), 1);
+    assert_eq!(deps[0].name, "MYDB.MYSCHEMA.MYTABLE");
+    assert_eq!(deps[0].parts.len(), 3);
+    assert!(!deps[0].is_case_sensitive);
+}
+
+// -- CTE filtering still works with resolved extraction --
+
+#[test]
+fn test_resolved_cte_filtered_out() {
+    let dialect = DuckDbDialect::new();
+    let deps = parse_and_extract_resolved(
+        r#"
+        WITH staged AS (
+            SELECT * FROM raw_orders
+        )
+        SELECT * FROM staged JOIN customers ON staged.id = customers.id
+        "#,
+        &dialect,
+    );
+    assert!(find_dep(&deps, "raw_orders").is_some());
+    assert!(find_dep(&deps, "customers").is_some());
+    assert!(
+        find_dep(&deps, "staged").is_none(),
+        "CTE should be filtered out"
+    );
+    assert_eq!(deps.len(), 2);
+}
+
+#[test]
+fn test_resolved_cte_filtered_snowflake() {
+    let dialect = SnowflakeDialect::new();
+    let deps = parse_and_extract_resolved(
+        r#"
+        WITH staged AS (
+            SELECT * FROM raw_orders
+        )
+        SELECT * FROM staged JOIN customers ON staged.id = customers.id
+        "#,
+        &dialect,
+    );
+    assert!(find_dep(&deps, "RAW_ORDERS").is_some());
+    assert!(find_dep(&deps, "CUSTOMERS").is_some());
+    assert!(
+        find_dep(&deps, "STAGED").is_none(),
+        "CTE should be filtered out"
+    );
+    assert_eq!(deps.len(), 2);
+}
+
+// -- categorize_dependencies_resolved --
+
+#[test]
+fn test_categorize_resolved_unquoted_case_insensitive() {
+    // DuckDB: unquoted "STG_ORDERS" should match model "stg_orders"
+    let dialect = DuckDbDialect::new();
+    let stmts = dialect.parse("SELECT * FROM STG_ORDERS").unwrap();
+    let deps = extract_dependencies_resolved(&stmts, &dialect);
+
+    let known_models = HashSet::from(["stg_orders"]);
+    let external_tables = HashSet::new();
+
+    let (model_deps, _external, _unknown) =
+        categorize_dependencies_resolved(deps, &known_models, &external_tables);
+
+    assert_eq!(model_deps, vec!["stg_orders"]);
+}
+
+#[test]
+fn test_categorize_resolved_quoted_requires_exact_match() {
+    // DuckDB: quoted "stg_orders" should match model "stg_orders" exactly
+    let dialect = DuckDbDialect::new();
+    let stmts = dialect.parse(r#"SELECT * FROM "stg_orders""#).unwrap();
+    let deps = extract_dependencies_resolved(&stmts, &dialect);
+
+    let known_models = HashSet::from(["stg_orders"]);
+    let external_tables = HashSet::new();
+
+    let (model_deps, _external, _unknown) =
+        categorize_dependencies_resolved(deps, &known_models, &external_tables);
+
+    assert_eq!(model_deps, vec!["stg_orders"]);
+}
+
+#[test]
+fn test_categorize_resolved_quoted_no_match_wrong_case() {
+    // DuckDB: quoted "STG_ORDERS" should NOT match model "stg_orders"
+    // because quoted identifiers are case-sensitive
+    let dialect = DuckDbDialect::new();
+    let stmts = dialect.parse(r#"SELECT * FROM "STG_ORDERS""#).unwrap();
+    let deps = extract_dependencies_resolved(&stmts, &dialect);
+
+    let known_models = HashSet::from(["stg_orders"]);
+    let external_tables = HashSet::new();
+
+    let (model_deps, _external, unknown) =
+        categorize_dependencies_resolved(deps, &known_models, &external_tables);
+
+    assert!(
+        model_deps.is_empty(),
+        "Quoted 'STG_ORDERS' should not match model 'stg_orders'"
+    );
+    assert_eq!(unknown, vec!["STG_ORDERS"]);
+}
+
+#[test]
+fn test_categorize_resolved_snowflake_unquoted_matches_upper() {
+    // Snowflake: unquoted "users" → folded to "USERS"
+    // Model list has "USERS" → should match
+    let dialect = SnowflakeDialect::new();
+    let stmts = dialect.parse("SELECT * FROM users").unwrap();
+    let deps = extract_dependencies_resolved(&stmts, &dialect);
+
+    let known_models = HashSet::from(["USERS"]);
+    let external_tables = HashSet::new();
+
+    let (model_deps, _external, _unknown) =
+        categorize_dependencies_resolved(deps, &known_models, &external_tables);
+
+    assert_eq!(model_deps, vec!["USERS"]);
+}
+
+#[test]
+fn test_categorize_resolved_snowflake_quoted_lowercase() {
+    // Snowflake: quoted "users" stays lowercase and is case-sensitive
+    // Model list only has "USERS" → should NOT match
+    let dialect = SnowflakeDialect::new();
+    let stmts = dialect.parse(r#"SELECT * FROM "users""#).unwrap();
+    let deps = extract_dependencies_resolved(&stmts, &dialect);
+
+    let known_models = HashSet::from(["USERS"]);
+    let external_tables = HashSet::new();
+
+    let (model_deps, _external, unknown) =
+        categorize_dependencies_resolved(deps, &known_models, &external_tables);
+
+    assert!(
+        model_deps.is_empty(),
+        "Quoted lowercase 'users' should not match 'USERS' on Snowflake"
+    );
+    assert_eq!(unknown, vec!["users"]);
 }

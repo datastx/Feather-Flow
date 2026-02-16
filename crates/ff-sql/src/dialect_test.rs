@@ -1,4 +1,5 @@
 use super::*;
+use sqlparser::ast::Ident;
 
 #[test]
 fn test_duckdb_parse() {
@@ -68,4 +69,144 @@ fn test_parse_location_extraction() {
     let (line, col) = super::parse_location_from_error("Some error without location");
     assert_eq!(line, 0);
     assert_eq!(col, 0);
+}
+
+// -- UnquotedCaseBehavior --
+
+#[test]
+fn test_duckdb_unquoted_case_behavior() {
+    let dialect = DuckDbDialect::new();
+    assert_eq!(
+        dialect.unquoted_case_behavior(),
+        UnquotedCaseBehavior::Preserve
+    );
+}
+
+#[test]
+fn test_snowflake_unquoted_case_behavior() {
+    let dialect = SnowflakeDialect::new();
+    assert_eq!(
+        dialect.unquoted_case_behavior(),
+        UnquotedCaseBehavior::Upper
+    );
+}
+
+// -- resolve_ident --
+
+#[test]
+fn test_duckdb_resolve_unquoted_ident() {
+    let dialect = DuckDbDialect::new();
+    let ident = Ident::new("MyTable");
+    let resolved = dialect.resolve_ident(&ident);
+    // DuckDB preserves case for unquoted
+    assert_eq!(resolved.value, "MyTable");
+    assert_eq!(resolved.sensitivity, CaseSensitivity::CaseInsensitive);
+}
+
+#[test]
+fn test_duckdb_resolve_quoted_ident() {
+    let dialect = DuckDbDialect::new();
+    let ident = Ident::with_quote('"', "MyTable");
+    let resolved = dialect.resolve_ident(&ident);
+    assert_eq!(resolved.value, "MyTable");
+    assert_eq!(resolved.sensitivity, CaseSensitivity::CaseSensitive);
+}
+
+#[test]
+fn test_snowflake_resolve_unquoted_ident() {
+    let dialect = SnowflakeDialect::new();
+    let ident = Ident::new("myTable");
+    let resolved = dialect.resolve_ident(&ident);
+    // Snowflake folds to UPPER
+    assert_eq!(resolved.value, "MYTABLE");
+    assert_eq!(resolved.sensitivity, CaseSensitivity::CaseInsensitive);
+}
+
+#[test]
+fn test_snowflake_resolve_quoted_ident() {
+    let dialect = SnowflakeDialect::new();
+    let ident = Ident::with_quote('"', "myTable");
+    let resolved = dialect.resolve_ident(&ident);
+    // Quoted: preserved exactly
+    assert_eq!(resolved.value, "myTable");
+    assert_eq!(resolved.sensitivity, CaseSensitivity::CaseSensitive);
+}
+
+// -- resolve_object_name --
+
+#[test]
+fn test_duckdb_resolve_object_name_bare() {
+    let dialect = DuckDbDialect::new();
+    let stmts = dialect.parse("SELECT * FROM users").unwrap();
+    // Parse and extract the object name via visit_relations
+    let mut names = Vec::new();
+    for stmt in &stmts {
+        let _ = sqlparser::ast::visit_relations(stmt, |rel| {
+            names.push(dialect.resolve_object_name(rel));
+            std::ops::ControlFlow::<()>::Continue(())
+        });
+    }
+    assert_eq!(names.len(), 1);
+    assert_eq!(names[0].name, "users");
+    assert!(!names[0].is_case_sensitive);
+}
+
+#[test]
+fn test_snowflake_resolve_object_name_bare() {
+    let dialect = SnowflakeDialect::new();
+    let stmts = dialect.parse("SELECT * FROM users").unwrap();
+    let mut names = Vec::new();
+    for stmt in &stmts {
+        let _ = sqlparser::ast::visit_relations(stmt, |rel| {
+            names.push(dialect.resolve_object_name(rel));
+            std::ops::ControlFlow::<()>::Continue(())
+        });
+    }
+    assert_eq!(names.len(), 1);
+    assert_eq!(names[0].name, "USERS");
+    assert!(!names[0].is_case_sensitive);
+}
+
+#[test]
+fn test_duckdb_resolve_object_name_quoted() {
+    let dialect = DuckDbDialect::new();
+    let stmts = dialect.parse(r#"SELECT * FROM "CaseSensitive""#).unwrap();
+    let mut names = Vec::new();
+    for stmt in &stmts {
+        let _ = sqlparser::ast::visit_relations(stmt, |rel| {
+            names.push(dialect.resolve_object_name(rel));
+            std::ops::ControlFlow::<()>::Continue(())
+        });
+    }
+    assert_eq!(names.len(), 1);
+    assert_eq!(names[0].name, "CaseSensitive");
+    assert!(names[0].is_case_sensitive);
+}
+
+#[test]
+fn test_snowflake_resolve_schema_qualified_mixed() {
+    let dialect = SnowflakeDialect::new();
+    // unquoted schema + quoted table
+    let stmts = dialect.parse(r#"SELECT * FROM raw."myTable""#).unwrap();
+    let mut names = Vec::new();
+    for stmt in &stmts {
+        let _ = sqlparser::ast::visit_relations(stmt, |rel| {
+            names.push(dialect.resolve_object_name(rel));
+            std::ops::ControlFlow::<()>::Continue(())
+        });
+    }
+    assert_eq!(names.len(), 1);
+    assert_eq!(names[0].name, "RAW.myTable");
+    // One part is quoted → whole thing is case-sensitive
+    assert!(names[0].is_case_sensitive);
+    assert_eq!(names[0].parts[0].value, "RAW");
+    assert_eq!(
+        names[0].parts[0].sensitivity,
+        CaseSensitivity::CaseInsensitive
+    );
+    assert_eq!(names[0].parts[1].value, "myTable");
+    assert_eq!(
+        names[0].parts[1].sensitivity,
+        CaseSensitivity::CaseSensitive
+    );
 }
