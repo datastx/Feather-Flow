@@ -76,13 +76,19 @@ fn test_parse_location_extraction() {
 #[test]
 fn test_duckdb_unquoted_case_behavior() {
     let dialect = DuckDbDialect::new();
-    assert_eq!(dialect.unquoted_case_behavior(), UnquotedCaseBehavior::Preserve);
+    assert_eq!(
+        dialect.unquoted_case_behavior(),
+        UnquotedCaseBehavior::Preserve
+    );
 }
 
 #[test]
 fn test_snowflake_unquoted_case_behavior() {
     let dialect = SnowflakeDialect::new();
-    assert_eq!(dialect.unquoted_case_behavior(), UnquotedCaseBehavior::Upper);
+    assert_eq!(
+        dialect.unquoted_case_behavior(),
+        UnquotedCaseBehavior::Upper
+    );
 }
 
 // -- resolve_ident --
@@ -194,7 +200,13 @@ fn test_snowflake_resolve_schema_qualified_mixed() {
     // One part is quoted → whole thing is case-sensitive
     assert!(names[0].is_case_sensitive);
     assert_eq!(names[0].parts[0].value, "RAW");
-    assert_eq!(names[0].parts[0].sensitivity, CaseSensitivity::CaseInsensitive);
+    assert_eq!(
+        names[0].parts[0].sensitivity,
+        CaseSensitivity::CaseInsensitive
+    );
     assert_eq!(names[0].parts[1].value, "myTable");
-    assert_eq!(names[0].parts[1].sensitivity, CaseSensitivity::CaseSensitive);
+    assert_eq!(
+        names[0].parts[1].sensitivity,
+        CaseSensitivity::CaseSensitive
+    );
 }

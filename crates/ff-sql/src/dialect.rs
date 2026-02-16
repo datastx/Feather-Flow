@@ -102,7 +102,9 @@ impl ResolvedIdent {
 
     /// Return the last part (the table/object name).
     pub fn table_part(&self) -> &ResolvedPart {
-        self.parts.last().expect("ResolvedIdent must have at least one part")
+        self.parts
+            .last()
+            .expect("ResolvedIdent must have at least one part")
     }
 }
 

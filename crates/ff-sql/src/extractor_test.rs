@@ -186,7 +186,10 @@ fn test_extract_multiple_joins() {
 // Dialect-aware (resolved) extraction tests
 // ---------------------------------------------------------------------------
 
-fn parse_and_extract_resolved(sql: &str, dialect: &dyn crate::dialect::SqlDialect) -> Vec<ResolvedIdent> {
+fn parse_and_extract_resolved(
+    sql: &str,
+    dialect: &dyn crate::dialect::SqlDialect,
+) -> Vec<ResolvedIdent> {
     let stmts = dialect.parse(sql).unwrap();
     extract_dependencies_resolved(&stmts, dialect)
 }
@@ -204,7 +207,10 @@ fn test_resolved_duckdb_unquoted_preserves_case() {
     assert_eq!(deps.len(), 1);
     assert_eq!(deps[0].name, "Users");
     assert!(!deps[0].is_case_sensitive);
-    assert_eq!(deps[0].table_part().sensitivity, CaseSensitivity::CaseInsensitive);
+    assert_eq!(
+        deps[0].table_part().sensitivity,
+        CaseSensitivity::CaseInsensitive
+    );
 }
 
 #[test]
@@ -214,7 +220,10 @@ fn test_resolved_duckdb_quoted_is_case_sensitive() {
     assert_eq!(deps.len(), 1);
     assert_eq!(deps[0].name, "MyTable");
     assert!(deps[0].is_case_sensitive);
-    assert_eq!(deps[0].table_part().sensitivity, CaseSensitivity::CaseSensitive);
+    assert_eq!(
+        deps[0].table_part().sensitivity,
+        CaseSensitivity::CaseSensitive
+    );
 }
 
 #[test]
@@ -255,7 +264,10 @@ fn test_resolved_duckdb_schema_qualified_mixed() {
     assert_eq!(deps[0].name, "raw.MyTable");
     // The table part is quoted so the whole ref is case-sensitive
     assert!(deps[0].is_case_sensitive);
-    assert_eq!(deps[0].parts[0].sensitivity, CaseSensitivity::CaseInsensitive);
+    assert_eq!(
+        deps[0].parts[0].sensitivity,
+        CaseSensitivity::CaseInsensitive
+    );
     assert_eq!(deps[0].parts[1].sensitivity, CaseSensitivity::CaseSensitive);
 }
 
@@ -333,7 +345,10 @@ fn test_resolved_cte_filtered_out() {
     );
     assert!(find_dep(&deps, "raw_orders").is_some());
     assert!(find_dep(&deps, "customers").is_some());
-    assert!(find_dep(&deps, "staged").is_none(), "CTE should be filtered out");
+    assert!(
+        find_dep(&deps, "staged").is_none(),
+        "CTE should be filtered out"
+    );
     assert_eq!(deps.len(), 2);
 }
 
@@ -351,7 +366,10 @@ fn test_resolved_cte_filtered_snowflake() {
     );
     assert!(find_dep(&deps, "RAW_ORDERS").is_some());
     assert!(find_dep(&deps, "CUSTOMERS").is_some());
-    assert!(find_dep(&deps, "STAGED").is_none(), "CTE should be filtered out");
+    assert!(
+        find_dep(&deps, "STAGED").is_none(),
+        "CTE should be filtered out"
+    );
     assert_eq!(deps.len(), 2);
 }
 
@@ -403,7 +421,10 @@ fn test_categorize_resolved_quoted_no_match_wrong_case() {
     let (model_deps, _external, unknown) =
         categorize_dependencies_resolved(deps, &known_models, &external_tables);
 
-    assert!(model_deps.is_empty(), "Quoted 'STG_ORDERS' should not match model 'stg_orders'");
+    assert!(
+        model_deps.is_empty(),
+        "Quoted 'STG_ORDERS' should not match model 'stg_orders'"
+    );
     assert_eq!(unknown, vec!["STG_ORDERS"]);
 }
 
@@ -438,6 +459,9 @@ fn test_categorize_resolved_snowflake_quoted_lowercase() {
     let (model_deps, _external, unknown) =
         categorize_dependencies_resolved(deps, &known_models, &external_tables);
 
-    assert!(model_deps.is_empty(), "Quoted lowercase 'users' should not match 'USERS' on Snowflake");
+    assert!(
+        model_deps.is_empty(),
+        "Quoted lowercase 'users' should not match 'USERS' on Snowflake"
+    );
     assert_eq!(unknown, vec!["users"]);
 }
