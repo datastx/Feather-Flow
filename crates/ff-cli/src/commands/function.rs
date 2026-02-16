@@ -3,7 +3,6 @@
 use anyhow::{Context, Result};
 use ff_core::function::{FunctionArg, FunctionDef};
 use ff_core::Project;
-use ff_jinja::JinjaEnvironment;
 
 use crate::cli::{
     FunctionArgs, FunctionCommands, FunctionDeployArgs, FunctionDropArgs, FunctionListArgs,
@@ -114,7 +113,7 @@ async fn list(args: &FunctionListArgs, global: &GlobalArgs) -> Result<()> {
 async fn deploy(args: &FunctionDeployArgs, global: &GlobalArgs) -> Result<()> {
     let project = load_project(global)?;
     let db = create_database_connection(&project.config, global.target.as_deref())?;
-    let jinja = JinjaEnvironment::new(&project.config.vars);
+    let jinja = common::build_jinja_env(&project);
 
     common::set_project_search_path(&db, &project).await?;
 
@@ -166,7 +165,7 @@ async fn show(args: &FunctionShowArgs, global: &GlobalArgs) -> Result<()> {
 
     if args.sql {
         // Show generated CREATE MACRO SQL
-        let jinja = JinjaEnvironment::new(&project.config.vars);
+        let jinja = common::build_jinja_env(&project);
         let rendered_body = jinja
             .render(&func.sql_body)
             .with_context(|| format!("Failed to render SQL for function '{}'", func.name))?;

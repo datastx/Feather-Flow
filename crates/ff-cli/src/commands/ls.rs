@@ -3,7 +3,6 @@
 use anyhow::{Context, Result};
 use ff_core::config::Materialization;
 use ff_core::dag::ModelDag;
-use ff_jinja::JinjaEnvironment;
 use ff_sql::{extract_dependencies, SqlParser};
 use std::collections::{HashMap, HashSet};
 
@@ -16,7 +15,7 @@ pub async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
 
     let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
         .context("Invalid SQL dialect")?;
-    let jinja = JinjaEnvironment::new(&project.config.vars);
+    let jinja = common::build_jinja_env(&project);
 
     let external_tables = common::build_external_tables_lookup(&project);
     let known_models: HashSet<&str> = project.models.keys().map(|k| k.as_str()).collect();

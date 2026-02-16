@@ -7,7 +7,6 @@ use ff_core::manifest::Manifest;
 use ff_core::model::ModelSchema;
 use ff_core::selector::Selector;
 use ff_core::Project;
-use ff_jinja::JinjaEnvironment;
 use ff_sql::{extract_dependencies, SqlParser};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -128,9 +127,7 @@ fn load_from_manifest(
     comment_ctx: Option<&ff_core::query_comment::QueryCommentContext>,
 ) -> Result<HashMap<String, CompiledModel>> {
     let mut compiled_models = HashMap::new();
-    let macro_paths = project.config.macro_paths_absolute(&project.root);
-    let template_ctx = common::build_template_context(project, target, true);
-    let jinja = JinjaEnvironment::with_context(&project.config.vars, &macro_paths, &template_ctx);
+    let jinja = common::build_jinja_env_with_context(project, target, true);
 
     for name in model_names {
         if let Some(manifest_model) = manifest.get_model(name) {
@@ -198,9 +195,7 @@ fn compile_all_models(
 ) -> Result<HashMap<String, CompiledModel>> {
     let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
         .context("Invalid SQL dialect")?;
-    let macro_paths = project.config.macro_paths_absolute(&project.root);
-    let template_ctx = common::build_template_context(project, target, true);
-    let jinja = JinjaEnvironment::with_context(&project.config.vars, &macro_paths, &template_ctx);
+    let jinja = common::build_jinja_env_with_context(project, target, true);
 
     let external_tables: HashSet<String> = common::build_external_tables_lookup(project);
     let known_models: HashSet<&str> = project.models.keys().map(|k| k.as_str()).collect();

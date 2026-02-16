@@ -1,12 +1,11 @@
 //! Lineage command implementation — column-level lineage across models
 
 use anyhow::{Context, Result};
-use ff_jinja::JinjaEnvironment;
 use ff_sql::{extract_column_lineage, ProjectLineage, SqlParser};
 use std::collections::HashSet;
 
 use crate::cli::{GlobalArgs, LineageArgs, LineageDirection, LineageOutput};
-use crate::commands::common::load_project;
+use crate::commands::common::{self, load_project};
 
 /// Execute the lineage command
 pub async fn execute(args: &LineageArgs, global: &GlobalArgs) -> Result<()> {
@@ -14,8 +13,7 @@ pub async fn execute(args: &LineageArgs, global: &GlobalArgs) -> Result<()> {
 
     let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
         .context("Invalid SQL dialect")?;
-    let macro_paths = project.config.macro_paths_absolute(&project.root);
-    let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
+    let jinja = common::build_jinja_env(&project);
 
     let known_models: HashSet<&str> = project.models.keys().map(|k| k.as_str()).collect();
 

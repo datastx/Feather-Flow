@@ -265,7 +265,7 @@ pub(crate) fn load_project(global: &GlobalArgs) -> Result<Project> {
 pub(crate) fn build_project_dag(
     project: &Project,
 ) -> Result<(HashMap<String, Vec<String>>, ff_core::dag::ModelDag)> {
-    let jinja = ff_jinja::JinjaEnvironment::new(&project.config.vars);
+    let jinja = build_jinja_env(project);
     let parser = ff_sql::SqlParser::from_dialect_name(&project.config.dialect.to_string())
         .context("Invalid SQL dialect")?;
     let external_tables = build_external_tables_lookup(project);
@@ -600,6 +600,30 @@ pub(crate) fn print_table(headers: &[&str], rows: &[Vec<String>]) {
             .collect();
         println!("{}", row_parts.join("  "));
     }
+}
+
+/// Build a [`JinjaEnvironment`] using the project's vars and macro paths.
+///
+/// Use this for commands that don't need template context variables
+/// (`{{ project_name }}`, `{{ target }}`, etc.).
+pub(crate) fn build_jinja_env(project: &Project) -> ff_jinja::JinjaEnvironment<'static> {
+    let macro_paths = project.config.macro_paths_absolute(&project.root);
+    ff_jinja::JinjaEnvironment::with_macros(&project.config.vars, &macro_paths)
+}
+
+/// Build a [`JinjaEnvironment`] with template context variables.
+///
+/// Includes `{{ project_name }}`, `{{ target }}`, `{{ run_id }}`,
+/// `{{ executing }}`, etc. Set `executing` to `true` for `ff run`,
+/// `false` for compile/validate/analyze.
+pub(crate) fn build_jinja_env_with_context(
+    project: &Project,
+    target: Option<&str>,
+    executing: bool,
+) -> ff_jinja::JinjaEnvironment<'static> {
+    let macro_paths = project.config.macro_paths_absolute(&project.root);
+    let template_ctx = build_template_context(project, target, executing);
+    ff_jinja::JinjaEnvironment::with_context(&project.config.vars, &macro_paths, &template_ctx)
 }
 
 /// Build a `TemplateContext` from project and target info.

@@ -40,7 +40,8 @@ fn test_load_sample_project() {
 fn test_parse_and_extract_dependencies() {
     let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
     let parser = SqlParser::duckdb();
-    let jinja = JinjaEnvironment::new(&project.config.vars);
+    let macro_paths = project.config.macro_paths_absolute(&project.root);
+    let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
 
     // Test stg_orders - depends on raw_orders (external)
     let stg_orders = project.get_model("stg_orders").unwrap();
@@ -1878,7 +1879,8 @@ fn build_analysis_pipeline(fixture_path: &str) -> AnalysisPipeline {
 
     let project = Project::load(Path::new(fixture_path)).unwrap();
     let parser = SqlParser::duckdb();
-    let jinja = JinjaEnvironment::new(&project.config.vars);
+    let macro_paths = project.config.macro_paths_absolute(&project.root);
+    let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
 
     let known_models: std::collections::HashSet<&str> =
         project.models.keys().map(|k| k.as_str()).collect();
@@ -2758,7 +2760,8 @@ fn test_project_level_hooks_loaded() {
 #[test]
 fn test_model_level_hooks_parsed_from_config() {
     let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
-    let jinja = JinjaEnvironment::new(&project.config.vars);
+    let macro_paths = project.config.macro_paths_absolute(&project.root);
+    let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
 
     // fct_orders should have pre_hook (single string) and post_hook (array of 2)
     let fct_orders = project.get_model("fct_orders").unwrap();
@@ -2986,7 +2989,8 @@ fn extract_hooks_from_config(
 #[test]
 fn test_compile_captures_hooks_in_manifest() {
     let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
-    let jinja = JinjaEnvironment::new(&project.config.vars);
+    let macro_paths = project.config.macro_paths_absolute(&project.root);
+    let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
 
     let fct_orders = project.get_model("fct_orders").unwrap();
     let (_, config_values) = jinja.render_with_config(&fct_orders.raw_sql).unwrap();

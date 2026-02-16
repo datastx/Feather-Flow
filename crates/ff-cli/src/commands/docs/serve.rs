@@ -6,7 +6,6 @@ use axum::http::{header, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
-use ff_jinja::JinjaEnvironment;
 use ff_sql::extractor::categorize_dependencies;
 use ff_sql::{extract_dependencies, SqlParser};
 use rust_embed::Embed;
@@ -19,7 +18,7 @@ use std::sync::Arc;
 use ff_core::Project;
 
 use crate::cli::{DocsServeArgs, GlobalArgs};
-use crate::commands::common::load_project;
+use crate::commands::common::{self, load_project};
 
 use super::data::*;
 
@@ -192,7 +191,7 @@ fn build_app_state(project: &Project) -> Result<AppState> {
     let known_models: HashSet<&str> = project.model_names().into_iter().collect();
     let external_tables = project.source_table_names();
     let parser = SqlParser::duckdb();
-    let jinja = JinjaEnvironment::new(&project.config.vars);
+    let jinja = common::build_jinja_env(project);
 
     // Process models — render Jinja, then parse SQL to extract dependencies
     for name in project.model_names() {
