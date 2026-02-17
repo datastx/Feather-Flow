@@ -24,6 +24,11 @@ on_run_start:
 on_run_end:
   - "INSERT INTO run_audit (run_id) VALUES (999)"
 
+rules:
+  paths: ["rules"]
+  severity: error
+  on_failure: warn
+
 vars:
   start_date: "2024-01-01"
   environment: dev

@@ -4,7 +4,6 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use ff_core::config::Materialization;
 use ff_core::dag::ModelDag;
-use ff_core::manifest::Manifest;
 use ff_core::model::ModelConfig;
 use ff_core::Project;
 use ff_jinja::JinjaEnvironment;
@@ -389,13 +388,9 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
-    let manifest_path = if !args.parse_only && failure_count == 0 {
-        // Write manifest only if not in parse-only mode and no failures
-        write_manifest(&project, &model_names, &output_dir, global.verbose)?;
-        Some(project.manifest_path().display().to_string())
-    } else {
-        None
-    };
+    if !args.parse_only && failure_count == 0 {
+        populate_meta_compile(&project, &compile_results, &dependencies, global);
+    }
 
     if json_mode {
         let results = CompileResults {
@@ -404,7 +399,7 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
             total_models: model_names.len(),
             success_count,
             failure_count,
-            manifest_path,
+            manifest_path: None,
             results: compile_results,
         };
         println!("{}", serde_json::to_string_pretty(&results)?);
@@ -428,9 +423,6 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
                 model_names.len(),
                 output_dir.display()
             );
-        }
-        if let Some(path) = manifest_path {
-            println!("Manifest written to {}", path);
         }
     }
 
@@ -584,46 +576,6 @@ fn compile_model_phase1(
     })
 }
 
-/// Write manifest file
-fn write_manifest(
-    project: &Project,
-    model_names: &[String],
-    output_dir: &Path,
-    verbose: bool,
-) -> Result<()> {
-    let mut manifest = Manifest::new(&project.config.name);
-
-    for name in model_names {
-        let model = project
-            .get_model(name)
-            .ok_or_else(|| anyhow::anyhow!("Model '{}' not found in project", name))?;
-        let compiled_path = compute_compiled_path(&model.path, &project.root, output_dir)?;
-
-        manifest.add_model_relative(
-            model,
-            &compiled_path,
-            &project.root,
-            project.config.materialization,
-            project.config.schema.as_deref(),
-        );
-    }
-
-    for source in &project.sources {
-        manifest.add_source(source);
-    }
-
-    let manifest_path = project.manifest_path();
-    manifest
-        .save(&manifest_path)
-        .context("Failed to write manifest")?;
-
-    if verbose {
-        eprintln!("[verbose] Manifest written to {}", manifest_path.display());
-    }
-
-    Ok(())
-}
-
 /// Compute the output path for a compiled model, preserving directory structure
 fn compute_compiled_path(
     model_path: &Path,
@@ -642,6 +594,84 @@ fn compute_compiled_path(
         .file_name()
         .context("model path must have a filename")?;
     Ok(output_dir.join(filename))
+}
+
+/// Populate the meta database with compile-phase data (non-fatal).
+fn populate_meta_compile(
+    project: &Project,
+    results: &[ModelCompileResult],
+    dependencies: &HashMap<String, Vec<String>>,
+    global: &GlobalArgs,
+) {
+    let Some(meta_db) = common::open_meta_db(project) else {
+        return;
+    };
+    let node_selector = None;
+    let Some((project_id, run_id, model_id_map)) =
+        common::populate_meta_phase1(&meta_db, project, "compile", node_selector)
+    else {
+        return;
+    };
+
+    let compile_result = meta_db.transaction(|conn| {
+        for result in results {
+            if !matches!(result.status, common::RunStatus::Success) {
+                continue;
+            }
+            let Some(&model_id) = model_id_map.get(&result.model) else {
+                continue;
+            };
+            let compiled_sql = project
+                .get_model(&result.model)
+                .and_then(|m| m.compiled_sql.as_deref())
+                .unwrap_or("");
+            let compiled_path = result.output_path.as_deref().unwrap_or("");
+            let checksum = ff_core::compute_checksum(compiled_sql);
+
+            ff_meta::populate::compilation::update_model_compiled(
+                conn,
+                model_id,
+                compiled_sql,
+                compiled_path,
+                &checksum,
+            )?;
+
+            if let Some(deps) = dependencies.get(&result.model) {
+                let dep_ids: Vec<i64> = deps
+                    .iter()
+                    .filter_map(|d| model_id_map.get(d).copied())
+                    .collect();
+                ff_meta::populate::compilation::populate_dependencies(conn, model_id, &dep_ids)?;
+            }
+
+            let ext_deps: Vec<&str> = project
+                .get_model(&result.model)
+                .map(|m| m.external_deps.iter().map(|t| t.as_ref()).collect())
+                .unwrap_or_default();
+            if !ext_deps.is_empty() {
+                ff_meta::populate::compilation::populate_external_dependencies(
+                    conn, model_id, &ext_deps,
+                )?;
+            }
+        }
+        Ok(())
+    });
+
+    let status = match compile_result {
+        Ok(()) => "success",
+        Err(e) => {
+            log::warn!("Meta database: compilation population failed: {e}");
+            "error"
+        }
+    };
+    common::complete_meta_run(&meta_db, run_id, status);
+
+    if global.verbose {
+        eprintln!(
+            "[verbose] Meta database populated (project_id={}, run_id={})",
+            project_id, run_id
+        );
+    }
 }
 
 /// Run DataFusion-based static analysis on compiled models

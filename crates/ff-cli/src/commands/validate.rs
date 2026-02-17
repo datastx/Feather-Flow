@@ -3,10 +3,10 @@
 use crate::commands::common::{self, load_project};
 use anyhow::{Context, Result};
 use ff_core::dag::ModelDag;
-use ff_core::manifest::Manifest;
 use ff_core::model::TestDefinition;
 use ff_core::{ModelName, Project};
 use ff_jinja::JinjaEnvironment;
+use ff_meta::manifest::Manifest;
 use ff_sql::SqlParser;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -152,6 +152,23 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
     // Validate governance if --governance flag is set
     if args.governance {
         validate_governance(&project, &models_to_validate, &mut ctx);
+    }
+
+    // Populate meta database (non-fatal)
+    if let Some(meta_db) = common::open_meta_db(&project) {
+        if let Some((_project_id, run_id, _model_id_map)) =
+            common::populate_meta_phase1(&meta_db, &project, "validate", args.nodes.as_deref())
+        {
+            // Run SQL rules if configured
+            validate_rules(&project, &meta_db, &mut ctx);
+
+            let status = if ctx.error_count() > 0 {
+                "error"
+            } else {
+                "success"
+            };
+            common::complete_meta_run(&meta_db, run_id, status);
+        }
     }
 
     print_issues_and_summary(&ctx, args.strict)
@@ -962,6 +979,76 @@ fn check_test_type_compatibility(
     }
 
     None
+}
+
+/// Run SQL rules against the meta database during validation.
+fn validate_rules(project: &Project, meta_db: &ff_meta::MetaDb, ctx: &mut ValidationContext) {
+    let rules_config = match &project.config.rules {
+        Some(rc) if !rc.paths.is_empty() => rc,
+        _ => return,
+    };
+
+    print!("Running SQL rules... ");
+
+    let rule_dirs = ff_core::rules::resolve_rule_paths(&rules_config.paths, &project.root);
+    let rules = match ff_core::rules::discover_rules(&rule_dirs, rules_config.severity) {
+        Ok(r) => r,
+        Err(e) => {
+            ctx.warning("R001", format!("Failed to discover rules: {e}"), None);
+            println!("(skipped)");
+            return;
+        }
+    };
+
+    if rules.is_empty() {
+        println!("(none found)");
+        return;
+    }
+
+    let (results, _violations) = match ff_meta::rules::execute_all_rules(meta_db.conn(), &rules) {
+        Ok(r) => r,
+        Err(e) => {
+            ctx.warning("R002", format!("Failed to execute rules: {e}"), None);
+            println!("(skipped)");
+            return;
+        }
+    };
+
+    let mut fail_count = 0;
+    for result in &results {
+        if let Some(ref err) = result.error {
+            ctx.warning(
+                "R003",
+                format!("Rule '{}' SQL error: {}", result.name, err),
+                Some(result.path.clone()),
+            );
+            fail_count += 1;
+        } else if !result.passed {
+            let code = match result.severity {
+                ff_core::rules::RuleSeverity::Error => "R010",
+                ff_core::rules::RuleSeverity::Warn => "R011",
+            };
+            let msg = format!(
+                "Rule '{}' found {} violations",
+                result.name, result.violation_count
+            );
+            match result.severity {
+                ff_core::rules::RuleSeverity::Error => {
+                    ctx.error(code, msg, Some(result.path.clone()))
+                }
+                ff_core::rules::RuleSeverity::Warn => {
+                    ctx.warning(code, msg, Some(result.path.clone()))
+                }
+            }
+            fail_count += 1;
+        }
+    }
+
+    if fail_count == 0 {
+        println!("\u{2713} ({} rules)", rules.len());
+    } else {
+        println!("{} issues ({} rules)", fail_count, rules.len());
+    }
 }
 
 #[cfg(test)]

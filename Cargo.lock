@@ -1177,6 +1177,7 @@ dependencies = [
  "ff-core",
  "ff-db",
  "ff-jinja",
+ "ff-meta",
  "ff-sql",
  "ff-test",
  "futures",
@@ -1238,6 +1239,21 @@ dependencies = [
  "tempfile",
  "thiserror",
  "uuid",
+]
+
+[[package]]
+name = "ff-meta"
+version = "0.1.2"
+dependencies = [
+ "chrono",
+ "duckdb",
+ "ff-core",
+ "log",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]

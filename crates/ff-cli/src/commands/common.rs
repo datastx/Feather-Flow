@@ -905,6 +905,67 @@ pub(crate) fn build_query_comment_context(
     ))
 }
 
+/// Open the meta database, returning `None` with a warning on failure.
+///
+/// During the dual-write phase, meta database errors are non-fatal.
+/// The meta database is stored at `<target_dir>/meta.duckdb`.
+pub(crate) fn open_meta_db(project: &Project) -> Option<ff_meta::MetaDb> {
+    let meta_path = project.target_dir().join("meta.duckdb");
+    if let Some(parent) = meta_path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            log::warn!("Meta database: failed to create directory: {e}");
+            return None;
+        }
+    }
+    match ff_meta::MetaDb::open(&meta_path) {
+        Ok(db) => Some(db),
+        Err(e) => {
+            log::warn!("Meta database: failed to open: {e}");
+            None
+        }
+    }
+}
+
+/// Populate the meta database with phase-1 data (project load).
+///
+/// Opens the meta database, begins a population cycle, inserts project
+/// data, and completes the run. Returns `None` with a warning on any
+/// failure — meta errors are non-fatal during the dual-write phase.
+pub(crate) fn populate_meta_phase1(
+    meta_db: &ff_meta::MetaDb,
+    project: &Project,
+    run_type: &str,
+    node_selector: Option<&str>,
+) -> Option<(i64, i64, std::collections::HashMap<String, i64>)> {
+    let result = meta_db.transaction(|conn| {
+        let project_id = ff_meta::populate::populate_project_load(conn, project)?;
+        let run_id = ff_meta::populate::lifecycle::begin_population(
+            conn,
+            project_id,
+            run_type,
+            node_selector,
+        )?;
+        let model_id_map = ff_meta::populate::models::get_model_id_map(conn, project_id)?;
+        Ok((project_id, run_id, model_id_map))
+    });
+    match result {
+        Ok(ids) => Some(ids),
+        Err(e) => {
+            log::warn!("Meta database population failed: {e}. JSON output is unaffected.");
+            None
+        }
+    }
+}
+
+/// Complete a meta database population run.
+pub(crate) fn complete_meta_run(meta_db: &ff_meta::MetaDb, run_id: i64, status: &str) {
+    if let Err(e) = meta_db
+        .transaction(|conn| ff_meta::populate::lifecycle::complete_population(conn, run_id, status))
+    {
+        log::warn!("Meta database: failed to complete run: {e}");
+    }
+}
+
 /// Run the static analysis gate before model execution.
 ///
 /// Returns `Ok(())` if analysis passes or is skipped, or an `ExitCode(1)`

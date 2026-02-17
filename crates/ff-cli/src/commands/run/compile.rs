@@ -3,10 +3,10 @@
 use anyhow::{Context, Result};
 use ff_core::config::{IncrementalStrategy, Materialization, OnSchemaChange};
 use ff_core::dag::ModelDag;
-use ff_core::manifest::Manifest;
 use ff_core::model::ModelSchema;
 use ff_core::selector::Selector;
 use ff_core::Project;
+use ff_meta::manifest::Manifest;
 use ff_sql::{extract_dependencies, SqlParser};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -39,44 +39,13 @@ pub(crate) struct CompiledModel {
     pub(crate) wap: bool,
 }
 
-/// Check if manifest cache is valid (newer than all source files)
-fn is_cache_valid(project: &Project) -> bool {
-    let manifest_path = project.manifest_path();
-    let Ok(manifest_meta) = std::fs::metadata(&manifest_path) else {
-        return false;
-    };
-    let Ok(manifest_mtime) = manifest_meta.modified() else {
-        return false;
-    };
-
-    // Check all model files are older than manifest
-    for model in project.models.values() {
-        if let Ok(meta) = std::fs::metadata(&model.path) {
-            if let Ok(mtime) = meta.modified() {
-                if mtime > manifest_mtime {
-                    return false;
-                }
-            }
-        }
-    }
-
-    // Check config file
-    let config_path = project.root.join("featherflow.yml");
-    if let Ok(meta) = std::fs::metadata(config_path) {
-        if let Ok(mtime) = meta.modified() {
-            if mtime > manifest_mtime {
-                return false;
-            }
-        }
-    }
-
-    true
-}
-
-/// Load models from cache or compile them fresh
+/// Compile all models from source templates.
+///
+/// Previously supported a manifest-based cache path; now always compiles
+/// fresh since template rendering is fast and avoids staleness issues.
 pub(crate) fn load_or_compile_models(
     project: &Project,
-    args: &RunArgs,
+    _args: &RunArgs,
     global: &GlobalArgs,
     comment_ctx: Option<&ff_core::query_comment::QueryCommentContext>,
 ) -> Result<HashMap<String, CompiledModel>> {
@@ -86,104 +55,15 @@ pub(crate) fn load_or_compile_models(
         .map(String::from)
         .collect();
 
-    let use_cache = !args.no_cache && is_cache_valid(project);
-    let cached_manifest = if use_cache {
-        Manifest::load(&project.manifest_path()).ok()
-    } else {
-        None
-    };
-
-    if let Some(ref manifest) = cached_manifest {
-        if global.verbose {
-            eprintln!("[verbose] Using cached manifest");
-        }
-        load_from_manifest(
-            project,
-            manifest,
-            &all_model_names,
-            global.target.as_deref(),
-            comment_ctx,
-        )
-        .context("Failed to load models from manifest cache")
-    } else {
-        if global.verbose && !args.no_cache {
-            eprintln!("[verbose] Cache invalid or missing, recompiling");
-        }
-        compile_all_models(
-            project,
-            &all_model_names,
-            global.target.as_deref(),
-            comment_ctx,
-        )
+    if global.verbose {
+        eprintln!("[verbose] Compiling {} models", all_model_names.len());
     }
-}
-
-/// Load compiled models from cached manifest
-fn load_from_manifest(
-    project: &Project,
-    manifest: &Manifest,
-    model_names: &[String],
-    target: Option<&str>,
-    comment_ctx: Option<&ff_core::query_comment::QueryCommentContext>,
-) -> Result<HashMap<String, CompiledModel>> {
-    let mut compiled_models = HashMap::new();
-    let jinja = common::build_jinja_env_with_context(project, target, true);
-
-    for name in model_names {
-        if let Some(manifest_model) = manifest.get_model(name) {
-            let compiled_path = project.root.join(&manifest_model.compiled_path);
-            let raw_sql = match std::fs::read_to_string(&compiled_path) {
-                Ok(sql) => sql,
-                Err(_) => {
-                    // Fall back to recompiling this model
-                    let model = project.get_model(name).with_context(|| {
-                        format!("Model '{}' not found during recompilation", name)
-                    })?;
-                    let (rendered, _) =
-                        jinja.render_with_config(&model.raw_sql).with_context(|| {
-                            format!("Failed to render template for model '{}'", name)
-                        })?;
-                    rendered
-                }
-            };
-
-            // Strip any existing query comment from cached compiled SQL
-            let sql = ff_core::query_comment::strip_query_comment(&raw_sql).to_string();
-
-            // Regenerate query comment for this invocation
-            let query_comment = comment_ctx.map(|ctx| {
-                let metadata = ctx.build_metadata(name, &manifest_model.materialized.to_string());
-                ff_core::query_comment::build_query_comment(&metadata)
-            });
-
-            // Get model schema from project if available
-            let model_schema = project.get_model(name).and_then(|m| m.schema.clone());
-
-            compiled_models.insert(
-                name.clone(),
-                CompiledModel {
-                    sql,
-                    materialization: manifest_model.materialized,
-                    schema: manifest_model.schema.clone(),
-                    dependencies: manifest_model
-                        .depends_on
-                        .iter()
-                        .map(|m| m.to_string())
-                        .collect(),
-                    unique_key: manifest_model.unique_key.clone(),
-                    incremental_strategy: manifest_model.incremental_strategy,
-                    on_schema_change: manifest_model.on_schema_change,
-                    pre_hook: manifest_model.pre_hook.clone(),
-                    post_hook: manifest_model.post_hook.clone(),
-                    model_schema,
-                    query_comment,
-                    wap: manifest_model.wap.unwrap_or(false),
-                },
-            );
-        }
-    }
-
-    Ok(compiled_models)
+    compile_all_models(
+        project,
+        &all_model_names,
+        global.target.as_deref(),
+        comment_ctx,
+    )
 }
 
 /// Compile all models fresh
@@ -452,8 +332,10 @@ pub(crate) fn determine_execution_order(
                     "state: selector requires --state flag with path to reference manifest"
                 );
             }
+            let ref_manifest: Option<&dyn ff_core::reference_manifest::ReferenceManifest> =
+                reference_manifest.as_ref().map(|m| m as _);
             let matched = selector
-                .apply_with_state(&project.models, &dag, reference_manifest.as_ref())
+                .apply_with_state(&project.models, &dag, ref_manifest)
                 .context("Failed to apply selector")?;
             combined.extend(matched);
         }

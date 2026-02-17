@@ -167,6 +167,20 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
         AnalyzeOutput::Table => print_table(&filtered),
     }
 
+    // Populate meta database (non-fatal)
+    if let Some(meta_db) = common::open_meta_db(ctx.project()) {
+        if let Some((_project_id, run_id, _model_id_map)) =
+            common::populate_meta_phase1(&meta_db, ctx.project(), "analyze", args.nodes.as_deref())
+        {
+            let status = if filtered.iter().any(|d| d.severity == Severity::Error) {
+                "error"
+            } else {
+                "success"
+            };
+            common::complete_meta_run(&meta_db, run_id, status);
+        }
+    }
+
     let has_errors = filtered.iter().any(|d| d.severity == Severity::Error);
     if has_errors {
         return Err(crate::commands::common::ExitCode(1).into());
