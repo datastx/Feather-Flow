@@ -916,7 +916,7 @@ fn generate_lineage_dot(project: &Project) -> String {
     let mut dot = String::new();
 
     // Try to load manifest for dependency information
-    let manifest = ff_core::manifest::Manifest::load(&project.manifest_path()).ok();
+    let manifest = ff_meta::manifest::Manifest::load(&project.manifest_path()).ok();
 
     dot.push_str("digraph lineage {\n");
     dot.push_str("    rankdir=LR;\n");

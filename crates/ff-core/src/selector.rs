@@ -13,7 +13,7 @@
 
 use crate::dag::ModelDag;
 use crate::error::{CoreError, CoreResult};
-use crate::manifest::Manifest;
+use crate::reference_manifest::{ReferenceManifest, ReferenceModelRef};
 use crate::Model;
 use crate::ModelName;
 use std::collections::{HashMap, HashSet};
@@ -181,7 +181,7 @@ impl Selector {
         &self,
         models: &HashMap<ModelName, Model>,
         dag: &ModelDag,
-        reference_manifest: Option<&Manifest>,
+        reference_manifest: Option<&dyn ReferenceManifest>,
     ) -> CoreResult<Vec<String>> {
         let matched = self.apply_unordered(models, dag, reference_manifest)?;
         // Return in topological order
@@ -197,7 +197,7 @@ impl Selector {
         &self,
         models: &HashMap<ModelName, Model>,
         dag: &ModelDag,
-        reference_manifest: Option<&Manifest>,
+        reference_manifest: Option<&dyn ReferenceManifest>,
     ) -> CoreResult<HashSet<String>> {
         match &self.selector_type {
             SelectorType::Model {
@@ -392,22 +392,17 @@ impl Selector {
         include_descendants: bool,
         models: &HashMap<ModelName, Model>,
         dag: &ModelDag,
-        reference_manifest: &Manifest,
+        reference_manifest: &dyn ReferenceManifest,
     ) -> CoreResult<HashSet<String>> {
         let mut selected: HashSet<String> = HashSet::new();
 
         for (name, model) in models {
             let should_select = match state_type {
-                StateType::New => {
-                    // Model is new if it doesn't exist in reference manifest
-                    !reference_manifest.models.contains_key(name.as_str())
-                }
+                StateType::New => !reference_manifest.contains_model(name.as_str()),
                 StateType::Modified => {
-                    // Model is modified if SQL content differs from reference
-                    if let Some(ref_model) = reference_manifest.models.get(name.as_str()) {
-                        Self::is_model_modified(model, ref_model)
+                    if let Some(ref_model) = reference_manifest.get_model_ref(name.as_str()) {
+                        Self::is_model_modified(model, &ref_model)
                     } else {
-                        // If not in reference, it's also considered "modified" (new)
                         true
                     }
                 }
@@ -418,7 +413,6 @@ impl Selector {
             }
         }
 
-        // If include_descendants, add all downstream models
         if include_descendants {
             let descendants: Vec<String> = selected
                 .iter()
@@ -431,7 +425,7 @@ impl Selector {
     }
 
     /// Check if a model has been modified compared to reference
-    fn is_model_modified(current: &Model, reference: &crate::manifest::ManifestModel) -> bool {
+    fn is_model_modified(current: &Model, reference: &ReferenceModelRef) -> bool {
         let current_deps: HashSet<String> =
             current.depends_on.iter().map(|m| m.to_string()).collect();
         let ref_deps: HashSet<String> =
@@ -441,7 +435,6 @@ impl Selector {
             return true;
         }
 
-        // Compare materialization (treat None as "unchanged" — only detect actual differences)
         if let Some(ref current_mat) = current.config.materialized {
             if current_mat != &reference.materialized {
                 return true;

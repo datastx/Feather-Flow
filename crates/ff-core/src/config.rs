@@ -98,6 +98,10 @@ pub struct Config {
     /// Query comment configuration for SQL observability
     #[serde(default)]
     pub query_comment: QueryCommentConfig,
+
+    /// SQL rules engine configuration
+    #[serde(default)]
+    pub rules: Option<crate::rules::RulesConfig>,
 }
 
 /// Target-specific configuration overrides

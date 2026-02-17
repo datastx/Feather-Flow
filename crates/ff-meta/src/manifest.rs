@@ -1,10 +1,15 @@
-//! Manifest types for compiled project output
+//! Manifest types for compiled project output.
+//!
+//! The manifest is a portable JSON interchange format used for `--defer`
+//! (loading an external project's manifest) and `--state` (loading a reference
+//! manifest for `state:modified`/`state:new` selectors).
 
-use crate::config::{IncrementalStrategy, Materialization, OnSchemaChange};
-use crate::model::Model;
-use crate::model_name::ModelName;
-use crate::source::SourceFile;
-use crate::table_name::TableName;
+use ff_core::config::{IncrementalStrategy, Materialization, OnSchemaChange};
+use ff_core::model::Model;
+use ff_core::model_name::ModelName;
+use ff_core::reference_manifest::{ReferenceManifest, ReferenceModelRef};
+use ff_core::source::SourceFile;
+use ff_core::table_name::TableName;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -182,7 +187,7 @@ impl Manifest {
         }
     }
 
-    fn source_column_to_manifest(col: &crate::source::SourceColumn) -> ManifestSourceColumn {
+    fn source_column_to_manifest(col: &ff_core::source::SourceColumn) -> ManifestSourceColumn {
         let tests = col.tests.iter().map(Self::test_definition_name).collect();
         ManifestSourceColumn {
             name: col.name.clone(),
@@ -192,10 +197,10 @@ impl Manifest {
         }
     }
 
-    fn test_definition_name(t: &crate::model::TestDefinition) -> String {
+    fn test_definition_name(t: &ff_core::model::TestDefinition) -> String {
         match t {
-            crate::model::TestDefinition::Simple(name) => name.clone(),
-            crate::model::TestDefinition::Parameterized(map) => map
+            ff_core::model::TestDefinition::Simple(name) => name.clone(),
+            ff_core::model::TestDefinition::Parameterized(map) => map
                 .keys()
                 .next()
                 .cloned()
@@ -232,7 +237,6 @@ impl Manifest {
         default_materialization: Materialization,
         default_schema: Option<&str>,
     ) {
-        // Compute relative paths from project root
         let source_path = model
             .path
             .strip_prefix(project_root)
@@ -254,8 +258,6 @@ impl Manifest {
     }
 
     /// Build a `ManifestModel` from pre-resolved paths and insert it into the manifest.
-    ///
-    /// This is the shared implementation used by both `add_model` and `add_model_relative`.
     fn insert_model(
         &mut self,
         model: &Model,
@@ -264,7 +266,6 @@ impl Manifest {
         default_materialization: Materialization,
         default_schema: Option<&str>,
     ) {
-        // Get tags from schema file if available
         let tags = model
             .schema
             .as_ref()
@@ -273,7 +274,6 @@ impl Manifest {
 
         let materialized = model.materialization(default_materialization);
 
-        // Only include incremental fields if model is incremental
         let (unique_key, incremental_strategy, on_schema_change) =
             if materialized == Materialization::Incremental {
                 (
@@ -285,7 +285,6 @@ impl Manifest {
                 (None, None, None)
             };
 
-        // Resolve WAP setting
         let wap = if model.wap_enabled() {
             Some(true)
         } else {
@@ -321,27 +320,24 @@ impl Manifest {
     /// Save the manifest to a file atomically
     ///
     /// Uses write-to-temp-then-rename pattern to prevent corruption.
-    /// The temp file includes the process ID to avoid races when multiple
-    /// processes compile the same project concurrently (e.g. parallel tests).
-    pub fn save(&self, path: &Path) -> crate::error::CoreResult<()> {
+    pub fn save(&self, path: &Path) -> ff_core::error::CoreResult<()> {
         let json = serde_json::to_string_pretty(self)?;
 
-        // Create parent directories if needed
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| crate::error::CoreError::IoWithPath {
+            std::fs::create_dir_all(parent).map_err(|e| ff_core::error::CoreError::IoWithPath {
                 path: parent.display().to_string(),
                 source: e,
             })?;
         }
 
         let temp_path = path.with_extension(format!("json.{}.tmp", std::process::id()));
-        std::fs::write(&temp_path, &json).map_err(|e| crate::error::CoreError::IoWithPath {
+        std::fs::write(&temp_path, &json).map_err(|e| ff_core::error::CoreError::IoWithPath {
             path: temp_path.display().to_string(),
             source: e,
         })?;
         std::fs::rename(&temp_path, path).map_err(|e| {
             let _ = std::fs::remove_file(&temp_path);
-            crate::error::CoreError::IoWithPath {
+            ff_core::error::CoreError::IoWithPath {
                 path: path.display().to_string(),
                 source: e,
             }
@@ -350,13 +346,13 @@ impl Manifest {
     }
 
     /// Load a manifest from a file
-    pub fn load(path: &Path) -> crate::error::CoreResult<Self> {
+    pub fn load(path: &Path) -> ff_core::error::CoreResult<Self> {
         let content =
-            std::fs::read_to_string(path).map_err(|e| crate::error::CoreError::IoWithPath {
+            std::fs::read_to_string(path).map_err(|e| ff_core::error::CoreError::IoWithPath {
                 path: path.display().to_string(),
                 source: e,
             })?;
-        serde_json::from_str(&content).map_err(|e| crate::error::CoreError::ConfigParseError {
+        serde_json::from_str(&content).map_err(|e| ff_core::error::CoreError::ConfigParseError {
             message: format!("Failed to parse manifest '{}': {}", path.display(), e),
         })
     }
@@ -382,6 +378,22 @@ impl Manifest {
     /// Total number of models in the manifest
     pub fn model_count(&self) -> usize {
         self.models.len()
+    }
+}
+
+impl ReferenceManifest for Manifest {
+    fn contains_model(&self, name: &str) -> bool {
+        self.models.contains_key(name)
+    }
+
+    fn get_model_ref(&self, name: &str) -> Option<ReferenceModelRef> {
+        self.models.get(name).map(|m| ReferenceModelRef {
+            depends_on: m.depends_on.clone(),
+            materialized: m.materialized,
+            schema: m.schema.clone(),
+            tags: m.tags.clone(),
+            sql_checksum: m.sql_checksum.clone(),
+        })
     }
 }
 

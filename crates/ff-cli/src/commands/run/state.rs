@@ -2,8 +2,8 @@
 
 use anyhow::{Context, Result};
 use chrono::Utc;
+use ff_core::compute_checksum;
 use ff_core::run_state::RunState;
-use ff_core::state::{compute_checksum, ModelState, ModelStateConfig, StateFile};
 use ff_core::Project;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -89,23 +89,18 @@ pub(super) fn handle_resume_mode(
     Ok((execution_order, Some(previous_state)))
 }
 
-/// Compute which models can be skipped in smart build mode
+/// Compute which models can be skipped in smart build mode.
+///
+/// Queries the meta database for previous run state. If meta DB is unavailable,
+/// falls back to rebuilding all models (returns empty skip set).
 pub(super) fn compute_smart_skips(
-    project: &Project,
     compiled_models: &HashMap<String, CompiledModel>,
     global: &GlobalArgs,
+    meta_db: Option<&ff_meta::MetaDb>,
 ) -> Result<HashSet<String>> {
-    let state_path = project.target_dir().join("state.json");
-    let state_file = match StateFile::load(&state_path) {
-        Ok(sf) => sf,
-        Err(e) => {
-            eprintln!(
-                "[warn] Failed to load state file at {}, smart build will rebuild all models: {}",
-                state_path.display(),
-                e
-            );
-            StateFile::default()
-        }
+    let Some(meta_db) = meta_db else {
+        eprintln!("[warn] Meta database unavailable, smart build will rebuild all models");
+        return Ok(HashSet::new());
     };
 
     let mut skipped = HashSet::new();
@@ -115,16 +110,28 @@ pub(super) fn compute_smart_skips(
         let schema_checksum = compute_schema_checksum(name, compiled_models);
         let input_checksums = compute_input_checksums(name, compiled_models);
 
-        if !state_file.is_model_or_inputs_modified(
+        match ff_meta::query::state::is_model_modified(
+            meta_db.conn(),
             name,
             &sql_checksum,
             schema_checksum.as_deref(),
             &input_checksums,
         ) {
-            if global.verbose {
-                eprintln!("[verbose] Smart build: skipping unchanged model '{}'", name);
+            Ok(false) => {
+                if global.verbose {
+                    eprintln!("[verbose] Smart build: skipping unchanged model '{}'", name);
+                }
+                skipped.insert(name.clone());
             }
-            skipped.insert(name.clone());
+            Ok(true) => {} // Model is modified, don't skip
+            Err(e) => {
+                if global.verbose {
+                    eprintln!(
+                        "[verbose] Smart build: error checking '{}', will rebuild: {}",
+                        name, e
+                    );
+                }
+            }
         }
     }
 
@@ -165,37 +172,6 @@ pub(super) fn compute_input_checksums(
                 .collect()
         })
         .unwrap_or_default()
-}
-
-/// Update state file entry for a successfully-run model
-pub(super) fn update_state_for_model(
-    state_file: &mut StateFile,
-    name: &str,
-    compiled: &CompiledModel,
-    compiled_models: &HashMap<String, CompiledModel>,
-    row_count: Option<usize>,
-) -> anyhow::Result<()> {
-    let state_config = ModelStateConfig::new(
-        compiled.materialization,
-        compiled.schema.clone(),
-        compiled.unique_key.clone(),
-        compiled.incremental_strategy,
-        compiled.on_schema_change,
-    );
-    let schema_checksum = compute_schema_checksum(name, compiled_models);
-    let input_checksums = compute_input_checksums(name, compiled_models);
-    let model_name = ff_core::ModelName::try_new(name)
-        .ok_or_else(|| anyhow::anyhow!("Empty model name in state update"))?;
-    let model_state = ModelState::new_with_checksums(
-        model_name,
-        &compiled.sql,
-        row_count,
-        state_config,
-        schema_checksum,
-        input_checksums,
-    );
-    state_file.upsert_model(model_state);
-    Ok(())
 }
 
 /// Write run results to JSON file
