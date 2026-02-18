@@ -62,6 +62,127 @@ pub fn parse_classification(s: &str) -> Option<DataClassification> {
     }
 }
 
+/// Return a numeric rank for a classification string (higher = more sensitive)
+///
+/// Returns 0 for unrecognized values.
+fn rank_str(cls: &str) -> u8 {
+    match cls {
+        "pii" => 4,
+        "sensitive" => 3,
+        "internal" => 2,
+        "public" => 1,
+        _ => 0,
+    }
+}
+
+/// A column-level lineage edge used for classification propagation.
+///
+/// This is a simplified representation that decouples the propagation logic
+/// from the SQL-level lineage types in `ff-sql`.
+#[derive(Debug, Clone)]
+pub struct ClassificationEdge {
+    /// Source model name
+    pub source_model: String,
+    /// Source column name
+    pub source_column: String,
+    /// Target model name
+    pub target_model: String,
+    /// Target column name
+    pub target_column: String,
+    /// Whether this is a direct pass-through (copy) or a transform.
+    /// Inspect edges (WHERE/JOIN) should be excluded before calling propagation.
+    pub is_direct: bool,
+}
+
+/// Propagate data classifications through column lineage in topological order.
+///
+/// Starting from declared classifications (from YAML schemas), walks models in
+/// topological order. For each output column, computes the effective
+/// classification as `max(declared, max(upstream effective via copy/transform edges))`.
+///
+/// Only `copy` and `transform` edges propagate classifications — `inspect` edges
+/// (WHERE/JOIN conditions) do not carry data into the output and should be
+/// filtered out before calling this function.
+///
+/// Returns a map of `model → column → effective_classification` for all columns
+/// that have an effective classification (declared or propagated).
+pub fn propagate_classifications_topo(
+    topo_order: &[String],
+    edges: &[ClassificationEdge],
+    declared: &HashMap<String, HashMap<String, String>>,
+) -> HashMap<String, HashMap<String, String>> {
+    // Build an index: (target_model, target_column) → list of edges
+    let mut target_index: HashMap<(&str, &str), Vec<&ClassificationEdge>> = HashMap::new();
+    for edge in edges {
+        target_index
+            .entry((edge.target_model.as_str(), edge.target_column.as_str()))
+            .or_default()
+            .push(edge);
+    }
+
+    // Collect all target columns per model so we know what to process
+    let mut model_columns: HashMap<&str, Vec<&str>> = HashMap::new();
+    for edge in edges {
+        let cols = model_columns.entry(edge.target_model.as_str()).or_default();
+        if !cols.contains(&edge.target_column.as_str()) {
+            cols.push(edge.target_column.as_str());
+        }
+    }
+
+    // effective_cls tracks the running effective classification per model/column.
+    // Initialize with declared classifications.
+    let mut effective_cls: HashMap<String, HashMap<String, String>> = declared.clone();
+
+    for model in topo_order {
+        let Some(columns) = model_columns.get(model.as_str()) else {
+            continue;
+        };
+
+        for &column in columns {
+            let Some(incoming) = target_index.get(&(model.as_str(), column)) else {
+                continue;
+            };
+
+            // Find the highest-ranked upstream effective classification.
+            // Clone the string to avoid holding an immutable borrow on effective_cls.
+            let mut best_rank: u8 = 0;
+            let mut best_cls: Option<String> = None;
+
+            for edge in incoming {
+                let upstream_cls = effective_cls
+                    .get(&edge.source_model)
+                    .and_then(|cols| cols.get(&edge.source_column));
+
+                if let Some(cls) = upstream_cls {
+                    let r = rank_str(cls);
+                    if r > best_rank {
+                        best_rank = r;
+                        best_cls = Some(cls.clone());
+                    }
+                }
+            }
+
+            if let Some(cls) = best_cls {
+                // Compare with any existing (declared) classification
+                let current_rank = effective_cls
+                    .get(model.as_str())
+                    .and_then(|cols| cols.get(column))
+                    .map(|c| rank_str(c))
+                    .unwrap_or(0);
+
+                if best_rank > current_rank {
+                    effective_cls
+                        .entry(model.to_string())
+                        .or_default()
+                        .insert(column.to_string(), cls);
+                }
+            }
+        }
+    }
+
+    effective_cls
+}
+
 #[cfg(test)]
 #[path = "classification_test.rs"]
 mod tests;
