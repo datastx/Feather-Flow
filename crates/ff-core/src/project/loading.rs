@@ -2,16 +2,25 @@
 
 use crate::config::Config;
 use crate::error::{CoreError, CoreResult};
-use crate::function::discover_functions;
+use crate::function::{discover_functions, FunctionDef};
 use crate::model::schema::ModelKind;
 use crate::model::{Model, ModelSchema, SingularTest};
 use crate::model_name::ModelName;
+use crate::node::{NodeKind, NodeKindProbe};
 use crate::seed::Seed;
-use crate::source::discover_sources;
+use crate::source::{discover_sources, SourceFile};
 use std::collections::HashMap;
 use std::path::Path;
 
 use super::{Project, ProjectParts};
+
+/// Collected results from unified node discovery.
+struct DiscoveredNodes {
+    models: HashMap<ModelName, Model>,
+    seeds: Vec<Seed>,
+    sources: Vec<SourceFile>,
+    functions: Vec<FunctionDef>,
+}
 
 impl Project {
     /// Load a project from a directory
@@ -32,13 +41,39 @@ impl Project {
 
         // Emit deprecation warning if external_tables is used
         if !config.external_tables.is_empty() {
-            log::warn!("'external_tables' is deprecated. Use source_paths and source files (kind: sources) instead.");
+            log::warn!("'external_tables' is deprecated. Use source files (kind: source) instead.");
         }
 
-        let (models, seeds) = Self::discover_models(&root, &config)?;
+        let (models, seeds, sources, functions) = if config.uses_node_paths() {
+            // ── Unified node_paths discovery ──────────────────────────
+            let nodes = Self::discover_all_nodes(&root, &config)?;
 
-        let source_paths = config.source_paths_absolute(&root);
-        let sources = discover_sources(&source_paths)?;
+            // Also pick up any legacy-path sources/functions that aren't
+            // covered by node_paths (allows gradual migration).
+            let legacy_source_paths = config.source_paths_absolute(&root);
+            let mut sources = nodes.sources;
+            if !legacy_source_paths.is_empty() {
+                let extra = discover_sources(&legacy_source_paths)?;
+                sources.extend(extra);
+            }
+
+            let legacy_fn_paths = config.function_paths_absolute(&root);
+            let mut functions = nodes.functions;
+            if !legacy_fn_paths.is_empty() {
+                let extra = discover_functions(&legacy_fn_paths)?;
+                functions.extend(extra);
+            }
+
+            (nodes.models, nodes.seeds, sources, functions)
+        } else {
+            // ── Legacy per-type discovery ─────────────────────────────
+            let (models, seeds) = Self::discover_models(&root, &config)?;
+            let source_paths = config.source_paths_absolute(&root);
+            let sources = discover_sources(&source_paths)?;
+            let function_paths = config.function_paths_absolute(&root);
+            let functions = discover_functions(&function_paths)?;
+            (models, seeds, sources, functions)
+        };
 
         let mut tests = Vec::new();
         for model in models.values() {
@@ -46,9 +81,6 @@ impl Project {
         }
 
         let singular_tests = Self::discover_singular_tests(&root, &config)?;
-
-        let function_paths = config.function_paths_absolute(&root);
-        let functions = discover_functions(&function_paths)?;
 
         Ok(Self::new(ProjectParts {
             root,
@@ -61,6 +93,232 @@ impl Project {
             functions,
         }))
     }
+
+    // ── Unified node discovery ───────────────────────────────────────
+
+    /// Discover all nodes from `node_paths` directories.
+    ///
+    /// Each direct child of a node path must be a directory containing a
+    /// `.yml`/`.yaml` file with a `kind` field.  The kind determines the
+    /// resource type and which companion files are expected:
+    ///
+    /// | kind       | companion file |
+    /// |------------|----------------|
+    /// | `sql`      | `<name>.sql`   |
+    /// | `seed`     | `<name>.csv`   |
+    /// | `source`   | *(none)*       |
+    /// | `function` | `<name>.sql`   |
+    fn discover_all_nodes(root: &Path, config: &Config) -> CoreResult<DiscoveredNodes> {
+        let mut models = HashMap::new();
+        let mut seeds = Vec::new();
+        let mut sources = Vec::new();
+        let mut functions = Vec::new();
+
+        for node_path in config.node_paths_absolute(root) {
+            if !node_path.exists() {
+                continue;
+            }
+
+            Self::discover_nodes_flat(
+                &node_path,
+                &mut models,
+                &mut seeds,
+                &mut sources,
+                &mut functions,
+            )?;
+        }
+
+        seeds.sort_by(|a, b| a.name.cmp(&b.name));
+
+        Ok(DiscoveredNodes {
+            models,
+            seeds,
+            sources,
+            functions,
+        })
+    }
+
+    /// Walk one node-path root and dispatch each directory by kind.
+    fn discover_nodes_flat(
+        dir: &Path,
+        models: &mut HashMap<ModelName, Model>,
+        seeds: &mut Vec<Seed>,
+        sources: &mut Vec<SourceFile>,
+        functions: &mut Vec<FunctionDef>,
+    ) -> CoreResult<()> {
+        for entry in std::fs::read_dir(dir).map_err(|e| CoreError::IoWithPath {
+            path: dir.display().to_string(),
+            source: e,
+        })? {
+            let entry = entry.map_err(|e| CoreError::IoWithPath {
+                path: dir.display().to_string(),
+                source: e,
+            })?;
+            let path = entry.path();
+
+            // Only directories are allowed at the node root
+            if !path.is_dir() {
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if matches!(ext, "sql" | "csv" | "yml" | "yaml" | "py") {
+                    return Err(CoreError::InvalidModelDirectory {
+                        path: path.display().to_string(),
+                        reason: format!(
+                            "loose .{ext} files are not allowed at the node root — each resource must be in its own directory (nodes/<name>/<name>.{ext})"
+                        ),
+                    });
+                }
+                continue;
+            }
+
+            let dir_name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(name) if !name.is_empty() => name.to_string(),
+                _ => {
+                    return Err(CoreError::InvalidModelDirectory {
+                        path: path.display().to_string(),
+                        reason: "directory name is not valid UTF-8".to_string(),
+                    });
+                }
+            };
+
+            // Find the YAML config file
+            let yml_path = path.join(format!("{}.yml", dir_name));
+            let yaml_path = path.join(format!("{}.yaml", dir_name));
+
+            let config_path = if yml_path.exists() {
+                yml_path
+            } else if yaml_path.exists() {
+                yaml_path
+            } else {
+                return Err(CoreError::NodeMissingYaml {
+                    directory: dir_name,
+                });
+            };
+
+            // Probe the kind field
+            let content =
+                std::fs::read_to_string(&config_path).map_err(|e| CoreError::IoWithPath {
+                    path: config_path.display().to_string(),
+                    source: e,
+                })?;
+
+            let probe: NodeKindProbe =
+                serde_yaml::from_str(&content).map_err(|_| CoreError::NodeMissingKind {
+                    directory: dir_name.clone(),
+                })?;
+
+            let kind = match probe.kind {
+                Some(k) => k.normalize(),
+                None => {
+                    return Err(CoreError::NodeMissingKind {
+                        directory: dir_name,
+                    });
+                }
+            };
+
+            match kind {
+                NodeKind::Sql => {
+                    Self::load_sql_node(&path, &dir_name, models)?;
+                }
+                NodeKind::Seed => {
+                    Self::load_seed_node(&path, &dir_name, seeds)?;
+                }
+                NodeKind::Source => {
+                    Self::load_source_node(&config_path, sources)?;
+                }
+                NodeKind::Function => {
+                    Self::load_function_node(&config_path, functions)?;
+                }
+                NodeKind::Python => {
+                    return Err(CoreError::NodeUnsupportedKind {
+                        directory: dir_name,
+                        kind: "python".to_string(),
+                    });
+                }
+                // Legacy variants are normalized away — unreachable after normalize()
+                _ => {
+                    return Err(CoreError::NodeUnsupportedKind {
+                        directory: dir_name,
+                        kind: kind.to_string(),
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Load a `kind: sql` node as a [`Model`].
+    fn load_sql_node(
+        dir: &Path,
+        dir_name: &str,
+        models: &mut HashMap<ModelName, Model>,
+    ) -> CoreResult<()> {
+        let sql_path = dir.join(format!("{}.sql", dir_name));
+        if !sql_path.exists() {
+            return Err(CoreError::NodeMissingDataFile {
+                directory: dir_name.to_string(),
+                kind: "sql".to_string(),
+                extension: "sql".to_string(),
+            });
+        }
+
+        let model = Model::from_file(sql_path)?;
+
+        if models.contains_key(model.name.as_str()) {
+            return Err(CoreError::DuplicateModel {
+                name: model.name.to_string(),
+            });
+        }
+
+        models.insert(model.name.clone(), model);
+        Ok(())
+    }
+
+    /// Load a `kind: seed` node as a [`Seed`].
+    fn load_seed_node(dir: &Path, dir_name: &str, seeds: &mut Vec<Seed>) -> CoreResult<()> {
+        let csv_path = dir.join(format!("{}.csv", dir_name));
+        if !csv_path.exists() {
+            return Err(CoreError::NodeMissingDataFile {
+                directory: dir_name.to_string(),
+                kind: "seed".to_string(),
+                extension: "csv".to_string(),
+            });
+        }
+
+        let yml_path = csv_path.with_extension("yml");
+        let yaml_path = csv_path.with_extension("yaml");
+
+        let schema = if yml_path.exists() {
+            ModelSchema::load(&yml_path)?
+        } else if yaml_path.exists() {
+            ModelSchema::load(&yaml_path)?
+        } else {
+            return Err(CoreError::MissingSchemaFile {
+                model: dir_name.to_string(),
+                expected_path: yml_path.display().to_string(),
+            });
+        };
+
+        let seed = Seed::from_schema(csv_path, &schema)?;
+        seeds.push(seed);
+        Ok(())
+    }
+
+    /// Load a `kind: source` node as a [`SourceFile`].
+    fn load_source_node(yaml_path: &Path, sources: &mut Vec<SourceFile>) -> CoreResult<()> {
+        let source = SourceFile::load(yaml_path)?;
+        sources.push(source);
+        Ok(())
+    }
+
+    /// Load a `kind: function` node as a [`FunctionDef`].
+    fn load_function_node(yaml_path: &Path, functions: &mut Vec<FunctionDef>) -> CoreResult<()> {
+        let func = FunctionDef::load(yaml_path)?;
+        functions.push(func);
+        Ok(())
+    }
+
+    // ── Legacy per-type discovery (backward compat) ──────────────────
 
     /// Discover all model and seed directories in the project using flat directory-per-resource layout
     ///
@@ -356,6 +614,8 @@ impl Project {
 
         Ok(())
     }
+
+    // ── Tests ────────────────────────────────────────────────────────
 
     /// Discover singular tests from test_paths
     fn discover_singular_tests(root: &Path, config: &Config) -> CoreResult<Vec<SingularTest>> {

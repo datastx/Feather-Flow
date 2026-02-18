@@ -5,8 +5,11 @@ use ff_analysis::{
     apply_severity_overrides, propagate_schemas, AnalysisContext, PlanPassManager, RelSchema,
     SchemaCatalog, Severity, SeverityOverrides,
 };
+use ff_core::classification::{
+    build_classification_lookup, propagate_classifications_topo, ClassificationEdge,
+};
 use ff_core::dag::ModelDag;
-use ff_sql::{extract_column_lineage, extract_dependencies, ProjectLineage, SqlParser};
+use ff_sql::{extract_column_lineage, extract_dependencies, ExprType, ProjectLineage, SqlParser};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -169,9 +172,25 @@ pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
 
     // Populate meta database (non-fatal)
     if let Some(meta_db) = common::open_meta_db(ctx.project()) {
-        if let Some((_project_id, run_id, _model_id_map)) =
+        if let Some((_project_id, run_id, model_id_map)) =
             common::populate_meta_phase1(&meta_db, ctx.project(), "analyze", args.nodes.as_deref())
         {
+            // Persist column lineage edges
+            if let Err(e) = meta_db.transaction(|conn| {
+                let meta_edges = build_meta_lineage_edges(ctx.lineage(), &model_id_map);
+                ff_meta::populate::analysis::populate_column_lineage(conn, &meta_edges)?;
+
+                // Propagate classifications through lineage and persist
+                let declared = build_classification_lookup(ctx.project());
+                let cls_edges = build_classification_edges(ctx.lineage());
+                let effective = propagate_classifications_topo(&order, &cls_edges, &declared);
+                let entries = build_effective_entries(&effective, &model_id_map);
+                ff_meta::populate::analysis::populate_effective_classifications(conn, &entries)?;
+                Ok(())
+            }) {
+                log::warn!("Meta database: failed to populate lineage/classifications: {e}");
+            }
+
             let status = if filtered.iter().any(|d| d.severity == Severity::Error) {
                 "error"
             } else {
@@ -278,4 +297,73 @@ fn print_json(diagnostics: &[ff_analysis::Diagnostic]) -> Result<()> {
     let json = serde_json::to_string_pretty(diagnostics)?;
     println!("{}", json);
     Ok(())
+}
+
+/// Convert ff-sql lineage edges to ff-meta lineage edges using model ID lookup.
+fn build_meta_lineage_edges(
+    lineage: &ProjectLineage,
+    model_id_map: &HashMap<String, i64>,
+) -> Vec<ff_meta::populate::analysis::LineageEdge> {
+    lineage
+        .edges
+        .iter()
+        .filter_map(|edge| {
+            let target_model_id = *model_id_map.get(&edge.target_model)?;
+            let source_model_id = model_id_map.get(&edge.source_model).copied();
+            let lineage_kind = if edge.is_direct && edge.expr_type == ExprType::Column {
+                "copy"
+            } else {
+                "transform"
+            };
+            Some(ff_meta::populate::analysis::LineageEdge {
+                target_model_id,
+                target_column: edge.target_column.clone(),
+                source_model_id,
+                source_table: if source_model_id.is_none() {
+                    Some(edge.source_model.clone())
+                } else {
+                    None
+                },
+                source_column: edge.source_column.clone(),
+                lineage_kind: lineage_kind.to_string(),
+                is_direct: edge.is_direct,
+            })
+        })
+        .collect()
+}
+
+/// Convert ff-sql lineage edges to classification edges for propagation.
+fn build_classification_edges(lineage: &ProjectLineage) -> Vec<ClassificationEdge> {
+    lineage
+        .edges
+        .iter()
+        .map(|edge| ClassificationEdge {
+            source_model: edge.source_model.clone(),
+            source_column: edge.source_column.clone(),
+            target_model: edge.target_model.clone(),
+            target_column: edge.target_column.clone(),
+            is_direct: edge.is_direct,
+        })
+        .collect()
+}
+
+/// Build effective classification entries for meta DB population.
+fn build_effective_entries(
+    effective: &HashMap<String, HashMap<String, String>>,
+    model_id_map: &HashMap<String, i64>,
+) -> Vec<ff_meta::populate::analysis::EffectiveClassification> {
+    let mut entries = Vec::new();
+    for (model, columns) in effective {
+        let Some(&model_id) = model_id_map.get(model) else {
+            continue;
+        };
+        for (column, classification) in columns {
+            entries.push(ff_meta::populate::analysis::EffectiveClassification {
+                model_id,
+                column_name: column.clone(),
+                effective_classification: classification.clone(),
+            });
+        }
+    }
+    entries
 }

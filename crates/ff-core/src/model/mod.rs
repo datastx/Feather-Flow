@@ -18,7 +18,7 @@ use crate::error::CoreError;
 use crate::model_name::ModelName;
 use crate::table_name::TableName;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 /// Represents a model in the project (SQL or Python)
@@ -105,6 +105,10 @@ pub struct ModelConfig {
     /// Whether this model uses Write-Audit-Publish pattern
     #[serde(default)]
     pub wap: Option<bool>,
+
+    /// Arbitrary key-value metadata from the config() function
+    #[serde(default)]
+    pub meta: HashMap<String, String>,
 }
 
 impl Model {

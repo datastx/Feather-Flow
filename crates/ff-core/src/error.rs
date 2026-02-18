@@ -180,6 +180,31 @@ pub enum CoreError {
     /// PY003: Python model output schema doesn't match declared columns
     #[error("[PY003] Python model '{model}' schema violation: {message}")]
     PythonSchemaViolation { model: String, message: String },
+
+    // ── Node-level errors (N001-N005) ────────────────────────────────
+    /// N001: Node directory is missing a YAML configuration file
+    #[error("[N001] Node directory '{directory}' is missing a required .yml configuration file")]
+    NodeMissingYaml { directory: String },
+
+    /// N002: Node YAML is missing the required `kind` field
+    #[error("[N002] Node '{directory}': YAML is missing the required `kind` field")]
+    NodeMissingKind { directory: String },
+
+    /// N003: Node kind is not yet supported (e.g., `kind: python`)
+    #[error("[N003] Node '{directory}': unsupported kind '{kind}'")]
+    NodeUnsupportedKind { directory: String, kind: String },
+
+    /// N004: Node directory is missing the expected data file for its kind
+    #[error("[N004] Node '{directory}' (kind: {kind}): missing expected .{extension} file")]
+    NodeMissingDataFile {
+        directory: String,
+        kind: String,
+        extension: String,
+    },
+
+    /// N005: Node directory name doesn't match the data file name
+    #[error("[N005] Node directory mismatch: directory '{directory}' contains file '{file}' (must match)")]
+    NodeDirectoryMismatch { directory: String, file: String },
 }
 
 /// Result type alias for CoreError

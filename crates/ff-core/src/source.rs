@@ -49,10 +49,13 @@ fn default_version() -> u32 {
     1
 }
 
-/// Enforces kind: sources
+/// Enforces kind: source (or legacy kind: sources)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum SourceKind {
+    /// Modern singular form
+    Source,
+    /// Legacy plural form (backward compatible)
     Sources,
 }
 
@@ -224,7 +227,7 @@ fn discover_sources_recursive(dir: &Path, sources: &mut Vec<SourceFile>) -> Core
                 Err(_) => continue,
             };
 
-            if !matches!(probe.kind, Some(SourceKind::Sources)) {
+            if !matches!(probe.kind, Some(SourceKind::Sources | SourceKind::Source)) {
                 continue;
             }
 

@@ -5,23 +5,50 @@ use crate::error::CoreError;
 use crate::model_name::ModelName;
 use serde::{Deserialize, Serialize};
 
-/// The kind of resource described by a model directory
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// The kind of resource described by a model directory.
+///
+/// Accepts both modern (`sql`) and legacy (`model`) names.
+/// Comparison via [`PartialEq`] treats `Sql` and `Model` as equivalent.
+#[derive(Debug, Clone, Copy, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelKind {
     /// A SQL model (default) — directory contains a `.sql` file
     #[default]
     Model,
+    /// Modern alias for [`ModelKind::Model`]
+    Sql,
     /// A CSV seed — directory contains a `.csv` file
     Seed,
     /// A Python model — directory contains a `.py` file, executed via `uv run`
     Python,
 }
 
+impl PartialEq for ModelKind {
+    fn eq(&self, other: &Self) -> bool {
+        self.normalize() == other.normalize()
+    }
+}
+
+impl ModelKind {
+    /// Collapse legacy `Model` to the canonical `Sql` form.
+    fn normalize(self) -> u8 {
+        match self {
+            ModelKind::Model | ModelKind::Sql => 0,
+            ModelKind::Seed => 1,
+            ModelKind::Python => 2,
+        }
+    }
+
+    /// Returns `true` if this is a SQL model kind (either `model` or `sql`).
+    pub fn is_sql(&self) -> bool {
+        matches!(self, ModelKind::Model | ModelKind::Sql)
+    }
+}
+
 impl std::fmt::Display for ModelKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ModelKind::Model => write!(f, "model"),
+            ModelKind::Model | ModelKind::Sql => write!(f, "sql"),
             ModelKind::Seed => write!(f, "seed"),
             ModelKind::Python => write!(f, "python"),
         }

@@ -33,8 +33,10 @@ pub(crate) struct CompiledModel {
     pub(crate) post_hook: Vec<String>,
     /// Model schema for contract validation (from .yml file)
     pub(crate) model_schema: Option<ModelSchema>,
-    /// Query comment to append when executing SQL
+    /// Query comment to attach when executing SQL
     pub(crate) query_comment: Option<String>,
+    /// Where to place the query comment (append or prepend)
+    pub(crate) comment_placement: ff_core::config::CommentPlacement,
     /// Whether this model uses Write-Audit-Publish pattern
     pub(crate) wap: bool,
     /// Whether this is a Python model (executed via `uv run`)
@@ -115,6 +117,7 @@ fn compile_all_models(
                     post_hook: Vec::new(),
                     model_schema,
                     query_comment: None,
+                    comment_placement: Default::default(),
                     wap: false,
                     is_python: true,
                     script_path: Some(model.path.clone()),
@@ -205,9 +208,22 @@ fn compile_all_models(
             .unwrap_or_else(|| model.wap_enabled());
 
         // Build query comment for this model
+        let comment_placement = comment_ctx
+            .map(|ctx| ctx.config.placement)
+            .unwrap_or_default();
         let query_comment = comment_ctx.map(|ctx| {
-            let metadata = ctx.build_metadata(name, &mat.to_string());
-            ff_core::query_comment::build_query_comment(&metadata)
+            let node_path = model
+                .path
+                .strip_prefix(&project.root)
+                .ok()
+                .map(|p| p.to_string_lossy().to_string());
+            let input = ff_core::query_comment::ModelCommentInput {
+                model_name: name,
+                materialization: &mat.to_string(),
+                node_path: node_path.as_deref(),
+                schema: schema.as_deref(),
+            };
+            ctx.build_comment(&input)
         });
 
         compiled_models.insert(
@@ -224,6 +240,7 @@ fn compile_all_models(
                 post_hook,
                 model_schema,
                 query_comment,
+                comment_placement,
                 wap,
                 is_python: false,
                 script_path: None,

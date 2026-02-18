@@ -243,9 +243,13 @@ pub(crate) async fn run_single_model(
         }
     }
 
-    // Append query comment to SQL for execution (compiled.sql stays clean for checksums)
+    // Attach query comment to SQL for execution (compiled.sql stays clean for checksums)
     let exec_sql = match &compiled.query_comment {
-        Some(comment) => ff_core::query_comment::append_query_comment(&compiled.sql, comment),
+        Some(comment) => ff_core::query_comment::attach_query_comment(
+            &compiled.sql,
+            comment,
+            compiled.comment_placement,
+        ),
         None => compiled.sql.clone(),
     };
 

@@ -664,6 +664,6 @@ columns:
 #[test]
 fn test_python_kind_display() {
     assert_eq!(ModelKind::Python.to_string(), "python");
-    assert_eq!(ModelKind::Model.to_string(), "model");
+    assert_eq!(ModelKind::Model.to_string(), "sql");
     assert_eq!(ModelKind::Seed.to_string(), "seed");
 }

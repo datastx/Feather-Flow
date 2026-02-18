@@ -101,6 +101,38 @@ pub fn populate_diagnostics(
     Ok(())
 }
 
+/// An effective classification to write to a model column.
+pub struct EffectiveClassification {
+    pub model_id: i64,
+    pub column_name: String,
+    pub effective_classification: String,
+}
+
+/// Update model_columns with effective (propagated) classifications.
+///
+/// For each entry, sets `effective_classification` on the matching row.
+/// This is the classification computed by propagating declared classifications
+/// through column-level lineage (copy/transform edges only).
+pub fn populate_effective_classifications(
+    conn: &Connection,
+    entries: &[EffectiveClassification],
+) -> MetaResult<()> {
+    for entry in entries {
+        conn.execute(
+            "UPDATE ff_meta.model_columns SET effective_classification = ? WHERE model_id = ? AND name = ?",
+            duckdb::params![
+                entry.effective_classification,
+                entry.model_id,
+                entry.column_name,
+            ],
+        )
+        .map_err(|e| {
+            MetaError::PopulationError(format!("update effective_classification: {e}"))
+        })?;
+    }
+    Ok(())
+}
+
 /// Insert schema mismatches (SA01/SA02) from validation.
 pub fn populate_schema_mismatches(
     conn: &Connection,
