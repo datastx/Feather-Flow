@@ -918,8 +918,7 @@ fn validate_documentation(project: &Project, models: &[String], ctx: &mut Valida
 
         if require_columns {
             for column in &schema.columns {
-                doc_issues +=
-                    check_column_description(column, name, &file_path, ctx);
+                doc_issues += check_column_description(column, name, &file_path, ctx);
             }
         }
     }

@@ -168,6 +168,19 @@ pub enum CoreError {
     #[error("[E019] Empty name: {context}")]
     EmptyName { context: String },
 
+    // Python model error types (PY001-PY003)
+    /// PY001: Python model execution failed
+    #[error("[PY001] Python model '{name}' failed: {message}")]
+    PythonExecutionError { name: String, message: String },
+
+    /// PY002: `uv` binary not found on PATH
+    #[error("[PY002] 'uv' is not installed or not on PATH. Python models require uv. Install it with: curl -LsSf https://astral.sh/uv/install.sh | sh")]
+    UvNotFound,
+
+    /// PY003: Python model output schema doesn't match declared columns
+    #[error("[PY003] Python model '{model}' schema violation: {message}")]
+    PythonSchemaViolation { model: String, message: String },
+
     // ── Node-level errors (N001-N005) ────────────────────────────────
     /// N001: Node directory is missing a YAML configuration file
     #[error("[N001] Node directory '{directory}' is missing a required .yml configuration file")]

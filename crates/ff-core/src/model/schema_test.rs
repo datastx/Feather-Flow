@@ -604,3 +604,66 @@ columns:
         Some("Use fct_orders_v2 instead".to_string())
     );
 }
+
+#[test]
+fn test_parse_python_model_schema() {
+    let yaml = r#"
+version: 1
+kind: python
+description: "Python model that enriches data"
+depends_on:
+  - stg_orders
+  - dim_customers
+columns:
+  - name: order_id
+    type: INTEGER
+  - name: score
+    type: DOUBLE
+python:
+  requires-python: ">=3.11"
+  dependencies:
+    - "pandas>=2.0"
+    - "scikit-learn>=1.3"
+"#;
+    let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
+    assert_eq!(schema.version, 1);
+    assert_eq!(schema.kind, ModelKind::Python);
+    assert_eq!(
+        schema.description,
+        Some("Python model that enriches data".to_string())
+    );
+    assert_eq!(schema.depends_on, vec!["stg_orders", "dim_customers"]);
+    assert_eq!(schema.columns.len(), 2);
+    assert_eq!(schema.columns[0].name, "order_id");
+    assert_eq!(schema.columns[1].name, "score");
+
+    let python_config = schema.python.as_ref().unwrap();
+    assert_eq!(python_config.requires_python, Some(">=3.11".to_string()));
+    assert_eq!(python_config.dependencies.len(), 2);
+    assert_eq!(python_config.dependencies[0], "pandas>=2.0");
+    assert_eq!(python_config.dependencies[1], "scikit-learn>=1.3");
+}
+
+#[test]
+fn test_parse_python_model_minimal() {
+    let yaml = r#"
+version: 1
+kind: python
+depends_on:
+  - source_table
+columns:
+  - name: id
+    type: INTEGER
+"#;
+    let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
+    assert_eq!(schema.kind, ModelKind::Python);
+    assert_eq!(schema.depends_on, vec!["source_table"]);
+    assert!(schema.python.is_none());
+}
+
+#[test]
+fn test_python_kind_display() {
+    assert_eq!(ModelKind::Python.to_string(), "python");
+    assert_eq!(ModelKind::Model.to_string(), "sql");
+    assert_eq!(ModelKind::Seed.to_string(), "seed");
+}

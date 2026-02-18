@@ -478,8 +478,10 @@ pub(crate) fn run_pre_execution_analysis(
         .topological_order()
         .context("Failed to get topological order")?;
 
+    // Exclude Python models from static analysis (no SQL to analyze)
     let sql_sources: HashMap<String, String> = compiled_models
         .iter()
+        .filter(|(_, model)| !model.is_python)
         .map(|(name, model)| (name.clone(), model.sql.clone()))
         .collect();
 

@@ -455,6 +455,179 @@ deprecation_message: "Use fct_orders_v2 instead"
     assert!(warnings[0].contains("Use fct_orders_v2 instead"));
 }
 
+#[test]
+fn test_discover_python_model() {
+    let dir = TempDir::new().unwrap();
+
+    std::fs::write(
+        dir.path().join("featherflow.yml"),
+        r#"
+name: test_project
+model_paths: ["models"]
+"#,
+    )
+    .unwrap();
+
+    // Create a SQL model that the Python model depends on
+    std::fs::create_dir_all(dir.path().join("models/stg_source")).unwrap();
+    std::fs::write(
+        dir.path().join("models/stg_source/stg_source.sql"),
+        "SELECT 1 AS id, 100.0 AS amount",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("models/stg_source/stg_source.yml"),
+        "version: 1\ncolumns:\n  - name: id\n    type: INTEGER\n",
+    )
+    .unwrap();
+
+    // Create a Python model
+    std::fs::create_dir_all(dir.path().join("models/py_enriched")).unwrap();
+    std::fs::write(
+        dir.path().join("models/py_enriched/py_enriched.py"),
+        "print('hello')",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("models/py_enriched/py_enriched.yml"),
+        r#"
+version: 1
+kind: python
+description: "Python enrichment model"
+depends_on:
+  - stg_source
+columns:
+  - name: id
+    type: INTEGER
+  - name: score
+    type: DOUBLE
+"#,
+    )
+    .unwrap();
+
+    let project = Project::load(dir.path()).unwrap();
+
+    // Both models should be discovered
+    assert_eq!(project.models.len(), 2);
+
+    // SQL model
+    let sql_model = project.get_model("stg_source").unwrap();
+    assert!(!sql_model.is_python());
+
+    // Python model
+    let py_model = project.get_model("py_enriched").unwrap();
+    assert!(py_model.is_python());
+    assert_eq!(py_model.kind, crate::model::schema::ModelKind::Python);
+    assert_eq!(py_model.depends_on.len(), 1);
+    assert!(py_model
+        .depends_on
+        .iter()
+        .any(|d| d.as_ref() == "stg_source"));
+
+    // Schema should have the columns
+    let schema = py_model.schema.as_ref().unwrap();
+    assert_eq!(schema.columns.len(), 2);
+    assert_eq!(schema.depends_on, vec!["stg_source"]);
+}
+
+#[test]
+fn test_python_file_without_python_kind_rejected() {
+    let dir = TempDir::new().unwrap();
+
+    std::fs::write(
+        dir.path().join("featherflow.yml"),
+        r#"
+name: test_project
+model_paths: ["models"]
+"#,
+    )
+    .unwrap();
+
+    // Create a .py file but YAML says kind: model (default)
+    std::fs::create_dir_all(dir.path().join("models/bad_model")).unwrap();
+    std::fs::write(
+        dir.path().join("models/bad_model/bad_model.py"),
+        "print('hello')",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("models/bad_model/bad_model.yml"),
+        "version: 1\ncolumns:\n  - name: id\n    type: INTEGER\n",
+    )
+    .unwrap();
+
+    let result = Project::load(dir.path());
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, CoreError::InvalidModelDirectory { ref reason, .. } if reason.contains("kind: python")),
+        "Expected error about kind: python, got: {:?}",
+        err
+    );
+}
+
+#[test]
+fn test_sql_file_with_python_kind_rejected() {
+    let dir = TempDir::new().unwrap();
+
+    std::fs::write(
+        dir.path().join("featherflow.yml"),
+        r#"
+name: test_project
+model_paths: ["models"]
+"#,
+    )
+    .unwrap();
+
+    // Create a .sql file but YAML says kind: python
+    std::fs::create_dir_all(dir.path().join("models/mismatch")).unwrap();
+    std::fs::write(
+        dir.path().join("models/mismatch/mismatch.sql"),
+        "SELECT 1 AS id",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("models/mismatch/mismatch.yml"),
+        "version: 1\nkind: python\ncolumns:\n  - name: id\n    type: INTEGER\n",
+    )
+    .unwrap();
+
+    let result = Project::load(dir.path());
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, CoreError::InvalidModelDirectory { ref reason, .. } if reason.contains("kind: python")),
+        "Expected error about kind: python mismatch, got: {:?}",
+        err
+    );
+}
+
+#[test]
+fn test_loose_py_file_at_model_root_rejected() {
+    let dir = TempDir::new().unwrap();
+
+    std::fs::write(
+        dir.path().join("featherflow.yml"),
+        r#"
+name: test_project
+model_paths: ["models"]
+"#,
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(dir.path().join("models")).unwrap();
+    std::fs::write(dir.path().join("models/loose.py"), "print('hello')").unwrap();
+
+    let result = Project::load(dir.path());
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, CoreError::InvalidModelDirectory { ref reason, .. } if reason.contains("loose .py")),
+        "Expected error about loose .py files, got: {:?}",
+        err
+    );
+}
+
 // ── Unified node_paths tests ─────────────────────────────────────
 
 fn setup_node_paths_project() -> TempDir {

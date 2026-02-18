@@ -1,6 +1,6 @@
 use super::*;
 use ff_core::config::Materialization;
-use ff_core::model::Model;
+use ff_core::model::{Model, ModelKind};
 use ff_core::model_name::ModelName;
 use std::collections::HashSet;
 
@@ -19,6 +19,7 @@ fn test_manifest_serialization() {
         schema: None,
         base_name: None,
         version: None,
+        kind: ModelKind::default(),
     };
 
     manifest.add_model(
@@ -50,6 +51,7 @@ fn test_reference_manifest_trait() {
         schema: None,
         base_name: None,
         version: None,
+        kind: ModelKind::default(),
     };
 
     manifest.add_model(

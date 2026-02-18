@@ -11,6 +11,7 @@ mod compile;
 mod execute;
 mod hooks;
 mod incremental;
+pub(crate) mod python;
 mod state;
 
 use anyhow::{Context, Result};
@@ -53,6 +54,10 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         let qualification_map = common::build_qualification_map(&project, &compiled_schemas);
 
         for (name, compiled) in &mut compiled_models {
+            // Skip SQL qualification for Python models (no SQL to qualify)
+            if compiled.is_python {
+                continue;
+            }
             match ff_sql::qualify_table_references(&compiled.sql, &qualification_map) {
                 Ok(qualified) => compiled.sql = qualified,
                 Err(e) => {
@@ -228,6 +233,10 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         None => (None, None),
     };
 
+    // Resolve database file path for Python model execution
+    let db_path_str = project.config.database.path.clone();
+    let db_path_ref = db_path_str.as_str();
+
     let exec_ctx = ExecutionContext {
         db: &db,
         compiled_models: &compiled_models,
@@ -237,6 +246,7 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         meta_db: meta_db.as_ref(),
         meta_run_id,
         meta_model_id_map,
+        db_path: Some(db_path_ref),
     };
 
     let (run_results, success_count, failure_count, stopped_early) =
