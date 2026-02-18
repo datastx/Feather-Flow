@@ -347,9 +347,15 @@ pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
                 })?;
             }
 
-            // Append query comment to written file, but keep in-memory SQL clean for checksums
+            // Attach query comment to written file, but keep in-memory SQL clean for checksums
+            let placement = comment_ctx
+                .as_ref()
+                .map(|c| c.config.placement)
+                .unwrap_or_default();
             let sql_to_write = match &compiled.query_comment {
-                Some(comment) => ff_core::query_comment::append_query_comment(&final_sql, comment),
+                Some(comment) => {
+                    ff_core::query_comment::attach_query_comment(&final_sql, comment, placement)
+                }
                 None => final_sql.clone(),
             };
             std::fs::write(&compiled.output_path, &sql_to_write).with_context(|| {
@@ -553,6 +559,19 @@ fn compile_model_phase1(
                 .map(|s| s == "true")
                 .unwrap_or_else(|| v.is_true())
         }),
+        meta: config_values
+            .get("meta")
+            .and_then(|v| {
+                v.try_iter().ok().map(|iter| {
+                    iter.filter_map(|key| {
+                        let key_str = key.as_str()?.to_string();
+                        let val = v.get_attr(&key_str).ok()?;
+                        Some((key_str, val.to_string()))
+                    })
+                    .collect()
+                })
+            })
+            .unwrap_or_default(),
     };
 
     let mat = model
@@ -562,8 +581,19 @@ fn compile_model_phase1(
     let output_path = compute_compiled_path(&model.path, ctx.project_root, ctx.output_dir)?;
 
     let query_comment = ctx.comment_ctx.map(|comment_ctx| {
-        let metadata = comment_ctx.build_metadata(name, &mat.to_string());
-        ff_core::query_comment::build_query_comment(&metadata)
+        let node_path = model
+            .path
+            .strip_prefix(ctx.project_root)
+            .ok()
+            .map(|p| p.to_string_lossy().to_string());
+        let schema = model.config.schema.as_deref();
+        let input = ff_core::query_comment::ModelCommentInput {
+            model_name: name,
+            materialization: &mat.to_string(),
+            node_path: node_path.as_deref(),
+            schema,
+        };
+        comment_ctx.build_comment(&input)
     });
 
     Ok(CompileOutput {
