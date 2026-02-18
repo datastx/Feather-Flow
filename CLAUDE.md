@@ -33,6 +33,50 @@ cargo run -p ff-cli -- <subcommand>
 - Tables in models/ become dependencies; external tables defined in config
 - Error handling: thiserror in libs, anyhow in CLI
 
+## Node Architecture
+All resource types are unified under a `NodeKind` system. Each node lives in its
+own directory with a required `.yml` configuration file. The `kind` field in the
+YAML determines the resource type:
+
+| kind       | companion file | description                     |
+|------------|----------------|---------------------------------|
+| `sql`      | `<name>.sql`   | SQL transformation model        |
+| `seed`     | `<name>.csv`   | CSV seed data                   |
+| `source`   | *(none)*       | External data source definition |
+| `function` | `<name>.sql`   | User-defined SQL function       |
+| `python`   | `<name>.py`    | Python transformation (planned) |
+
+### Unified node_paths layout (preferred)
+```yaml
+# featherflow.yml
+node_paths: ["nodes"]
+```
+```
+nodes/
+  stg_orders/
+    stg_orders.sql
+    stg_orders.yml       # kind: sql
+  raw_orders/
+    raw_orders.csv
+    raw_orders.yml       # kind: seed
+  raw_ecommerce/
+    raw_ecommerce.yml    # kind: source
+  cents_to_dollars/
+    cents_to_dollars.sql
+    cents_to_dollars.yml # kind: function
+```
+
+### Legacy per-type layout (still supported)
+```yaml
+# featherflow.yml
+model_paths: ["models"]
+source_paths: ["sources"]
+function_paths: ["functions"]
+```
+
+Legacy kind values (`model`, `sources`, `functions`) are normalised to their
+modern equivalents (`sql`, `source`, `function`) automatically.
+
 ## Testing
 - All tests: `make test`
 - Unit tests only: `make test-unit`

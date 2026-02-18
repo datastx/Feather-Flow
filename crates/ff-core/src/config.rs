@@ -18,7 +18,16 @@ pub struct Config {
     #[serde(default = "default_version")]
     pub version: String,
 
-    /// Directories containing model SQL files
+    /// Directories containing all node types (unified layout).
+    ///
+    /// When set, Featherflow discovers models, seeds, sources, and functions
+    /// from these directories based on the `kind` field in each node's YAML
+    /// configuration file.  Takes precedence over the legacy per-type path
+    /// fields (`model_paths`, `source_paths`, `function_paths`).
+    #[serde(default)]
+    pub node_paths: Vec<String>,
+
+    /// Directories containing model SQL files (legacy — prefer `node_paths`)
     #[serde(default = "default_model_paths")]
     pub model_paths: Vec<String>,
 
@@ -26,7 +35,7 @@ pub struct Config {
     #[serde(default = "default_macro_paths")]
     pub macro_paths: Vec<String>,
 
-    /// Directories containing source definitions
+    /// Directories containing source definitions (legacy — prefer `node_paths`)
     #[serde(default = "default_source_paths")]
     pub source_paths: Vec<String>,
 
@@ -34,7 +43,7 @@ pub struct Config {
     #[serde(default = "default_test_paths")]
     pub test_paths: Vec<String>,
 
-    /// Directories containing user-defined function definitions
+    /// Directories containing user-defined function definitions (legacy — prefer `node_paths`)
     #[serde(default = "default_function_paths")]
     pub function_paths: Vec<String>,
 
@@ -313,9 +322,11 @@ impl Config {
             });
         }
 
-        if self.model_paths.is_empty() {
+        // At least one of node_paths or model_paths must be specified
+        if self.node_paths.is_empty() && self.model_paths.is_empty() {
             return Err(CoreError::ConfigInvalid {
-                message: "At least one model path must be specified".to_string(),
+                message: "At least one node_paths or model_paths entry must be specified"
+                    .to_string(),
             });
         }
 
@@ -355,6 +366,16 @@ impl Config {
     /// Resolve relative path strings to absolute paths against a root directory
     fn paths_absolute(paths: &[String], root: &Path) -> Vec<PathBuf> {
         paths.iter().map(|p| root.join(p)).collect()
+    }
+
+    /// Returns `true` when the project uses the unified `node_paths` layout.
+    pub fn uses_node_paths(&self) -> bool {
+        !self.node_paths.is_empty()
+    }
+
+    /// Get absolute node paths relative to a project root
+    pub fn node_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
+        Self::paths_absolute(&self.node_paths, root)
     }
 
     /// Get absolute model paths relative to a project root

@@ -454,3 +454,226 @@ deprecation_message: "Use fct_orders_v2 instead"
     assert!(warnings[0].contains("deprecated"));
     assert!(warnings[0].contains("Use fct_orders_v2 instead"));
 }
+
+// ── Unified node_paths tests ─────────────────────────────────────
+
+fn setup_node_paths_project() -> TempDir {
+    let dir = TempDir::new().unwrap();
+
+    std::fs::write(
+        dir.path().join("featherflow.yml"),
+        r#"
+name: node_test
+node_paths: ["nodes"]
+"#,
+    )
+    .unwrap();
+
+    // SQL model node
+    std::fs::create_dir_all(dir.path().join("nodes/stg_orders")).unwrap();
+    std::fs::write(
+        dir.path().join("nodes/stg_orders/stg_orders.sql"),
+        "SELECT id AS order_id, amount FROM raw_orders",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("nodes/stg_orders/stg_orders.yml"),
+        r#"
+version: 1
+kind: sql
+description: "Staged orders"
+columns:
+  - name: order_id
+    type: INTEGER
+    tests:
+      - unique
+      - not_null
+"#,
+    )
+    .unwrap();
+
+    // Seed node
+    std::fs::create_dir_all(dir.path().join("nodes/raw_orders")).unwrap();
+    std::fs::write(
+        dir.path().join("nodes/raw_orders/raw_orders.csv"),
+        "id,amount\n1,100\n2,200\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("nodes/raw_orders/raw_orders.yml"),
+        "version: 1\nkind: seed\ndescription: \"Raw orders\"\n",
+    )
+    .unwrap();
+
+    // Source node
+    std::fs::create_dir_all(dir.path().join("nodes/raw_ecommerce")).unwrap();
+    std::fs::write(
+        dir.path().join("nodes/raw_ecommerce/raw_ecommerce.yml"),
+        r#"
+kind: source
+version: 1
+name: raw_ecommerce
+schema: main
+tables:
+  - name: raw_orders
+    columns:
+      - name: id
+        type: INTEGER
+"#,
+    )
+    .unwrap();
+
+    // Function node
+    std::fs::create_dir_all(dir.path().join("nodes/double_it")).unwrap();
+    std::fs::write(dir.path().join("nodes/double_it/double_it.sql"), "x * 2").unwrap();
+    std::fs::write(
+        dir.path().join("nodes/double_it/double_it.yml"),
+        r#"
+kind: function
+version: 1
+name: double_it
+function_type: scalar
+args:
+  - name: x
+    data_type: INTEGER
+returns:
+  data_type: INTEGER
+"#,
+    )
+    .unwrap();
+
+    dir
+}
+
+#[test]
+fn test_node_paths_discovers_all_kinds() {
+    let dir = setup_node_paths_project();
+    let project = Project::load(dir.path()).unwrap();
+
+    assert_eq!(project.config.name, "node_test");
+    assert_eq!(project.models.len(), 1, "should discover 1 SQL model");
+    assert!(project.models.contains_key("stg_orders"));
+    assert_eq!(project.seeds.len(), 1, "should discover 1 seed");
+    assert_eq!(project.seeds[0].name, "raw_orders");
+    assert_eq!(project.sources.len(), 1, "should discover 1 source");
+    assert_eq!(project.sources[0].name, "raw_ecommerce");
+    assert_eq!(project.functions.len(), 1, "should discover 1 function");
+    assert_eq!(project.functions[0].name.as_str(), "double_it");
+}
+
+#[test]
+fn test_node_paths_schema_tests_extracted() {
+    let dir = setup_node_paths_project();
+    let project = Project::load(dir.path()).unwrap();
+
+    // stg_orders has 2 tests: unique + not_null on order_id
+    assert_eq!(project.tests.len(), 2);
+    assert!(project.tests.iter().all(|t| t.model == "stg_orders"));
+}
+
+#[test]
+fn test_node_paths_missing_kind_fails() {
+    let dir = TempDir::new().unwrap();
+
+    std::fs::write(
+        dir.path().join("featherflow.yml"),
+        "name: test\nnode_paths: [\"nodes\"]\n",
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(dir.path().join("nodes/bad_node")).unwrap();
+    std::fs::write(
+        dir.path().join("nodes/bad_node/bad_node.yml"),
+        "version: 1\ndescription: no kind\n",
+    )
+    .unwrap();
+
+    let result = Project::load(dir.path());
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, CoreError::NodeMissingKind { ref directory } if directory == "bad_node"),
+        "Expected NodeMissingKind, got: {:?}",
+        err
+    );
+}
+
+#[test]
+fn test_node_paths_missing_yaml_fails() {
+    let dir = TempDir::new().unwrap();
+
+    std::fs::write(
+        dir.path().join("featherflow.yml"),
+        "name: test\nnode_paths: [\"nodes\"]\n",
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(dir.path().join("nodes/no_yaml")).unwrap();
+    std::fs::write(dir.path().join("nodes/no_yaml/no_yaml.sql"), "SELECT 1").unwrap();
+
+    let result = Project::load(dir.path());
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, CoreError::NodeMissingYaml { ref directory } if directory == "no_yaml"),
+        "Expected NodeMissingYaml, got: {:?}",
+        err
+    );
+}
+
+#[test]
+fn test_node_paths_legacy_kind_model_accepted() {
+    let dir = TempDir::new().unwrap();
+
+    std::fs::write(
+        dir.path().join("featherflow.yml"),
+        "name: test\nnode_paths: [\"nodes\"]\n",
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(dir.path().join("nodes/orders")).unwrap();
+    std::fs::write(dir.path().join("nodes/orders/orders.sql"), "SELECT 1 AS id").unwrap();
+    // Use legacy "kind: model" — should be accepted and normalized to sql
+    std::fs::write(
+        dir.path().join("nodes/orders/orders.yml"),
+        "version: 1\nkind: model\ncolumns:\n  - name: id\n    type: INTEGER\n",
+    )
+    .unwrap();
+
+    let project = Project::load(dir.path()).unwrap();
+    assert_eq!(project.models.len(), 1);
+    assert!(project.models.contains_key("orders"));
+}
+
+#[test]
+fn test_node_paths_source_with_no_data_file_works() {
+    let dir = TempDir::new().unwrap();
+
+    std::fs::write(
+        dir.path().join("featherflow.yml"),
+        "name: test\nnode_paths: [\"nodes\"]\n",
+    )
+    .unwrap();
+
+    // Source nodes don't need a companion data file — just the YAML
+    std::fs::create_dir_all(dir.path().join("nodes/my_source")).unwrap();
+    std::fs::write(
+        dir.path().join("nodes/my_source/my_source.yml"),
+        r#"
+kind: source
+version: 1
+name: my_source
+schema: public
+tables:
+  - name: events
+    columns:
+      - name: id
+        type: INTEGER
+"#,
+    )
+    .unwrap();
+
+    let project = Project::load(dir.path()).unwrap();
+    assert_eq!(project.sources.len(), 1);
+    assert_eq!(project.sources[0].name, "my_source");
+}
