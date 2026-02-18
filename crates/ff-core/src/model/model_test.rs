@@ -106,6 +106,7 @@ fn test_config_precedence_sql_wins() {
             pre_hook: vec![],
             post_hook: vec![],
             wap: None,
+            meta: HashMap::new(),
         },
         depends_on: HashSet::new(),
         external_deps: HashSet::new(),
@@ -207,6 +208,7 @@ fn test_model_config_with_hooks() {
             "GRANT SELECT ON {{ this }} TO analyst".to_string(),
         ],
         wap: None,
+        meta: HashMap::new(),
     };
     assert_eq!(config.pre_hook.len(), 1);
     assert_eq!(config.post_hook.len(), 2);

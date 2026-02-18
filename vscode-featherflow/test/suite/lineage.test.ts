@@ -10,6 +10,7 @@ import {
   buildUpstream,
   buildDownstream,
   buildLineageGraph,
+  buildColumnLineage,
 } from "../../src/providers/lineageViewProvider.js";
 import type { ProjectIndex } from "../../src/projectIndex.js";
 
@@ -257,5 +258,58 @@ describe("buildLineageGraph", () => {
     // Only external deps in upstream
     const upNames = graph.upstream.flatMap((c) => c.nodes.map((n) => n.name));
     expect(upNames).toEqual(["raw_orders"]);
+  });
+});
+
+describe("buildColumnLineage", () => {
+  const index = mockIndex(MODELS);
+
+  it("returns upstream models from model_deps and external_deps", () => {
+    const entry = MODELS.find((m) => m.name === "int_orders_enriched")!;
+    const data = buildColumnLineage(entry, index);
+
+    expect(data.modelName).toBe("int_orders_enriched");
+    expect(data.materialized).toBe("view");
+    expect(data.upstreamModels).toHaveLength(2);
+    expect(data.upstreamModels.map((u) => u.name).sort()).toEqual([
+      "stg_orders",
+      "stg_payments",
+    ]);
+    expect(data.upstreamModels.every((u) => u.type === "model")).toBe(true);
+  });
+
+  it("includes external deps in upstream models", () => {
+    const entry = MODELS.find((m) => m.name === "stg_orders")!;
+    const data = buildColumnLineage(entry, index);
+
+    expect(data.upstreamModels).toHaveLength(1);
+    expect(data.upstreamModels[0].name).toBe("raw_orders");
+    expect(data.upstreamModels[0].type).toBe("external");
+  });
+
+  it("returns empty columns when file path does not exist", () => {
+    const entry = MODELS.find((m) => m.name === "fct_orders")!;
+    const data = buildColumnLineage(entry, index);
+
+    // File paths in test fixtures don't exist, so columns should be empty
+    expect(data.columns).toHaveLength(0);
+  });
+
+  it("returns empty upstream for a model with no deps", () => {
+    const isolated: LsModelEntry[] = [
+      {
+        name: "standalone",
+        type: "model",
+        path: "/standalone.sql",
+        materialized: "table",
+        model_deps: [],
+        external_deps: [],
+      },
+    ];
+    const isoIndex = mockIndex(isolated);
+    const data = buildColumnLineage(isolated[0], isoIndex);
+
+    expect(data.upstreamModels).toHaveLength(0);
+    expect(data.columns).toHaveLength(0);
   });
 });
