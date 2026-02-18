@@ -15,7 +15,9 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum FunctionKind {
-    /// User-defined function definition
+    /// Modern singular form
+    Function,
+    /// Legacy plural form (backward compatible)
     Functions,
 }
 
@@ -442,7 +444,10 @@ fn discover_functions_recursive(dir: &Path, functions: &mut Vec<FunctionDef>) ->
                 Err(_) => continue, // Not valid YAML or unrelated file
             };
 
-            if !matches!(probe.kind, Some(FunctionKind::Functions)) {
+            if !matches!(
+                probe.kind,
+                Some(FunctionKind::Functions | FunctionKind::Function)
+            ) {
                 continue;
             }
 

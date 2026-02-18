@@ -1,0 +1,16 @@
+version: 1
+kind: sql
+
+description: "Staged customers"
+tags:
+  - staging
+
+columns:
+  - name: customer_id
+    type: INTEGER
+    tests:
+      - unique
+      - not_null
+
+  - name: name
+    type: VARCHAR
