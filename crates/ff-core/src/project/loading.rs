@@ -39,7 +39,6 @@ impl Project {
 
         let config = Config::load_from_dir(&root)?;
 
-        // Emit deprecation warning if external_tables is used
         if !config.external_tables.is_empty() {
             log::warn!("'external_tables' is deprecated. Use source files (kind: source) instead.");
         }
@@ -156,7 +155,6 @@ impl Project {
             })?;
             let path = entry.path();
 
-            // Only directories are allowed at the node root
             if !path.is_dir() {
                 let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
                 if matches!(ext, "sql" | "csv" | "yml" | "yaml" | "py") {
@@ -180,7 +178,6 @@ impl Project {
                 }
             };
 
-            // Find the YAML config file
             let yml_path = path.join(format!("{}.yml", dir_name));
             let yaml_path = path.join(format!("{}.yaml", dir_name));
 
@@ -194,7 +191,6 @@ impl Project {
                 });
             };
 
-            // Probe the kind field
             let content =
                 std::fs::read_to_string(&config_path).map_err(|e| CoreError::IoWithPath {
                     path: config_path.display().to_string(),
@@ -424,7 +420,6 @@ impl Project {
                 Python(&'a std::path::PathBuf),
             }
 
-            // Determine resource type based on files present (exactly one data file required)
             let resource = match (sql_files.len(), csv_files.len(), py_files.len()) {
                 (1, 0, 0) => ResourceType::Sql(sql_files[0]),
                 (0, 1, 0) => ResourceType::Csv(csv_files[0]),
@@ -482,7 +477,6 @@ impl Project {
                 });
             }
 
-            // Check for extra files (only .sql/.csv/.py + .yml/.yaml are allowed)
             let extra_files: Vec<String> = all_visible_files
                 .iter()
                 .filter(|p| {
@@ -506,112 +500,115 @@ impl Project {
 
             match resource {
                 ResourceType::Csv(_) => {
-                    // Load YAML to confirm kind: seed and build Seed from it
-                    let yml_path = data_path.with_extension("yml");
-                    let yaml_path = data_path.with_extension("yaml");
-
-                    let schema = if yml_path.exists() {
-                        ModelSchema::load(&yml_path)?
-                    } else if yaml_path.exists() {
-                        ModelSchema::load(&yaml_path)?
-                    } else {
-                        return Err(CoreError::MissingSchemaFile {
-                            model: dir_name,
-                            expected_path: yml_path.display().to_string(),
-                        });
-                    };
-
-                    if schema.kind != ModelKind::Seed {
-                        return Err(CoreError::InvalidModelDirectory {
-                            path: path.display().to_string(),
-                            reason: format!(
-                                "directory contains a .csv file but YAML declares kind: {} (expected kind: seed)",
-                                schema.kind
-                            ),
-                        });
-                    }
-
-                    let seed = Seed::from_schema(data_path.to_path_buf(), &schema)?;
+                    let seed = Self::load_seed_resource(data_path, &dir_name, &path)?;
                     seeds.push(seed);
                 }
                 ResourceType::Python(_) => {
-                    // Load YAML and confirm kind: python
-                    let yml_path = data_path.with_extension("yml");
-                    let yaml_path = data_path.with_extension("yaml");
-
-                    let schema = if yml_path.exists() {
-                        ModelSchema::load(&yml_path)?
-                    } else if yaml_path.exists() {
-                        ModelSchema::load(&yaml_path)?
-                    } else {
-                        return Err(CoreError::MissingSchemaFile {
-                            model: dir_name,
-                            expected_path: yml_path.display().to_string(),
-                        });
-                    };
-
-                    if schema.kind != ModelKind::Python {
-                        return Err(CoreError::InvalidModelDirectory {
-                            path: path.display().to_string(),
-                            reason: format!(
-                                "directory contains a .py file but YAML declares kind: {} (expected kind: python)",
-                                schema.kind
-                            ),
-                        });
-                    }
-
-                    let model = Model::from_python_file(data_path.to_path_buf(), schema)?;
-
-                    if models.contains_key(model.name.as_str()) {
-                        return Err(CoreError::DuplicateModel {
-                            name: model.name.to_string(),
-                        });
-                    }
-
-                    models.insert(model.name.clone(), model);
+                    let model = Self::load_python_resource(data_path, &dir_name, &path)?;
+                    Self::insert_model(models, model)?;
                 }
                 ResourceType::Sql(_) => {
-                    // Peek at YAML to ensure kind is not seed/python for a SQL directory
-                    let yml_path = data_path.with_extension("yml");
-                    let yaml_path = data_path.with_extension("yaml");
-
-                    let schema_path = if yml_path.exists() {
-                        Some(&yml_path)
-                    } else if yaml_path.exists() {
-                        Some(&yaml_path)
-                    } else {
-                        None
-                    };
-
-                    if let Some(sp) = schema_path {
-                        let schema = ModelSchema::load(sp)?;
-                        if schema.kind == ModelKind::Seed {
-                            return Err(CoreError::InvalidModelDirectory {
-                                path: path.display().to_string(),
-                                reason: "directory contains a .sql file but YAML declares kind: seed (expected kind: model or no kind field)".to_string(),
-                            });
-                        }
-                        if schema.kind == ModelKind::Python {
-                            return Err(CoreError::InvalidModelDirectory {
-                                path: path.display().to_string(),
-                                reason: "directory contains a .sql file but YAML declares kind: python (expected kind: model or no kind field)".to_string(),
-                            });
-                        }
-                    }
-
-                    let model = Model::from_file(data_path.clone())?;
-
-                    if models.contains_key(model.name.as_str()) {
-                        return Err(CoreError::DuplicateModel {
-                            name: model.name.to_string(),
-                        });
-                    }
-
-                    models.insert(model.name.clone(), model);
+                    let model = Self::load_sql_resource(data_path, &path)?;
+                    Self::insert_model(models, model)?;
                 }
             }
         }
 
+        Ok(())
+    }
+
+    // ── Resource loaders for discover_models_flat ────────────────────
+
+    fn load_required_schema(data_path: &Path, dir_name: &str) -> CoreResult<ModelSchema> {
+        let yml_path = data_path.with_extension("yml");
+        let yaml_path = data_path.with_extension("yaml");
+
+        if yml_path.exists() {
+            return ModelSchema::load(&yml_path);
+        }
+        if yaml_path.exists() {
+            return ModelSchema::load(&yaml_path);
+        }
+        Err(CoreError::MissingSchemaFile {
+            model: dir_name.to_string(),
+            expected_path: yml_path.display().to_string(),
+        })
+    }
+
+    fn load_seed_resource(data_path: &Path, dir_name: &str, dir_path: &Path) -> CoreResult<Seed> {
+        let schema = Self::load_required_schema(data_path, dir_name)?;
+
+        if schema.kind != ModelKind::Seed {
+            return Err(CoreError::InvalidModelDirectory {
+                path: dir_path.display().to_string(),
+                reason: format!(
+                    "directory contains a .csv file but YAML declares kind: {} (expected kind: seed)",
+                    schema.kind
+                ),
+            });
+        }
+
+        Seed::from_schema(data_path.to_path_buf(), &schema)
+    }
+
+    fn load_python_resource(
+        data_path: &Path,
+        dir_name: &str,
+        dir_path: &Path,
+    ) -> CoreResult<Model> {
+        let schema = Self::load_required_schema(data_path, dir_name)?;
+
+        if schema.kind != ModelKind::Python {
+            return Err(CoreError::InvalidModelDirectory {
+                path: dir_path.display().to_string(),
+                reason: format!(
+                    "directory contains a .py file but YAML declares kind: {} (expected kind: python)",
+                    schema.kind
+                ),
+            });
+        }
+
+        Model::from_python_file(data_path.to_path_buf(), schema)
+    }
+
+    fn load_sql_resource(data_path: &Path, dir_path: &Path) -> CoreResult<Model> {
+        let yml_path = data_path.with_extension("yml");
+        let yaml_path = data_path.with_extension("yaml");
+
+        let schema_path = if yml_path.exists() {
+            Some(yml_path)
+        } else if yaml_path.exists() {
+            Some(yaml_path)
+        } else {
+            None
+        };
+
+        if let Some(sp) = schema_path {
+            let schema = ModelSchema::load(&sp)?;
+            if schema.kind == ModelKind::Seed {
+                return Err(CoreError::InvalidModelDirectory {
+                    path: dir_path.display().to_string(),
+                    reason: "directory contains a .sql file but YAML declares kind: seed (expected kind: model or no kind field)".to_string(),
+                });
+            }
+            if schema.kind == ModelKind::Python {
+                return Err(CoreError::InvalidModelDirectory {
+                    path: dir_path.display().to_string(),
+                    reason: "directory contains a .sql file but YAML declares kind: python (expected kind: model or no kind field)".to_string(),
+                });
+            }
+        }
+
+        Model::from_file(data_path.to_path_buf())
+    }
+
+    fn insert_model(models: &mut HashMap<ModelName, Model>, model: Model) -> CoreResult<()> {
+        if models.contains_key(model.name.as_str()) {
+            return Err(CoreError::DuplicateModel {
+                name: model.name.to_string(),
+            });
+        }
+        models.insert(model.name.clone(), model);
         Ok(())
     }
 
