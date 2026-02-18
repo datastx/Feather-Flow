@@ -45,12 +45,16 @@ fn open_file_creates_database() {
 fn open_is_idempotent() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("meta.duckdb");
-    let _db1 = MetaDb::open(&path).unwrap();
+    {
+        let _db1 = MetaDb::open(&path).unwrap();
+        // drop db1 so the file is not held open
+    }
     let db2 = MetaDb::open(&path).unwrap();
+    let migration_count = crate::ddl::MIGRATIONS.len() as i64;
     assert_eq!(
         count(&db2, "SELECT COUNT(*) FROM ff_meta.schema_version"),
-        1,
-        "schema_version should have exactly 1 row (one migration)"
+        migration_count,
+        "schema_version should have one row per migration"
     );
 }
 
@@ -65,7 +69,8 @@ fn schema_version_recorded() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 1);
+    let expected = crate::ddl::MIGRATIONS.last().unwrap().version;
+    assert_eq!(version, expected);
 }
 
 // ── All expected tables exist ──────────────────────────────────────────
