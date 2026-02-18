@@ -1,13 +1,13 @@
 //! Integration tests for Featherflow
 
 use ff_core::dag::ModelDag;
-use ff_core::manifest::Manifest;
 use ff_core::model::TestDefinition;
 use ff_core::run_state::{RunState, RunStatus};
 use ff_core::ModelName;
 use ff_core::Project;
 use ff_db::{DatabaseCore, DatabaseCsv, DatabaseIncremental, DatabaseSchema, DuckDbBackend};
 use ff_jinja::JinjaEnvironment;
+use ff_meta::manifest::Manifest;
 use ff_sql::{extract_dependencies, SqlParser};
 use ff_test::{generator::GeneratedTest, TestRunner};
 use std::collections::HashMap;
@@ -875,42 +875,6 @@ async fn test_incremental_full_refresh() {
     assert_eq!(new_value, Some("200".to_string()));
 }
 
-/// Test state file serialization
-#[test]
-fn test_state_file_serialization() {
-    use ff_core::config::Materialization;
-    use ff_core::state::{ModelState, ModelStateConfig, StateFile};
-
-    let mut state = StateFile::new();
-
-    let config = ModelStateConfig::new(
-        Materialization::Table,
-        Some("staging".to_string()),
-        None,
-        None,
-        None,
-    );
-    let model_state = ModelState::new(
-        ff_core::ModelName::new("my_model"),
-        "SELECT 1",
-        Some(100),
-        config,
-    );
-
-    state.upsert_model(model_state);
-
-    // Serialize and deserialize
-    let json = serde_json::to_string_pretty(&state).unwrap();
-    let loaded: StateFile = serde_json::from_str(&json).unwrap();
-
-    assert_eq!(loaded.models.len(), 1);
-    assert!(loaded.models.contains_key("my_model"));
-
-    let loaded_model = loaded.models.get("my_model").unwrap();
-    assert_eq!(loaded_model.row_count, Some(100));
-    assert_eq!(loaded_model.config.schema, Some("staging".to_string()));
-}
-
 /// Test parallel execution with independent models
 #[tokio::test]
 async fn test_parallel_execution_independent() {
@@ -1411,7 +1375,7 @@ fn test_run_state_models_to_run() {
 #[test]
 fn test_load_deferred_manifest() {
     use ff_core::config::Materialization;
-    use ff_core::manifest::{Manifest, ManifestModel};
+    use ff_meta::manifest::{Manifest, ManifestModel};
     let dir = tempdir().unwrap();
     let manifest_path = dir.path().join("manifest.json");
 
@@ -1466,7 +1430,7 @@ fn test_defer_manifest_not_found() {
 #[test]
 fn test_defer_dependency_resolution() {
     use ff_core::config::Materialization;
-    use ff_core::manifest::{Manifest, ManifestModel};
+    use ff_meta::manifest::{Manifest, ManifestModel};
 
     // Create a deferred manifest with stg_customers and stg_orders
     let mut deferred = Manifest::new("prod_project");
@@ -1538,7 +1502,7 @@ fn test_defer_dependency_resolution() {
 #[test]
 fn test_defer_missing_upstream_detection() {
     use ff_core::config::Materialization;
-    use ff_core::manifest::{Manifest, ManifestModel};
+    use ff_meta::manifest::{Manifest, ManifestModel};
 
     // Create a deferred manifest with only stg_customers (missing stg_orders)
     let mut deferred = Manifest::new("prod_project");
@@ -1580,7 +1544,7 @@ fn test_defer_missing_upstream_detection() {
 #[test]
 fn test_defer_transitive_dependencies() {
     use ff_core::config::Materialization;
-    use ff_core::manifest::{Manifest, ManifestModel};
+    use ff_meta::manifest::{Manifest, ManifestModel};
 
     // Create a manifest with a chain: dim_products -> stg_products -> raw_products
     let mut manifest = Manifest::new("prod");
@@ -1641,7 +1605,7 @@ fn test_defer_transitive_dependencies() {
 #[test]
 fn test_defer_slim_ci_scenario() {
     use ff_core::config::Materialization;
-    use ff_core::manifest::{Manifest, ManifestModel};
+    use ff_meta::manifest::{Manifest, ManifestModel};
 
     // Production manifest has a full DAG
     let mut prod_manifest = Manifest::new("production");

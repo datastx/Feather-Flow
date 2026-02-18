@@ -84,6 +84,12 @@ pub enum Commands {
 
     /// Run seeds, models, and tests in a single invocation
     Build(BuildArgs),
+
+    /// Run SQL rules against the meta database
+    Rules(RulesArgs),
+
+    /// Query and export the meta database
+    Meta(MetaArgs),
 }
 
 /// Arguments for the parse command
@@ -626,6 +632,54 @@ pub enum AnalyzeSeverity {
     Warning,
     /// Show errors only
     Error,
+}
+
+/// Arguments for the rules command
+#[derive(Args, Debug)]
+pub struct RulesArgs {
+    /// List discovered rules without executing them
+    #[arg(long)]
+    pub list: bool,
+}
+
+/// Arguments for the meta command
+#[derive(Args, Debug)]
+pub struct MetaArgs {
+    /// Meta subcommand
+    #[command(subcommand)]
+    pub command: MetaCommands,
+}
+
+/// Meta subcommands
+#[derive(Subcommand, Debug)]
+pub enum MetaCommands {
+    /// Run a SQL query against the meta database
+    Query(MetaQueryArgs),
+
+    /// Export the entire meta database as JSON
+    Export(MetaExportArgs),
+
+    /// List all meta database tables with row counts
+    Tables,
+}
+
+/// Arguments for the meta query subcommand
+#[derive(Args, Debug)]
+pub struct MetaQueryArgs {
+    /// SQL query to execute against the meta database
+    pub sql: String,
+
+    /// Output as JSON instead of table format
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// Arguments for the meta export subcommand
+#[derive(Args, Debug)]
+pub struct MetaExportArgs {
+    /// Write export to a file instead of stdout
+    #[arg(short, long)]
+    pub output: Option<String>,
 }
 
 #[cfg(test)]

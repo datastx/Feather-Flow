@@ -3,7 +3,6 @@
 use ff_core::config::Materialization;
 use ff_core::run_state::RunState;
 use ff_core::sql_utils::quote_qualified;
-use ff_core::state::StateFile;
 use ff_db::Database;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::{HashMap, HashSet};
@@ -20,7 +19,7 @@ use crate::commands::common::RunStatus;
 use super::compile::CompiledModel;
 use super::hooks::{execute_hooks, validate_model_contract};
 use super::incremental::{execute_incremental, execute_wap, WapParams};
-use super::state::{update_state_for_model, ModelRunResult};
+use super::state::{compute_input_checksums, compute_schema_checksum, ModelRunResult};
 
 /// Create an optional progress bar for model execution.
 fn create_progress_bar(count: usize, quiet: bool, output: &OutputFormat) -> Option<ProgressBar> {
@@ -69,6 +68,84 @@ fn format_model_status(result: &ModelRunResult) -> String {
     }
 }
 
+/// Record a model's execution result to the meta database (non-fatal).
+///
+/// Writes to `model_run_state`, `model_run_input_checksums`, and `model_run_config`
+/// tables. Errors are logged as warnings and do not affect execution.
+fn record_execution_to_meta(
+    ctx: &ExecutionContext<'_>,
+    name: &str,
+    compiled: &CompiledModel,
+    row_count: Option<usize>,
+    result: &ModelRunResult,
+) {
+    let (Some(meta_db), Some(run_id), Some(model_id_map)) =
+        (ctx.meta_db, ctx.meta_run_id, ctx.meta_model_id_map)
+    else {
+        return;
+    };
+    let Some(&model_id) = model_id_map.get(name) else {
+        return;
+    };
+
+    let sql_checksum = ff_core::compute_checksum(&compiled.sql);
+    let schema_checksum = compute_schema_checksum(name, ctx.compiled_models);
+    let input_checksums = compute_input_checksums(name, ctx.compiled_models);
+
+    let record = ff_meta::populate::execution::ModelRunRecord {
+        model_id,
+        run_id,
+        status: result.status.to_string(),
+        row_count: row_count.map(|c| c as i64),
+        sql_checksum: Some(sql_checksum),
+        schema_checksum,
+        duration_ms: Some((result.duration_secs * 1000.0) as i64),
+    };
+
+    let meta_input_checksums: Vec<ff_meta::populate::execution::InputChecksum> = input_checksums
+        .iter()
+        .filter_map(|(dep_name, checksum)| {
+            model_id_map.get(dep_name.as_str()).map(|&upstream_id| {
+                ff_meta::populate::execution::InputChecksum {
+                    upstream_model_id: upstream_id,
+                    checksum: checksum.clone(),
+                }
+            })
+        })
+        .collect();
+
+    let config = ff_meta::populate::execution::ConfigSnapshot {
+        materialization: compiled.materialization.to_string(),
+        schema_name: compiled.schema.clone(),
+        unique_key: compiled.unique_key.as_ref().map(|v| v.join(",")),
+        incremental_strategy: compiled.incremental_strategy.map(|s| s.to_string()),
+        on_schema_change: compiled.on_schema_change.map(|s| match s {
+            ff_core::config::OnSchemaChange::Ignore => "ignore".to_string(),
+            ff_core::config::OnSchemaChange::Fail => "fail".to_string(),
+            ff_core::config::OnSchemaChange::AppendNewColumns => "append_new_columns".to_string(),
+        }),
+    };
+
+    if let Err(e) = meta_db.transaction(|conn| {
+        ff_meta::populate::execution::record_model_run(conn, &record)?;
+        if !meta_input_checksums.is_empty() {
+            ff_meta::populate::execution::record_input_checksums(
+                conn,
+                model_id,
+                run_id,
+                &meta_input_checksums,
+            )?;
+        }
+        ff_meta::populate::execution::record_config_snapshot(conn, model_id, run_id, &config)?;
+        Ok(())
+    }) {
+        eprintln!(
+            "[warn] Failed to record execution state for '{}' in meta database: {}",
+            name, e
+        );
+    }
+}
+
 /// Acquire a mutex lock, recovering from a poisoned state if necessary.
 ///
 /// If a previous thread panicked while holding the lock the mutex becomes
@@ -93,6 +170,12 @@ pub(super) struct ExecutionContext<'a> {
     pub(super) args: &'a RunArgs,
     /// Optional WAP staging schema name
     pub(super) wap_schema: Option<&'a str>,
+    /// Meta database handle (None if meta DB unavailable)
+    pub(super) meta_db: Option<&'a ff_meta::MetaDb>,
+    /// Meta database run ID for this execution
+    pub(super) meta_run_id: Option<i64>,
+    /// Map of model name -> meta database model_id
+    pub(super) meta_model_id_map: Option<&'a HashMap<String, i64>>,
 }
 
 impl std::fmt::Debug for ExecutionContext<'_> {
@@ -252,26 +335,21 @@ pub(crate) async fn run_single_model(
 }
 
 /// Execute all models in order with optional parallelism
-async fn execute_models(
-    ctx: &ExecutionContext<'_>,
-    state_file: &mut StateFile,
-) -> (Vec<ModelRunResult>, usize, usize, bool) {
+async fn execute_models(ctx: &ExecutionContext<'_>) -> (Vec<ModelRunResult>, usize, usize, bool) {
     if ctx.args.threads <= 1 {
-        return execute_models_sequential(ctx, state_file).await;
+        return execute_models_sequential(ctx).await;
     }
 
-    execute_models_parallel(ctx, state_file).await
+    execute_models_parallel(ctx).await
 }
 
 /// Execute all models in order with run state tracking for resume capability
 pub(super) async fn execute_models_with_state(
     ctx: &ExecutionContext<'_>,
-    state_file: &mut StateFile,
     run_state: &mut RunState,
     run_state_path: &Path,
 ) -> anyhow::Result<(Vec<ModelRunResult>, usize, usize, bool)> {
-    let (run_results, success_count, failure_count, stopped_early) =
-        execute_models(ctx, state_file).await;
+    let (run_results, success_count, failure_count, stopped_early) = execute_models(ctx).await;
 
     for result in &run_results {
         let duration_ms = (result.duration_secs * 1000.0) as u64;
@@ -332,7 +410,6 @@ fn get_transitive_dependents(
 /// Execute models sequentially (original behavior for --threads=1)
 async fn execute_models_sequential(
     ctx: &ExecutionContext<'_>,
-    state_file: &mut StateFile,
 ) -> (Vec<ModelRunResult>, usize, usize, bool) {
     let mut success_count = 0;
     let mut failure_count = 0;
@@ -456,11 +533,7 @@ async fn execute_models_sequential(
                 }
             };
 
-            if let Err(e) =
-                update_state_for_model(state_file, name, compiled, ctx.compiled_models, row_count)
-            {
-                eprintln!("[warn] Failed to update state for '{}': {}", name, e);
-            }
+            record_execution_to_meta(ctx, name, compiled, row_count, &model_result);
 
             run_results.push(model_result);
         }
@@ -534,7 +607,6 @@ async fn execute_model_task(
 /// Execute models in parallel using DAG-aware scheduling
 async fn execute_models_parallel(
     ctx: &ExecutionContext<'_>,
-    state_file: &mut StateFile,
 ) -> (Vec<ModelRunResult>, usize, usize, bool) {
     let success_count = Arc::new(AtomicUsize::new(0));
     let failure_count = Arc::new(AtomicUsize::new(0));
@@ -669,18 +741,7 @@ async fn execute_models_parallel(
                 None
             }
         };
-        if let Err(e) = update_state_for_model(
-            state_file,
-            &result.model,
-            compiled,
-            ctx.compiled_models,
-            row_count,
-        ) {
-            eprintln!(
-                "[warn] Failed to update state for '{}': {}",
-                result.model, e
-            );
-        }
+        record_execution_to_meta(ctx, &result.model, compiled, row_count, result);
     }
 
     (final_results, final_success, final_failure, final_stopped)

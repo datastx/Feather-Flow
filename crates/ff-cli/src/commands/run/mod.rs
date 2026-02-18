@@ -17,7 +17,6 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use ff_core::config::Materialization;
 use ff_core::run_state::RunState;
-use ff_core::state::StateFile;
 use ff_core::ModelName;
 use std::collections::HashSet;
 use std::path::Path;
@@ -73,9 +72,12 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         json_mode,
     )?;
 
-    // Smart build: filter out unchanged models
+    // Open meta database early (needed for smart build and execution state)
+    let meta_db = common::open_meta_db(&project);
+
+    // Smart build: filter out unchanged models (queries previous execution state)
     let smart_skipped: HashSet<String> = if args.smart {
-        compute_smart_skips(&project, &compiled_models, global)?
+        compute_smart_skips(&compiled_models, global, meta_db.as_ref())?
     } else {
         HashSet::new()
     };
@@ -202,9 +204,6 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         .await?;
     }
 
-    let state_path = project.target_dir().join("state.json");
-    let mut state_file = StateFile::load(&state_path).unwrap_or_default();
-
     let selection_str = args.nodes.clone();
     let mut run_state = RunState::new(
         execution_order
@@ -220,17 +219,28 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         eprintln!("Warning: Failed to save initial run state: {}", e);
     }
 
+    // Populate meta database before execution to capture model_id_map (non-fatal)
+    let meta_ids = meta_db
+        .as_ref()
+        .and_then(|db| common::populate_meta_phase1(db, &project, "run", args.nodes.as_deref()));
+    let (meta_run_id, meta_model_id_map) = match &meta_ids {
+        Some((_project_id, run_id, model_id_map)) => (Some(*run_id), Some(model_id_map)),
+        None => (None, None),
+    };
+
     let exec_ctx = ExecutionContext {
         db: &db,
         compiled_models: &compiled_models,
         execution_order: &execution_order,
         args,
         wap_schema,
+        meta_db: meta_db.as_ref(),
+        meta_run_id,
+        meta_model_id_map,
     };
 
     let (run_results, success_count, failure_count, stopped_early) =
-        execute_models_with_state(&exec_ctx, &mut state_file, &mut run_state, &run_state_path)
-            .await?;
+        execute_models_with_state(&exec_ctx, &mut run_state, &run_state_path).await?;
 
     // Mark run as completed
     run_state.mark_run_completed();
@@ -238,9 +248,14 @@ pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         eprintln!("Warning: Failed to save final run state: {}", e);
     }
 
-    // Save updated incremental state
-    if let Err(e) = state_file.save(&state_path) {
-        eprintln!("Warning: Failed to save state file: {}", e);
+    // Complete meta database run (non-fatal)
+    if let (Some(ref meta_db), Some(run_id)) = (&meta_db, meta_run_id) {
+        let status = if failure_count > 0 {
+            "error"
+        } else {
+            "success"
+        };
+        common::complete_meta_run(meta_db, run_id, status);
     }
 
     if !stopped_early {

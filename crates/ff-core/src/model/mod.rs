@@ -283,7 +283,7 @@ impl Model {
 
     /// Compute a SHA-256 checksum of the raw SQL content.
     pub fn sql_checksum(&self) -> String {
-        crate::state::compute_checksum(&self.raw_sql)
+        crate::compute_checksum(&self.raw_sql)
     }
 
     /// Get the owner for this model from schema metadata
