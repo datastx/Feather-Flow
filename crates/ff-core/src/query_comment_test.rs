@@ -1,26 +1,97 @@
 use super::*;
+use crate::config::{CommentInclude, CommentPlacement, CommentStyle, QueryCommentConfig};
+use std::collections::HashMap;
+
+fn default_config() -> QueryCommentConfig {
+    QueryCommentConfig::default()
+}
+
+fn make_input<'a>(
+    name: &'a str,
+    mat: &'a str,
+    path: Option<&'a str>,
+    schema: Option<&'a str>,
+) -> ModelCommentInput<'a> {
+    ModelCommentInput {
+        model_name: name,
+        materialization: mat,
+        node_path: path,
+        schema,
+    }
+}
 
 #[test]
-fn test_build_query_comment() {
-    let ctx = QueryCommentContext::new("my_project", Some("dev"));
-    let metadata = ctx.build_metadata("stg_orders", "table");
-    let comment = build_query_comment(&metadata);
-    assert!(comment.starts_with("\n/* ff_metadata:"));
+fn test_build_comment_compact_default() {
+    let ctx = QueryCommentContext::new("my_project", Some("dev"), default_config());
+    let input = make_input("stg_orders", "table", Some("models/stg_orders.sql"), None);
+    let comment = ctx.build_comment(&input);
+    assert!(comment.starts_with("/* ff_metadata:"));
     assert!(comment.ends_with("*/"));
     assert!(comment.contains("stg_orders"));
     assert!(comment.contains("my_project"));
     assert!(comment.contains("\"materialization\":\"table\""));
     assert!(comment.contains("\"target\":\"dev\""));
+    assert!(comment.contains("\"node_path\":\"models/stg_orders.sql\""));
 }
 
 #[test]
-fn test_append_and_strip() {
+fn test_build_comment_pretty_style() {
+    let config = QueryCommentConfig {
+        style: CommentStyle::Pretty,
+        ..default_config()
+    };
+    let ctx = QueryCommentContext::new("my_project", None, config);
+    let input = make_input("dim_users", "view", None, None);
+    let comment = ctx.build_comment(&input);
+    assert!(comment.starts_with("/*\nff_metadata:\n"));
+    assert!(comment.ends_with("\n*/"));
+    assert!(comment.contains("\"model\": \"dim_users\""));
+}
+
+#[test]
+fn test_attach_append_placement() {
     let sql = "SELECT * FROM orders";
-    let comment = "\n/* ff_metadata: {\"model\":\"test\"} */";
-    let with_comment = append_query_comment(sql, comment);
-    assert!(with_comment.contains("ff_metadata"));
-    let stripped = strip_query_comment(&with_comment);
-    assert_eq!(stripped, sql);
+    let comment = "/* ff_metadata: {} */";
+    let result = attach_query_comment(sql, comment, CommentPlacement::Append);
+    assert!(result.starts_with("SELECT * FROM orders\n"));
+    assert!(result.ends_with("/* ff_metadata: {} */"));
+}
+
+#[test]
+fn test_attach_prepend_placement() {
+    let sql = "SELECT * FROM orders";
+    let comment = "/* ff_metadata: {} */";
+    let result = attach_query_comment(sql, comment, CommentPlacement::Prepend);
+    assert!(result.starts_with("/* ff_metadata: {} */\n"));
+    assert!(result.ends_with("SELECT * FROM orders"));
+}
+
+#[test]
+fn test_strip_appended_compact_comment() {
+    let sql = "SELECT * FROM orders\n/* ff_metadata: {\"model\":\"test\"} */";
+    let stripped = strip_query_comment(sql);
+    assert_eq!(stripped, "SELECT * FROM orders");
+}
+
+#[test]
+fn test_strip_appended_pretty_comment() {
+    let sql = "SELECT * FROM orders\n/*\nff_metadata:\n{\"model\":\"test\"}\n*/";
+    let stripped = strip_query_comment(sql);
+    assert_eq!(stripped, "SELECT * FROM orders");
+}
+
+#[test]
+fn test_strip_prepended_compact_comment() {
+    let sql = "/* ff_metadata: {\"model\":\"test\"} */\nSELECT * FROM orders";
+    let stripped = strip_query_comment(sql);
+    assert_eq!(stripped, "SELECT * FROM orders");
+}
+
+#[test]
+fn test_strip_prepended_pretty_comment() {
+    let sql = "/*\nff_metadata:\n{\"model\":\"test\"}\n*/\nSELECT * FROM orders";
+    let stripped = strip_query_comment(sql);
+    assert_eq!(stripped, "SELECT * FROM orders");
 }
 
 #[test]
@@ -30,24 +101,71 @@ fn test_strip_no_comment() {
 }
 
 #[test]
+fn test_include_filter_suppresses_fields() {
+    let config = QueryCommentConfig {
+        include: CommentInclude {
+            model: true,
+            project: true,
+            materialization: false,
+            compiled_at: false,
+            target: false,
+            invocation_id: false,
+            user: false,
+            featherflow_version: false,
+            node_path: false,
+            schema: false,
+        },
+        ..default_config()
+    };
+    let ctx = QueryCommentContext::new("proj", Some("dev"), config);
+    let input = make_input("m", "table", Some("models/m.sql"), Some("analytics"));
+    let comment = ctx.build_comment(&input);
+    assert!(comment.contains("\"model\":\"m\""));
+    assert!(comment.contains("\"project\":\"proj\""));
+    assert!(!comment.contains("materialization"));
+    assert!(!comment.contains("compiled_at"));
+    assert!(!comment.contains("\"target\""));
+    assert!(!comment.contains("invocation_id"));
+    assert!(!comment.contains("\"user\""));
+    assert!(!comment.contains("featherflow_version"));
+    assert!(!comment.contains("node_path"));
+    assert!(!comment.contains("schema"));
+}
+
+#[test]
+fn test_custom_vars_appear_in_comment() {
+    let mut custom = HashMap::new();
+    custom.insert("team".to_string(), "data-eng".to_string());
+    custom.insert("env_id".to_string(), "ci-42".to_string());
+    let config = QueryCommentConfig {
+        custom_vars: custom,
+        ..default_config()
+    };
+    let ctx = QueryCommentContext::new("proj", None, config);
+    let input = make_input("m", "view", None, None);
+    let comment = ctx.build_comment(&input);
+    assert!(comment.contains("\"team\":\"data-eng\""));
+    assert!(comment.contains("\"env_id\":\"ci-42\""));
+}
+
+#[test]
+fn test_schema_and_node_path_in_metadata() {
+    let ctx = QueryCommentContext::new("proj", None, default_config());
+    let input = make_input("m", "table", Some("models/staging/m.sql"), Some("staging"));
+    let metadata = ctx.build_metadata(&input);
+    assert_eq!(metadata.node_path.as_deref(), Some("models/staging/m.sql"));
+    assert_eq!(metadata.schema.as_deref(), Some("staging"));
+}
+
+#[test]
 fn test_whoami() {
     let user = whoami();
     assert!(!user.is_empty());
 }
 
 #[test]
-fn test_metadata_serialization() {
-    let ctx = QueryCommentContext::new("proj", None);
-    let metadata = ctx.build_metadata("my_model", "view");
-    let json = serde_json::to_string(&metadata).unwrap();
-    assert!(json.contains("\"model\":\"my_model\""));
-    assert!(json.contains("\"project\":\"proj\""));
-    assert!(json.contains("\"target\":null"));
-}
-
-#[test]
 fn test_context_fields() {
-    let ctx = QueryCommentContext::new("test_proj", Some("prod"));
+    let ctx = QueryCommentContext::new("test_proj", Some("prod"), default_config());
     assert_eq!(ctx.project_name, "test_proj");
     assert_eq!(ctx.target, Some("prod".to_string()));
     assert!(!ctx.invocation_id.is_empty());
@@ -57,6 +175,85 @@ fn test_context_fields() {
 
 #[test]
 fn test_config_default_enabled() {
-    let config = crate::config::QueryCommentConfig::default();
+    let config = QueryCommentConfig::default();
     assert!(config.enabled);
+    assert_eq!(config.placement, CommentPlacement::Append);
+    assert_eq!(config.style, CommentStyle::Compact);
+    assert!(config.custom_vars.is_empty());
+    assert!(config.include.model);
+    assert!(config.include.node_path);
+    assert!(config.include.schema);
+}
+
+#[test]
+fn test_legacy_build_query_comment() {
+    let ctx = QueryCommentContext::new("proj", None, default_config());
+    let input = make_input("my_model", "view", None, None);
+    let metadata = ctx.build_metadata(&input);
+    let comment = build_query_comment(&metadata);
+    assert!(comment.starts_with("/* ff_metadata:"));
+    assert!(comment.contains("\"model\":\"my_model\""));
+    assert!(comment.contains("\"project\":\"proj\""));
+    assert!(comment.contains("\"target\":null"));
+}
+
+#[test]
+fn test_legacy_append_query_comment() {
+    let sql = "SELECT 1";
+    let comment = "/* ff_metadata: {} */";
+    let result = append_query_comment(sql, comment);
+    assert_eq!(result, "SELECT 1\n/* ff_metadata: {} */");
+}
+
+#[test]
+fn test_round_trip_append_strip() {
+    let sql = "SELECT * FROM orders";
+    let ctx = QueryCommentContext::new("proj", Some("dev"), default_config());
+    let input = make_input("orders", "table", Some("models/orders.sql"), Some("main"));
+    let comment = ctx.build_comment(&input);
+    let with_comment = attach_query_comment(sql, &comment, CommentPlacement::Append);
+    let stripped = strip_query_comment(&with_comment);
+    assert_eq!(stripped, sql);
+}
+
+#[test]
+fn test_round_trip_prepend_strip() {
+    let sql = "SELECT * FROM orders";
+    let ctx = QueryCommentContext::new("proj", Some("dev"), default_config());
+    let input = make_input("orders", "table", None, None);
+    let comment = ctx.build_comment(&input);
+    let with_comment = attach_query_comment(sql, &comment, CommentPlacement::Prepend);
+    let stripped = strip_query_comment(&with_comment);
+    assert_eq!(stripped, sql);
+}
+
+#[test]
+fn test_round_trip_pretty_append() {
+    let sql = "SELECT * FROM orders";
+    let config = QueryCommentConfig {
+        style: CommentStyle::Pretty,
+        ..default_config()
+    };
+    let ctx = QueryCommentContext::new("proj", None, config);
+    let input = make_input("orders", "view", None, None);
+    let comment = ctx.build_comment(&input);
+    let with_comment = attach_query_comment(sql, &comment, CommentPlacement::Append);
+    let stripped = strip_query_comment(&with_comment);
+    assert_eq!(stripped, sql);
+}
+
+#[test]
+fn test_round_trip_pretty_prepend() {
+    let sql = "SELECT * FROM orders";
+    let config = QueryCommentConfig {
+        style: CommentStyle::Pretty,
+        placement: CommentPlacement::Prepend,
+        ..default_config()
+    };
+    let ctx = QueryCommentContext::new("proj", None, config);
+    let input = make_input("orders", "view", None, None);
+    let comment = ctx.build_comment(&input);
+    let with_comment = attach_query_comment(sql, &comment, CommentPlacement::Prepend);
+    let stripped = strip_query_comment(&with_comment);
+    assert_eq!(stripped, sql);
 }
