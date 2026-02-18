@@ -77,6 +77,7 @@ fn test_model(name: &str) -> Model {
         }),
         base_name: None,
         version: None,
+        kind: ff_core::ModelKind::default(),
     }
 }
 
@@ -895,6 +896,7 @@ fn populate_model_no_schema() {
             schema: None,
             base_name: None,
             version: None,
+            kind: ff_core::ModelKind::default(),
         };
 
         let mut models = HashMap::new();

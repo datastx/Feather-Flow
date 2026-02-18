@@ -1,0 +1,9 @@
+version: 1
+description: "Source table for testing"
+columns:
+  - name: id
+    type: INTEGER
+  - name: name
+    type: VARCHAR
+  - name: amount
+    type: DOUBLE

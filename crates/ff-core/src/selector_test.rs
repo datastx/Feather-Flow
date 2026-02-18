@@ -320,7 +320,7 @@ fn test_parse_empty_owner() {
 // apply_selectors integration tests
 // -----------------------------------------------------------------------
 
-use crate::model::ModelConfig;
+use crate::model::{ModelConfig, ModelKind};
 use crate::table_name::TableName;
 use std::path::PathBuf;
 
@@ -337,6 +337,7 @@ fn make_test_model(name: &str) -> Model {
         schema: None,
         base_name: None,
         version: None,
+        kind: ModelKind::default(),
     }
 }
 

@@ -37,7 +37,8 @@ pub use function::{
 };
 pub use function_name::FunctionName;
 pub use model::{
-    ColumnConstraint, DataClassification, Model, ModelKind, ModelSchema, SchemaContract,
+    ColumnConstraint, DataClassification, Model, ModelKind, ModelSchema, PythonConfig,
+    SchemaContract,
 };
 pub use model_name::ModelName;
 pub use project::{Project, ProjectParts};

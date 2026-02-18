@@ -37,6 +37,10 @@ pub(crate) struct CompiledModel {
     pub(crate) query_comment: Option<String>,
     /// Whether this model uses Write-Audit-Publish pattern
     pub(crate) wap: bool,
+    /// Whether this is a Python model (executed via `uv run`)
+    pub(crate) is_python: bool,
+    /// Path to the Python script (only set for Python models)
+    pub(crate) script_path: Option<std::path::PathBuf>,
 }
 
 /// Compile all models from source templates.
@@ -86,6 +90,38 @@ fn compile_all_models(
         let model = project
             .get_model(name)
             .with_context(|| format!("Model not found: {}", name))?;
+
+        // Python models skip Jinja/SQL compilation — deps come from YAML
+        if model.is_python() {
+            let model_deps: Vec<String> = model.depends_on.iter().map(|m| m.to_string()).collect();
+            let schema = model
+                .config
+                .schema
+                .clone()
+                .or_else(|| project.config.schema.clone());
+            let model_schema = model.schema.clone();
+
+            compiled_models.insert(
+                name.to_string(),
+                CompiledModel {
+                    sql: String::new(),
+                    materialization: Materialization::Table,
+                    schema,
+                    dependencies: model_deps,
+                    unique_key: None,
+                    incremental_strategy: None,
+                    on_schema_change: None,
+                    pre_hook: Vec::new(),
+                    post_hook: Vec::new(),
+                    model_schema,
+                    query_comment: None,
+                    wap: false,
+                    is_python: true,
+                    script_path: Some(model.path.clone()),
+                },
+            );
+            continue;
+        }
 
         let (rendered, config_values) = jinja
             .render_with_config(&model.raw_sql)
@@ -189,6 +225,8 @@ fn compile_all_models(
                 model_schema,
                 query_comment,
                 wap,
+                is_python: false,
+                script_path: None,
             },
         );
     }

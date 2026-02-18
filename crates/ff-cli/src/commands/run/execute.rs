@@ -176,6 +176,8 @@ pub(super) struct ExecutionContext<'a> {
     pub(super) meta_run_id: Option<i64>,
     /// Map of model name -> meta database model_id
     pub(super) meta_model_id_map: Option<&'a HashMap<String, i64>>,
+    /// Database file path (needed by Python models to connect directly)
+    pub(super) db_path: Option<&'a str>,
 }
 
 impl std::fmt::Debug for ExecutionContext<'_> {
@@ -475,14 +477,25 @@ async fn execute_models_sequential(
         }
         executable_idx += 1;
 
-        let model_result = run_single_model(
-            ctx.db,
-            name,
-            compiled,
-            ctx.args.full_refresh,
-            ctx.wap_schema,
-        )
-        .await;
+        let model_result = if compiled.is_python {
+            super::python::run_python_model(
+                ctx.db,
+                name,
+                compiled,
+                ctx.compiled_models,
+                ctx.db_path.unwrap_or(":memory:"),
+            )
+            .await
+        } else {
+            run_single_model(
+                ctx.db,
+                name,
+                compiled,
+                ctx.args.full_refresh,
+                ctx.wap_schema,
+            )
+            .await
+        };
 
         println!("{}", format_model_status(&model_result));
 
@@ -563,6 +576,8 @@ async fn execute_model_task(
     completed: Arc<Mutex<HashSet<String>>>,
     progress: Option<Arc<ProgressBar>>,
     output_lock: Arc<AsyncMutex<()>>,
+    all_compiled_models: Arc<HashMap<String, CompiledModel>>,
+    db_path: Option<String>,
 ) {
     // Semaphore was closed -- treat as cancellation
     let Ok(_permit) = semaphore.acquire().await else {
@@ -573,8 +588,18 @@ async fn execute_model_task(
         return;
     }
 
-    let model_result =
-        run_single_model(&db, &name, &compiled, full_refresh, wap_schema.as_deref()).await;
+    let model_result = if compiled.is_python {
+        super::python::run_python_model(
+            &db,
+            &name,
+            &compiled,
+            &all_compiled_models,
+            db_path.as_deref().unwrap_or(":memory:"),
+        )
+        .await
+    } else {
+        run_single_model(&db, &name, &compiled, full_refresh, wap_schema.as_deref()).await
+    };
 
     let is_error = matches!(model_result.status, RunStatus::Error);
 
@@ -682,6 +707,8 @@ async fn execute_models_parallel(
             }
 
             let compiled = Arc::new(compiled.clone());
+            let all_compiled = Arc::new(ctx.compiled_models.clone());
+            let db_path_owned = ctx.db_path.map(String::from);
             set.spawn(execute_model_task(
                 db,
                 name,
@@ -697,6 +724,8 @@ async fn execute_models_parallel(
                 Arc::clone(&completed),
                 progress.clone(),
                 Arc::clone(&output_lock),
+                all_compiled,
+                db_path_owned,
             ));
         }
 

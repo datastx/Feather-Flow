@@ -5,8 +5,8 @@ pub mod testing;
 
 // Re-export all public types to preserve existing `ff_core::model::*` paths
 pub use schema::{
-    ColumnConstraint, ColumnReference, DataClassification, ModelKind, ModelSchema, SchemaColumnDef,
-    SchemaContract,
+    ColumnConstraint, ColumnReference, DataClassification, ModelKind, ModelSchema, PythonConfig,
+    SchemaColumnDef, SchemaContract,
 };
 pub use testing::{
     parse_test_definition, SchemaTest, SingularTest, TestConfig, TestDefinition, TestParams,
@@ -21,19 +21,19 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-/// Represents a SQL model in the project
+/// Represents a model in the project (SQL or Python)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Model {
     /// Model name (derived from filename without extension)
     pub name: ModelName,
 
-    /// Path to the source SQL file
+    /// Path to the source file (.sql or .py)
     pub path: PathBuf,
 
-    /// Raw SQL content (before Jinja rendering)
+    /// Raw source content (SQL before Jinja rendering, or Python script source)
     pub raw_sql: String,
 
-    /// Compiled SQL content (after Jinja rendering)
+    /// Compiled SQL content (after Jinja rendering). Not used for Python models.
     #[serde(default)]
     pub compiled_sql: Option<String>,
 
@@ -60,6 +60,10 @@ pub struct Model {
     /// Version number if model follows _v{N} naming convention (e.g., 2 for "fct_orders_v2")
     #[serde(default)]
     pub version: Option<u32>,
+
+    /// The kind of model: SQL (default) or Python
+    #[serde(default)]
+    pub kind: ModelKind,
 }
 
 /// Configuration for a model extracted from config() function
@@ -159,6 +163,67 @@ impl Model {
             schema,
             base_name,
             version,
+            kind: ModelKind::Model,
+        })
+    }
+
+    /// Create a new Python model from a `.py` file path
+    ///
+    /// Like `from_file`, this requires a matching 1:1 schema file with `kind: python`.
+    /// Dependencies are read from the schema file's `depends_on` field rather than
+    /// SQL AST parsing.
+    pub fn from_python_file(
+        path: PathBuf,
+        schema: ModelSchema,
+    ) -> Result<Self, crate::error::CoreError> {
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| crate::error::CoreError::ModelParseError {
+                name: path.display().to_string(),
+                message: "Cannot extract model name from path".to_string(),
+            })?
+            .to_string();
+
+        let raw_source = std::fs::read_to_string(&path).map_err(|e| CoreError::IoWithPath {
+            path: path.display().to_string(),
+            source: e,
+        })?;
+
+        if raw_source.trim().is_empty() {
+            return Err(CoreError::ModelParseError {
+                name,
+                message: "Python file is empty".into(),
+            });
+        }
+
+        // Pre-populate depends_on from the schema's explicit dependency list
+        let depends_on: HashSet<ModelName> = schema
+            .depends_on
+            .iter()
+            .filter_map(|s| ModelName::try_new(s.clone()))
+            .collect();
+
+        let (base_name, version) = Self::parse_version(&name);
+
+        Ok(Self {
+            name: ModelName::new(name),
+            path,
+            raw_sql: raw_source,
+            compiled_sql: None,
+            config: ModelConfig {
+                // Python models always materialize as tables
+                materialized: Some(Materialization::Table),
+                schema: schema.schema.clone(),
+                tags: schema.tags.clone(),
+                ..ModelConfig::default()
+            },
+            depends_on,
+            external_deps: HashSet::new(),
+            schema: Some(schema),
+            base_name,
+            version,
+            kind: ModelKind::Python,
         })
     }
 
@@ -281,7 +346,12 @@ impl Model {
             .unwrap_or(OnSchemaChange::Ignore)
     }
 
-    /// Compute a SHA-256 checksum of the raw SQL content.
+    /// Check if this is a Python model (executed via `uv run`)
+    pub fn is_python(&self) -> bool {
+        self.kind == ModelKind::Python
+    }
+
+    /// Compute a SHA-256 checksum of the raw source content (SQL or Python).
     pub fn sql_checksum(&self) -> String {
         crate::compute_checksum(&self.raw_sql)
     }

@@ -14,6 +14,8 @@ pub enum ModelKind {
     Model,
     /// A CSV seed — directory contains a `.csv` file
     Seed,
+    /// A Python model — directory contains a `.py` file, executed via `uv run`
+    Python,
 }
 
 impl std::fmt::Display for ModelKind {
@@ -21,8 +23,21 @@ impl std::fmt::Display for ModelKind {
         match self {
             ModelKind::Model => write!(f, "model"),
             ModelKind::Seed => write!(f, "seed"),
+            ModelKind::Python => write!(f, "python"),
         }
     }
+}
+
+/// Python-specific configuration for `kind: python` models
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PythonConfig {
+    /// Minimum Python version requirement (e.g., ">=3.11")
+    #[serde(default, rename = "requires-python")]
+    pub requires_python: Option<String>,
+
+    /// Python package dependencies (e.g., ["pandas>=2.0", "scikit-learn>=1.3"])
+    #[serde(default)]
+    pub dependencies: Vec<String>,
 }
 
 /// Schema metadata for a single model (from 1:1 .yml file)
@@ -79,6 +94,17 @@ pub struct ModelSchema {
     #[serde(default)]
     pub deprecation_message: Option<String>,
 
+    // ── Python-specific fields (only relevant when kind: python) ──────
+    /// Explicit dependency list for Python models (kind: python only).
+    /// Since Python scripts cannot be parsed for SQL table references,
+    /// dependencies must be declared here.
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+
+    /// Python-specific configuration (kind: python only)
+    #[serde(default)]
+    pub python: Option<PythonConfig>,
+
     // ── Seed-specific fields (only relevant when kind: seed) ─────────
     /// Override target schema for seed loading (kind: seed only)
     #[serde(default)]
@@ -124,6 +150,8 @@ impl Default for ModelSchema {
             columns: Vec::new(),
             deprecated: false,
             deprecation_message: None,
+            depends_on: Vec::new(),
+            python: None,
             schema: None,
             quote_columns: false,
             column_types: std::collections::HashMap::new(),

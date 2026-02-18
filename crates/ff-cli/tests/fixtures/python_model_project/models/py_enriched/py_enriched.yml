@@ -1,0 +1,16 @@
+version: 1
+kind: python
+description: "Python model that enriches source data with a score"
+
+depends_on:
+  - stg_source
+
+columns:
+  - name: id
+    type: INTEGER
+  - name: name
+    type: VARCHAR
+  - name: amount
+    type: DOUBLE
+  - name: score
+    type: DOUBLE

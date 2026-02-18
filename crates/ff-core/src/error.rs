@@ -167,6 +167,19 @@ pub enum CoreError {
     /// E019: Empty name where a non-empty name is required
     #[error("[E019] Empty name: {context}")]
     EmptyName { context: String },
+
+    // Python model error types (PY001-PY003)
+    /// PY001: Python model execution failed
+    #[error("[PY001] Python model '{name}' failed: {message}")]
+    PythonExecutionError { name: String, message: String },
+
+    /// PY002: `uv` binary not found on PATH
+    #[error("[PY002] 'uv' is not installed or not on PATH. Python models require uv. Install it with: curl -LsSf https://astral.sh/uv/install.sh | sh")]
+    UvNotFound,
+
+    /// PY003: Python model output schema doesn't match declared columns
+    #[error("[PY003] Python model '{model}' schema violation: {message}")]
+    PythonSchemaViolation { model: String, message: String },
 }
 
 /// Result type alias for CoreError

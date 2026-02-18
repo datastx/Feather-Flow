@@ -114,6 +114,7 @@ fn test_config_precedence_sql_wins() {
         }),
         base_name: None,
         version: None,
+        kind: ModelKind::default(),
     };
 
     // SQL config should win over project default
@@ -142,6 +143,7 @@ fn test_config_precedence_falls_back_to_project_default() {
         }),
         base_name: None,
         version: None,
+        kind: ModelKind::default(),
     };
 
     // Should use the passed-in project default
@@ -172,6 +174,7 @@ fn test_config_precedence_project_default() {
         schema: None,
         base_name: None,
         version: None,
+        kind: ModelKind::default(),
     };
 
     // Project default should be used
@@ -261,6 +264,7 @@ fn test_model_version_methods() {
         schema: None,
         base_name: Some("fct_orders".to_string()),
         version: Some(2),
+        kind: ModelKind::default(),
     };
 
     assert!(model.is_versioned());
@@ -294,6 +298,7 @@ fn test_deprecated_model_via_model() {
         }),
         base_name: Some("fct_orders".to_string()),
         version: Some(1),
+        kind: ModelKind::default(),
     };
 
     assert!(model.is_deprecated());
