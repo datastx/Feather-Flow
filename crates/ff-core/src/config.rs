@@ -556,17 +556,134 @@ pub struct DataClassificationConfig {
     pub propagate: bool,
 }
 
+/// Where to place the query comment relative to the SQL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CommentPlacement {
+    /// Append the comment after the SQL (default).
+    #[default]
+    Append,
+    /// Prepend the comment before the SQL.
+    Prepend,
+}
+
+impl std::fmt::Display for CommentPlacement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Append => write!(f, "append"),
+            Self::Prepend => write!(f, "prepend"),
+        }
+    }
+}
+
+/// How to format the query comment JSON.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CommentStyle {
+    /// Compact single-line JSON (default).
+    #[default]
+    Compact,
+    /// Pretty-printed, human-readable JSON.
+    Pretty,
+}
+
+impl std::fmt::Display for CommentStyle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Compact => write!(f, "compact"),
+            Self::Pretty => write!(f, "pretty"),
+        }
+    }
+}
+
+/// Which metadata fields to include in query comments.
+///
+/// All fields default to `true`. Set individual fields to `false` to suppress
+/// them from the generated comment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommentInclude {
+    /// Include the model name (default: true)
+    #[serde(default = "default_true")]
+    pub model: bool,
+    /// Include the project name (default: true)
+    #[serde(default = "default_true")]
+    pub project: bool,
+    /// Include the materialization type (default: true)
+    #[serde(default = "default_true")]
+    pub materialization: bool,
+    /// Include the compilation timestamp (default: true)
+    #[serde(default = "default_true")]
+    pub compiled_at: bool,
+    /// Include the target name (default: true)
+    #[serde(default = "default_true")]
+    pub target: bool,
+    /// Include the invocation ID (default: true)
+    #[serde(default = "default_true")]
+    pub invocation_id: bool,
+    /// Include the OS user (default: true)
+    #[serde(default = "default_true")]
+    pub user: bool,
+    /// Include the featherflow version (default: true)
+    #[serde(default = "default_true")]
+    pub featherflow_version: bool,
+    /// Include the model's relative file path (default: true)
+    #[serde(default = "default_true")]
+    pub node_path: bool,
+    /// Include the target schema (default: true)
+    #[serde(default = "default_true")]
+    pub schema: bool,
+}
+
+impl Default for CommentInclude {
+    fn default() -> Self {
+        Self {
+            model: true,
+            project: true,
+            materialization: true,
+            compiled_at: true,
+            target: true,
+            invocation_id: true,
+            user: true,
+            featherflow_version: true,
+            node_path: true,
+            schema: true,
+        }
+    }
+}
+
 /// Query comment configuration for SQL observability
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryCommentConfig {
     /// Whether to append query comments to compiled SQL (default: true)
     #[serde(default = "default_true")]
     pub enabled: bool,
+
+    /// Where to place the comment: `append` (default) or `prepend`
+    #[serde(default)]
+    pub placement: CommentPlacement,
+
+    /// JSON formatting style: `compact` (default) or `pretty`
+    #[serde(default)]
+    pub style: CommentStyle,
+
+    /// Which fields to include in the comment
+    #[serde(default)]
+    pub include: CommentInclude,
+
+    /// Custom key-value pairs added to every query comment
+    #[serde(default)]
+    pub custom_vars: HashMap<String, String>,
 }
 
 impl Default for QueryCommentConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            placement: CommentPlacement::default(),
+            style: CommentStyle::default(),
+            include: CommentInclude::default(),
+            custom_vars: HashMap::new(),
+        }
     }
 }
 
