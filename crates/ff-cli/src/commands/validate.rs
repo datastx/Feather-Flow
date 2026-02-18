@@ -154,6 +154,9 @@ pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
         validate_governance(&project, &models_to_validate, &mut ctx);
     }
 
+    // Validate documentation completeness (driven by featherflow.yml config)
+    validate_documentation(&project, &models_to_validate, &mut ctx);
+
     // Populate meta database (non-fatal)
     if let Some(meta_db) = common::open_meta_db(&project) {
         if let Some((_project_id, run_id, _model_id_map)) =
@@ -881,6 +884,100 @@ fn validate_governance(project: &Project, models: &[String], ctx: &mut Validatio
     } else {
         println!("{} issues", governance_issues);
     }
+}
+
+/// Validate documentation completeness
+///
+/// Checks:
+/// - D001: Model missing description (when `require_model_descriptions` is true)
+/// - D002: Column missing description (when `require_column_descriptions` is true)
+fn validate_documentation(project: &Project, models: &[String], ctx: &mut ValidationContext) {
+    let doc_config = &project.config.documentation;
+    let require_models = doc_config.require_model_descriptions;
+    let require_columns = doc_config.require_column_descriptions;
+
+    if !require_models && !require_columns {
+        return;
+    }
+
+    print!("Checking documentation... ");
+    let mut doc_issues = 0;
+
+    for name in models {
+        let Some(model) = project.get_model(name) else {
+            continue;
+        };
+        let Some(schema) = &model.schema else {
+            continue;
+        };
+        let file_path = model.path.with_extension("yml").display().to_string();
+
+        if require_models {
+            doc_issues += check_model_description(schema, name, &file_path, ctx);
+        }
+
+        if require_columns {
+            for column in &schema.columns {
+                doc_issues +=
+                    check_column_description(column, name, &file_path, ctx);
+            }
+        }
+    }
+
+    if doc_issues == 0 {
+        println!("✓");
+    } else {
+        println!("{} issues", doc_issues);
+    }
+}
+
+/// Check that a model has a non-empty description (D001).
+fn check_model_description(
+    schema: &ff_core::model::ModelSchema,
+    model_name: &str,
+    file_path: &str,
+    ctx: &mut ValidationContext,
+) -> usize {
+    let has_description = schema
+        .description
+        .as_ref()
+        .is_some_and(|d| !d.trim().is_empty());
+
+    if !has_description {
+        ctx.error(
+            "D001",
+            format!("Model '{}' is missing a description", model_name),
+            Some(file_path.to_string()),
+        );
+        return 1;
+    }
+    0
+}
+
+/// Check that a column has a non-empty description (D002).
+fn check_column_description(
+    column: &ff_core::model::SchemaColumnDef,
+    model_name: &str,
+    file_path: &str,
+    ctx: &mut ValidationContext,
+) -> usize {
+    let has_description = column
+        .description
+        .as_ref()
+        .is_some_and(|d| !d.trim().is_empty());
+
+    if !has_description {
+        ctx.error(
+            "D002",
+            format!(
+                "Column '{}' in model '{}' is missing a description",
+                column.name, model_name
+            ),
+            Some(file_path.to_string()),
+        );
+        return 1;
+    }
+    0
 }
 
 /// Print all issues and final summary
