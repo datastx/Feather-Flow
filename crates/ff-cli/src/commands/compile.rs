@@ -559,6 +559,19 @@ fn compile_model_phase1(
                 .map(|s| s == "true")
                 .unwrap_or_else(|| v.is_true())
         }),
+        meta: config_values
+            .get("meta")
+            .and_then(|v| {
+                v.try_iter().ok().map(|iter| {
+                    iter.filter_map(|key| {
+                        let key_str = key.as_str()?.to_string();
+                        let val = v.get_attr(&key_str).ok()?;
+                        Some((key_str, val.to_string()))
+                    })
+                    .collect()
+                })
+            })
+            .unwrap_or_default(),
     };
 
     let mat = model
