@@ -146,6 +146,16 @@ export async function activate(
     )
   );
 
+  // 10. Register lineage mode toggle command
+  context.subscriptions.push(
+    vscode.commands.registerCommand("featherflow.toggleLineageMode", () => {
+      const current = lineageProvider.getMode();
+      const next = current === "table" ? "column" : "table";
+      lineageProvider.setMode(next);
+      out.appendLine(`Lineage mode switched to: ${next}`);
+    })
+  );
+
   // Track all disposables
   context.subscriptions.push(...disposables);
   out.appendLine("Feather-Flow extension activated successfully.");

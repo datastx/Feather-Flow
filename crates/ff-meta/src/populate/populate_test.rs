@@ -20,6 +20,7 @@ fn test_config() -> Config {
     Config {
         name: "test_project".to_string(),
         version: "1.0.0".to_string(),
+        node_paths: vec![],
         model_paths: vec!["models".to_string()],
         macro_paths: vec!["macros".to_string()],
         source_paths: vec!["sources".to_string()],
@@ -39,6 +40,7 @@ fn test_config() -> Config {
         targets: HashMap::new(),
         analysis: Default::default(),
         data_classification: Default::default(),
+        documentation: Default::default(),
         query_comment: Default::default(),
         rules: None,
     }
