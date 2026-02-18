@@ -40,6 +40,7 @@ fn test_config() -> Config {
         targets: HashMap::new(),
         analysis: Default::default(),
         data_classification: Default::default(),
+        documentation: Default::default(),
         query_comment: Default::default(),
         rules: None,
     }
