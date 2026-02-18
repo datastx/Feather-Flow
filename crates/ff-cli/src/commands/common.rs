@@ -902,6 +902,7 @@ pub(crate) fn build_query_comment_context(
     Some(ff_core::query_comment::QueryCommentContext::new(
         &config.name,
         resolved_target.as_deref(),
+        config.query_comment.clone(),
     ))
 }
 
