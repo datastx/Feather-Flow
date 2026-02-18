@@ -15,6 +15,7 @@ pub mod function_name;
 pub mod model;
 pub mod model_name;
 mod newtype_string;
+pub mod node;
 pub mod project;
 pub mod query_comment;
 pub mod reference_manifest;
@@ -40,6 +41,7 @@ pub use model::{
     ColumnConstraint, DataClassification, Model, ModelKind, ModelSchema, SchemaContract,
 };
 pub use model_name::ModelName;
+pub use node::NodeKind;
 pub use project::{Project, ProjectParts};
 pub use query_comment::{QueryCommentContext, QueryCommentMetadata};
 pub use reference_manifest::{ReferenceManifest, ReferenceModelRef};

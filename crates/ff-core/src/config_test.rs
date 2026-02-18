@@ -410,3 +410,33 @@ analysis:
     assert!(config.validate().is_ok());
     assert_eq!(config.analysis.severity_overrides.len(), 15);
 }
+
+#[test]
+fn test_node_paths_parsing() {
+    let yaml = r#"
+name: test_project
+node_paths: ["nodes"]
+"#;
+    let config: Config = serde_yaml::from_str(yaml).unwrap();
+    assert_eq!(config.node_paths, vec!["nodes"]);
+    assert!(config.uses_node_paths());
+}
+
+#[test]
+fn test_node_paths_default_empty() {
+    let config: Config = serde_yaml::from_str("name: test").unwrap();
+    assert!(config.node_paths.is_empty());
+    assert!(!config.uses_node_paths());
+}
+
+#[test]
+fn test_node_paths_with_model_paths_both_accepted() {
+    let yaml = r#"
+name: test_project
+node_paths: ["nodes"]
+model_paths: ["legacy_models"]
+"#;
+    let config: Config = serde_yaml::from_str(yaml).unwrap();
+    assert!(config.uses_node_paths());
+    assert_eq!(config.model_paths, vec!["legacy_models"]);
+}

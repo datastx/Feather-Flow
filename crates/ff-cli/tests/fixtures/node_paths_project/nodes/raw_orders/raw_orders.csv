@@ -1,0 +1,4 @@
+id,user_id,created_at,amount,status
+1,1,2024-01-01,100.50,completed
+2,2,2024-01-02,200.00,pending
+3,1,2024-01-03,50.25,completed
