@@ -143,7 +143,6 @@ impl ModelDag {
     /// Get direct dependencies of a model
     pub fn dependencies(&self, model: &str) -> Vec<String> {
         if let Some(&idx) = self.node_map.get(model) {
-            // Get incoming edges (dependencies point to us)
             self.graph
                 .edges_directed(idx, petgraph::Direction::Incoming)
                 .map(|e| self.graph[e.source()].to_string())
@@ -156,7 +155,6 @@ impl ModelDag {
     /// Get direct dependents of a model
     pub fn dependents(&self, model: &str) -> Vec<String> {
         if let Some(&idx) = self.node_map.get(model) {
-            // Get outgoing edges (we point to dependents)
             self.graph
                 .edges_directed(idx, petgraph::Direction::Outgoing)
                 .map(|e| self.graph[e.target()].to_string())
