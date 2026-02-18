@@ -13,7 +13,13 @@ pub struct Migration {
 }
 
 /// All known migrations, in order.
-pub static MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    sql: include_str!("v001_initial.sql"),
-}];
+pub static MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        sql: include_str!("v001_initial.sql"),
+    },
+    Migration {
+        version: 2,
+        sql: include_str!("v002_effective_classification.sql"),
+    },
+];
