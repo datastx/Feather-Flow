@@ -111,6 +111,10 @@ pub struct Config {
     /// SQL rules engine configuration
     #[serde(default)]
     pub rules: Option<crate::rules::RulesConfig>,
+
+    /// Documentation enforcement settings
+    #[serde(default)]
+    pub documentation: DocumentationConfig,
 }
 
 /// Target-specific configuration overrides
@@ -575,6 +579,23 @@ pub struct DataClassificationConfig {
     /// Whether classification propagates through lineage (default: true)
     #[serde(default = "default_true")]
     pub propagate: bool,
+}
+
+/// Documentation enforcement settings
+///
+/// When enabled, `ff validate` will report errors for models or columns
+/// that are missing a `description` field in their schema YAML. This ensures
+/// every node and column is documented, which is critical for AI/LLM
+/// discoverability and team onboarding.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DocumentationConfig {
+    /// Whether every model must have a non-empty `description` in its schema YAML
+    #[serde(default)]
+    pub require_model_descriptions: bool,
+
+    /// Whether every column must have a non-empty `description` in its schema YAML
+    #[serde(default)]
+    pub require_column_descriptions: bool,
 }
 
 /// Where to place the query comment relative to the SQL.
