@@ -1,0 +1,28 @@
+version: 1
+kind: sql
+
+description: "All orders combining enriched completed and staging pending via UNION ALL"
+owner: data-team
+tags:
+  - intermediate
+  - orders
+
+columns:
+  - name: order_id
+    type: INTEGER
+    description: "Unique order identifier"
+  - name: customer_id
+    type: INTEGER
+    description: "Customer reference"
+  - name: order_date
+    type: DATE
+    description: "Date the order was placed"
+  - name: order_amount
+    type: DECIMAL(10,2)
+    description: "Order amount"
+  - name: status
+    type: VARCHAR
+    description: "Order status"
+  - name: source
+    type: VARCHAR
+    description: "Which pipeline the order came from"

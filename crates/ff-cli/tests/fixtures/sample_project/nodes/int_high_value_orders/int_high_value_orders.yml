@@ -1,0 +1,31 @@
+version: 1
+kind: sql
+
+description: "High value customer order summary, filtered by total amount > 100"
+owner: data-team
+tags:
+  - intermediate
+  - orders
+
+columns:
+  - name: customer_id
+    type: INTEGER
+    description: "Customer identifier"
+    tests:
+      - unique
+      - not_null
+  - name: order_count
+    type: INTEGER
+    description: "Number of orders placed"
+  - name: total_amount
+    type: DECIMAL(10,2)
+    description: "Total amount across all orders"
+  - name: min_order
+    type: DECIMAL(10,2)
+    description: "Minimum single order amount"
+  - name: max_order
+    type: DECIMAL(10,2)
+    description: "Maximum single order amount"
+  - name: avg_order
+    type: DOUBLE
+    description: "Average order amount"

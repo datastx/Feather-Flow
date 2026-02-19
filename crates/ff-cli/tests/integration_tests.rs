@@ -8,7 +8,7 @@ use ff_core::Project;
 use ff_db::{DatabaseCore, DatabaseCsv, DatabaseIncremental, DatabaseSchema, DuckDbBackend};
 use ff_jinja::JinjaEnvironment;
 use ff_meta::manifest::Manifest;
-use ff_sql::{extract_dependencies, SqlParser};
+use ff_sql::{extract_dependencies, ColumnRef, ExprType, ModelLineage, SqlParser};
 use ff_test::{generator::GeneratedTest, TestRunner};
 use std::collections::HashMap;
 use std::path::Path;
@@ -21,7 +21,7 @@ fn test_load_sample_project() {
     let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
 
     assert_eq!(project.config.name, "sample_project");
-    assert_eq!(project.models.len(), 11);
+    assert_eq!(project.models.len(), 16);
     assert!(project.models.contains_key("stg_orders"));
     assert!(project.models.contains_key("stg_customers"));
     assert!(project.models.contains_key("stg_products"));
@@ -33,6 +33,11 @@ fn test_load_sample_project() {
     assert!(project.models.contains_key("dim_products"));
     assert!(project.models.contains_key("fct_orders"));
     assert!(project.models.contains_key("rpt_order_volume"));
+    assert!(project.models.contains_key("int_all_orders"));
+    assert!(project.models.contains_key("int_customer_ranking"));
+    assert!(project.models.contains_key("dim_products_extended"));
+    assert!(project.models.contains_key("int_high_value_orders"));
+    assert!(project.models.contains_key("rpt_customer_orders"));
 }
 
 /// Test parsing and dependency extraction
@@ -1940,6 +1945,9 @@ fn build_analysis_pipeline(fixture_path: &str) -> AnalysisPipeline {
     }
     project_lineage.resolve_edges(&known_models);
 
+    let classification_lookup = ff_core::classification::build_classification_lookup(&project);
+    project_lineage.propagate_classifications(&classification_lookup);
+
     let dag = ModelDag::build(&dep_map).unwrap();
     let topo_order = dag.topological_order().unwrap();
 
@@ -2092,7 +2100,7 @@ fn test_analysis_sample_project_no_false_diagnostics() {
         "Expected no planning failures, got: {:?}",
         pipeline.propagation.failures
     );
-    assert_eq!(pipeline.propagation.model_plans.len(), 11);
+    assert_eq!(pipeline.propagation.model_plans.len(), 16);
 
     let diagnostics = run_all_passes(&pipeline);
 
@@ -3152,4 +3160,817 @@ fn test_severity_overrides_empty_is_noop() {
         result_severities, original_severities,
         "Empty overrides should not change severities"
     );
+}
+
+// ── Column-Level Lineage Integration Tests ──────────────────────────────
+
+/// Helper: create an unqualified ColumnRef
+fn col_ref(column: &str) -> ColumnRef {
+    ColumnRef {
+        table: None,
+        column: column.to_string(),
+    }
+}
+
+/// Helper: create a table-qualified ColumnRef
+fn qual_ref(table: &str, column: &str) -> ColumnRef {
+    ColumnRef {
+        table: Some(table.to_string()),
+        column: column.to_string(),
+    }
+}
+
+/// Helper: find a column lineage entry by output column name
+fn find_column<'a>(model: &'a ModelLineage, col_name: &str) -> &'a ff_sql::ColumnLineage {
+    model
+        .columns
+        .iter()
+        .find(|c| c.output_column == col_name)
+        .unwrap_or_else(|| {
+            panic!(
+                "Column '{}' not found in model '{}'. Available: {:?}",
+                col_name,
+                model.model_name,
+                model
+                    .columns
+                    .iter()
+                    .map(|c| &c.output_column)
+                    .collect::<Vec<_>>()
+            )
+        })
+}
+
+// ── Category A: Per-Model Lineage — Existing Models ─────────────────────
+
+/// A1: stg_orders — 5 columns, all direct Column type, alias resolution
+#[test]
+fn test_lineage_stg_orders_columns() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+    let model = lineage
+        .models
+        .get("stg_orders")
+        .expect("stg_orders lineage missing");
+
+    assert_eq!(model.columns.len(), 5);
+    assert!(model.source_tables.contains("raw_orders"));
+
+    // order_id is renamed from id (unqualified since no table alias in FROM)
+    let order_id = find_column(model, "order_id");
+    assert!(order_id.is_direct);
+    assert_eq!(order_id.expr_type, ExprType::Column);
+    assert!(order_id.source_columns.contains(&col_ref("id")));
+
+    // customer_id is renamed from user_id
+    let customer_id = find_column(model, "customer_id");
+    assert!(customer_id.is_direct);
+    assert!(customer_id.source_columns.contains(&col_ref("user_id")));
+
+    // order_date is renamed from created_at
+    let order_date = find_column(model, "order_date");
+    assert!(order_date.is_direct);
+    assert!(order_date.source_columns.contains(&col_ref("created_at")));
+
+    // amount is pass-through (same name)
+    let amount = find_column(model, "amount");
+    assert!(amount.is_direct);
+    assert_eq!(amount.expr_type, ExprType::Column);
+
+    // status is pass-through
+    let status = find_column(model, "status");
+    assert!(status.is_direct);
+    assert_eq!(status.expr_type, ExprType::Column);
+}
+
+/// A2: stg_products — CAST lineage
+#[test]
+fn test_lineage_stg_products_cast() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+    let model = lineage
+        .models
+        .get("stg_products")
+        .expect("stg_products lineage missing");
+
+    assert_eq!(model.columns.len(), 5);
+
+    // price uses CAST(price AS DECIMAL(10,2)) -> Cast type, not direct
+    let price = find_column(model, "price");
+    assert_eq!(price.expr_type, ExprType::Cast);
+    assert!(!price.is_direct);
+    assert!(price.source_columns.contains(&col_ref("price")));
+
+    // product_id is a direct rename
+    let product_id = find_column(model, "product_id");
+    assert!(product_id.is_direct);
+    assert_eq!(product_id.expr_type, ExprType::Column);
+}
+
+/// A3: stg_payments — Jinja macro expansion (cents_to_dollars → expression)
+#[test]
+fn test_lineage_stg_payments_function_call() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+    let model = lineage
+        .models
+        .get("stg_payments")
+        .expect("stg_payments lineage missing");
+
+    assert_eq!(model.columns.len(), 3);
+
+    // amount is (amount / 100.0) after Jinja expansion -> Expression
+    let amount = find_column(model, "amount");
+    assert!(!amount.is_direct);
+    assert_eq!(amount.expr_type, ExprType::Expression);
+}
+
+/// A4: stg_payments_star — wildcard lineage
+#[test]
+fn test_lineage_stg_payments_star_wildcard() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+    let model = lineage
+        .models
+        .get("stg_payments_star")
+        .expect("stg_payments_star lineage missing");
+
+    assert_eq!(model.columns.len(), 1);
+    let wildcard = &model.columns[0];
+    assert_eq!(wildcard.output_column, "*");
+    assert_eq!(wildcard.expr_type, ExprType::Wildcard);
+    assert!(wildcard.source_columns.iter().any(|r| r.column == "*"));
+}
+
+/// A5: int_orders_enriched — aggregation lineage, JOIN aliases
+#[test]
+fn test_lineage_int_orders_enriched_aggregation() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+    let model = lineage
+        .models
+        .get("int_orders_enriched")
+        .expect("int_orders_enriched lineage missing");
+
+    assert_eq!(model.columns.len(), 7);
+    assert!(model.source_tables.contains("stg_orders"));
+    assert!(model.source_tables.contains("stg_payments"));
+
+    // Table aliases should be resolved
+    assert_eq!(
+        model.table_aliases.get("o"),
+        Some(&"stg_orders".to_string())
+    );
+    assert_eq!(
+        model.table_aliases.get("p"),
+        Some(&"stg_payments".to_string())
+    );
+
+    // order_id is direct from o.order_id
+    let order_id = find_column(model, "order_id");
+    assert!(order_id.is_direct);
+    assert!(order_id
+        .source_columns
+        .contains(&qual_ref("stg_orders", "order_id")));
+
+    // payment_total is COALESCE(SUM(p.amount), 0) -> Function
+    let payment_total = find_column(model, "payment_total");
+    assert!(!payment_total.is_direct);
+    assert_eq!(payment_total.expr_type, ExprType::Function);
+
+    // payment_count is COUNT(p.payment_id) -> Function
+    let payment_count = find_column(model, "payment_count");
+    assert!(!payment_count.is_direct);
+    assert_eq!(payment_count.expr_type, ExprType::Function);
+
+    // order_amount is alias of o.amount -> direct
+    let order_amount = find_column(model, "order_amount");
+    assert!(order_amount.is_direct);
+    assert_eq!(order_amount.expr_type, ExprType::Column);
+}
+
+/// A6: dim_customers — CASE expression lineage
+#[test]
+fn test_lineage_dim_customers_case() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+    let model = lineage
+        .models
+        .get("dim_customers")
+        .expect("dim_customers lineage missing");
+
+    assert_eq!(model.columns.len(), 8);
+
+    let computed_tier = find_column(model, "computed_tier");
+    assert_eq!(computed_tier.expr_type, ExprType::Case);
+    assert!(!computed_tier.is_direct);
+    // The CASE references m.lifetime_value which resolves to int_customer_metrics
+    assert!(computed_tier
+        .source_columns
+        .contains(&qual_ref("int_customer_metrics", "lifetime_value")));
+}
+
+/// A7: fct_orders — expression and function call lineage
+#[test]
+fn test_lineage_fct_orders_expression_and_function() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+    let model = lineage
+        .models
+        .get("fct_orders")
+        .expect("fct_orders lineage missing");
+
+    assert_eq!(model.columns.len(), 11);
+
+    // balance_due = e.order_amount - e.payment_total -> Expression
+    let balance_due = find_column(model, "balance_due");
+    assert_eq!(balance_due.expr_type, ExprType::Expression);
+    assert!(!balance_due.is_direct);
+    assert!(balance_due
+        .source_columns
+        .contains(&qual_ref("int_orders_enriched", "order_amount")));
+    assert!(balance_due
+        .source_columns
+        .contains(&qual_ref("int_orders_enriched", "payment_total")));
+
+    // payment_ratio = safe_divide(...) — plain SQL function call (not Jinja-expanded)
+    let payment_ratio = find_column(model, "payment_ratio");
+    assert_eq!(payment_ratio.expr_type, ExprType::Function);
+    assert!(!payment_ratio.is_direct);
+}
+
+/// A8: dim_products — two CASE columns
+#[test]
+fn test_lineage_dim_products_two_case_columns() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+    let model = lineage
+        .models
+        .get("dim_products")
+        .expect("dim_products lineage missing");
+
+    assert_eq!(model.columns.len(), 6);
+
+    let category_group = find_column(model, "category_group");
+    assert_eq!(category_group.expr_type, ExprType::Case);
+    assert!(!category_group.is_direct);
+    assert!(category_group.source_columns.contains(&col_ref("category")));
+
+    let price_tier = find_column(model, "price_tier");
+    assert_eq!(price_tier.expr_type, ExprType::Case);
+    assert!(!price_tier.is_direct);
+    assert!(price_tier.source_columns.contains(&col_ref("price")));
+}
+
+// ── Category B: Per-Model Lineage — New Models ──────────────────────────
+
+/// B1: int_all_orders — UNION ALL column names from left operand
+#[test]
+fn test_lineage_union_all_column_names() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+    let model = lineage
+        .models
+        .get("int_all_orders")
+        .expect("int_all_orders lineage missing");
+
+    // Column names come from the left operand of the UNION ALL
+    assert_eq!(model.columns.len(), 6);
+
+    let order_id = find_column(model, "order_id");
+    assert!(order_id.is_direct);
+    assert_eq!(order_id.expr_type, ExprType::Column);
+
+    // 'enriched' AS source is a literal column
+    let source = find_column(model, "source");
+    assert_eq!(source.expr_type, ExprType::Literal);
+    assert!(!source.is_direct);
+    assert!(source.source_columns.is_empty());
+
+    // Source tables should come from the left operand extraction
+    assert!(model.source_tables.contains("int_orders_enriched"));
+}
+
+/// B2: int_customer_ranking — LEFT JOIN with COALESCE/NULLIF functions
+#[test]
+fn test_lineage_left_join_functions() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+    let model = lineage
+        .models
+        .get("int_customer_ranking")
+        .expect("int_customer_ranking lineage missing");
+
+    assert_eq!(model.columns.len(), 5);
+    assert!(model.source_tables.contains("stg_customers"));
+    assert!(model.source_tables.contains("int_customer_metrics"));
+
+    // COALESCE(m.lifetime_value, 0) -> Function
+    let value_or_zero = find_column(model, "value_or_zero");
+    assert_eq!(value_or_zero.expr_type, ExprType::Function);
+    assert!(!value_or_zero.is_direct);
+
+    // NULLIF(m.total_orders, 0) -> Function
+    let nonzero_orders = find_column(model, "nonzero_orders");
+    assert_eq!(nonzero_orders.expr_type, ExprType::Function);
+    assert!(!nonzero_orders.is_direct);
+
+    // Direct column passes through LEFT JOIN
+    let customer_id = find_column(model, "customer_id");
+    assert!(customer_id.is_direct);
+}
+
+/// B3: int_customer_ranking — JOIN table resolution and alias mapping
+#[test]
+fn test_lineage_join_table_resolution() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+    let model = lineage
+        .models
+        .get("int_customer_ranking")
+        .expect("int_customer_ranking lineage missing");
+
+    // Should have both tables as source tables
+    assert_eq!(model.source_tables.len(), 2);
+    assert!(model.source_tables.contains("stg_customers"));
+    assert!(model.source_tables.contains("int_customer_metrics"));
+
+    // Aliases should resolve
+    assert_eq!(
+        model.table_aliases.get("c"),
+        Some(&"stg_customers".to_string())
+    );
+    assert_eq!(
+        model.table_aliases.get("m"),
+        Some(&"int_customer_metrics".to_string())
+    );
+}
+
+/// B4: dim_products_extended — nested CASE and CAST of expression
+#[test]
+fn test_lineage_nested_case_and_cast_expression() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+    let model = lineage
+        .models
+        .get("dim_products_extended")
+        .expect("dim_products_extended lineage missing");
+
+    assert_eq!(model.columns.len(), 6);
+
+    // CAST(product_id * 10 AS BIGINT) -> Cast wrapping an expression
+    let id_scaled = find_column(model, "id_scaled");
+    assert_eq!(id_scaled.expr_type, ExprType::Cast);
+    assert!(!id_scaled.is_direct);
+    assert!(id_scaled.source_columns.contains(&col_ref("product_id")));
+
+    // Nested CASE: CASE WHEN category THEN CASE WHEN price ... END ... END
+    let detailed_category = find_column(model, "detailed_category");
+    assert_eq!(detailed_category.expr_type, ExprType::Case);
+    assert!(!detailed_category.is_direct);
+    // References both category and price
+    assert!(detailed_category
+        .source_columns
+        .contains(&col_ref("category")));
+    assert!(detailed_category.source_columns.contains(&col_ref("price")));
+}
+
+/// B5: int_high_value_orders — HAVING clause, multiple aggregation functions
+#[test]
+fn test_lineage_having_multiple_aggregations() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+    let model = lineage
+        .models
+        .get("int_high_value_orders")
+        .expect("int_high_value_orders lineage missing");
+
+    assert_eq!(model.columns.len(), 6);
+
+    // customer_id is direct from o.customer_id
+    let customer_id = find_column(model, "customer_id");
+    assert!(customer_id.is_direct);
+
+    // All aggregation columns are Function type
+    let order_count = find_column(model, "order_count");
+    assert_eq!(order_count.expr_type, ExprType::Function);
+    assert!(!order_count.is_direct);
+
+    let total_amount = find_column(model, "total_amount");
+    assert_eq!(total_amount.expr_type, ExprType::Function);
+    assert!(!total_amount.is_direct);
+
+    let min_order = find_column(model, "min_order");
+    assert_eq!(min_order.expr_type, ExprType::Function);
+
+    let max_order = find_column(model, "max_order");
+    assert_eq!(max_order.expr_type, ExprType::Function);
+
+    let avg_order = find_column(model, "avg_order");
+    assert_eq!(avg_order.expr_type, ExprType::Function);
+}
+
+/// B6: rpt_customer_orders — 3-way JOIN, nested expressions
+#[test]
+fn test_lineage_multiple_joins_nested_expression() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+    let model = lineage
+        .models
+        .get("rpt_customer_orders")
+        .expect("rpt_customer_orders lineage missing");
+
+    // 3 source tables from 3-way join
+    assert!(model.source_tables.contains("stg_customers"));
+    assert!(model.source_tables.contains("int_orders_enriched"));
+    assert!(model.source_tables.contains("stg_orders"));
+
+    // balance_with_fee = (e.order_amount - e.payment_total) * 1.1 -> Expression
+    let balance_with_fee = find_column(model, "balance_with_fee");
+    assert_eq!(balance_with_fee.expr_type, ExprType::Expression);
+    assert!(!balance_with_fee.is_direct);
+    assert!(balance_with_fee
+        .source_columns
+        .contains(&qual_ref("int_orders_enriched", "order_amount")));
+    assert!(balance_with_fee
+        .source_columns
+        .contains(&qual_ref("int_orders_enriched", "payment_total")));
+
+    // combined_metric = e.order_amount + e.payment_total + e.payment_count -> Expression
+    let combined_metric = find_column(model, "combined_metric");
+    assert_eq!(combined_metric.expr_type, ExprType::Expression);
+    assert!(combined_metric.source_columns.len() >= 3);
+}
+
+// ── Category C: Cross-Model Edge Resolution ─────────────────────────────
+
+/// C1: edges from stg_orders/stg_payments into int_orders_enriched
+#[test]
+fn test_edges_stg_orders_to_int_orders_enriched() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+
+    // Direct edge: stg_orders.order_id -> int_orders_enriched.order_id
+    let edges = lineage.trace_column("int_orders_enriched", "order_id");
+    assert!(
+        edges
+            .iter()
+            .any(|e| e.source_model == "stg_orders" && e.source_column == "order_id"),
+        "Expected edge from stg_orders.order_id to int_orders_enriched.order_id"
+    );
+
+    // Renamed edge: stg_orders.amount -> int_orders_enriched.order_amount
+    let amount_edges = lineage.trace_column("int_orders_enriched", "order_amount");
+    assert!(
+        amount_edges
+            .iter()
+            .any(|e| e.source_model == "stg_orders" && e.source_column == "amount"),
+        "Expected edge from stg_orders.amount to int_orders_enriched.order_amount"
+    );
+
+    // Aggregation edge: stg_payments -> int_orders_enriched.payment_total
+    let payment_edges = lineage.trace_column("int_orders_enriched", "payment_total");
+    assert!(
+        payment_edges
+            .iter()
+            .any(|e| e.source_model == "stg_payments"),
+        "Expected edge from stg_payments to int_orders_enriched.payment_total"
+    );
+}
+
+/// C2: fct_orders pulls from both int_orders_enriched and stg_customers
+#[test]
+fn test_edges_fct_orders_multiple_sources() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+
+    // customer_name comes from stg_customers
+    let name_edges = lineage.trace_column("fct_orders", "customer_name");
+    assert!(
+        name_edges
+            .iter()
+            .any(|e| e.source_model == "stg_customers" && e.source_column == "customer_name"),
+        "Expected edge from stg_customers.customer_name to fct_orders.customer_name"
+    );
+
+    // order_id comes from int_orders_enriched
+    let id_edges = lineage.trace_column("fct_orders", "order_id");
+    assert!(
+        id_edges
+            .iter()
+            .any(|e| e.source_model == "int_orders_enriched" && e.source_column == "order_id"),
+        "Expected edge from int_orders_enriched.order_id to fct_orders.order_id"
+    );
+
+    // balance_due is Expression -> is_direct should be false on the edge
+    let balance_edges = lineage.trace_column("fct_orders", "balance_due");
+    assert!(
+        balance_edges.iter().all(|e| !e.is_direct),
+        "balance_due edges should not be direct (it's an expression)"
+    );
+    assert!(
+        balance_edges
+            .iter()
+            .all(|e| e.expr_type == ExprType::Expression),
+        "balance_due edges should have Expression expr_type"
+    );
+}
+
+/// C3: dim_customers — computed_tier edges carry Case expr_type
+#[test]
+fn test_edges_dim_customers_case_expr_type() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+
+    let tier_edges = lineage.trace_column("dim_customers", "computed_tier");
+    assert!(
+        !tier_edges.is_empty(),
+        "computed_tier should have upstream edges"
+    );
+    for edge in &tier_edges {
+        assert_eq!(edge.expr_type, ExprType::Case);
+        assert!(!edge.is_direct);
+    }
+}
+
+/// C4: total edge count sanity check
+#[test]
+fn test_edges_total_count() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+
+    assert!(
+        !lineage.edges.is_empty(),
+        "ProjectLineage should have resolved edges"
+    );
+    // With 16 SQL models, there should be many edges
+    assert!(
+        lineage.edges.len() > 20,
+        "Expected more than 20 edges across the sample project, got {}",
+        lineage.edges.len()
+    );
+}
+
+// ── Category D: Recursive Multi-Hop Tracing ─────────────────────────────
+
+/// D1: fct_orders.order_id traces back >= 2 hops
+#[test]
+fn test_recursive_upstream_fct_orders_order_id() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+
+    let upstream = lineage.trace_column_recursive("fct_orders", "order_id");
+    assert!(
+        upstream.len() >= 2,
+        "fct_orders.order_id should trace back at least 2 hops, got {}",
+        upstream.len()
+    );
+
+    // Should include int_orders_enriched as an intermediate source
+    assert!(
+        upstream
+            .iter()
+            .any(|e| e.source_model == "int_orders_enriched"),
+        "Upstream of fct_orders.order_id should include int_orders_enriched"
+    );
+
+    // Should include stg_orders as the original source
+    assert!(
+        upstream.iter().any(|e| e.source_model == "stg_orders"),
+        "Upstream of fct_orders.order_id should trace back to stg_orders"
+    );
+}
+
+/// D2: stg_orders.order_id fans out downstream
+#[test]
+fn test_recursive_downstream_stg_orders_order_id() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+
+    let downstream = lineage.column_consumers_recursive("stg_orders", "order_id");
+    assert!(
+        downstream.len() >= 2,
+        "stg_orders.order_id should have at least 2 downstream consumers, got {}",
+        downstream.len()
+    );
+
+    // int_orders_enriched should consume order_id
+    assert!(
+        downstream
+            .iter()
+            .any(|e| e.target_model == "int_orders_enriched"),
+        "stg_orders.order_id should flow to int_orders_enriched"
+    );
+
+    // fct_orders should consume order_id (2 hops)
+    assert!(
+        downstream.iter().any(|e| e.target_model == "fct_orders"),
+        "stg_orders.order_id should flow to fct_orders (2 hops)"
+    );
+}
+
+/// D3: dim_customers.computed_tier traces through int_customer_metrics
+#[test]
+fn test_recursive_upstream_dim_customers_computed_tier() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+
+    let upstream = lineage.trace_column_recursive("dim_customers", "computed_tier");
+    assert!(
+        !upstream.is_empty(),
+        "dim_customers.computed_tier should have upstream edges"
+    );
+
+    // Should trace back to int_customer_metrics.lifetime_value
+    assert!(
+        upstream.iter().any(
+            |e| e.source_model == "int_customer_metrics" && e.source_column == "lifetime_value"
+        ),
+        "computed_tier should trace through int_customer_metrics.lifetime_value"
+    );
+}
+
+/// D4: stg_customers.customer_id fans out to multiple models
+#[test]
+fn test_recursive_downstream_stg_customers_customer_id_fan_out() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+
+    let downstream = lineage.column_consumers_recursive("stg_customers", "customer_id");
+    assert!(
+        downstream.len() >= 3,
+        "stg_customers.customer_id should have at least 3 downstream consumers, got {}",
+        downstream.len()
+    );
+
+    // Should reach multiple models
+    let target_models: std::collections::HashSet<&str> =
+        downstream.iter().map(|e| e.target_model.as_str()).collect();
+    assert!(
+        target_models.len() >= 2,
+        "stg_customers.customer_id should reach at least 2 distinct target models, got {:?}",
+        target_models
+    );
+}
+
+/// D5: rpt_customer_orders.order_amount traces deep through DAG
+#[test]
+fn test_recursive_upstream_rpt_customer_orders_deep_chain() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+
+    let upstream = lineage.trace_column_recursive("rpt_customer_orders", "order_amount");
+    assert!(
+        upstream.len() >= 2,
+        "rpt_customer_orders.order_amount should trace at least 2 hops, got {}",
+        upstream.len()
+    );
+
+    // Should include int_orders_enriched as intermediate
+    assert!(
+        upstream
+            .iter()
+            .any(|e| e.source_model == "int_orders_enriched"),
+        "rpt_customer_orders.order_amount should trace through int_orders_enriched"
+    );
+
+    // Should reach stg_orders as the origin
+    assert!(
+        upstream.iter().any(|e| e.source_model == "stg_orders"),
+        "rpt_customer_orders.order_amount should trace back to stg_orders"
+    );
+}
+
+// ── Category E: Classification Propagation ──────────────────────────────
+
+/// E1: PII classification propagates on stg_orders.customer_id edges
+#[test]
+fn test_classification_propagation_pii_through_edges() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+
+    let edges_from_customer_id = lineage.column_consumers("stg_orders", "customer_id");
+    assert!(
+        !edges_from_customer_id.is_empty(),
+        "stg_orders.customer_id should have downstream edges"
+    );
+    for edge in &edges_from_customer_id {
+        assert_eq!(
+            edge.classification.as_deref(),
+            Some("pii"),
+            "Edge from stg_orders.customer_id to {}.{} should carry pii classification",
+            edge.target_model,
+            edge.target_column
+        );
+    }
+}
+
+/// E2: Sensitive classification on stg_orders.amount propagates
+#[test]
+fn test_classification_sensitive_amount_propagation() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+
+    let amount_edges = lineage.column_consumers("stg_orders", "amount");
+    assert!(
+        !amount_edges.is_empty(),
+        "stg_orders.amount should have downstream edges"
+    );
+    for edge in &amount_edges {
+        assert_eq!(
+            edge.classification.as_deref(),
+            Some("sensitive"),
+            "Edge from stg_orders.amount to {}.{} should carry sensitive classification",
+            edge.target_model,
+            edge.target_column
+        );
+    }
+}
+
+/// E3: Internal classification on stg_orders.status propagates
+#[test]
+fn test_classification_internal_status_propagation() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+
+    let status_edges = lineage.column_consumers("stg_orders", "status");
+    assert!(
+        !status_edges.is_empty(),
+        "stg_orders.status should have downstream edges"
+    );
+    for edge in &status_edges {
+        assert_eq!(
+            edge.classification.as_deref(),
+            Some("internal"),
+            "Edge from stg_orders.status to {}.{} should carry internal classification",
+            edge.target_model,
+            edge.target_column
+        );
+    }
+}
+
+// ── Category F: Edge Attribute Verification ─────────────────────────────
+
+/// F1: Direct rename/passthrough preserves is_direct=true
+#[test]
+fn test_edge_is_direct_for_rename_passthrough() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+
+    // customer_id in int_orders_enriched is o.customer_id (direct passthrough)
+    let edges = lineage.trace_column("int_orders_enriched", "customer_id");
+    let stg_edge = edges.iter().find(|e| e.source_model == "stg_orders");
+    assert!(
+        stg_edge.is_some(),
+        "Expected edge from stg_orders.customer_id"
+    );
+    assert!(
+        stg_edge.unwrap().is_direct,
+        "customer_id passthrough should be direct"
+    );
+    assert_eq!(stg_edge.unwrap().expr_type, ExprType::Column);
+}
+
+/// F2: Aggregation edges have is_direct=false
+#[test]
+fn test_edge_is_not_direct_for_aggregation() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+
+    let edges = lineage.trace_column("int_orders_enriched", "payment_total");
+    assert!(
+        !edges.is_empty(),
+        "payment_total should have upstream edges"
+    );
+    for edge in &edges {
+        assert!(
+            !edge.is_direct,
+            "payment_total (aggregation) edges should not be direct"
+        );
+        assert_eq!(edge.expr_type, ExprType::Function);
+    }
+}
+
+/// F3: ExprType::Column and is_direct=true preserved at each hop in rename chains
+#[test]
+fn test_edge_expr_type_across_hops() {
+    let pipeline = build_analysis_pipeline("tests/fixtures/sample_project");
+    let lineage = pipeline.ctx.lineage();
+
+    // fct_orders.amount is `e.order_amount AS amount` -> direct column reference
+    let amount_edges = lineage.trace_column("fct_orders", "amount");
+    let from_enriched = amount_edges
+        .iter()
+        .find(|e| e.source_model == "int_orders_enriched");
+    assert!(from_enriched.is_some());
+    assert_eq!(from_enriched.unwrap().expr_type, ExprType::Column);
+    assert!(from_enriched.unwrap().is_direct);
+
+    // int_orders_enriched.order_amount is `o.amount AS order_amount` -> also direct
+    let order_amount_edges = lineage.trace_column("int_orders_enriched", "order_amount");
+    let from_stg = order_amount_edges
+        .iter()
+        .find(|e| e.source_model == "stg_orders");
+    assert!(from_stg.is_some());
+    assert_eq!(from_stg.unwrap().expr_type, ExprType::Column);
+    assert!(from_stg.unwrap().is_direct);
 }
