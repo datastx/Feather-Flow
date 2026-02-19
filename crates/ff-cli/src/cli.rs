@@ -121,7 +121,7 @@ pub(crate) enum ParseOutput {
 
 /// Output formats for run/test/compile commands (for CI integration)
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum OutputFormat {
+pub(crate) enum OutputFormat {
     /// Human-readable text output (default)
     #[default]
     Text,

@@ -136,7 +136,7 @@ fn normalize_table_name(name: &str) -> &str {
 /// resolution.
 ///
 /// Like [`extract_dependencies`] but each returned [`ResolvedIdent`] carries
-/// per-part [`CaseSensitivity`] metadata and has its identifier values folded
+/// per-part `CaseSensitivity` metadata and has its identifier values folded
 /// according to the dialect's rules (e.g. Snowflake folds unquoted idents to
 /// UPPER CASE, PostgreSQL to lower case, DuckDB preserves as-is).
 ///

@@ -209,33 +209,8 @@ pub(crate) fn build_schema_catalog(
             if schema_catalog.contains_key(&table.name) {
                 continue;
             }
-            if table.columns.is_empty() {
-                schema_catalog.insert(table.name.clone(), Arc::new(RelSchema::empty()));
-            } else {
-                let columns: Vec<TypedColumn> = table
-                    .columns
-                    .iter()
-                    .map(|col| {
-                        let sql_type = parse_sql_type(&col.data_type);
-                        let has_not_null = col.tests.iter().any(|t| {
-                            matches!(t, ff_core::model::TestDefinition::Simple(s) if s == "not_null")
-                        });
-                        let nullability = if has_not_null {
-                            Nullability::NotNull
-                        } else {
-                            Nullability::Unknown
-                        };
-                        TypedColumn {
-                            name: col.name.clone(),
-                            source_table: None,
-                            sql_type,
-                            nullability,
-                            provenance: vec![],
-                        }
-                    })
-                    .collect();
-                schema_catalog.insert(table.name.clone(), Arc::new(RelSchema::new(columns)));
-            }
+            let schema = build_source_table_schema(table);
+            schema_catalog.insert(table.name.clone(), Arc::new(schema));
         }
     }
 
@@ -252,6 +227,41 @@ pub(crate) fn build_schema_catalog(
 /// Load a project from the directory specified in global CLI arguments.
 pub(crate) fn load_project(global: &GlobalArgs) -> Result<Project> {
     Project::load(&global.project_dir).context("Failed to load project")
+}
+
+/// Build a [`RelSchema`](ff_analysis::RelSchema) from a source table's column definitions.
+///
+/// Returns an empty schema if the table has no columns defined.
+fn build_source_table_schema(table: &ff_core::SourceTable) -> ff_analysis::RelSchema {
+    use ff_analysis::{parse_sql_type, Nullability, RelSchema, TypedColumn};
+
+    if table.columns.is_empty() {
+        return RelSchema::empty();
+    }
+    let columns: Vec<TypedColumn> = table
+        .columns
+        .iter()
+        .map(|col| {
+            let sql_type = parse_sql_type(&col.data_type);
+            let has_not_null = col
+                .tests
+                .iter()
+                .any(|t| matches!(t, ff_core::model::TestDefinition::Simple(s) if s == "not_null"));
+            let nullability = if has_not_null {
+                Nullability::NotNull
+            } else {
+                Nullability::Unknown
+            };
+            TypedColumn {
+                name: col.name.clone(),
+                source_table: None,
+                sql_type,
+                nullability,
+                provenance: vec![],
+            }
+        })
+        .collect();
+    RelSchema::new(columns)
 }
 
 /// Build a DAG from a project by rendering Jinja, parsing SQL, and extracting
@@ -605,7 +615,7 @@ pub(crate) fn print_table(headers: &[&str], rows: &[Vec<String>]) {
     }
 }
 
-/// Build a [`JinjaEnvironment`] using the project's vars and macro paths.
+/// Build a `JinjaEnvironment` using the project's vars and macro paths.
 ///
 /// Use this for commands that don't need template context variables
 /// (`{{ project_name }}`, `{{ target }}`, etc.).
@@ -614,7 +624,7 @@ pub(crate) fn build_jinja_env(project: &Project) -> ff_jinja::JinjaEnvironment<'
     ff_jinja::JinjaEnvironment::with_macros(&project.config.vars, &macro_paths)
 }
 
-/// Build a [`JinjaEnvironment`] with template context variables.
+/// Build a `JinjaEnvironment` with template context variables.
 ///
 /// Includes `{{ project_name }}`, `{{ target }}`, `{{ run_id }}`,
 /// `{{ executing }}`, etc. Set `executing` to `true` for `ff run`,
@@ -857,14 +867,13 @@ pub(crate) fn build_qualification_map(
     // Source tables: use 3-part only when the source targets a different database
     for source in &project.sources {
         let source_db = source.database.as_deref().unwrap_or(db_name);
-        let cross_db = source_db != db_name;
+        let database = if source_db != db_name {
+            Some(source_db.to_string())
+        } else {
+            None
+        };
         for table in &source.tables {
             let actual_name = table.identifier.as_ref().unwrap_or(&table.name);
-            let database = if cross_db {
-                Some(source_db.to_string())
-            } else {
-                None
-            };
             map.insert(
                 table.name.to_lowercase(),
                 QualifiedRef {
@@ -879,7 +888,7 @@ pub(crate) fn build_qualification_map(
                     map.insert(
                         ident.to_lowercase(),
                         QualifiedRef {
-                            database,
+                            database: database.clone(),
                             schema: source.schema.clone(),
                             table: ident.clone(),
                         },

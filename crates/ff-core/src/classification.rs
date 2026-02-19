@@ -64,15 +64,12 @@ pub fn parse_classification(s: &str) -> Option<DataClassification> {
 
 /// Return a numeric rank for a classification string (higher = more sensitive)
 ///
+/// Delegates to [`parse_classification`] + [`classification_rank`].
 /// Returns 0 for unrecognized values.
 fn rank_str(cls: &str) -> u8 {
-    match cls {
-        "pii" => 4,
-        "sensitive" => 3,
-        "internal" => 2,
-        "public" => 1,
-        _ => 0,
-    }
+    parse_classification(cls)
+        .map(|c| classification_rank(&c))
+        .unwrap_or(0)
 }
 
 /// A column-level lineage edge used for classification propagation.
@@ -92,6 +89,33 @@ pub struct ClassificationEdge {
     /// Whether this is a direct pass-through (copy) or a transform.
     /// Inspect edges (WHERE/JOIN) should be excluded before calling propagation.
     pub is_direct: bool,
+}
+
+/// Find the highest-ranked upstream classification among a set of incoming edges.
+///
+/// Returns `None` if no upstream edge carries a classification.
+fn find_best_upstream_classification(
+    effective_cls: &HashMap<String, HashMap<String, String>>,
+    incoming: &[&ClassificationEdge],
+) -> Option<String> {
+    let mut best_rank: u8 = 0;
+    let mut best_cls: Option<String> = None;
+
+    for edge in incoming {
+        let upstream = effective_cls
+            .get(&edge.source_model)
+            .and_then(|cols| cols.get(&edge.source_column));
+
+        if let Some(cls) = upstream {
+            let r = rank_str(cls);
+            if r > best_rank {
+                best_rank = r;
+                best_cls = Some(cls.clone());
+            }
+        }
+    }
+
+    best_cls
 }
 
 /// Propagate data classifications through column lineage in topological order.
@@ -143,39 +167,21 @@ pub fn propagate_classifications_topo(
                 continue;
             };
 
-            // Find the highest-ranked upstream effective classification.
-            // Clone the string to avoid holding an immutable borrow on effective_cls.
-            let mut best_rank: u8 = 0;
-            let mut best_cls: Option<String> = None;
+            let Some(best_cls) = find_best_upstream_classification(&effective_cls, incoming) else {
+                continue;
+            };
 
-            for edge in incoming {
-                let upstream_cls = effective_cls
-                    .get(&edge.source_model)
-                    .and_then(|cols| cols.get(&edge.source_column));
+            let current_rank = effective_cls
+                .get(model.as_str())
+                .and_then(|cols| cols.get(column))
+                .map(|c| rank_str(c))
+                .unwrap_or(0);
 
-                if let Some(cls) = upstream_cls {
-                    let r = rank_str(cls);
-                    if r > best_rank {
-                        best_rank = r;
-                        best_cls = Some(cls.clone());
-                    }
-                }
-            }
-
-            if let Some(cls) = best_cls {
-                // Compare with any existing (declared) classification
-                let current_rank = effective_cls
-                    .get(model.as_str())
-                    .and_then(|cols| cols.get(column))
-                    .map(|c| rank_str(c))
-                    .unwrap_or(0);
-
-                if best_rank > current_rank {
-                    effective_cls
-                        .entry(model.to_string())
-                        .or_default()
-                        .insert(column.to_string(), cls);
-                }
+            if rank_str(&best_cls) > current_rank {
+                effective_cls
+                    .entry(model.to_string())
+                    .or_default()
+                    .insert(column.to_string(), best_cls);
             }
         }
     }

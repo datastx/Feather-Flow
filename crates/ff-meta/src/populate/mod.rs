@@ -1,7 +1,7 @@
 //! Population functions for the meta database.
 //!
 //! Each submodule handles one entity type. All functions take `&Connection`
-//! so callers can wrap them in a single transaction via [`MetaDb::transaction`].
+//! so callers can wrap them in a single transaction via `MetaDb::transaction`.
 
 pub mod analysis;
 pub mod compilation;

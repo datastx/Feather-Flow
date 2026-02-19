@@ -1,6 +1,6 @@
 //! Populate the `models` and related child tables.
 
-use crate::error::{MetaError, MetaResult};
+use crate::error::{MetaResult, MetaResultExt};
 use crate::populate::project::serialize_yaml_value;
 use duckdb::Connection;
 use ff_core::{Config, Model, ModelName};
@@ -32,18 +32,17 @@ pub fn populate_models(
 pub fn get_model_id_map(conn: &Connection, project_id: i64) -> MetaResult<HashMap<String, i64>> {
     let mut stmt = conn
         .prepare("SELECT model_id, name FROM ff_meta.models WHERE project_id = ?")
-        .map_err(|e| MetaError::PopulationError(format!("prepare get_model_id_map: {e}")))?;
+        .populate_context("prepare get_model_id_map")?;
 
     let rows = stmt
         .query_map(duckdb::params![project_id], |row| {
             Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
         })
-        .map_err(|e| MetaError::PopulationError(format!("query get_model_id_map: {e}")))?;
+        .populate_context("query get_model_id_map")?;
 
     let mut map = HashMap::new();
     for row in rows {
-        let (model_id, name) =
-            row.map_err(|e| MetaError::PopulationError(format!("row get_model_id_map: {e}")))?;
+        let (model_id, name) = row.populate_context("row get_model_id_map")?;
         map.insert(name, model_id);
     }
     Ok(map)
@@ -95,7 +94,7 @@ fn insert_model(
             checksum,
         ],
     )
-    .map_err(|e| MetaError::PopulationError(format!("insert models ({}): {e}", model.name)))?;
+    .populate_context(&format!("insert models ({})", model.name))?;
 
     let model_id: i64 = conn
         .query_row(
@@ -103,7 +102,7 @@ fn insert_model(
             duckdb::params![project_id, model.name.as_ref()],
             |row| row.get(0),
         )
-        .map_err(|e| MetaError::PopulationError(format!("select model_id: {e}")))?;
+        .populate_context("select model_id")?;
 
     Ok(model_id)
 }
@@ -114,12 +113,8 @@ fn insert_model_config(conn: &Connection, model_id: i64, model: &Model) -> MetaR
         .config
         .incremental_strategy
         .as_ref()
-        .map(|s| format!("{s:?}").to_lowercase());
-    let on_schema_change = model
-        .config
-        .on_schema_change
-        .as_ref()
-        .map(|s| format!("{s:?}").to_lowercase());
+        .map(|s| s.as_str());
+    let on_schema_change = model.config.on_schema_change.as_ref().map(|s| s.as_str());
     let wap = model.config.wap;
 
     conn.execute(
@@ -127,7 +122,7 @@ fn insert_model_config(conn: &Connection, model_id: i64, model: &Model) -> MetaR
          VALUES (?, ?, ?, ?, ?)",
         duckdb::params![model_id, unique_key, strategy, on_schema_change, wap],
     )
-    .map_err(|e| MetaError::PopulationError(format!("insert model_config: {e}")))?;
+    .populate_context("insert model_config")?;
 
     Ok(())
 }
@@ -138,7 +133,7 @@ fn insert_model_hooks(conn: &Connection, model_id: i64, model: &Model) -> MetaRe
             "INSERT INTO ff_meta.model_hooks (model_id, hook_type, sql_text, ordinal_position) VALUES (?, 'pre_hook', ?, ?)",
             duckdb::params![model_id, sql, (i + 1) as i32],
         )
-        .map_err(|e| MetaError::PopulationError(format!("insert model_hooks: {e}")))?;
+        .populate_context("insert model_hooks")?;
     }
 
     for (i, sql) in model.config.post_hook.iter().enumerate() {
@@ -146,7 +141,7 @@ fn insert_model_hooks(conn: &Connection, model_id: i64, model: &Model) -> MetaRe
             "INSERT INTO ff_meta.model_hooks (model_id, hook_type, sql_text, ordinal_position) VALUES (?, 'post_hook', ?, ?)",
             duckdb::params![model_id, sql, (i + 1) as i32],
         )
-        .map_err(|e| MetaError::PopulationError(format!("insert model_hooks: {e}")))?;
+        .populate_context("insert model_hooks")?;
     }
 
     Ok(())
@@ -170,7 +165,7 @@ fn insert_model_tags(conn: &Connection, model_id: i64, model: &Model) -> MetaRes
             "INSERT INTO ff_meta.model_tags (model_id, tag) VALUES (?, ?)",
             duckdb::params![model_id, tag],
         )
-        .map_err(|e| MetaError::PopulationError(format!("insert model_tags: {e}")))?;
+        .populate_context("insert model_tags")?;
     }
 
     Ok(())
@@ -187,7 +182,7 @@ fn insert_model_meta(conn: &Connection, model_id: i64, model: &Model) -> MetaRes
             "INSERT INTO ff_meta.model_meta (model_id, key, value) VALUES (?, ?, ?)",
             duckdb::params![model_id, key, serialized],
         )
-        .map_err(|e| MetaError::PopulationError(format!("insert model_meta: {e}")))?;
+        .populate_context("insert model_meta")?;
     }
 
     Ok(())
@@ -226,7 +221,7 @@ fn insert_model_columns(conn: &Connection, model_id: i64, model: &Model) -> Meta
                 (i + 1) as i32,
             ],
         )
-        .map_err(|e| MetaError::PopulationError(format!("insert model_columns: {e}")))?;
+        .populate_context("insert model_columns")?;
 
         let column_id: i64 = conn
             .query_row(
@@ -234,7 +229,7 @@ fn insert_model_columns(conn: &Connection, model_id: i64, model: &Model) -> Meta
                 duckdb::params![model_id, col.name],
                 |row| row.get(0),
             )
-            .map_err(|e| MetaError::PopulationError(format!("select column_id: {e}")))?;
+            .populate_context("select column_id")?;
 
         for constraint in &col.constraints {
             let ct = match constraint {
@@ -246,7 +241,7 @@ fn insert_model_columns(conn: &Connection, model_id: i64, model: &Model) -> Meta
                 "INSERT INTO ff_meta.model_column_constraints (column_id, constraint_type) VALUES (?, ?)",
                 duckdb::params![column_id, ct],
             )
-            .map_err(|e| MetaError::PopulationError(format!("insert column_constraints: {e}")))?;
+            .populate_context("insert column_constraints")?;
         }
 
         if let Some(ref_info) = &col.references {
@@ -254,7 +249,7 @@ fn insert_model_columns(conn: &Connection, model_id: i64, model: &Model) -> Meta
                 "INSERT INTO ff_meta.model_column_references (column_id, referenced_model_name, referenced_column_name) VALUES (?, ?, ?)",
                 duckdb::params![column_id, ref_info.model.as_ref(), ref_info.column],
             )
-            .map_err(|e| MetaError::PopulationError(format!("insert column_references: {e}")))?;
+            .populate_context("insert column_references")?;
         }
     }
 

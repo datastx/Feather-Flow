@@ -102,6 +102,38 @@ pub(crate) fn collect_column_refs(expr: &Expr, cols: &mut HashSet<String>) {
     });
 }
 
+/// Iterate over every sub-expression inside a [`datafusion_expr::expr::Case`].
+///
+/// Calls `f` on the optional operand, every WHEN and THEN expression, and
+/// the optional ELSE expression — in that order.
+pub(crate) fn for_each_case_subexpr(case: &datafusion_expr::expr::Case, mut f: impl FnMut(&Expr)) {
+    if let Some(ref operand) = case.expr {
+        f(operand);
+    }
+    for (when, then) in &case.when_then_expr {
+        f(when);
+        f(then);
+    }
+    if let Some(ref else_expr) = case.else_expr {
+        f(else_expr);
+    }
+}
+
+/// Iterate over the *output-producing* sub-expressions of a CASE: each THEN
+/// branch and the optional ELSE. Skips the operand and WHEN conditions, which
+/// don't contribute to the output value.
+pub(crate) fn for_each_case_output_expr(
+    case: &datafusion_expr::expr::Case,
+    mut f: impl FnMut(&Expr),
+) {
+    for (_when, then) in &case.when_then_expr {
+        f(then);
+    }
+    if let Some(ref else_expr) = case.else_expr {
+        f(else_expr);
+    }
+}
+
 /// Get a human-readable display name for a DataFusion expression.
 ///
 /// For columns, includes the optional table qualifier (`table.column`).

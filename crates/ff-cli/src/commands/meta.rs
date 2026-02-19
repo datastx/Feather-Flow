@@ -53,26 +53,7 @@ async fn execute_export(args: &crate::cli::MetaExportArgs, global: &GlobalArgs) 
             }
         };
 
-        let json_rows: Vec<serde_json::Value> = result
-            .rows
-            .iter()
-            .map(|row| {
-                let map: serde_json::Map<String, serde_json::Value> = result
-                    .columns
-                    .iter()
-                    .zip(row.iter())
-                    .map(|(col, val)| {
-                        let json_val = if val == "null" {
-                            serde_json::Value::Null
-                        } else {
-                            serde_json::Value::String(val.clone())
-                        };
-                        (col.clone(), json_val)
-                    })
-                    .collect();
-                serde_json::Value::Object(map)
-            })
-            .collect();
+        let json_rows = rows_to_json_values(&result.columns, &result.rows);
 
         export.insert(table.clone(), serde_json::Value::Array(json_rows));
     }
@@ -122,8 +103,17 @@ fn print_table_output(columns: &[String], rows: &[Vec<String>]) {
 }
 
 fn print_json_output(columns: &[String], rows: &[Vec<String>]) -> Result<()> {
-    let json_rows: Vec<serde_json::Value> = rows
-        .iter()
+    let json_rows = rows_to_json_values(columns, rows);
+    let output =
+        serde_json::to_string_pretty(&json_rows).context("Failed to serialize JSON output")?;
+    println!("{output}");
+    Ok(())
+}
+
+/// Convert tabular rows into a `Vec<serde_json::Value>` of JSON objects,
+/// mapping `"null"` strings to `serde_json::Value::Null`.
+fn rows_to_json_values(columns: &[String], rows: &[Vec<String>]) -> Vec<serde_json::Value> {
+    rows.iter()
         .map(|row| {
             let map: serde_json::Map<String, serde_json::Value> = columns
                 .iter()
@@ -139,10 +129,5 @@ fn print_json_output(columns: &[String], rows: &[Vec<String>]) -> Result<()> {
                 .collect();
             serde_json::Value::Object(map)
         })
-        .collect();
-
-    let output =
-        serde_json::to_string_pretty(&json_rows).context("Failed to serialize JSON output")?;
-    println!("{output}");
-    Ok(())
+        .collect()
 }

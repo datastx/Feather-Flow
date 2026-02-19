@@ -1,6 +1,6 @@
 //! Populate the `tests` and `singular_tests` tables.
 
-use crate::error::{MetaError, MetaResult};
+use crate::error::{MetaResult, MetaResultExt};
 use duckdb::Connection;
 use ff_core::model::testing::{SchemaTest, SingularTest, TestType};
 use std::collections::HashMap;
@@ -32,7 +32,7 @@ pub fn populate_schema_tests(
                 config_json,
             ],
         )
-        .map_err(|e| MetaError::PopulationError(format!("insert tests: {e}")))?;
+        .populate_context("insert tests")?;
     }
     Ok(())
 }
@@ -53,7 +53,7 @@ pub fn populate_singular_tests(
                 test.sql,
             ],
         )
-        .map_err(|e| MetaError::PopulationError(format!("insert singular_tests: {e}")))?;
+        .populate_context("insert singular_tests")?;
     }
     Ok(())
 }

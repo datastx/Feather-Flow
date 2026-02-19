@@ -14,6 +14,11 @@ use std::path::Path;
 
 use super::{Project, ProjectParts};
 
+/// Extract the file extension as a `&str`, returning `""` for paths without one.
+fn file_extension_str(path: &Path) -> &str {
+    path.extension().and_then(|e| e.to_str()).unwrap_or("")
+}
+
 /// Collected results from unified node discovery.
 struct DiscoveredNodes {
     models: HashMap<ModelName, Model>,
@@ -156,7 +161,7 @@ impl Project {
             let path = entry.path();
 
             if !path.is_dir() {
-                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                let ext = file_extension_str(&path);
                 if matches!(ext, "sql" | "csv" | "yml" | "yaml" | "py") {
                     return Err(CoreError::InvalidModelDirectory {
                         path: path.display().to_string(),
@@ -348,7 +353,7 @@ impl Project {
             let path = entry.path();
 
             if !path.is_dir() {
-                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                let ext = file_extension_str(&path);
                 if matches!(ext, "sql" | "csv" | "py") {
                     return Err(CoreError::InvalidModelDirectory {
                         path: path.display().to_string(),
@@ -474,7 +479,7 @@ impl Project {
         let extra_files: Vec<String> = all_visible_files
             .iter()
             .filter(|p| {
-                let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+                let ext = file_extension_str(p);
                 !matches!(ext, "sql" | "csv" | "py" | "yml" | "yaml")
             })
             .map(|p| {

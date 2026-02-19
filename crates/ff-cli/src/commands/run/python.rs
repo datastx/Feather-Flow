@@ -183,8 +183,6 @@ pub(crate) async fn run_python_model(
 struct UvRunOutput {
     success: bool,
     exit_code: i32,
-    #[allow(dead_code)]
-    stdout: String,
     stderr: String,
 }
 
@@ -204,7 +202,6 @@ async fn execute_uv_run(
     Ok(UvRunOutput {
         success: output.status.success(),
         exit_code: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
         stderr: String::from_utf8_lossy(&output.stderr).to_string(),
     })
 }

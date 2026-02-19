@@ -47,7 +47,7 @@ pub struct ModelCommentInput<'a> {
 
 /// Full metadata for a single model's query comment.
 ///
-/// Only serialized into JSON indirectly via [`build_metadata_value`] so that
+/// Only serialized into JSON indirectly via `build_metadata_value` so that
 /// the `include` filter is respected. This struct is kept for programmatic
 /// access when needed.
 #[derive(Debug, Clone, Serialize)]
@@ -181,8 +181,12 @@ fn filter_metadata(metadata: &QueryCommentMetadata, include: &CommentInclude) ->
 /// Format a metadata JSON value into a SQL block comment.
 fn format_comment(value: &Value, style: CommentStyle) -> String {
     let json = match style {
-        CommentStyle::Compact => serde_json::to_string(value).unwrap_or_default(),
-        CommentStyle::Pretty => serde_json::to_string_pretty(value).unwrap_or_default(),
+        CommentStyle::Compact => {
+            serde_json::to_string(value).expect("serde_json::to_string cannot fail on Value")
+        }
+        CommentStyle::Pretty => {
+            serde_json::to_string_pretty(value).expect("serde_json::to_string cannot fail on Value")
+        }
     };
     match style {
         CommentStyle::Compact => format!("/* ff_metadata: {} */", json),
@@ -192,7 +196,7 @@ fn format_comment(value: &Value, style: CommentStyle) -> String {
 
 /// Build the query comment string for a model (legacy convenience function).
 ///
-/// Delegates to [`format_comment`] with compact style.
+/// Delegates to `format_comment` with compact style.
 pub fn build_query_comment(metadata: &QueryCommentMetadata) -> String {
     let include = CommentInclude::default();
     let value = filter_metadata(metadata, &include);

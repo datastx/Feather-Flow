@@ -1,6 +1,6 @@
 //! Populate execution-phase data: model run state, input checksums, config snapshots.
 
-use crate::error::{MetaError, MetaResult};
+use crate::error::{MetaResult, MetaResultExt};
 use duckdb::Connection;
 
 /// A model execution record.
@@ -44,7 +44,7 @@ pub fn record_model_run(conn: &Connection, record: &ModelRunRecord) -> MetaResul
             record.duration_ms,
         ],
     )
-    .map_err(|e| MetaError::PopulationError(format!("insert model_run_state: {e}")))?;
+    .populate_context("insert model_run_state")?;
     Ok(())
 }
 
@@ -60,7 +60,7 @@ pub fn record_input_checksums(
             "INSERT INTO ff_meta.model_run_input_checksums (model_id, run_id, upstream_model_id, checksum) VALUES (?, ?, ?, ?)",
             duckdb::params![model_id, run_id, cs.upstream_model_id, cs.checksum],
         )
-        .map_err(|e| MetaError::PopulationError(format!("insert model_run_input_checksums: {e}")))?;
+        .populate_context("insert model_run_input_checksums")?;
     }
     Ok(())
 }
@@ -85,6 +85,6 @@ pub fn record_config_snapshot(
             config.on_schema_change,
         ],
     )
-    .map_err(|e| MetaError::PopulationError(format!("insert model_run_config: {e}")))?;
+    .populate_context("insert model_run_config")?;
     Ok(())
 }

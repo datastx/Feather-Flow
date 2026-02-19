@@ -264,7 +264,7 @@ fn default_function_paths() -> Vec<String> {
 }
 
 fn default_target_path() -> String {
-    "target".to_string()
+    DEFAULT_TARGET_DIR.to_string()
 }
 
 fn default_dialect() -> Dialect {
@@ -426,7 +426,7 @@ impl Config {
     ///
     /// If target is specified and exists, uses target's database config.
     /// Otherwise, uses the base database config.
-    pub fn get_database_config(&self, target: Option<&str>) -> CoreResult<DatabaseConfig> {
+    pub fn get_database_config(&self, target: Option<&str>) -> CoreResult<Cow<'_, DatabaseConfig>> {
         match target {
             Some(name) => {
                 let target_config =
@@ -445,12 +445,12 @@ impl Config {
                         })?;
 
                 // Use target's database config if specified, otherwise fall back to base
-                Ok(target_config
-                    .database
-                    .clone()
-                    .unwrap_or_else(|| self.database.clone()))
+                match &target_config.database {
+                    Some(db) => Ok(Cow::Borrowed(db)),
+                    None => Ok(Cow::Borrowed(&self.database)),
+                }
             }
-            None => Ok(self.database.clone()),
+            None => Ok(Cow::Borrowed(&self.database)),
         }
     }
 
@@ -516,6 +516,28 @@ impl Materialization {
     /// Returns true if this is an ephemeral materialization
     pub fn is_ephemeral(&self) -> bool {
         matches!(self, Materialization::Ephemeral)
+    }
+}
+
+impl IncrementalStrategy {
+    /// Return the strategy name as a static string slice.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            IncrementalStrategy::Append => "append",
+            IncrementalStrategy::Merge => "merge",
+            IncrementalStrategy::DeleteInsert => "delete+insert",
+        }
+    }
+}
+
+impl OnSchemaChange {
+    /// Return the schema-change policy name as a static string slice.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            OnSchemaChange::Ignore => "ignore",
+            OnSchemaChange::Fail => "fail",
+            OnSchemaChange::AppendNewColumns => "append_new_columns",
+        }
     }
 }
 

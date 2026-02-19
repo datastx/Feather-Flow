@@ -72,28 +72,30 @@ pub(crate) async fn set_search_path(
     global: &GlobalArgs,
 ) -> Result<()> {
     let mut schemas: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    let push_unique =
+        |s: String, schemas: &mut Vec<String>, seen: &mut std::collections::HashSet<String>| {
+            if seen.insert(s.clone()) {
+                schemas.push(s);
+            }
+        };
 
     if let Some(default_schema) = &project.config.schema {
-        schemas.push(default_schema.clone());
+        push_unique(default_schema.clone(), &mut schemas, &mut seen);
     }
 
     for model in compiled_models.values() {
         if let Some(ref s) = model.schema {
-            if !schemas.contains(s) {
-                schemas.push(s.clone());
-            }
+            push_unique(s.clone(), &mut schemas, &mut seen);
         }
     }
 
     if let Some(ws) = wap_schema {
-        if !schemas.iter().any(|s| s == ws) {
-            schemas.push(ws.to_string());
-        }
+        push_unique(ws.to_string(), &mut schemas, &mut seen);
     }
 
-    if !schemas.iter().any(|s| s == "main") {
-        schemas.push("main".to_string());
-    }
+    push_unique("main".to_string(), &mut schemas, &mut seen);
 
     if global.verbose {
         eprintln!("[verbose] Setting search_path to: {}", schemas.join(","));

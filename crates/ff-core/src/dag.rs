@@ -107,16 +107,8 @@ impl ModelDag {
 
     /// Get models in topological order (dependencies first)
     pub fn topological_order(&self) -> CoreResult<Vec<String>> {
-        match toposort(&self.graph, None) {
-            Ok(indices) => Ok(indices
-                .into_iter()
-                .map(|idx| self.graph[idx].to_string())
-                .collect()),
-            Err(cycle) => {
-                let cycle_str = self.find_cycle_path(cycle.node_id());
-                Err(CoreError::CircularDependency { cycle: cycle_str })
-            }
-        }
+        self.topological_order_names()
+            .map(|names| names.into_iter().map(|n| n.to_string()).collect())
     }
 
     /// Get models in topological order as `ModelName` values

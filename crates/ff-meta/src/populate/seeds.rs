@@ -1,6 +1,6 @@
 //! Populate the `seeds` and `seed_column_types` tables.
 
-use crate::error::{MetaError, MetaResult};
+use crate::error::{MetaResult, MetaResultExt};
 use duckdb::Connection;
 use ff_core::Seed;
 
@@ -31,7 +31,7 @@ fn insert_seed(conn: &Connection, project_id: i64, seed: &Seed) -> MetaResult<()
             enabled,
         ],
     )
-    .map_err(|e| MetaError::PopulationError(format!("insert seeds ({}): {e}", seed.name)))?;
+    .populate_context(&format!("insert seeds ({})", seed.name))?;
 
     let seed_id: i64 = conn
         .query_row(
@@ -39,14 +39,14 @@ fn insert_seed(conn: &Connection, project_id: i64, seed: &Seed) -> MetaResult<()
             duckdb::params![project_id, seed.name],
             |row| row.get(0),
         )
-        .map_err(|e| MetaError::PopulationError(format!("select seed_id: {e}")))?;
+        .populate_context("select seed_id")?;
 
     for (col_name, data_type) in seed.column_types() {
         conn.execute(
             "INSERT INTO ff_meta.seed_column_types (seed_id, column_name, data_type) VALUES (?, ?, ?)",
             duckdb::params![seed_id, col_name, data_type],
         )
-        .map_err(|e| MetaError::PopulationError(format!("insert seed_column_types: {e}")))?;
+        .populate_context("insert seed_column_types")?;
     }
 
     Ok(())
