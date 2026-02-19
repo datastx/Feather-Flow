@@ -271,22 +271,19 @@ impl ModelSchema {
 
     /// Extract tests from this schema
     pub fn extract_tests(&self, model_name: &str) -> Vec<SchemaTest> {
-        let mut tests = Vec::new();
-
-        for column in &self.columns {
-            for test_def in &column.tests {
-                if let Some(test_type) = parse_test_definition(test_def) {
-                    tests.push(SchemaTest {
+        self.columns
+            .iter()
+            .flat_map(|column| {
+                column.tests.iter().filter_map(move |test_def| {
+                    parse_test_definition(test_def).map(|test_type| SchemaTest {
                         test_type,
                         column: column.name.clone(),
                         model: crate::model_name::ModelName::new(model_name),
                         config: TestConfig::default(),
-                    });
-                }
-            }
-        }
-
-        tests
+                    })
+                })
+            })
+            .collect()
     }
 }
 

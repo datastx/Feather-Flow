@@ -100,7 +100,7 @@ impl ValidationContext {
 }
 
 /// Execute the validate command
-pub async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
+pub(crate) async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<()> {
     let project = load_project(global)?;
 
     println!("Validating project: {}\n", project.config.name);

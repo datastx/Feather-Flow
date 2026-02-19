@@ -176,6 +176,7 @@ impl Default for FunctionRegistry {
 /// from the catalog to avoid repeated conversion in `get_table_source`.
 pub struct FeatherFlowProvider<'a> {
     arrow_schemas: HashMap<String, SchemaRef>,
+    lowercase_schemas: HashMap<String, SchemaRef>,
     config: ConfigOptions,
     registry: &'a FunctionRegistry,
 }
@@ -191,8 +192,13 @@ impl<'a> FeatherFlowProvider<'a> {
             .iter()
             .map(|(name, schema)| (name.clone(), Self::rel_schema_to_arrow(schema)))
             .collect();
+        let lowercase_schemas: HashMap<String, SchemaRef> = arrow_schemas
+            .iter()
+            .map(|(k, v)| (k.to_lowercase(), v.clone()))
+            .collect();
         Self {
             arrow_schemas,
+            lowercase_schemas,
             config: ConfigOptions::default(),
             registry,
         }
@@ -237,13 +243,10 @@ impl ContextProvider for FeatherFlowProvider<'_> {
             }));
         }
 
-        let lower = table_name.to_lowercase();
-        for (key, arrow_schema) in &self.arrow_schemas {
-            if key.to_lowercase() == lower {
-                return Ok(Arc::new(LogicalTableSource {
-                    schema: arrow_schema.clone(),
-                }));
-            }
+        if let Some(arrow_schema) = self.lowercase_schemas.get(&table_name.to_lowercase()) {
+            return Ok(Arc::new(LogicalTableSource {
+                schema: arrow_schema.clone(),
+            }));
         }
 
         plan_err!("Table not found: {table_name}")

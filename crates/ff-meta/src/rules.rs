@@ -62,20 +62,14 @@ pub fn execute_rule(
         let col_count = row.as_ref().column_count();
         let mut vals = Vec::with_capacity(col_count);
         for i in 0..col_count {
-            let val = get_column_as_string(row, i);
+            let val = crate::row_helpers::get_column_as_string(row, i);
             vals.push(val);
         }
         Ok(vals)
     }) {
-        Ok(mapped) => {
-            let mut collected = Vec::new();
-            for row_result in mapped {
-                let row = row_result
-                    .map_err(|e| MetaError::QueryError(format!("rule row error: {e}")))?;
-                collected.push(row);
-            }
-            collected
-        }
+        Ok(mapped) => mapped
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| MetaError::QueryError(format!("rule row error: {e}")))?,
         Err(e) => {
             return Ok((make_error_result(rule, format!("Query error: {e}")), vec![]));
         }
@@ -170,23 +164,6 @@ pub fn populate_rule_violations(
         .map_err(|e| MetaError::PopulationError(format!("insert rule_violations: {e}")))?;
     }
     Ok(())
-}
-
-/// Extract a column value as a string, handling multiple DuckDB types.
-fn get_column_as_string(row: &duckdb::Row<'_>, idx: usize) -> String {
-    if let Ok(Some(s)) = row.get::<_, Option<String>>(idx) {
-        return s;
-    }
-    if let Ok(Some(n)) = row.get::<_, Option<i64>>(idx) {
-        return n.to_string();
-    }
-    if let Ok(Some(f)) = row.get::<_, Option<f64>>(idx) {
-        return f.to_string();
-    }
-    if let Ok(Some(b)) = row.get::<_, Option<bool>>(idx) {
-        return b.to_string();
-    }
-    "null".to_string()
 }
 
 fn make_error_result(rule: &RuleFile, error: String) -> RuleResult {

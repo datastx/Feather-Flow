@@ -15,7 +15,7 @@ use super::data::*;
 const CHECKMARK: char = '\u{2713}';
 
 /// Execute static documentation generation
-pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
+pub(super) async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
     let project = load_project(global)?;
 
     // Determine output directory

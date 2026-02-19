@@ -1,13 +1,14 @@
 version: 1
+kind: sql
 
-description: "Staged payments using SELECT * — mirrors raw_payments columns"
+description: "Staged payments from raw source with renamed columns"
 owner: data-team
 tags:
   - staging
   - payments
 
 columns:
-  - name: id
+  - name: payment_id
     type: INTEGER
     description: "Unique payment identifier"
     tests:
@@ -18,12 +19,6 @@ columns:
     description: "Reference to the order"
     tests:
       - not_null
-  - name: payment_method
-    type: VARCHAR
-    description: "Payment method used"
   - name: amount
     type: DECIMAL(10,2)
     description: "Payment amount in dollars"
-  - name: created_at
-    type: DATE
-    description: "Payment creation date"

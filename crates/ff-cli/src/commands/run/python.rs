@@ -5,7 +5,7 @@
 //! reads from upstream tables, and writes its output table. After execution,
 //! Feather-Flow validates the output schema matches the declared columns.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use ff_core::sql_utils::quote_qualified;
 use ff_db::Database;
 use std::collections::HashMap;
@@ -198,7 +198,8 @@ async fn execute_uv_run(
         .arg(script_path)
         .envs(env_vars)
         .output()
-        .await?;
+        .await
+        .context("Failed to execute 'uv run' — is uv installed?")?;
 
     Ok(UvRunOutput {
         success: output.status.success(),

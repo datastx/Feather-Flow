@@ -1,4 +1,4 @@
-kind: functions
+kind: function
 version: 1
 name: safe_divide
 description: "Division that returns NULL instead of error on zero denominator"

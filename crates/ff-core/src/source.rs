@@ -141,19 +141,20 @@ impl SourceFile {
 
     /// Get all table names (both logical and identifier names)
     pub fn get_all_table_names(&self) -> Vec<String> {
-        let mut names = Vec::new();
-        for table in &self.tables {
-            names.push(table.name.clone());
-            names.push(format!("{}.{}", self.schema, table.name));
-
-            if let Some(ref ident) = table.identifier {
-                if ident != &table.name {
-                    names.push(ident.clone());
-                    names.push(format!("{}.{}", self.schema, ident));
+        self.tables
+            .iter()
+            .flat_map(|table| {
+                let schema = &self.schema;
+                let mut names = vec![table.name.clone(), format!("{schema}.{}", table.name)];
+                if let Some(ref ident) = table.identifier {
+                    if ident != &table.name {
+                        names.push(ident.clone());
+                        names.push(format!("{schema}.{ident}"));
+                    }
                 }
-            }
-        }
-        names
+                names
+            })
+            .collect()
     }
 }
 

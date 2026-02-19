@@ -7,7 +7,7 @@ use std::path::PathBuf;
 #[derive(Parser, Debug)]
 #[command(name = "ff")]
 #[command(author, version, about, long_about = None)]
-pub struct Cli {
+pub(crate) struct Cli {
     /// Global options
     #[command(flatten)]
     pub global: GlobalArgs,
@@ -19,7 +19,7 @@ pub struct Cli {
 
 /// Global arguments available to all commands
 #[derive(Args, Debug, Clone)]
-pub struct GlobalArgs {
+pub(crate) struct GlobalArgs {
     /// Enable verbose output
     #[arg(short, long, global = true)]
     pub verbose: bool,
@@ -39,7 +39,7 @@ pub struct GlobalArgs {
 
 /// Available subcommands
 #[derive(Subcommand, Debug)]
-pub enum Commands {
+pub(crate) enum Commands {
     /// Initialize a new Featherflow project
     Init(InitArgs),
 
@@ -94,7 +94,7 @@ pub enum Commands {
 
 /// Arguments for the parse command
 #[derive(Args, Debug)]
-pub struct ParseArgs {
+pub(crate) struct ParseArgs {
     /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
     #[arg(short = 'n', long)]
     pub nodes: Option<String>,
@@ -110,7 +110,7 @@ pub struct ParseArgs {
 
 /// Parse output formats
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ParseOutput {
+pub(crate) enum ParseOutput {
     /// JSON AST output
     Json,
     /// Human-readable tree
@@ -131,7 +131,7 @@ pub enum OutputFormat {
 
 /// Arguments for the compile command
 #[derive(Args, Debug)]
-pub struct CompileArgs {
+pub(crate) struct CompileArgs {
     /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
     #[arg(short = 'n', long)]
     pub nodes: Option<String>,
@@ -163,7 +163,7 @@ pub struct CompileArgs {
 
 /// Arguments for the run command
 #[derive(Args, Debug)]
-pub struct RunArgs {
+pub(crate) struct RunArgs {
     /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
     #[arg(short = 'n', long)]
     pub nodes: Option<String>,
@@ -227,7 +227,7 @@ pub struct RunArgs {
 
 /// Arguments for the ls command
 #[derive(Args, Debug)]
-pub struct LsArgs {
+pub(crate) struct LsArgs {
     /// Output format
     #[arg(short, long, value_enum, default_value = "table")]
     pub output: LsOutput,
@@ -251,7 +251,7 @@ pub struct LsArgs {
 
 /// Resource types for filtering
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResourceType {
+pub(crate) enum ResourceType {
     /// Models only
     Model,
     /// Sources only
@@ -266,7 +266,7 @@ pub enum ResourceType {
 
 /// List output formats
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LsOutput {
+pub(crate) enum LsOutput {
     /// Table format
     Table,
     /// JSON output
@@ -279,7 +279,7 @@ pub enum LsOutput {
 
 /// Arguments for the test command
 #[derive(Args, Debug)]
-pub struct TestArgs {
+pub(crate) struct TestArgs {
     /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
     #[arg(short = 'n', long)]
     pub nodes: Option<String>,
@@ -311,7 +311,7 @@ pub struct TestArgs {
 
 /// Arguments for the seed command
 #[derive(Args, Debug)]
-pub struct SeedArgs {
+pub(crate) struct SeedArgs {
     /// Seed names to load (comma-separated, default: all)
     #[arg(short, long)]
     pub seeds: Option<String>,
@@ -327,7 +327,7 @@ pub struct SeedArgs {
 
 /// Arguments for the build command
 #[derive(Args, Debug)]
-pub struct BuildArgs {
+pub(crate) struct BuildArgs {
     /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
     #[arg(short = 'n', long)]
     pub nodes: Option<String>,
@@ -367,7 +367,7 @@ pub struct BuildArgs {
 
 /// Arguments for the validate command
 #[derive(Args, Debug)]
-pub struct ValidateArgs {
+pub(crate) struct ValidateArgs {
     /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
     #[arg(short = 'n', long)]
     pub nodes: Option<String>,
@@ -391,7 +391,7 @@ pub struct ValidateArgs {
 
 /// Arguments for the docs command
 #[derive(Args, Debug)]
-pub struct DocsArgs {
+pub(crate) struct DocsArgs {
     /// Docs subcommand (serve, etc.)
     #[command(subcommand)]
     pub command: Option<DocsCommands>,
@@ -411,14 +411,14 @@ pub struct DocsArgs {
 
 /// Docs subcommands
 #[derive(Subcommand, Debug)]
-pub enum DocsCommands {
+pub(crate) enum DocsCommands {
     /// Launch interactive documentation server
     Serve(DocsServeArgs),
 }
 
 /// Arguments for the docs serve subcommand
 #[derive(Args, Debug)]
-pub struct DocsServeArgs {
+pub(crate) struct DocsServeArgs {
     /// Port to serve on
     #[arg(long, default_value = "4040")]
     pub port: u16,
@@ -442,7 +442,7 @@ pub struct DocsServeArgs {
 
 /// Documentation output formats
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DocsFormat {
+pub(crate) enum DocsFormat {
     /// Markdown format
     Markdown,
     /// JSON format
@@ -453,7 +453,7 @@ pub enum DocsFormat {
 
 /// Arguments for the clean command
 #[derive(Args, Debug)]
-pub struct CleanArgs {
+pub(crate) struct CleanArgs {
     /// Show what would be deleted without actually deleting
     #[arg(long)]
     pub dry_run: bool,
@@ -461,7 +461,7 @@ pub struct CleanArgs {
 
 /// Arguments for the run-operation command
 #[derive(Args, Debug)]
-pub struct RunOperationArgs {
+pub(crate) struct RunOperationArgs {
     /// Name of the macro to execute
     pub macro_name: String,
 
@@ -472,7 +472,7 @@ pub struct RunOperationArgs {
 
 /// Arguments for the init command
 #[derive(Args, Debug)]
-pub struct InitArgs {
+pub(crate) struct InitArgs {
     /// Project name (also used as directory name)
     #[arg(long)]
     pub name: String,
@@ -484,7 +484,7 @@ pub struct InitArgs {
 
 /// Arguments for the lineage command
 #[derive(Args, Debug)]
-pub struct LineageArgs {
+pub(crate) struct LineageArgs {
     /// Filter to a specific node
     #[arg(short = 'n', long)]
     pub node: Option<String>,
@@ -508,7 +508,7 @@ pub struct LineageArgs {
 
 /// Lineage trace direction
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LineageDirection {
+pub(crate) enum LineageDirection {
     /// Trace upstream (sources)
     Upstream,
     /// Trace downstream (consumers)
@@ -519,7 +519,7 @@ pub enum LineageDirection {
 
 /// Lineage output formats
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LineageOutput {
+pub(crate) enum LineageOutput {
     /// Human-readable table
     Table,
     /// JSON output
@@ -530,7 +530,7 @@ pub enum LineageOutput {
 
 /// Arguments for the analyze command
 #[derive(Args, Debug)]
-pub struct AnalyzeArgs {
+pub(crate) struct AnalyzeArgs {
     /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
     #[arg(short = 'n', long)]
     pub nodes: Option<String>,
@@ -550,7 +550,7 @@ pub struct AnalyzeArgs {
 
 /// Analyze output formats
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AnalyzeOutput {
+pub(crate) enum AnalyzeOutput {
     /// Human-readable table
     Table,
     /// JSON output
@@ -559,7 +559,7 @@ pub enum AnalyzeOutput {
 
 /// Arguments for the function command
 #[derive(Args, Debug)]
-pub struct FunctionArgs {
+pub(crate) struct FunctionArgs {
     /// Function subcommand
     #[command(subcommand)]
     pub command: FunctionCommands,
@@ -567,7 +567,7 @@ pub struct FunctionArgs {
 
 /// Function subcommands
 #[derive(Subcommand, Debug)]
-pub enum FunctionCommands {
+pub(crate) enum FunctionCommands {
     /// List all user-defined functions in the project
     List(FunctionListArgs),
 
@@ -586,7 +586,7 @@ pub enum FunctionCommands {
 
 /// Arguments for the function list subcommand
 #[derive(Args, Debug)]
-pub struct FunctionListArgs {
+pub(crate) struct FunctionListArgs {
     /// Output format (text or json)
     #[arg(short, long, value_enum, default_value = "text")]
     pub output: OutputFormat,
@@ -594,7 +594,7 @@ pub struct FunctionListArgs {
 
 /// Arguments for the function deploy subcommand
 #[derive(Args, Debug)]
-pub struct FunctionDeployArgs {
+pub(crate) struct FunctionDeployArgs {
     /// Function names to deploy (comma-separated, default: all)
     #[arg(short, long)]
     pub functions: Option<String>,
@@ -602,7 +602,7 @@ pub struct FunctionDeployArgs {
 
 /// Arguments for the function show subcommand
 #[derive(Args, Debug)]
-pub struct FunctionShowArgs {
+pub(crate) struct FunctionShowArgs {
     /// Name of the function to show
     pub name: String,
 
@@ -613,11 +613,11 @@ pub struct FunctionShowArgs {
 
 /// Arguments for the function validate subcommand
 #[derive(Args, Debug)]
-pub struct FunctionValidateArgs {}
+pub(crate) struct FunctionValidateArgs {}
 
 /// Arguments for the function drop subcommand
 #[derive(Args, Debug)]
-pub struct FunctionDropArgs {
+pub(crate) struct FunctionDropArgs {
     /// Function names to drop (comma-separated, default: all)
     #[arg(short, long)]
     pub functions: Option<String>,
@@ -625,7 +625,7 @@ pub struct FunctionDropArgs {
 
 /// Minimum severity filter for analyze output
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum AnalyzeSeverity {
+pub(crate) enum AnalyzeSeverity {
     /// Show all diagnostics
     Info,
     /// Show warnings and errors only
@@ -636,7 +636,7 @@ pub enum AnalyzeSeverity {
 
 /// Arguments for the rules command
 #[derive(Args, Debug)]
-pub struct RulesArgs {
+pub(crate) struct RulesArgs {
     /// List discovered rules without executing them
     #[arg(long)]
     pub list: bool,
@@ -644,7 +644,7 @@ pub struct RulesArgs {
 
 /// Arguments for the meta command
 #[derive(Args, Debug)]
-pub struct MetaArgs {
+pub(crate) struct MetaArgs {
     /// Meta subcommand
     #[command(subcommand)]
     pub command: MetaCommands,
@@ -652,7 +652,7 @@ pub struct MetaArgs {
 
 /// Meta subcommands
 #[derive(Subcommand, Debug)]
-pub enum MetaCommands {
+pub(crate) enum MetaCommands {
     /// Run a SQL query against the meta database
     Query(MetaQueryArgs),
 
@@ -665,7 +665,7 @@ pub enum MetaCommands {
 
 /// Arguments for the meta query subcommand
 #[derive(Args, Debug)]
-pub struct MetaQueryArgs {
+pub(crate) struct MetaQueryArgs {
     /// SQL query to execute against the meta database
     pub sql: String,
 
@@ -676,7 +676,7 @@ pub struct MetaQueryArgs {
 
 /// Arguments for the meta export subcommand
 #[derive(Args, Debug)]
-pub struct MetaExportArgs {
+pub(crate) struct MetaExportArgs {
     /// Write export to a file instead of stdout
     #[arg(short, long)]
     pub output: Option<String>,

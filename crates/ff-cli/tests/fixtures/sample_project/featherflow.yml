@@ -1,10 +1,8 @@
 name: sample_project
 version: "1.0.0"
 
-model_paths: ["models"]
-source_paths: ["sources"]
+node_paths: ["nodes"]
 macro_paths: ["macros"]
-function_paths: ["functions"]
 target_path: "target"
 
 materialization: view
