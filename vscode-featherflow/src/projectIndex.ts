@@ -111,6 +111,16 @@ export class ProjectIndex implements vscode.Disposable {
     );
   }
 
+  /** Path to the `ff` binary used by this index. */
+  getBinaryPath(): string {
+    return this.binaryPath;
+  }
+
+  /** Path to the Feather-Flow project directory. */
+  getProjectDir(): string {
+    return this.projectDir;
+  }
+
   /** Project name derived from `featherflow.yml`. */
   getProjectName(): string {
     return this.projectName;

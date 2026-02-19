@@ -96,6 +96,20 @@
           "type": "string",
           "default": "",
           "description": "Path to the Feather-Flow project directory. Leave empty to auto-detect from workspace."
+        },
+        "featherflow.columnLineage.defaultUpstreamDepth": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Default number of upstream hops to show in column lineage."
+        },
+        "featherflow.columnLineage.defaultDownstreamDepth": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Default number of downstream hops to show in column lineage."
         }
       }
     }

@@ -3,15 +3,20 @@
  *
  * Supports two modes via a dropdown selector:
  * - **Table Lineage**: left-to-right DAG of model dependencies
- * - **Column Lineage**: column-level mapping between current model and its sources
+ * - **Column Lineage**: interactive column-level lineage with click-to-trace
+ *
+ * In Column Lineage mode, clicking a column shows upstream and downstream
+ * column-level edges fetched from the CLI. Depth is configurable via
+ * VS Code settings and in-panel +/- controls.
  *
  * Listens for active editor changes to track the current `.sql` model.
  */
 
 import * as fs from "node:fs";
 import * as vscode from "vscode";
+import { ffLineage } from "../cli.js";
 import type { ProjectIndex } from "../projectIndex.js";
-import type { LsModelEntry } from "../types.js";
+import type { CliLineageEdge, LsModelEntry } from "../types.js";
 import { parseColumns, type ParsedColumn } from "./columnParser.js";
 
 // ── Data types ──────────────────────────────────────────────────────
@@ -37,12 +42,16 @@ export interface LineageGraph {
   downstream: LineageColumn[];
 }
 
-/** Column lineage data for the column view. */
-export interface ColumnLineageData {
+/** Column lineage state for the interactive column view. */
+export interface ColumnLineageState {
   modelName: string;
   materialized?: string;
   columns: ParsedColumn[];
+  allEdges: CliLineageEdge[];
   upstreamModels: { name: string; type: "model" | "external" }[];
+  selectedColumn?: string;
+  upstreamDepth: number;
+  downstreamDepth: number;
 }
 
 /** Lineage display mode. */
@@ -179,11 +188,11 @@ export function buildLineageGraph(
   };
 }
 
-/** Build column lineage data for a model. */
-export function buildColumnLineage(
+/** Build column lineage state for a model (async — fetches edges from CLI). */
+export async function buildColumnLineage(
   entry: LsModelEntry,
   index: ProjectIndex
-): ColumnLineageData {
+): Promise<ColumnLineageState> {
   let columns: ParsedColumn[] = [];
   if (entry.path) {
     try {
@@ -199,12 +208,96 @@ export function buildColumnLineage(
     ...entry.external_deps.map((d) => ({ name: d, type: "external" as const })),
   ];
 
+  let allEdges: CliLineageEdge[] = [];
+  try {
+    allEdges = await ffLineage(
+      index.getBinaryPath(),
+      index.getProjectDir(),
+      entry.name
+    );
+  } catch {
+    // CLI not available or lineage failed — continue with empty edges
+  }
+
+  const config = vscode.workspace.getConfiguration("featherflow");
+  const upstreamDepth = config.get<number>(
+    "columnLineage.defaultUpstreamDepth",
+    1
+  );
+  const downstreamDepth = config.get<number>(
+    "columnLineage.defaultDownstreamDepth",
+    1
+  );
+
   return {
     modelName: entry.name,
     materialized: entry.materialized,
     columns,
+    allEdges,
     upstreamModels,
+    upstreamDepth,
+    downstreamDepth,
   };
+}
+
+// ── Edge filtering ──────────────────────────────────────────────────
+
+/**
+ * BFS-filter edges from a starting (model, column) up to maxDepth hops.
+ *
+ * For "upstream", follows edges where `target_model::target_column` matches
+ * the frontier, yielding the source side as the next hop.
+ *
+ * For "downstream", follows edges where `source_model::source_column` matches
+ * the frontier, yielding the target side as the next hop.
+ */
+export function filterEdgesByDepth(
+  allEdges: CliLineageEdge[],
+  model: string,
+  column: string,
+  direction: "upstream" | "downstream",
+  maxDepth: number
+): CliLineageEdge[] {
+  const result: CliLineageEdge[] = [];
+  const visited = new Set<string>();
+  let frontier = [`${model}::${column}`];
+  visited.add(frontier[0]);
+
+  for (let depth = 0; depth < maxDepth; depth++) {
+    const nextFrontier: string[] = [];
+    for (const key of frontier) {
+      const [m, c] = key.split("::");
+      for (const edge of allEdges) {
+        if (
+          direction === "downstream" &&
+          edge.source_model === m &&
+          edge.source_column === c
+        ) {
+          result.push(edge);
+          const next = `${edge.target_model}::${edge.target_column}`;
+          if (!visited.has(next)) {
+            visited.add(next);
+            nextFrontier.push(next);
+          }
+        }
+        if (
+          direction === "upstream" &&
+          edge.target_model === m &&
+          edge.target_column === c
+        ) {
+          result.push(edge);
+          const next = `${edge.source_model}::${edge.source_column}`;
+          if (!visited.has(next)) {
+            visited.add(next);
+            nextFrontier.push(next);
+          }
+        }
+      }
+    }
+    frontier = nextFrontier;
+    if (frontier.length === 0) break;
+  }
+  return result;
 }
 
 // ── View provider ───────────────────────────────────────────────────
@@ -216,6 +309,7 @@ export class LineageViewProvider
 
   private view?: vscode.WebviewView;
   private mode: LineageMode = "table";
+  private columnState?: ColumnLineageState;
   private disposables: vscode.Disposable[] = [];
 
   constructor(
@@ -224,16 +318,25 @@ export class LineageViewProvider
   ) {
     // Re-render when active editor changes
     this.disposables.push(
-      vscode.window.onDidChangeActiveTextEditor(() => this.updateView())
+      vscode.window.onDidChangeActiveTextEditor(() => {
+        this.columnState = undefined;
+        this.updateView();
+      })
     );
 
     // Re-render when the index refreshes
-    this.disposables.push(index.onDidChange(() => this.updateView()));
+    this.disposables.push(
+      index.onDidChange(() => {
+        this.columnState = undefined;
+        this.updateView();
+      })
+    );
   }
 
   /** Switch the lineage display mode. */
   setMode(mode: LineageMode): void {
     this.mode = mode;
+    this.columnState = undefined;
     this.updateView();
   }
 
@@ -248,7 +351,13 @@ export class LineageViewProvider
     // Handle messages from the webview
     this.disposables.push(
       webviewView.webview.onDidReceiveMessage(
-        (msg: { command: string; path?: string; mode?: string }) => {
+        (msg: {
+          command: string;
+          path?: string;
+          mode?: string;
+          column?: string;
+          depth?: number;
+        }) => {
           if (msg.command === "openModel" && msg.path) {
             vscode.commands.executeCommand(
               "vscode.open",
@@ -256,7 +365,40 @@ export class LineageViewProvider
             );
           } else if (msg.command === "setMode" && msg.mode) {
             this.mode = msg.mode as LineageMode;
+            this.columnState = undefined;
             this.updateView();
+          } else if (msg.command === "selectColumn" && msg.column) {
+            if (this.columnState) {
+              this.columnState.selectedColumn = msg.column;
+              this.renderColumnState();
+            }
+          } else if (msg.command === "clearColumn") {
+            if (this.columnState) {
+              this.columnState.selectedColumn = undefined;
+              this.renderColumnState();
+            }
+          } else if (
+            msg.command === "setUpstreamDepth" &&
+            typeof msg.depth === "number"
+          ) {
+            if (this.columnState) {
+              this.columnState.upstreamDepth = Math.max(
+                1,
+                Math.min(10, msg.depth)
+              );
+              this.renderColumnState();
+            }
+          } else if (
+            msg.command === "setDownstreamDepth" &&
+            typeof msg.depth === "number"
+          ) {
+            if (this.columnState) {
+              this.columnState.downstreamDepth = Math.max(
+                1,
+                Math.min(10, msg.depth)
+              );
+              this.renderColumnState();
+            }
           }
         }
       )
@@ -270,6 +412,15 @@ export class LineageViewProvider
     );
 
     this.updateView();
+  }
+
+  /** Re-render the column lineage state without re-fetching. */
+  private renderColumnState(): void {
+    if (!this.view || !this.view.visible || !this.columnState) return;
+    this.view.webview.html = renderColumnLineageHtml(
+      this.columnState,
+      this.mode
+    );
   }
 
   private updateView(): void {
@@ -292,8 +443,21 @@ export class LineageViewProvider
     }
 
     if (this.mode === "column") {
-      const data = buildColumnLineage(entry, this.index);
-      this.view.webview.html = renderColumnLineageHtml(data, this.mode);
+      // Show loading, then fetch async
+      this.view.webview.html = renderEmpty("Loading column lineage...");
+      buildColumnLineage(entry, this.index).then(
+        (state) => {
+          this.columnState = state;
+          this.renderColumnState();
+        },
+        () => {
+          if (this.view) {
+            this.view.webview.html = renderEmpty(
+              "Failed to load column lineage."
+            );
+          }
+        }
+      );
     } else {
       const graph = buildLineageGraph(entry, this.index);
       this.view.webview.html = renderTableLineageHtml(graph, this.mode);
@@ -651,51 +815,8 @@ function getIconLetter(node: LineageNode): string {
 
 // ── Column lineage HTML ─────────────────────────────────────────────
 
-function renderColumnLineageHtml(
-  data: ColumnLineageData,
-  mode: LineageMode
-): string {
-  const matBadge = data.materialized
-    ? `<span class="badge-type">${escapeHtml(data.materialized)}</span>`
-    : "";
-
-  // Build upstream sources panel
-  const sourcesHtml = data.upstreamModels
-    .map((src) => {
-      const cls = src.type === "external" ? "source-item external" : "source-item";
-      const iconClass = src.type === "external" ? "mat-external" : "mat-view";
-      const letter = src.type === "external" ? "E" : "M";
-      return `<div class="${cls}">
-        <span class="node-icon ${iconClass}">${letter}</span>
-        <span class="source-name">${escapeHtml(src.name)}</span>
-      </div>`;
-    })
-    .join("\n");
-
-  // Build columns panel
-  const columnsHtml =
-    data.columns.length > 0
-      ? data.columns
-          .map((col) => {
-            const sourceTag = col.sourceTable
-              ? `<span class="col-source" title="From: ${escapeHtml(col.sourceTable)}">${escapeHtml(col.sourceTable)}</span>`
-              : "";
-            const computedTag = col.isComputed
-              ? `<span class="col-computed" title="${escapeHtml(col.expression)}">fx</span>`
-              : "";
-            return `<div class="col-item">
-              <span class="col-name">${escapeHtml(col.name)}</span>
-              <span class="col-tags">${computedTag}${sourceTag}</span>
-            </div>`;
-          })
-          .join("\n")
-      : `<div class="empty-hint">Could not parse columns from SQL.</div>`;
-
-  return `<!DOCTYPE html>
-<html><head><meta charset="UTF-8">
-<style>
-  ${sharedStyles()}
-
+function columnLineageStyles(): string {
+  return `
   /* ── Column lineage layout ── */
   .col-lineage-wrapper {
     padding: 12px;
@@ -758,6 +879,7 @@ function renderColumnLineageHtml(
     padding: 5px 12px;
     border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.08));
     font-size: 12px;
+    cursor: pointer;
   }
   .col-item:last-child { border-bottom: none; }
   .col-item:hover {
@@ -818,6 +940,169 @@ function renderColumnLineageHtml(
     opacity: 0.5;
     font-size: 12px;
   }
+
+  /* ── Detail view (column selected) ── */
+  .back-btn {
+    background: none;
+    border: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.3));
+    color: var(--vscode-foreground);
+    border-radius: 4px;
+    padding: 3px 10px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .back-btn:hover {
+    background: var(--vscode-list-hoverBackground, rgba(128,128,128,0.08));
+  }
+  .detail-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.2));
+    background: var(--vscode-sideBar-background, transparent);
+  }
+  .detail-col-name {
+    font-family: var(--vscode-editor-font-family, 'Cascadia Code', 'Fira Code', monospace);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  /* ── Depth controls ── */
+  .depth-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+  .depth-btn {
+    background: var(--vscode-button-secondaryBackground, #3a3d41);
+    color: var(--vscode-button-secondaryForeground, inherit);
+    border: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.3));
+    border-radius: 3px;
+    width: 22px;
+    height: 22px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: inherit;
+    line-height: 1;
+    padding: 0;
+  }
+  .depth-btn:hover {
+    background: var(--vscode-button-secondaryHoverBackground, #45494e);
+  }
+  .depth-btn:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
+  .depth-value {
+    font-size: 11px;
+    min-width: 16px;
+    text-align: center;
+    font-weight: 600;
+  }
+
+  /* ── Edge rows ── */
+  .edge-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.08));
+    font-size: 12px;
+    font-family: var(--vscode-editor-font-family, 'Cascadia Code', 'Fira Code', monospace);
+  }
+  .edge-item:last-child { border-bottom: none; }
+  .edge-arrow {
+    opacity: 0.4;
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+  .edge-model {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: rgba(30, 111, 235, 0.15);
+    color: var(--vscode-textLink-foreground, #3794ff);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .edge-col {
+    white-space: nowrap;
+  }
+  .edge-type {
+    margin-left: auto;
+    font-size: 9px;
+    opacity: 0.5;
+    text-transform: uppercase;
+    flex-shrink: 0;
+    font-family: var(--vscode-font-family, sans-serif);
+  }
+  `;
+}
+
+function renderColumnLineageHtml(
+  data: ColumnLineageState,
+  mode: LineageMode
+): string {
+  if (data.selectedColumn) {
+    return renderColumnDetailHtml(data, mode);
+  }
+  return renderColumnListHtml(data, mode);
+}
+
+/** State 1: column list (no column selected). */
+function renderColumnListHtml(
+  data: ColumnLineageState,
+  mode: LineageMode
+): string {
+  const matBadge = data.materialized
+    ? `<span class="badge-type">${escapeHtml(data.materialized)}</span>`
+    : "";
+
+  // Build upstream sources panel
+  const sourcesHtml = data.upstreamModels
+    .map((src) => {
+      const cls = src.type === "external" ? "source-item external" : "source-item";
+      const iconClass = src.type === "external" ? "mat-external" : "mat-view";
+      const letter = src.type === "external" ? "E" : "M";
+      return `<div class="${cls}">
+        <span class="node-icon ${iconClass}">${letter}</span>
+        <span class="source-name">${escapeHtml(src.name)}</span>
+      </div>`;
+    })
+    .join("\n");
+
+  // Build clickable columns panel
+  const columnsHtml =
+    data.columns.length > 0
+      ? data.columns
+          .map((col) => {
+            const sourceTag = col.sourceTable
+              ? `<span class="col-source" title="From: ${escapeHtml(col.sourceTable)}">${escapeHtml(col.sourceTable)}</span>`
+              : "";
+            const computedTag = col.isComputed
+              ? `<span class="col-computed" title="${escapeHtml(col.expression)}">fx</span>`
+              : "";
+            return `<div class="col-item" data-column="${escapeHtml(col.name)}">
+              <span class="col-name">${escapeHtml(col.name)}</span>
+              <span class="col-tags">${computedTag}${sourceTag}</span>
+            </div>`;
+          })
+          .join("\n")
+      : `<div class="empty-hint">Could not parse columns from SQL.</div>`;
+
+  return `<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+  ${sharedStyles()}
+  ${columnLineageStyles()}
 </style>
 </head>
 <body>
@@ -852,6 +1137,146 @@ function renderColumnLineageHtml(
 
     document.getElementById('modeSelect').addEventListener('change', (e) => {
       vscode.postMessage({ command: 'setMode', mode: e.target.value });
+    });
+
+    document.querySelectorAll('.col-item[data-column]').forEach(el => {
+      el.addEventListener('click', () => {
+        const column = el.getAttribute('data-column');
+        if (column) vscode.postMessage({ command: 'selectColumn', column });
+      });
+    });
+  </script>
+</body></html>`;
+}
+
+/** State 2: column detail view (column selected). */
+function renderColumnDetailHtml(
+  data: ColumnLineageState,
+  mode: LineageMode
+): string {
+  const column = data.selectedColumn!;
+  const matBadge = data.materialized
+    ? `<span class="badge-type">${escapeHtml(data.materialized)}</span>`
+    : "";
+
+  // Filter edges for this column
+  const upstreamEdges = filterEdgesByDepth(
+    data.allEdges,
+    data.modelName,
+    column,
+    "upstream",
+    data.upstreamDepth
+  );
+  const downstreamEdges = filterEdgesByDepth(
+    data.allEdges,
+    data.modelName,
+    column,
+    "downstream",
+    data.downstreamDepth
+  );
+
+  const upEdgesHtml =
+    upstreamEdges.length > 0
+      ? upstreamEdges
+          .map(
+            (e) => `<div class="edge-item">
+            <span class="edge-model">${escapeHtml(e.source_model)}</span>
+            <span class="edge-col">${escapeHtml(e.source_column)}</span>
+            <span class="edge-arrow">&rarr;</span>
+            <span class="edge-model">${escapeHtml(e.target_model)}</span>
+            <span class="edge-col">${escapeHtml(e.target_column)}</span>
+            <span class="edge-type">${escapeHtml(e.expr_type)}</span>
+          </div>`
+          )
+          .join("\n")
+      : '<div class="empty-hint">No upstream column edges found.</div>';
+
+  const downEdgesHtml =
+    downstreamEdges.length > 0
+      ? downstreamEdges
+          .map(
+            (e) => `<div class="edge-item">
+            <span class="edge-model">${escapeHtml(e.source_model)}</span>
+            <span class="edge-col">${escapeHtml(e.source_column)}</span>
+            <span class="edge-arrow">&rarr;</span>
+            <span class="edge-model">${escapeHtml(e.target_model)}</span>
+            <span class="edge-col">${escapeHtml(e.target_column)}</span>
+            <span class="edge-type">${escapeHtml(e.expr_type)}</span>
+          </div>`
+          )
+          .join("\n")
+      : '<div class="empty-hint">No downstream column edges found.</div>';
+
+  return `<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+  ${sharedStyles()}
+  ${columnLineageStyles()}
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <span class="toolbar-label">Lineage</span>
+    <select class="mode-select" id="modeSelect">
+      <option value="table"${mode === "table" ? " selected" : ""}>Table Lineage</option>
+      <option value="column"${mode === "column" ? " selected" : ""}>Column Lineage</option>
+    </select>
+    <div class="model-badge">
+      ${matBadge}
+    </div>
+  </div>
+  <div class="detail-header">
+    <button class="back-btn" id="backBtn">&larr; Back</button>
+    <span class="detail-col-name">${escapeHtml(column)}</span>
+  </div>
+  <div class="col-lineage-wrapper">
+    <div class="col-section">
+      <div class="col-section-header">
+        <span>Upstream</span>
+        <div class="depth-controls">
+          <button class="depth-btn" id="upMinus"${data.upstreamDepth <= 1 ? " disabled" : ""}>-</button>
+          <span class="depth-value">${data.upstreamDepth}</span>
+          <button class="depth-btn" id="upPlus"${data.upstreamDepth >= 10 ? " disabled" : ""}>+</button>
+        </div>
+        <span class="count">${upstreamEdges.length}</span>
+      </div>
+      ${upEdgesHtml}
+    </div>
+    <div class="col-section">
+      <div class="col-section-header">
+        <span>Downstream</span>
+        <div class="depth-controls">
+          <button class="depth-btn" id="downMinus"${data.downstreamDepth <= 1 ? " disabled" : ""}>-</button>
+          <span class="depth-value">${data.downstreamDepth}</span>
+          <button class="depth-btn" id="downPlus"${data.downstreamDepth >= 10 ? " disabled" : ""}>+</button>
+        </div>
+        <span class="count">${downstreamEdges.length}</span>
+      </div>
+      ${downEdgesHtml}
+    </div>
+  </div>
+  <script>
+    const vscode = acquireVsCodeApi();
+
+    document.getElementById('modeSelect').addEventListener('change', (e) => {
+      vscode.postMessage({ command: 'setMode', mode: e.target.value });
+    });
+
+    document.getElementById('backBtn').addEventListener('click', () => {
+      vscode.postMessage({ command: 'clearColumn' });
+    });
+
+    document.getElementById('upMinus').addEventListener('click', () => {
+      vscode.postMessage({ command: 'setUpstreamDepth', depth: ${data.upstreamDepth} - 1 });
+    });
+    document.getElementById('upPlus').addEventListener('click', () => {
+      vscode.postMessage({ command: 'setUpstreamDepth', depth: ${data.upstreamDepth} + 1 });
+    });
+    document.getElementById('downMinus').addEventListener('click', () => {
+      vscode.postMessage({ command: 'setDownstreamDepth', depth: ${data.downstreamDepth} - 1 });
+    });
+    document.getElementById('downPlus').addEventListener('click', () => {
+      vscode.postMessage({ command: 'setDownstreamDepth', depth: ${data.downstreamDepth} + 1 });
     });
   </script>
 </body></html>`;

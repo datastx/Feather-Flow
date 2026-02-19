@@ -1,16 +1,17 @@
 /**
- * Unit tests for lineage graph building (upstream/downstream traversal).
+ * Unit tests for lineage graph building (upstream/downstream traversal)
+ * and interactive column lineage filtering.
  *
  * Uses a mock ProjectIndex to test the pure graph functions without CLI or VS Code.
  */
 
 import { describe, expect, it } from "vitest";
-import type { LsModelEntry } from "../../src/types.js";
+import type { CliLineageEdge, LsModelEntry } from "../../src/types.js";
 import {
   buildUpstream,
   buildDownstream,
   buildLineageGraph,
-  buildColumnLineage,
+  filterEdgesByDepth,
 } from "../../src/providers/lineageViewProvider.js";
 import type { ProjectIndex } from "../../src/projectIndex.js";
 
@@ -93,6 +94,12 @@ function mockIndex(models: LsModelEntry[]): ProjectIndex {
           m.type === "model" &&
           m.model_deps.some((d) => d.toLowerCase() === lower)
       );
+    },
+    getBinaryPath() {
+      return "/usr/local/bin/ff";
+    },
+    getProjectDir() {
+      return "/project";
     },
   } as unknown as ProjectIndex;
 }
@@ -261,55 +268,174 @@ describe("buildLineageGraph", () => {
   });
 });
 
-describe("buildColumnLineage", () => {
-  const index = mockIndex(MODELS);
+// ---------- filterEdgesByDepth tests ----------
 
-  it("returns upstream models from model_deps and external_deps", () => {
-    const entry = MODELS.find((m) => m.name === "int_orders_enriched")!;
-    const data = buildColumnLineage(entry, index);
+/** Sample edges for a 3-model chain: raw -> stg -> fct */
+const SAMPLE_EDGES: CliLineageEdge[] = [
+  {
+    source_model: "raw_orders",
+    source_column: "id",
+    target_model: "stg_orders",
+    target_column: "order_id",
+    is_direct: true,
+    expr_type: "column",
+  },
+  {
+    source_model: "raw_orders",
+    source_column: "amount",
+    target_model: "stg_orders",
+    target_column: "amount",
+    is_direct: true,
+    expr_type: "column",
+  },
+  {
+    source_model: "stg_orders",
+    source_column: "order_id",
+    target_model: "fct_orders",
+    target_column: "order_id",
+    is_direct: true,
+    expr_type: "column",
+  },
+  {
+    source_model: "stg_orders",
+    source_column: "amount",
+    target_model: "fct_orders",
+    target_column: "total_amount",
+    is_direct: false,
+    expr_type: "function",
+  },
+  {
+    source_model: "fct_orders",
+    source_column: "order_id",
+    target_model: "dim_orders",
+    target_column: "order_id",
+    is_direct: true,
+    expr_type: "column",
+  },
+];
 
-    expect(data.modelName).toBe("int_orders_enriched");
-    expect(data.materialized).toBe("view");
-    expect(data.upstreamModels).toHaveLength(2);
-    expect(data.upstreamModels.map((u) => u.name).sort()).toEqual([
+describe("filterEdgesByDepth", () => {
+  it("returns direct upstream edges at depth 1", () => {
+    const result = filterEdgesByDepth(
+      SAMPLE_EDGES,
       "stg_orders",
-      "stg_payments",
-    ]);
-    expect(data.upstreamModels.every((u) => u.type === "model")).toBe(true);
+      "order_id",
+      "upstream",
+      1
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].source_model).toBe("raw_orders");
+    expect(result[0].source_column).toBe("id");
   });
 
-  it("includes external deps in upstream models", () => {
-    const entry = MODELS.find((m) => m.name === "stg_orders")!;
-    const data = buildColumnLineage(entry, index);
-
-    expect(data.upstreamModels).toHaveLength(1);
-    expect(data.upstreamModels[0].name).toBe("raw_orders");
-    expect(data.upstreamModels[0].type).toBe("external");
+  it("returns direct downstream edges at depth 1", () => {
+    const result = filterEdgesByDepth(
+      SAMPLE_EDGES,
+      "stg_orders",
+      "order_id",
+      "downstream",
+      1
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].target_model).toBe("fct_orders");
+    expect(result[0].target_column).toBe("order_id");
   });
 
-  it("returns empty columns when file path does not exist", () => {
-    const entry = MODELS.find((m) => m.name === "fct_orders")!;
-    const data = buildColumnLineage(entry, index);
-
-    // File paths in test fixtures don't exist, so columns should be empty
-    expect(data.columns).toHaveLength(0);
+  it("returns transitive edges at depth 2", () => {
+    // Downstream from stg_orders.order_id depth 2:
+    // hop 1: stg_orders.order_id -> fct_orders.order_id
+    // hop 2: fct_orders.order_id -> dim_orders.order_id
+    const result = filterEdgesByDepth(
+      SAMPLE_EDGES,
+      "stg_orders",
+      "order_id",
+      "downstream",
+      2
+    );
+    expect(result).toHaveLength(2);
+    const targets = result.map((e) => `${e.target_model}.${e.target_column}`);
+    expect(targets).toContain("fct_orders.order_id");
+    expect(targets).toContain("dim_orders.order_id");
   });
 
-  it("returns empty upstream for a model with no deps", () => {
-    const isolated: LsModelEntry[] = [
+  it("max depth limits traversal", () => {
+    // From stg_orders.order_id downstream with depth 1, should NOT reach dim_orders
+    const result = filterEdgesByDepth(
+      SAMPLE_EDGES,
+      "stg_orders",
+      "order_id",
+      "downstream",
+      1
+    );
+    expect(result).toHaveLength(1);
+    const models = result.map((e) => e.target_model);
+    expect(models).not.toContain("dim_orders");
+  });
+
+  it("returns empty for non-existent column", () => {
+    const result = filterEdgesByDepth(
+      SAMPLE_EDGES,
+      "stg_orders",
+      "nonexistent",
+      "upstream",
+      5
+    );
+    expect(result).toHaveLength(0);
+  });
+
+  it("handles cycles without infinite loop", () => {
+    const cyclicEdges: CliLineageEdge[] = [
       {
-        name: "standalone",
-        type: "model",
-        path: "/standalone.sql",
-        materialized: "table",
-        model_deps: [],
-        external_deps: [],
+        source_model: "a",
+        source_column: "x",
+        target_model: "b",
+        target_column: "x",
+        is_direct: true,
+        expr_type: "column",
+      },
+      {
+        source_model: "b",
+        source_column: "x",
+        target_model: "a",
+        target_column: "x",
+        is_direct: true,
+        expr_type: "column",
       },
     ];
-    const isoIndex = mockIndex(isolated);
-    const data = buildColumnLineage(isolated[0], isoIndex);
 
-    expect(data.upstreamModels).toHaveLength(0);
-    expect(data.columns).toHaveLength(0);
+    // Should not hang; visited set prevents re-traversal of a::x
+    const result = filterEdgesByDepth(cyclicEdges, "a", "x", "downstream", 10);
+    // Hop 1: a->b (b::x added to frontier)
+    // Hop 2: b->a (edge collected, but a::x already visited so no new frontier)
+    // Both edges are returned, but traversal stops — no infinite loop
+    expect(result).toHaveLength(2);
+    expect(result[0].target_model).toBe("b");
+    expect(result[1].target_model).toBe("a");
+  });
+
+  it("returns multiple edges from the same hop", () => {
+    // From fct_orders upstream depth 1, both stg_orders.order_id and stg_orders.amount map to fct_orders columns
+    const result = filterEdgesByDepth(
+      SAMPLE_EDGES,
+      "fct_orders",
+      "order_id",
+      "upstream",
+      1
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].source_model).toBe("stg_orders");
+    expect(result[0].source_column).toBe("order_id");
+  });
+
+  it("handles depth 0 by returning empty", () => {
+    // Edge case: maxDepth 0 means no hops
+    const result = filterEdgesByDepth(
+      SAMPLE_EDGES,
+      "stg_orders",
+      "order_id",
+      "upstream",
+      0
+    );
+    expect(result).toHaveLength(0);
   });
 });

@@ -36,3 +36,14 @@ export interface VersionInfo {
   minor: number;
   patch: number;
 }
+
+/** A single cross-model column lineage edge from `ff lineage --output json`. */
+export interface CliLineageEdge {
+  source_model: string;
+  source_column: string;
+  target_model: string;
+  target_column: string;
+  is_direct: boolean;
+  expr_type: string;
+  classification?: string;
+}

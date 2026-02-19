@@ -188,3 +188,133 @@ fn test_cte_lineage() {
     let user_id = lineage.get_column("user_id");
     assert!(user_id.is_some());
 }
+
+// --- Recursive traversal tests ---
+
+/// Helper to build a ProjectLineage with given edges
+fn build_project_lineage(edges: Vec<LineageEdge>) -> ProjectLineage {
+    ProjectLineage {
+        models: HashMap::new(),
+        edges,
+    }
+}
+
+fn make_edge(src_model: &str, src_col: &str, tgt_model: &str, tgt_col: &str) -> LineageEdge {
+    LineageEdge {
+        source_model: src_model.to_string(),
+        source_column: src_col.to_string(),
+        target_model: tgt_model.to_string(),
+        target_column: tgt_col.to_string(),
+        is_direct: true,
+        expr_type: ExprType::Column,
+        classification: None,
+    }
+}
+
+#[test]
+fn test_recursive_downstream_three_model_chain() {
+    // A.x → B.x → C.x
+    let lineage = build_project_lineage(vec![
+        make_edge("A", "x", "B", "x"),
+        make_edge("B", "x", "C", "x"),
+    ]);
+
+    let downstream = lineage.column_consumers_recursive("A", "x");
+    assert_eq!(downstream.len(), 2);
+    assert!(downstream.iter().any(|e| e.target_model == "B"));
+    assert!(downstream.iter().any(|e| e.target_model == "C"));
+}
+
+#[test]
+fn test_recursive_upstream_three_model_chain() {
+    // A.x → B.x → C.x
+    let lineage = build_project_lineage(vec![
+        make_edge("A", "x", "B", "x"),
+        make_edge("B", "x", "C", "x"),
+    ]);
+
+    let upstream = lineage.trace_column_recursive("C", "x");
+    assert_eq!(upstream.len(), 2);
+    assert!(upstream.iter().any(|e| e.source_model == "A"));
+    assert!(upstream.iter().any(|e| e.source_model == "B"));
+}
+
+#[test]
+fn test_recursive_downstream_diamond() {
+    // A.x → B.x, A.x → C.x, B.x → D.x, C.x → D.x
+    let lineage = build_project_lineage(vec![
+        make_edge("A", "x", "B", "x"),
+        make_edge("A", "x", "C", "x"),
+        make_edge("B", "x", "D", "x"),
+        make_edge("C", "x", "D", "x"),
+    ]);
+
+    let downstream = lineage.column_consumers_recursive("A", "x");
+    // Should get all 4 edges, no duplicates
+    assert_eq!(downstream.len(), 4);
+    // D.x appears as target twice (from B and C) — both edges should be present
+    let d_edges: Vec<_> = downstream
+        .iter()
+        .filter(|e| e.target_model == "D")
+        .collect();
+    assert_eq!(d_edges.len(), 2);
+}
+
+#[test]
+fn test_recursive_upstream_diamond() {
+    // A.x → C.x, B.x → C.x, C.x → D.x
+    let lineage = build_project_lineage(vec![
+        make_edge("A", "x", "C", "x"),
+        make_edge("B", "x", "C", "x"),
+        make_edge("C", "x", "D", "x"),
+    ]);
+
+    let upstream = lineage.trace_column_recursive("D", "x");
+    assert_eq!(upstream.len(), 3);
+    assert!(upstream.iter().any(|e| e.source_model == "A"));
+    assert!(upstream.iter().any(|e| e.source_model == "B"));
+    assert!(upstream.iter().any(|e| e.source_model == "C"));
+}
+
+#[test]
+fn test_recursive_cycle_protection() {
+    // A.x → B.x → A.x (cycle)
+    let lineage = build_project_lineage(vec![
+        make_edge("A", "x", "B", "x"),
+        make_edge("B", "x", "A", "x"),
+    ]);
+
+    // Should not loop forever; visited set prevents re-expansion
+    let downstream = lineage.column_consumers_recursive("A", "x");
+    assert_eq!(downstream.len(), 2);
+
+    let upstream = lineage.trace_column_recursive("A", "x");
+    assert_eq!(upstream.len(), 2);
+}
+
+#[test]
+fn test_recursive_single_hop() {
+    // Only one hop: A.x → B.x
+    let lineage = build_project_lineage(vec![make_edge("A", "x", "B", "x")]);
+
+    let downstream = lineage.column_consumers_recursive("A", "x");
+    assert_eq!(downstream.len(), 1);
+    assert_eq!(downstream[0].target_model, "B");
+
+    let upstream = lineage.trace_column_recursive("B", "x");
+    assert_eq!(upstream.len(), 1);
+    assert_eq!(upstream[0].source_model, "A");
+}
+
+#[test]
+fn test_recursive_no_matches() {
+    let lineage = build_project_lineage(vec![make_edge("A", "x", "B", "x")]);
+
+    // No downstream from B.x
+    let downstream = lineage.column_consumers_recursive("B", "x");
+    assert!(downstream.is_empty());
+
+    // No upstream to A.x
+    let upstream = lineage.trace_column_recursive("A", "x");
+    assert!(upstream.is_empty());
+}
