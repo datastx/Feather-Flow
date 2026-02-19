@@ -77,7 +77,7 @@ impl std::fmt::Debug for CompileContext<'_> {
 }
 
 /// Execute the compile command
-pub async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
+pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
     use ff_core::config::Config;
 
     let start_time = Instant::now();

@@ -39,7 +39,7 @@ fn format_args(args: &[FunctionArg]) -> String {
 }
 
 /// Execute the function command
-pub async fn execute(args: &FunctionArgs, global: &GlobalArgs) -> Result<()> {
+pub(crate) async fn execute(args: &FunctionArgs, global: &GlobalArgs) -> Result<()> {
     match &args.command {
         FunctionCommands::List(sub) => list(sub, global).await,
         FunctionCommands::Deploy(sub) => deploy(sub, global).await,

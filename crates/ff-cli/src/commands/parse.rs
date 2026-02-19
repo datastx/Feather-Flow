@@ -9,7 +9,7 @@ use crate::cli::{GlobalArgs, ParseArgs, ParseOutput};
 use crate::commands::common::{self, load_project};
 
 /// Execute the parse command
-pub async fn execute(args: &ParseArgs, global: &GlobalArgs) -> Result<()> {
+pub(crate) async fn execute(args: &ParseArgs, global: &GlobalArgs) -> Result<()> {
     let project = load_project(global)?;
 
     let dialect_str = project.config.dialect.to_string();

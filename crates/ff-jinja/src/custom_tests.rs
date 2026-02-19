@@ -79,16 +79,14 @@ pub fn discover_custom_test_macros(
 ///
 /// Looks for patterns like `{% macro test_<name>(...) %}` in the content.
 fn extract_test_macros_from_content(content: &str, source_file: &str) -> Vec<CustomTestMacro> {
-    use std::sync::OnceLock;
+    use std::sync::LazyLock;
 
     let mut macros = Vec::new();
 
-    // Look for macro definitions with test_ prefix
-    // Pattern: {% macro test_<name>( or {%- macro test_<name>(
-    static MACRO_PATTERN: OnceLock<regex::Regex> = OnceLock::new();
-    let macro_pattern = MACRO_PATTERN.get_or_init(|| {
+    static MACRO_PATTERN: LazyLock<regex::Regex> = LazyLock::new(|| {
         regex::Regex::new(r#"\{%-?\s*macro\s+(test_(\w+))\s*\("#).expect("valid regex literal")
     });
+    let macro_pattern = &*MACRO_PATTERN;
 
     for captures in macro_pattern.captures_iter(content) {
         if let (Some(full_name), Some(test_name)) = (captures.get(1), captures.get(2)) {

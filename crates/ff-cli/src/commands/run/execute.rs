@@ -563,15 +563,11 @@ async fn execute_models_sequential(
     (run_results, success_count, failure_count, stopped_early)
 }
 
-/// Async task body for executing a single model in parallel mode.
-#[allow(clippy::too_many_arguments)]
-async fn execute_model_task(
-    db: Arc<dyn Database>,
-    name: String,
-    compiled: Arc<CompiledModel>,
-    full_refresh: bool,
-    wap_schema: Option<String>,
-    fail_fast: bool,
+/// Shared state for parallel model execution.
+///
+/// Groups the many `Arc`-wrapped counters, locks, and collections that every
+/// spawned task needs, keeping `execute_model_task`'s signature manageable.
+struct ParallelExecutionState {
     semaphore: Arc<Semaphore>,
     success_count: Arc<AtomicUsize>,
     failure_count: Arc<AtomicUsize>,
@@ -581,14 +577,24 @@ async fn execute_model_task(
     progress: Option<Arc<ProgressBar>>,
     output_lock: Arc<AsyncMutex<()>>,
     all_compiled_models: Arc<HashMap<String, CompiledModel>>,
+    full_refresh: bool,
+    fail_fast: bool,
+    wap_schema: Option<String>,
     db_path: Option<String>,
+}
+
+/// Async task body for executing a single model in parallel mode.
+async fn execute_model_task(
+    db: Arc<dyn Database>,
+    name: String,
+    compiled: Arc<CompiledModel>,
+    state: Arc<ParallelExecutionState>,
 ) {
-    // Semaphore was closed -- treat as cancellation
-    let Ok(_permit) = semaphore.acquire().await else {
+    let Ok(_permit) = state.semaphore.acquire().await else {
         return;
     };
 
-    if stopped.load(Ordering::SeqCst) && fail_fast {
+    if state.stopped.load(Ordering::SeqCst) && state.fail_fast {
         return;
     }
 
@@ -597,38 +603,44 @@ async fn execute_model_task(
             &db,
             &name,
             &compiled,
-            &all_compiled_models,
-            db_path.as_deref().unwrap_or(":memory:"),
+            &state.all_compiled_models,
+            state.db_path.as_deref().unwrap_or(":memory:"),
         )
         .await
     } else {
-        run_single_model(&db, &name, &compiled, full_refresh, wap_schema.as_deref()).await
+        run_single_model(
+            &db,
+            &name,
+            &compiled,
+            state.full_refresh,
+            state.wap_schema.as_deref(),
+        )
+        .await
     };
 
     let is_error = matches!(model_result.status, RunStatus::Error);
 
-    // Print status under lock to prevent interleaved output
     {
-        let _guard = output_lock.lock().await;
+        let _guard = state.output_lock.lock().await;
         println!("{}", format_model_status(&model_result));
-        if is_error && fail_fast {
+        if is_error && state.fail_fast {
             println!("\n  Stopping due to --fail-fast");
         }
     }
 
     if is_error {
-        failure_count.fetch_add(1, Ordering::SeqCst);
-        if fail_fast {
-            stopped.store(true, Ordering::SeqCst);
+        state.failure_count.fetch_add(1, Ordering::SeqCst);
+        if state.fail_fast {
+            state.stopped.store(true, Ordering::SeqCst);
         }
     } else {
-        success_count.fetch_add(1, Ordering::SeqCst);
+        state.success_count.fetch_add(1, Ordering::SeqCst);
     }
 
-    recover_mutex(&run_results).push(model_result);
-    recover_mutex(&completed).insert(name);
+    recover_mutex(&state.run_results).push(model_result);
+    recover_mutex(&state.completed).insert(name);
 
-    if let Some(ref pb) = progress {
+    if let Some(ref pb) = state.progress {
         pb.inc(1);
     }
 }
@@ -637,13 +649,6 @@ async fn execute_model_task(
 async fn execute_models_parallel(
     ctx: &ExecutionContext<'_>,
 ) -> (Vec<ModelRunResult>, usize, usize, bool) {
-    let success_count = Arc::new(AtomicUsize::new(0));
-    let failure_count = Arc::new(AtomicUsize::new(0));
-    let run_results = Arc::new(Mutex::new(Vec::with_capacity(ctx.execution_order.len())));
-    let stopped = Arc::new(AtomicBool::new(false));
-    let semaphore = Arc::new(Semaphore::new(ctx.args.threads));
-    let completed = Arc::new(Mutex::new(HashSet::new()));
-    let output_lock = Arc::new(AsyncMutex::new(()));
     let levels = compute_execution_levels(ctx.execution_order, ctx.compiled_models);
 
     let executable_count = ctx
@@ -669,6 +674,22 @@ async fn execute_models_parallel(
         None
     };
 
+    let state = Arc::new(ParallelExecutionState {
+        semaphore: Arc::new(Semaphore::new(ctx.args.threads)),
+        success_count: Arc::new(AtomicUsize::new(0)),
+        failure_count: Arc::new(AtomicUsize::new(0)),
+        run_results: Arc::new(Mutex::new(Vec::with_capacity(ctx.execution_order.len()))),
+        stopped: Arc::new(AtomicBool::new(false)),
+        completed: Arc::new(Mutex::new(HashSet::new())),
+        progress,
+        output_lock: Arc::new(AsyncMutex::new(())),
+        all_compiled_models: Arc::new(ctx.compiled_models.clone()),
+        full_refresh: ctx.args.full_refresh,
+        fail_fast: ctx.args.fail_fast,
+        wap_schema: ctx.wap_schema.map(String::from),
+        db_path: ctx.db_path.map(String::from),
+    });
+
     println!(
         "  [parallel mode: {} threads, {} levels]",
         ctx.args.threads,
@@ -676,14 +697,14 @@ async fn execute_models_parallel(
     );
 
     for level_models in &levels {
-        if stopped.load(Ordering::SeqCst) {
+        if state.stopped.load(Ordering::SeqCst) {
             break;
         }
 
         let mut set = JoinSet::new();
 
         for name in level_models {
-            if stopped.load(Ordering::SeqCst) && ctx.args.fail_fast {
+            if state.stopped.load(Ordering::SeqCst) && ctx.args.fail_fast {
                 break;
             }
 
@@ -698,39 +719,20 @@ async fn execute_models_parallel(
             };
 
             if compiled.materialization == Materialization::Ephemeral {
-                success_count.fetch_add(1, Ordering::SeqCst);
-                recover_mutex(&run_results).push(ModelRunResult {
+                state.success_count.fetch_add(1, Ordering::SeqCst);
+                recover_mutex(&state.run_results).push(ModelRunResult {
                     model: name.clone(),
                     status: RunStatus::Success,
                     materialization: "ephemeral".to_string(),
                     duration_secs: 0.0,
                     error: None,
                 });
-                recover_mutex(&completed).insert(name);
+                recover_mutex(&state.completed).insert(name);
                 continue;
             }
 
             let compiled = Arc::new(compiled.clone());
-            let all_compiled = Arc::new(ctx.compiled_models.clone());
-            let db_path_owned = ctx.db_path.map(String::from);
-            set.spawn(execute_model_task(
-                db,
-                name,
-                compiled,
-                ctx.args.full_refresh,
-                ctx.wap_schema.map(String::from),
-                ctx.args.fail_fast,
-                Arc::clone(&semaphore),
-                Arc::clone(&success_count),
-                Arc::clone(&failure_count),
-                Arc::clone(&run_results),
-                Arc::clone(&stopped),
-                Arc::clone(&completed),
-                progress.clone(),
-                Arc::clone(&output_lock),
-                all_compiled,
-                db_path_owned,
-            ));
+            set.spawn(execute_model_task(db, name, compiled, Arc::clone(&state)));
         }
 
         while let Some(res) = set.join_next().await {
@@ -740,14 +742,14 @@ async fn execute_models_parallel(
         }
     }
 
-    if let Some(pb) = progress {
+    if let Some(ref pb) = state.progress {
         pb.finish_with_message("Complete");
     }
 
-    let final_results = recover_mutex(&run_results).clone();
-    let final_success = success_count.load(Ordering::SeqCst);
-    let final_failure = failure_count.load(Ordering::SeqCst);
-    let final_stopped = stopped.load(Ordering::SeqCst);
+    let final_results = recover_mutex(&state.run_results).clone();
+    let final_success = state.success_count.load(Ordering::SeqCst);
+    let final_failure = state.failure_count.load(Ordering::SeqCst);
+    let final_stopped = state.stopped.load(Ordering::SeqCst);
 
     for result in &final_results {
         if !matches!(result.status, RunStatus::Success) {

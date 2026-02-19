@@ -18,7 +18,7 @@ use regex::Regex;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 /// Private render context passed to `render_str`.
 ///
@@ -321,8 +321,12 @@ fn load_macro_from_paths(
 /// Scan macro files in `paths`, extract `{% macro name( %}` definitions,
 /// and build `{% from "file.sql" import macro1, macro2 %}` lines so every
 /// user macro is available globally without explicit imports.
+/// Regex for extracting macro names from Jinja template files.
+static MACRO_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{%-?\s*macro\s+(\w+)\s*\(").expect("valid regex literal"));
+
 fn build_macro_preamble(paths: &[PathBuf]) -> String {
-    let re = Regex::new(r"\{%-?\s*macro\s+(\w+)\s*\(").expect("valid regex");
+    let re = &*MACRO_RE;
 
     // BTreeMap keeps files sorted for deterministic output.
     let mut file_macros: BTreeMap<String, Vec<String>> = BTreeMap::new();

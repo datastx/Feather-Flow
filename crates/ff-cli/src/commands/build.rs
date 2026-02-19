@@ -35,7 +35,7 @@ fn classify_phase_result(result: Result<()>) -> Result<Option<i32>> {
 }
 
 /// Execute the build command: seed → per-model (materialize + test).
-pub async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()> {
+pub(crate) async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()> {
     let quiet = args.quiet || args.output == OutputFormat::Json;
     let start_time = Instant::now();
 

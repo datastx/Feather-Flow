@@ -115,7 +115,7 @@ struct LineageEntry {
 }
 
 /// Execute the docs serve command
-pub async fn execute(args: &DocsServeArgs, global: &GlobalArgs) -> Result<()> {
+pub(super) async fn execute(args: &DocsServeArgs, global: &GlobalArgs) -> Result<()> {
     let project = load_project(global)?;
 
     println!("Building documentation data...");
@@ -251,7 +251,8 @@ fn build_app_state(project: &Project) -> Result<AppState> {
             }
 
             // Serialize full model doc
-            let json = serde_json::to_string(&doc)?;
+            let json = serde_json::to_string(&doc)
+                .with_context(|| format!("Failed to serialize docs for '{}'", doc.name))?;
             model_docs_map.insert(doc.name.clone(), json);
         }
     }

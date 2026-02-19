@@ -19,7 +19,7 @@ use crate::commands::common::{
 };
 
 /// Execute the analyze command
-pub async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
+pub(crate) async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
     let project = load_project(global)?;
 
     let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())

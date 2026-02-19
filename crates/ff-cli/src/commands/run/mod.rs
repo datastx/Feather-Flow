@@ -33,7 +33,7 @@ pub(crate) use hooks::{create_database_connection, create_schemas, set_search_pa
 use state::{compute_config_hash, compute_smart_skips, write_run_results, RunResults};
 
 /// Execute the run command
-pub async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
+pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     let start_time = Instant::now();
     let project = load_project(global)?;
 

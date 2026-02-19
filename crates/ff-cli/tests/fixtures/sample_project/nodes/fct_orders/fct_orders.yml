@@ -1,4 +1,5 @@
 version: 1
+kind: sql
 
 description: "Fact table for orders with customer details and payment information"
 owner: analytics-team

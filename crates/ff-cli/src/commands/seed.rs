@@ -9,7 +9,7 @@ use crate::cli::{GlobalArgs, SeedArgs};
 use crate::commands::common::{self, load_project};
 
 /// Execute the seed command
-pub async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
+pub(crate) async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
     let project = load_project(global)?;
 
     let db = common::create_database_connection(&project.config, global.target.as_deref())?;
