@@ -39,11 +39,11 @@ pub(crate) async fn execute(args: &RulesArgs, global: &GlobalArgs) -> Result<()>
     let (results, violations) = ff_meta::rules::execute_all_rules(meta_db.conn(), &rules)
         .context("Failed to execute rules")?;
 
-    if let Some(meta_db_inner) = common::open_meta_db(&project) {
+    {
         if let Some((_project_id, run_id, _model_id_map)) =
-            common::populate_meta_phase1(&meta_db_inner, &project, "rules", None)
+            common::populate_meta_phase1(&meta_db, &project, "rules", None)
         {
-            let _ = meta_db_inner.transaction(|conn| {
+            let _ = meta_db.transaction(|conn| {
                 ff_meta::rules::populate_rule_violations(conn, run_id, &violations)
             });
             let status = if results
@@ -54,7 +54,7 @@ pub(crate) async fn execute(args: &RulesArgs, global: &GlobalArgs) -> Result<()>
             } else {
                 "success"
             };
-            common::complete_meta_run(&meta_db_inner, run_id, status);
+            common::complete_meta_run(&meta_db, run_id, status);
         }
     }
 

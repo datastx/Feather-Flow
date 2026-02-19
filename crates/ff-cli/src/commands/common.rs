@@ -352,7 +352,7 @@ pub(crate) fn run_static_analysis_pipeline(
     topo_order: &[String],
     external_tables: &HashSet<String>,
 ) -> Result<StaticAnalysisOutput> {
-    use ff_analysis::{propagate_schemas, OverriddenSeverity, SeverityOverrides};
+    use ff_analysis::{propagate_schemas, SeverityOverrides};
 
     let overrides = SeverityOverrides::from_config(&project.config.analysis.severity_overrides);
     let (schema_catalog, yaml_schemas) = build_schema_catalog(project, external_tables);
@@ -368,39 +368,46 @@ pub(crate) fn run_static_analysis_pipeline(
         .map(|(k, v)| (ff_core::ModelName::new(k.clone()), v.clone()))
         .collect();
 
-    let yaml_model_map: HashMap<ff_core::ModelName, Arc<ff_analysis::RelSchema>> = yaml_schemas
-        .iter()
-        .map(|(k, v)| (k.clone(), Arc::clone(v)))
-        .collect();
-
     let (user_fn_stubs, user_table_fn_stubs) = ff_analysis::build_user_function_stubs(project);
     let result = propagate_schemas(
         &filtered_order,
         &sql_model_sources,
-        &yaml_model_map,
+        &yaml_schemas,
         schema_catalog,
         &user_fn_stubs,
         &user_table_fn_stubs,
     );
 
-    // Compute has_errors respecting severity overrides for SA codes
-    let has_errors = !result.failures.is_empty()
-        || result.model_plans.values().any(|pr| {
-            pr.mismatches.iter().any(|m| {
-                let sa_code = m.code();
-                match overrides.get_for_sa(sa_code) {
-                    Some(OverriddenSeverity::Off) => false,
-                    Some(OverriddenSeverity::Level(ff_analysis::Severity::Error)) => true,
-                    Some(OverriddenSeverity::Level(_)) => false,
-                    None => m.is_error(),
-                }
-            })
-        });
+    let has_errors = has_schema_errors(&result, &overrides);
 
     Ok(StaticAnalysisOutput {
         result,
         has_errors,
         overrides,
+    })
+}
+
+/// Check whether any schema mismatch in the propagation result is an error,
+/// respecting severity overrides for SA codes.
+fn has_schema_errors(
+    result: &ff_analysis::PropagationResult,
+    overrides: &ff_analysis::SeverityOverrides,
+) -> bool {
+    use ff_analysis::OverriddenSeverity;
+
+    if !result.failures.is_empty() {
+        return true;
+    }
+    result.model_plans.values().any(|pr| {
+        pr.mismatches.iter().any(|m| {
+            let sa_code = m.code();
+            match overrides.get_for_sa(sa_code) {
+                Some(OverriddenSeverity::Off) => false,
+                Some(OverriddenSeverity::Level(ff_analysis::Severity::Error)) => true,
+                Some(OverriddenSeverity::Level(_)) => false,
+                None => m.is_error(),
+            }
+        })
     })
 }
 
@@ -946,7 +953,7 @@ pub(crate) fn populate_meta_phase1(
     project: &Project,
     run_type: &str,
     node_selector: Option<&str>,
-) -> Option<(i64, i64, std::collections::HashMap<String, i64>)> {
+) -> Option<(i64, i64, std::collections::HashMap<ff_core::ModelName, i64>)> {
     let result = meta_db.transaction(|conn| {
         let project_id = ff_meta::populate::populate_project_load(conn, project)?;
         let run_id = ff_meta::populate::lifecycle::begin_population(

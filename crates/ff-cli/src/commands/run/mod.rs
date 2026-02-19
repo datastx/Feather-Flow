@@ -19,7 +19,7 @@ use chrono::Utc;
 use ff_core::config::Materialization;
 use ff_core::run_state::RunState;
 use ff_core::ModelName;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -32,6 +32,32 @@ pub(crate) use execute::run_single_model;
 use execute::{execute_models_with_state, ExecutionContext};
 pub(crate) use hooks::{create_database_connection, create_schemas, set_search_path};
 use state::{compute_config_hash, compute_smart_skips, write_run_results, RunResults};
+
+/// Qualify bare table names in compiled SQL to fully-qualified references.
+fn qualify_sql_references(
+    compiled_models: &mut HashMap<String, CompiledModel>,
+    project: &ff_core::Project,
+    global: &GlobalArgs,
+) {
+    let compiled_schemas: std::collections::HashMap<String, Option<String>> = compiled_models
+        .iter()
+        .map(|(name, cm)| (name.clone(), cm.schema.clone()))
+        .collect();
+    let qualification_map = common::build_qualification_map(project, &compiled_schemas);
+    for (name, compiled) in compiled_models.iter_mut() {
+        if compiled.is_python {
+            continue;
+        }
+        match ff_sql::qualify_table_references(&compiled.sql, &qualification_map) {
+            Ok(qualified) => compiled.sql = qualified,
+            Err(e) => {
+                if global.verbose {
+                    eprintln!("[verbose] Failed to qualify references in {}: {}", name, e);
+                }
+            }
+        }
+    }
+}
 
 /// Execute the run command
 pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
@@ -46,29 +72,7 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         common::build_query_comment_context(&project.config, global.target.as_deref());
 
     let mut compiled_models = load_or_compile_models(&project, args, global, comment_ctx.as_ref())?;
-
-    {
-        let compiled_schemas: std::collections::HashMap<String, Option<String>> = compiled_models
-            .iter()
-            .map(|(name, cm)| (name.clone(), cm.schema.clone()))
-            .collect();
-        let qualification_map = common::build_qualification_map(&project, &compiled_schemas);
-
-        for (name, compiled) in &mut compiled_models {
-            // Skip SQL qualification for Python models (no SQL to qualify)
-            if compiled.is_python {
-                continue;
-            }
-            match ff_sql::qualify_table_references(&compiled.sql, &qualification_map) {
-                Ok(qualified) => compiled.sql = qualified,
-                Err(e) => {
-                    if global.verbose {
-                        eprintln!("[verbose] Failed to qualify references in {}: {}", name, e);
-                    }
-                }
-            }
-        }
-    }
+    qualify_sql_references(&mut compiled_models, &project, global);
 
     let compiled_models = Arc::new(compiled_models);
 

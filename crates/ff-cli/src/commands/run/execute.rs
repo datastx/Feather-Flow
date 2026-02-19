@@ -92,10 +92,15 @@ fn record_execution_to_meta(
     let schema_checksum = compute_schema_checksum(name, &ctx.compiled_models);
     let input_checksums = compute_input_checksums(name, &ctx.compiled_models);
 
+    let meta_status = match result.status {
+        RunStatus::Success => ff_meta::populate::execution::ModelRunStatus::Success,
+        RunStatus::Error => ff_meta::populate::execution::ModelRunStatus::Error,
+        RunStatus::Skipped => ff_meta::populate::execution::ModelRunStatus::Skipped,
+    };
     let record = ff_meta::populate::execution::ModelRunRecord {
         model_id,
         run_id,
-        status: result.status.to_string(),
+        status: meta_status,
         row_count: row_count.map(|c| c as i64),
         sql_checksum: Some(sql_checksum),
         schema_checksum,
@@ -115,15 +120,11 @@ fn record_execution_to_meta(
         .collect();
 
     let config = ff_meta::populate::execution::ConfigSnapshot {
-        materialization: compiled.materialization.to_string(),
+        materialization: compiled.materialization,
         schema_name: compiled.schema.clone(),
         unique_key: compiled.unique_key.as_ref().map(|v| v.join(",")),
-        incremental_strategy: compiled.incremental_strategy.map(|s| s.to_string()),
-        on_schema_change: compiled.on_schema_change.map(|s| match s {
-            ff_core::config::OnSchemaChange::Ignore => "ignore".to_string(),
-            ff_core::config::OnSchemaChange::Fail => "fail".to_string(),
-            ff_core::config::OnSchemaChange::AppendNewColumns => "append_new_columns".to_string(),
-        }),
+        incremental_strategy: compiled.incremental_strategy,
+        on_schema_change: compiled.on_schema_change,
     };
 
     if let Err(e) = meta_db.transaction(|conn| {
@@ -175,7 +176,7 @@ pub(super) struct ExecutionContext<'a> {
     /// Meta database run ID for this execution
     pub(super) meta_run_id: Option<i64>,
     /// Map of model name -> meta database model_id
-    pub(super) meta_model_id_map: Option<&'a HashMap<String, i64>>,
+    pub(super) meta_model_id_map: Option<&'a HashMap<ff_core::ModelName, i64>>,
     /// Database file path (needed by Python models to connect directly)
     pub(super) db_path: Option<&'a str>,
 }

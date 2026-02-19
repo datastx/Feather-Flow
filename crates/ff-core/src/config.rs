@@ -513,6 +513,16 @@ impl std::fmt::Display for Materialization {
 }
 
 impl Materialization {
+    /// Return the materialization name as a static string slice.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Materialization::View => "view",
+            Materialization::Table => "table",
+            Materialization::Incremental => "incremental",
+            Materialization::Ephemeral => "ephemeral",
+        }
+    }
+
     /// Returns true if this is an ephemeral materialization
     pub fn is_ephemeral(&self) -> bool {
         matches!(self, Materialization::Ephemeral)

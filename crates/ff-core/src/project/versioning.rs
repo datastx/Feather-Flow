@@ -28,20 +28,22 @@ impl Project {
         }
 
         let (parsed_base, _) = Model::parse_version(reference);
-        if parsed_base.is_none() {
-            // Unversioned reference - find all versions and return latest
-            if let Some((name, model)) = self.get_latest_version(reference) {
-                if model.is_deprecated() {
-                    let msg = model
-                        .get_deprecation_message()
-                        .unwrap_or("This model is deprecated");
-                    warnings.push(format!("Warning: Model '{}' is deprecated. {}", name, msg));
-                }
-                return (Some(model), warnings);
-            }
+        if parsed_base.is_some() {
+            return (None, warnings);
         }
 
-        (None, warnings)
+        // Unversioned reference - find all versions and return latest
+        let Some((name, model)) = self.get_latest_version(reference) else {
+            return (None, warnings);
+        };
+
+        if model.is_deprecated() {
+            let msg = model
+                .get_deprecation_message()
+                .unwrap_or("This model is deprecated");
+            warnings.push(format!("Warning: Model '{}' is deprecated. {}", name, msg));
+        }
+        (Some(model), warnings)
     }
 
     /// Get the latest version of a model by base name

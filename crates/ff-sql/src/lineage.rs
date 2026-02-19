@@ -19,6 +19,28 @@ enum TraceDirection {
     Downstream,
 }
 
+/// Return `(match_model, match_col, next_model, next_col)` for a given edge
+/// and trace direction.
+fn edge_endpoints(
+    edge: &LineageEdge,
+    direction: TraceDirection,
+) -> (&String, &String, &String, &String) {
+    match direction {
+        TraceDirection::Upstream => (
+            &edge.target_model,
+            &edge.target_column,
+            &edge.source_model,
+            &edge.source_column,
+        ),
+        TraceDirection::Downstream => (
+            &edge.source_model,
+            &edge.source_column,
+            &edge.target_model,
+            &edge.target_column,
+        ),
+    }
+}
+
 /// Expression type for a lineage column
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -284,26 +306,15 @@ impl ProjectLineage {
 
         while let Some((m, c)) = queue.pop_front() {
             for edge in &self.edges {
-                let (match_model, match_col, next_model, next_col) = match direction {
-                    TraceDirection::Upstream => (
-                        &edge.target_model,
-                        &edge.target_column,
-                        &edge.source_model,
-                        &edge.source_column,
-                    ),
-                    TraceDirection::Downstream => (
-                        &edge.source_model,
-                        &edge.source_column,
-                        &edge.target_model,
-                        &edge.target_column,
-                    ),
-                };
-                if match_model == &m && match_col == &c {
-                    result.push(edge);
-                    let key = (next_model.clone(), next_col.clone());
-                    if visited.insert(key) {
-                        queue.push_back((next_model.clone(), next_col.clone()));
-                    }
+                let (match_model, match_col, next_model, next_col) =
+                    edge_endpoints(edge, direction);
+                if match_model != &m || match_col != &c {
+                    continue;
+                }
+                result.push(edge);
+                let key = (next_model.clone(), next_col.clone());
+                if visited.insert(key) {
+                    queue.push_back((next_model.clone(), next_col.clone()));
                 }
             }
         }
