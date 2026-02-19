@@ -165,7 +165,6 @@ pub fn extract_dependencies_resolved(
                 return std::ops::ControlFlow::<()>::Continue(());
             }
 
-            // Dedup by resolved name
             if seen.insert(resolved.name.clone()) {
                 deps.push(resolved);
             }

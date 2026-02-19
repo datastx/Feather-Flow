@@ -87,24 +87,20 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     // Open meta database early (needed for smart build and execution state)
     let meta_db = common::open_meta_db(&project);
 
-    // Smart build: filter out unchanged models (queries previous execution state)
     let smart_skipped: HashSet<String> = if args.smart {
         compute_smart_skips(&compiled_models, global, meta_db.as_ref())?
     } else {
         HashSet::new()
     };
 
-    // Compute config hash for run state validation
     let config_hash = compute_config_hash(&project);
 
-    // Determine run state path
     let run_state_path = args
         .state_file
         .as_ref()
         .map(|s| Path::new(s).to_path_buf())
         .unwrap_or_else(|| project.target_dir().join("run_state.json"));
 
-    // Handle resume mode
     let (execution_order, previous_run_state) = if args.resume {
         state::handle_resume_mode(
             &run_state_path,
@@ -118,7 +114,6 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         (order, None)
     };
 
-    // Apply smart build filtering
     let execution_order: Vec<String> = if !smart_skipped.is_empty() {
         let before = execution_order.len();
         let filtered: Vec<String> = execution_order
@@ -160,7 +155,6 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         );
     }
 
-    // Count non-ephemeral models (ephemeral models are inlined, not executed)
     let ephemeral_count = execution_order
         .iter()
         .filter(|name| {
@@ -172,7 +166,6 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         .count();
     let executable_count = execution_order.len() - ephemeral_count;
 
-    // Show resume summary if applicable (text mode only)
     if !json_mode {
         if let Some(ref prev_state) = previous_run_state {
             let summary = prev_state.summary();
@@ -190,13 +183,11 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         }
     }
 
-    // Resolve WAP schema from config
     let target = ff_core::config::Config::resolve_target(global.target.as_deref());
     let wap_schema = project.config.get_wap_schema(target.as_deref());
 
     create_schemas(&db, &compiled_models, global).await?;
 
-    // Create WAP schema if configured
     if let Some(ws) = wap_schema {
         db.create_schema_if_not_exists(ws)
             .await
@@ -226,12 +217,10 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         config_hash,
     );
 
-    // Save initial run state
     if let Err(e) = run_state.save(&run_state_path) {
         eprintln!("Warning: Failed to save initial run state: {}", e);
     }
 
-    // Populate meta database before execution to capture model_id_map (non-fatal)
     let meta_ids = meta_db
         .as_ref()
         .and_then(|db| common::populate_meta_phase1(db, &project, "run", args.nodes.as_deref()));
@@ -240,7 +229,6 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         None => (None, None),
     };
 
-    // Resolve database file path for Python model execution
     let db_path_str = project.config.database.path.clone();
     let db_path_ref = db_path_str.as_str();
 
@@ -259,13 +247,11 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     let (run_results, success_count, failure_count, stopped_early) =
         execute_models_with_state(&exec_ctx, &mut run_state, &run_state_path).await?;
 
-    // Mark run as completed
     run_state.mark_run_completed();
     if let Err(e) = run_state.save(&run_state_path) {
         eprintln!("Warning: Failed to save final run state: {}", e);
     }
 
-    // Complete meta database run (non-fatal)
     if let (Some(ref meta_db), Some(run_id)) = (&meta_db, meta_run_id) {
         let status = if failure_count > 0 {
             "error"

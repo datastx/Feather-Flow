@@ -200,44 +200,18 @@ struct SourceKindProbe {
 
 /// Recursively discover source files in a directory
 fn discover_sources_recursive(dir: &Path, sources: &mut Vec<SourceFile>) -> CoreResult<()> {
-    for entry in std::fs::read_dir(dir).map_err(|e| CoreError::IoWithPath {
-        path: dir.display().to_string(),
-        source: e,
-    })? {
-        let entry = entry.map_err(|e| CoreError::IoWithPath {
-            path: dir.display().to_string(),
-            source: e,
-        })?;
-        let path = entry.path();
-
-        if path.is_dir() {
-            discover_sources_recursive(&path, sources)?;
-        } else if path.extension().is_some_and(|e| e == "yml" || e == "yaml") {
-            let content = match std::fs::read_to_string(&path) {
-                Ok(c) => c,
-                Err(e) => {
-                    log::warn!("Cannot read {}: {}", path.display(), e);
-                    continue;
-                }
-            };
-
-            // Probe the kind field before attempting a full parse
-            let probe: SourceKindProbe = match serde_yaml::from_str(&content) {
+    crate::project::loading::discover_yaml_recursive(
+        dir,
+        sources,
+        |content| {
+            let probe: SourceKindProbe = match serde_yaml::from_str(content) {
                 Ok(p) => p,
-                Err(_) => continue,
+                Err(_) => return false,
             };
-
-            if !matches!(probe.kind, Some(SourceKind::Sources | SourceKind::Source)) {
-                continue;
-            }
-
-            // Kind probe confirmed this is a sources file — parse errors are real
-            let source = SourceFile::load(&path)?;
-            sources.push(source);
-        }
-    }
-
-    Ok(())
+            matches!(probe.kind, Some(SourceKind::Sources | SourceKind::Source))
+        },
+        SourceFile::load,
+    )
 }
 
 /// Build lookup of known source tables for dependency categorization

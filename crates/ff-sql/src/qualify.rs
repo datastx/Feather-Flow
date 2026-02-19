@@ -48,10 +48,11 @@ pub fn qualify_table_references(
     let dialect = DuckDbDialect {};
     let mut statements = Parser::parse_sql(&dialect, sql).map_err(|e| {
         let msg = e.to_string();
+        let (line, column) = crate::dialect::parse_location_from_error(&msg);
         SqlError::ParseError {
             message: msg,
-            line: 0,
-            column: 0,
+            line,
+            column,
         }
     })?;
 
