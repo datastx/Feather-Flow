@@ -1,0 +1,32 @@
+version: 1
+kind: sql
+
+description: "Extended product dimension with nested category classification and price in cents"
+owner: analytics-team
+tags:
+  - marts
+  - dimensions
+  - products
+
+columns:
+  - name: product_id
+    type: INTEGER
+    description: "Unique product identifier"
+    tests:
+      - unique
+      - not_null
+  - name: product_name
+    type: VARCHAR
+    description: "Product display name"
+  - name: category
+    type: VARCHAR
+    description: "Original product category"
+  - name: price
+    type: DECIMAL(10,2)
+    description: "Product price in dollars"
+  - name: id_scaled
+    type: BIGINT
+    description: "Product ID scaled by 10 (CAST of expression)"
+  - name: detailed_category
+    type: VARCHAR
+    description: "Detailed category using nested CASE logic"

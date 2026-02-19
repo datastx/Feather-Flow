@@ -1,0 +1,41 @@
+version: 1
+kind: sql
+
+description: "Customer order report combining customers with enriched orders"
+owner: analytics-team
+tags:
+  - reports
+  - customers
+  - orders
+
+columns:
+  - name: customer_id
+    type: INTEGER
+    description: "Unique customer identifier"
+    classification: pii
+    tests:
+      - not_null
+  - name: customer_name
+    type: VARCHAR
+    description: "Customer full name"
+    classification: pii
+  - name: email
+    type: VARCHAR
+    description: "Customer email address"
+    classification: pii
+  - name: order_id
+    type: INTEGER
+    description: "Order identifier"
+  - name: order_amount
+    type: DECIMAL(10,2)
+    description: "Original order amount"
+    classification: sensitive
+  - name: payment_total
+    type: DECIMAL(10,2)
+    description: "Total payments for order"
+  - name: balance_with_fee
+    type: DECIMAL(10,2)
+    description: "Balance due plus 10% fee"
+  - name: combined_metric
+    type: DECIMAL(10,2)
+    description: "Sum of amount, payment total, and count"
