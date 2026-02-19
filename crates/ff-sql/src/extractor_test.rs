@@ -250,9 +250,15 @@ fn test_resolved_duckdb_schema_qualified_quoted() {
     assert_eq!(deps[0].name, "MySchema.MyTable");
     assert!(deps[0].is_case_sensitive);
     // Both parts are quoted
-    assert_eq!(deps[0].parts.len(), 2);
-    assert_eq!(deps[0].parts[0].sensitivity, CaseSensitivity::CaseSensitive);
-    assert_eq!(deps[0].parts[1].sensitivity, CaseSensitivity::CaseSensitive);
+    assert_eq!(deps[0].parts().len(), 2);
+    assert_eq!(
+        deps[0].parts()[0].sensitivity,
+        CaseSensitivity::CaseSensitive
+    );
+    assert_eq!(
+        deps[0].parts()[1].sensitivity,
+        CaseSensitivity::CaseSensitive
+    );
 }
 
 #[test]
@@ -265,10 +271,13 @@ fn test_resolved_duckdb_schema_qualified_mixed() {
     // The table part is quoted so the whole ref is case-sensitive
     assert!(deps[0].is_case_sensitive);
     assert_eq!(
-        deps[0].parts[0].sensitivity,
+        deps[0].parts()[0].sensitivity,
         CaseSensitivity::CaseInsensitive
     );
-    assert_eq!(deps[0].parts[1].sensitivity, CaseSensitivity::CaseSensitive);
+    assert_eq!(
+        deps[0].parts()[1].sensitivity,
+        CaseSensitivity::CaseSensitive
+    );
 }
 
 // -- Snowflake: unquoted folds to UPPER CASE --
@@ -325,7 +334,7 @@ fn test_resolved_snowflake_three_part_name() {
     let deps = parse_and_extract_resolved("SELECT * FROM mydb.myschema.mytable", &dialect);
     assert_eq!(deps.len(), 1);
     assert_eq!(deps[0].name, "MYDB.MYSCHEMA.MYTABLE");
-    assert_eq!(deps[0].parts.len(), 3);
+    assert_eq!(deps[0].parts().len(), 3);
     assert!(!deps[0].is_case_sensitive);
 }
 

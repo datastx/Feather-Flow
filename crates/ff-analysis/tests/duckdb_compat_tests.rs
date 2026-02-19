@@ -4,10 +4,21 @@ use ff_analysis::propagate_schemas;
 use ff_analysis::sql_to_plan;
 use ff_analysis::{FeatherFlowProvider, FunctionRegistry};
 use ff_analysis::{FloatBitWidth, IntBitWidth, Nullability, RelSchema, SqlType, TypedColumn};
+use ff_core::ModelName;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 type SchemaCatalog = HashMap<String, Arc<RelSchema>>;
+
+fn mn(names: Vec<String>) -> Vec<ModelName> {
+    names.into_iter().map(ModelName::new).collect()
+}
+
+fn ms(map: HashMap<String, String>) -> HashMap<ModelName, String> {
+    map.into_iter()
+        .map(|(k, v)| (ModelName::new(k), v))
+        .collect()
+}
 
 fn make_col(name: &str, ty: SqlType, null: Nullability) -> TypedColumn {
     TypedColumn {
@@ -425,8 +436,8 @@ fn test_propagation_with_cast_shorthand() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
+        &mn(topo_order),
+        &ms(sql_sources),
         &HashMap::new(),
         initial.clone(),
         &[],
@@ -459,8 +470,8 @@ fn test_propagation_with_duckdb_function() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
+        &mn(topo_order),
+        &ms(sql_sources),
         &HashMap::new(),
         initial.clone(),
         &[],

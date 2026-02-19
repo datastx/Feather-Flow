@@ -1831,7 +1831,7 @@ fn test_analysis_propagation_sample_project() {
 struct AnalysisPipeline {
     propagation: ff_analysis::PropagationResult,
     ctx: ff_analysis::AnalysisContext,
-    order: Vec<String>,
+    order: Vec<ModelName>,
 }
 
 /// Build the full analysis pipeline for a fixture project.
@@ -1920,7 +1920,7 @@ fn build_analysis_pipeline(fixture_path: &str) -> AnalysisPipeline {
     }
 
     let mut dep_map: HashMap<String, Vec<String>> = HashMap::new();
-    let mut sql_sources: HashMap<String, String> = HashMap::new();
+    let mut sql_sources: HashMap<ModelName, String> = HashMap::new();
     for (name, model) in &project.models {
         let Ok(rendered) = jinja.render(&model.raw_sql) else {
             dep_map.insert(name.to_string(), vec![]);
@@ -1941,7 +1941,7 @@ fn build_analysis_pipeline(fixture_path: &str) -> AnalysisPipeline {
                 project_lineage.add_model_lineage(lineage);
             }
         }
-        sql_sources.insert(name.to_string(), rendered);
+        sql_sources.insert(name.clone(), rendered);
     }
     project_lineage.resolve_edges(&known_models);
 
@@ -1951,22 +1951,20 @@ fn build_analysis_pipeline(fixture_path: &str) -> AnalysisPipeline {
     let dag = ModelDag::build(&dep_map).unwrap();
     let topo_order = dag.topological_order().unwrap();
 
-    let yaml_string_map: HashMap<String, Arc<RelSchema>> = yaml_schemas
-        .iter()
-        .map(|(k, v)| (k.to_string(), Arc::clone(v)))
-        .collect();
-
     let (user_fn_stubs, user_table_fn_stubs) = ff_analysis::build_user_function_stubs(&project);
+
+    let topo_order_names: Vec<ModelName> = topo_order.iter().map(ModelName::new).collect();
+
     let propagation = propagate_schemas(
-        &topo_order,
+        &topo_order_names,
         &sql_sources,
-        &yaml_string_map,
+        &yaml_schemas,
         catalog,
         &user_fn_stubs,
         &user_table_fn_stubs,
     );
 
-    let order: Vec<String> = topo_order
+    let order: Vec<ModelName> = topo_order_names
         .into_iter()
         .filter(|n| propagation.model_plans.contains_key(n))
         .collect();
@@ -2071,7 +2069,7 @@ fn test_analysis_diagnostic_json_roundtrip() {
         code: DiagnosticCode::A001,
         severity: Severity::Info,
         message: "Test message".to_string(),
-        model: "test_model".to_string(),
+        model: ModelName::new("test_model"),
         column: Some("col1".to_string()),
         hint: Some("Fix it".to_string()),
         pass_name: "type_inference".into(),

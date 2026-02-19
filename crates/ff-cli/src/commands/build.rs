@@ -72,7 +72,7 @@ pub(crate) async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()>
         nodes: args.nodes.clone(),
         exclude: args.exclude.clone(),
         full_refresh: args.full_refresh,
-        fail_fast: true, // build always fails fast
+        fail_fast: true,
         no_cache: false,
         defer: None,
         state: None,
@@ -263,7 +263,7 @@ pub(crate) async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()>
             }
 
             if model_tests_failed > 0 {
-                break; // stop testing this model on first failure
+                break;
             }
         }
 

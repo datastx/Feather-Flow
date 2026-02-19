@@ -1,4 +1,5 @@
 use super::*;
+use ff_core::ModelName;
 use std::collections::HashMap;
 
 fn make_diagnostic(code: DiagnosticCode, severity: Severity) -> Diagnostic {
@@ -6,7 +7,7 @@ fn make_diagnostic(code: DiagnosticCode, severity: Severity) -> Diagnostic {
         code,
         severity,
         message: format!("test diagnostic {:?}", code),
-        model: "test_model".to_string(),
+        model: ModelName::new("test_model"),
         column: None,
         hint: None,
         pass_name: "test_pass".into(),

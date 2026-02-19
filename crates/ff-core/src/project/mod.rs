@@ -3,6 +3,8 @@
 mod loading;
 mod versioning;
 
+pub(crate) use loading::find_yaml_path;
+
 use crate::config::Config;
 use crate::function::FunctionDef;
 use crate::function_name::FunctionName;

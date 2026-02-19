@@ -218,7 +218,6 @@ impl FunctionDef {
             }
         }
 
-        // Validate default arg ordering: non-default args cannot follow default args (FN005)
         let mut seen_default = false;
         for arg in &schema.args {
             if arg.default.is_some() {

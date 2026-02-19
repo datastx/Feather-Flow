@@ -14,6 +14,12 @@ use super::data::*;
 
 const CHECKMARK: char = '\u{2713}';
 
+/// DOT node fill colors by materialization type
+const COLOR_TABLE: &str = "#90EE90";
+const COLOR_VIEW: &str = "#ADD8E6";
+const COLOR_INCREMENTAL: &str = "#FFD700";
+const COLOR_EPHEMERAL: &str = "#E8E8E8";
+
 /// Execute static documentation generation
 pub(super) async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
     let project = load_project(global)?;
@@ -80,7 +86,8 @@ pub(super) async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> 
                 DocsFormat::Markdown => {
                     let md_content = generate_markdown(&doc);
                     let md_path = output_dir.join(format!("{}.md", name));
-                    fs::write(&md_path, md_content)?;
+                    fs::write(&md_path, &md_content)
+                        .context(format!("failed to write {}", md_path.display()))?;
                     println!("  {} {}.md", CHECKMARK, name);
                 }
                 DocsFormat::Json => {
@@ -90,7 +97,8 @@ pub(super) async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> 
                 DocsFormat::Html => {
                     let html_content = generate_html(&doc);
                     let html_path = output_dir.join(format!("{}.html", name));
-                    fs::write(&html_path, html_content)?;
+                    fs::write(&html_path, &html_content)
+                        .context(format!("failed to write {}", html_path.display()))?;
                     println!("  {} {}.html", CHECKMARK, name);
                 }
             }
@@ -114,7 +122,8 @@ pub(super) async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> 
             DocsFormat::Markdown => {
                 let md_content = generate_source_markdown(&doc);
                 let md_path = output_dir.join(format!("source_{}.md", source.name));
-                fs::write(&md_path, md_content)?;
+                fs::write(&md_path, &md_content)
+                    .context(format!("failed to write {}", md_path.display()))?;
                 println!("  {} source_{}.md", CHECKMARK, source.name);
             }
             DocsFormat::Json => {
@@ -123,7 +132,8 @@ pub(super) async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> 
             DocsFormat::Html => {
                 let html_content = generate_source_html(&doc);
                 let html_path = output_dir.join(format!("source_{}.html", source.name));
-                fs::write(&html_path, html_content)?;
+                fs::write(&html_path, &html_content)
+                    .context(format!("failed to write {}", html_path.display()))?;
                 println!("  {} source_{}.html", CHECKMARK, source.name);
             }
         }
@@ -140,7 +150,8 @@ pub(super) async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> 
                 &builtin_macros,
             );
             let index_path = output_dir.join("index.md");
-            fs::write(&index_path, index_content)?;
+            fs::write(&index_path, &index_content)
+                .context(format!("failed to write {}", index_path.display()))?;
             println!("  {} index.md", CHECKMARK);
         }
         DocsFormat::Json => {
@@ -169,7 +180,8 @@ pub(super) async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> 
 
             let json_path = output_dir.join("docs.json");
             let json_content = serde_json::to_string_pretty(&json_output)?;
-            fs::write(&json_path, json_content)?;
+            fs::write(&json_path, &json_content)
+                .context(format!("failed to write {}", json_path.display()))?;
             println!("  {} docs.json", CHECKMARK);
         }
         DocsFormat::Html => {
@@ -181,7 +193,8 @@ pub(super) async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> 
                 &builtin_macros,
             );
             let index_path = output_dir.join("index.html");
-            fs::write(&index_path, index_content)?;
+            fs::write(&index_path, &index_content)
+                .context(format!("failed to write {}", index_path.display()))?;
             println!("  {} index.html", CHECKMARK);
         }
     }
@@ -189,7 +202,8 @@ pub(super) async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> 
     // Generate lineage diagram (DOT file)
     let lineage_content = generate_lineage_dot(&project);
     let lineage_path = output_dir.join("lineage.dot");
-    fs::write(&lineage_path, lineage_content)?;
+    fs::write(&lineage_path, &lineage_content)
+        .context(format!("failed to write {}", lineage_path.display()))?;
     println!("  {} lineage.dot", CHECKMARK);
 
     // Generate macro documentation
@@ -197,21 +211,22 @@ pub(super) async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> 
         DocsFormat::Markdown => {
             let macros_content = generate_macros_markdown(&builtin_macros);
             let macros_path = output_dir.join("macros.md");
-            fs::write(&macros_path, macros_content)?;
+            fs::write(&macros_path, &macros_content)
+                .context(format!("failed to write {}", macros_path.display()))?;
             println!("  {} macros.md", CHECKMARK);
         }
         DocsFormat::Html => {
             let macros_content = generate_macros_html(&builtin_macros);
             let macros_path = output_dir.join("macros.html");
-            fs::write(&macros_path, macros_content)?;
+            fs::write(&macros_path, &macros_content)
+                .context(format!("failed to write {}", macros_path.display()))?;
             println!("  {} macros.html", CHECKMARK);
         }
         DocsFormat::Json => {
-            // JSON already includes macros in the overall output, but let's also
-            // add a separate macros.json with full metadata
             let macros_json = serde_json::to_string_pretty(&builtin_macros)?;
             let macros_path = output_dir.join("macros.json");
-            fs::write(&macros_path, macros_json)?;
+            fs::write(&macros_path, &macros_json)
+                .context(format!("failed to write {}", macros_path.display()))?;
             println!("  {} macros.json", CHECKMARK);
         }
     }
@@ -940,10 +955,10 @@ fn generate_lineage_dot(project: &Project) -> String {
     if let Some(ref manifest) = manifest {
         for (name, model) in &manifest.models {
             let color = match model.materialized {
-                ff_core::config::Materialization::Table => "#90EE90", // light green
-                ff_core::config::Materialization::View => "#ADD8E6",  // light blue
-                ff_core::config::Materialization::Incremental => "#FFD700", // gold
-                ff_core::config::Materialization::Ephemeral => "#E8E8E8", // light gray
+                ff_core::config::Materialization::Table => COLOR_TABLE,
+                ff_core::config::Materialization::View => COLOR_VIEW,
+                ff_core::config::Materialization::Incremental => COLOR_INCREMENTAL,
+                ff_core::config::Materialization::Ephemeral => COLOR_EPHEMERAL,
             };
             dot.push_str(&format!(
                 "    \"{}\" [label=\"{}\" fillcolor=\"{}\"];\n",
@@ -954,10 +969,10 @@ fn generate_lineage_dot(project: &Project) -> String {
         for (name, model) in &project.models {
             let mat = model.materialization(project.config.materialization);
             let color = match mat {
-                ff_core::config::Materialization::Table => "#90EE90", // light green
-                ff_core::config::Materialization::View => "#ADD8E6",  // light blue
-                ff_core::config::Materialization::Incremental => "#FFD700", // gold
-                ff_core::config::Materialization::Ephemeral => "#E8E8E8", // light gray
+                ff_core::config::Materialization::Table => COLOR_TABLE,
+                ff_core::config::Materialization::View => COLOR_VIEW,
+                ff_core::config::Materialization::Incremental => COLOR_INCREMENTAL,
+                ff_core::config::Materialization::Ephemeral => COLOR_EPHEMERAL,
             };
             dot.push_str(&format!(
                 "    \"{}\" [label=\"{}\" fillcolor=\"{}\"];\n",

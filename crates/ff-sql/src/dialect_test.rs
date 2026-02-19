@@ -199,14 +199,14 @@ fn test_snowflake_resolve_schema_qualified_mixed() {
     assert_eq!(names[0].name, "RAW.myTable");
     // One part is quoted → whole thing is case-sensitive
     assert!(names[0].is_case_sensitive);
-    assert_eq!(names[0].parts[0].value, "RAW");
+    assert_eq!(names[0].parts()[0].value, "RAW");
     assert_eq!(
-        names[0].parts[0].sensitivity,
+        names[0].parts()[0].sensitivity,
         CaseSensitivity::CaseInsensitive
     );
-    assert_eq!(names[0].parts[1].value, "myTable");
+    assert_eq!(names[0].parts()[1].value, "myTable");
     assert_eq!(
-        names[0].parts[1].sensitivity,
+        names[0].parts()[1].sensitivity,
         CaseSensitivity::CaseSensitive
     );
 }

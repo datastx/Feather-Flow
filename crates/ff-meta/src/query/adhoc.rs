@@ -24,11 +24,9 @@ pub fn execute_query(conn: &Connection, sql: &str) -> MetaResult<QueryResult> {
 
     let raw_rows: Vec<Vec<String>> = match stmt.query_map([], |row| {
         let col_count = row.as_ref().column_count();
-        let mut vals = Vec::with_capacity(col_count);
-        for i in 0..col_count {
-            vals.push(get_column_as_string(row, i));
-        }
-        Ok(vals)
+        Ok((0..col_count)
+            .map(|i| get_column_as_string(row, i))
+            .collect())
     }) {
         Ok(mapped) => mapped
             .collect::<Result<Vec<_>, _>>()

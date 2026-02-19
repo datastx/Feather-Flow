@@ -7,6 +7,7 @@
 use std::collections::HashSet;
 
 use datafusion_expr::{Expr, LogicalPlan};
+use ff_core::ModelName;
 
 /// How a column is used in producing the output
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,19 +37,16 @@ pub struct ColumnLineageEdge {
 #[derive(Debug, Clone)]
 pub struct ModelColumnLineage {
     /// Model name
-    pub model_name: String,
+    pub model_name: ModelName,
     /// All column lineage edges
     pub edges: Vec<ColumnLineageEdge>,
 }
 
 /// Extract column-level lineage from a LogicalPlan
-pub fn extract_column_lineage(model_name: &str, plan: &LogicalPlan) -> ModelColumnLineage {
+pub fn extract_column_lineage(model_name: ModelName, plan: &LogicalPlan) -> ModelColumnLineage {
     let mut edges = Vec::new();
     walk_plan(plan, &mut edges);
-    ModelColumnLineage {
-        model_name: model_name.to_string(),
-        edges,
-    }
+    ModelColumnLineage { model_name, edges }
 }
 
 /// Collect lineage edges for a list of expressions.
@@ -79,6 +77,20 @@ fn collect_expr_edges(
     }
 }
 
+/// Collect Inspect-kind edges from a filter predicate
+fn collect_filter_inspect_edges(predicate: &Expr, edges: &mut Vec<ColumnLineageEdge>) {
+    let mut sources = Vec::new();
+    collect_column_refs(predicate, &mut sources);
+    for (table, column) in sources {
+        edges.push(ColumnLineageEdge {
+            output_column: String::new(),
+            source_table: table,
+            source_column: column,
+            kind: LineageKind::Inspect,
+        });
+    }
+}
+
 /// Collect Inspect-kind edges from join key pairs
 fn collect_join_inspect_edges(on: &[(Expr, Expr)], edges: &mut Vec<ColumnLineageEdge>) {
     for (left_key, right_key) in on {
@@ -104,17 +116,7 @@ fn walk_plan(plan: &LogicalPlan, edges: &mut Vec<ColumnLineageEdge>) {
             walk_plan(proj.input.as_ref(), edges);
         }
         LogicalPlan::Filter(filter) => {
-            // Columns in filter predicates are Inspect
-            let mut sources = Vec::new();
-            collect_column_refs(&filter.predicate, &mut sources);
-            for (table, column) in sources {
-                edges.push(ColumnLineageEdge {
-                    output_column: String::new(), // not in output
-                    source_table: table,
-                    source_column: column,
-                    kind: LineageKind::Inspect,
-                });
-            }
+            collect_filter_inspect_edges(&filter.predicate, edges);
             walk_plan(filter.input.as_ref(), edges);
         }
         LogicalPlan::Join(join) => {

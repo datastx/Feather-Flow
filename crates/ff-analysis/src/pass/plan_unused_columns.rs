@@ -7,6 +7,7 @@
 use std::collections::{HashMap, HashSet};
 
 use datafusion_expr::{Expr, LogicalPlan};
+use ff_core::ModelName;
 
 use crate::context::AnalysisContext;
 use crate::datafusion_bridge::propagation::ModelPlanResult;
@@ -29,13 +30,12 @@ impl DagPlanPass for PlanUnusedColumns {
 
     fn run_project(
         &self,
-        models: &HashMap<String, ModelPlanResult>,
+        models: &HashMap<ModelName, ModelPlanResult>,
         ctx: &AnalysisContext,
     ) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
 
-        // Sort for deterministic output
-        let mut sorted_names: Vec<&String> = models.keys().collect();
+        let mut sorted_names: Vec<&ModelName> = models.keys().collect();
         sorted_names.sort();
 
         for model_name in sorted_names {
@@ -48,8 +48,8 @@ impl DagPlanPass for PlanUnusedColumns {
 
 /// Check a single model for columns produced but never consumed downstream (A020)
 fn check_model_unused_columns(
-    model_name: &str,
-    models: &HashMap<String, ModelPlanResult>,
+    model_name: &ModelName,
+    models: &HashMap<ModelName, ModelPlanResult>,
     ctx: &AnalysisContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -81,7 +81,7 @@ fn check_model_unused_columns(
                     "Column '{}' produced but never used by any downstream model",
                     col_name
                 ),
-                model: model_name.to_string(),
+                model: model_name.clone(),
                 column: Some(col_name.clone()),
                 hint: Some("Consider removing this column to simplify the model".to_string()),
                 pass_name: "plan_unused_columns".into(),
@@ -93,7 +93,7 @@ fn check_model_unused_columns(
 fn collect_consumed_columns(
     source_model: &str,
     dependents: &[String],
-    models: &HashMap<String, ModelPlanResult>,
+    models: &HashMap<ModelName, ModelPlanResult>,
     ctx: &AnalysisContext,
 ) -> HashSet<String> {
     let mut consumed = HashSet::new();
@@ -106,7 +106,7 @@ fn collect_consumed_columns(
     }
 
     for dep_name in dependents {
-        if let Some(dep_result) = models.get(dep_name) {
+        if let Some(dep_result) = models.get(dep_name.as_str()) {
             collect_column_refs_from_plan(&dep_result.plan, &mut consumed);
         }
     }

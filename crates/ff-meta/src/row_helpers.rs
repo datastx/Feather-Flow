@@ -4,7 +4,7 @@
 ///
 /// DuckDB integer columns return `None` for `Option<String>`, so we try
 /// String -> i64 -> f64 -> bool -> "null".
-pub fn get_column_as_string(row: &duckdb::Row<'_>, idx: usize) -> String {
+pub(crate) fn get_column_as_string(row: &duckdb::Row<'_>, idx: usize) -> String {
     if let Ok(Some(s)) = row.get::<_, Option<String>>(idx) {
         return s;
     }

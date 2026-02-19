@@ -9,6 +9,7 @@ pub(crate) mod plan_type_inference;
 pub(crate) mod plan_unused_columns;
 
 use ff_core::config::ConfigSeverity;
+use ff_core::ModelName;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -89,7 +90,7 @@ pub struct Diagnostic {
     /// Human-readable message
     pub message: String,
     /// Model that produced this diagnostic
-    pub model: String,
+    pub model: ModelName,
     /// Optional column reference
     pub column: Option<String>,
     /// Optional hint for how to fix

@@ -60,12 +60,9 @@ pub fn execute_rule(
     // We use query_map which executes the statement and yields rows.
     let raw_rows: Vec<Vec<String>> = match stmt.query_map([], |row| {
         let col_count = row.as_ref().column_count();
-        let mut vals = Vec::with_capacity(col_count);
-        for i in 0..col_count {
-            let val = crate::row_helpers::get_column_as_string(row, i);
-            vals.push(val);
-        }
-        Ok(vals)
+        Ok((0..col_count)
+            .map(|i| crate::row_helpers::get_column_as_string(row, i))
+            .collect())
     }) {
         Ok(mapped) => mapped
             .collect::<Result<Vec<_>, _>>()

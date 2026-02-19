@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 
 use datafusion_expr::LogicalPlan;
+use ff_core::ModelName;
 
 use crate::context::AnalysisContext;
 use crate::datafusion_bridge::propagation::ModelPlanResult;
@@ -39,7 +40,7 @@ pub trait DagPlanPass: Send + Sync {
     /// Run the pass across all models
     fn run_project(
         &self,
-        models: &HashMap<String, ModelPlanResult>,
+        models: &HashMap<ModelName, ModelPlanResult>,
         ctx: &AnalysisContext,
     ) -> Vec<Diagnostic>;
 }
@@ -71,8 +72,8 @@ impl PlanPassManager {
     /// Models are processed in the order provided (should be topological).
     pub fn run(
         &self,
-        model_order: &[String],
-        models: &HashMap<String, ModelPlanResult>,
+        model_order: &[ModelName],
+        models: &HashMap<ModelName, ModelPlanResult>,
         ctx: &AnalysisContext,
         pass_filter: Option<&[String]>,
     ) -> Vec<Diagnostic> {

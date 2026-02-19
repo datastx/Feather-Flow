@@ -1,6 +1,23 @@
 use super::*;
 use crate::test_utils::*;
+use ff_core::ModelName;
 use std::sync::Arc;
+
+fn mn(names: Vec<String>) -> Vec<ModelName> {
+    names.into_iter().map(ModelName::new).collect()
+}
+
+fn ms(map: HashMap<String, String>) -> HashMap<ModelName, String> {
+    map.into_iter()
+        .map(|(k, v)| (ModelName::new(k), v))
+        .collect()
+}
+
+fn my(map: HashMap<String, Arc<RelSchema>>) -> HashMap<ModelName, Arc<RelSchema>> {
+    map.into_iter()
+        .map(|(k, v)| (ModelName::new(k), v))
+        .collect()
+}
 
 #[test]
 fn test_linear_chain_propagation() {
@@ -22,8 +39,8 @@ fn test_linear_chain_propagation() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
+        &mn(topo_order),
+        &ms(sql_sources),
         &HashMap::new(),
         initial_catalog.clone(),
         &[],
@@ -68,8 +85,8 @@ fn test_multi_step_propagation() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
+        &mn(topo_order),
+        &ms(sql_sources),
         &HashMap::new(),
         initial_catalog.clone(),
         &[],
@@ -119,8 +136,8 @@ fn test_diamond_dag_propagation() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
+        &mn(topo_order),
+        &ms(sql_sources),
         &HashMap::new(),
         initial_catalog.clone(),
         &[],
@@ -161,9 +178,9 @@ fn test_schema_mismatch_detection() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
-        &yaml_schemas,
+        &mn(topo_order),
+        &ms(sql_sources),
+        &my(yaml_schemas),
         initial_catalog.clone(),
         &[],
         &[],
@@ -200,8 +217,8 @@ fn test_plan_failure_recorded() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
+        &mn(topo_order),
+        &ms(sql_sources),
         &HashMap::new(),
         initial_catalog.clone(),
         &[],
@@ -239,8 +256,8 @@ fn test_fan_out_propagation() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
+        &mn(topo_order),
+        &ms(sql_sources),
         &HashMap::new(),
         initial_catalog.clone(),
         &[],
@@ -285,8 +302,8 @@ fn test_fan_in_propagation() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
+        &mn(topo_order),
+        &ms(sql_sources),
         &HashMap::new(),
         initial_catalog.clone(),
         &[],
@@ -321,8 +338,8 @@ fn test_column_narrowing() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
+        &mn(topo_order),
+        &ms(sql_sources),
         &HashMap::new(),
         initial_catalog.clone(),
         &[],
@@ -356,8 +373,8 @@ fn test_column_rename_via_alias() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
+        &mn(topo_order),
+        &ms(sql_sources),
         &HashMap::new(),
         initial_catalog.clone(),
         &[],
@@ -393,8 +410,8 @@ fn test_deep_chain_propagation() {
     }
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
+        &mn(topo_order),
+        &ms(sql_sources),
         &HashMap::new(),
         initial_catalog.clone(),
         &[],
@@ -405,11 +422,17 @@ fn test_deep_chain_propagation() {
     for i in 1..=5 {
         let name = format!("model_{}", i);
         assert!(
-            result.model_plans.contains_key(&name),
+            result.model_plans.contains_key(name.as_str()),
             "Model {} should be planned",
             name
         );
-        assert_eq!(result.model_plans[&name].inferred_schema.columns.len(), 2);
+        assert_eq!(
+            result.model_plans[name.as_str()]
+                .inferred_schema
+                .columns
+                .len(),
+            2
+        );
     }
 }
 
@@ -438,8 +461,8 @@ fn test_upstream_failure_isolation() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
+        &mn(topo_order),
+        &ms(sql_sources),
         &HashMap::new(),
         initial_catalog.clone(),
         &[],
@@ -461,8 +484,8 @@ fn test_missing_sql_source_skipped() {
     let sql_sources = HashMap::new(); // empty — no SQL for "missing"
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
+        &mn(topo_order),
+        &ms(sql_sources),
         &HashMap::new(),
         initial_catalog.clone(),
         &[],
@@ -495,8 +518,8 @@ fn test_aggregate_type_preservation() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
+        &mn(topo_order),
+        &ms(sql_sources),
         &HashMap::new(),
         initial_catalog.clone(),
         &[],
@@ -549,8 +572,8 @@ fn test_coalesce_type_preservation() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
+        &mn(topo_order),
+        &ms(sql_sources),
         &HashMap::new(),
         initial_catalog.clone(),
         &[],

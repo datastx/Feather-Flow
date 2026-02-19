@@ -4,6 +4,7 @@ use crate::datafusion_bridge::provider::{FeatherFlowProvider, FunctionRegistry};
 use crate::schema::{RelSchema, SchemaCatalog};
 use crate::test_utils::{int32, make_col, varchar};
 use crate::types::Nullability;
+use ff_core::ModelName;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -33,7 +34,7 @@ fn plan_and_lineage(sql: &str) -> ModelColumnLineage {
     let registry = FunctionRegistry::new();
     let provider = FeatherFlowProvider::new(&catalog, &registry);
     let plan = sql_to_plan(sql, &provider).unwrap();
-    extract_column_lineage("test_model", &plan)
+    extract_column_lineage(ModelName::new("test_model"), &plan)
 }
 
 #[test]

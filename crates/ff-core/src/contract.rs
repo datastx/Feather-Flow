@@ -108,7 +108,6 @@ pub fn validate_contract(
     let enforced = schema.has_enforced_contract();
     let mut result = ContractValidationResult::new(model_name, enforced);
 
-    // Build a map of actual columns for quick lookup (case-insensitive)
     let actual_map: HashMap<String, &str> = actual_columns
         .iter()
         .map(|(name, dtype)| (name.to_lowercase(), dtype.as_str()))

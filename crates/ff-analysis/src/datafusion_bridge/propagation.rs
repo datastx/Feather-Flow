@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use datafusion_expr::LogicalPlan;
+use ff_core::ModelName;
 
 use crate::datafusion_bridge::planner::sql_to_plan;
 use crate::datafusion_bridge::provider::{
@@ -120,11 +121,11 @@ impl std::fmt::Display for SchemaMismatch {
 /// inferred schemas registered, and any models that failed to plan.
 pub struct PropagationResult {
     /// Per-model planning results (model name → result)
-    pub model_plans: HashMap<String, ModelPlanResult>,
+    pub model_plans: HashMap<ModelName, ModelPlanResult>,
     /// Final schema catalog after propagation
     pub final_catalog: SchemaCatalog,
     /// Models that failed to plan (model name → error message)
-    pub failures: HashMap<String, String>,
+    pub failures: HashMap<ModelName, String>,
 }
 
 /// Propagate schemas through the DAG in topological order
@@ -133,17 +134,17 @@ pub struct PropagationResult {
 /// output schema, compares against YAML declarations, and registers the
 /// inferred schema for downstream models.
 pub fn propagate_schemas(
-    topo_order: &[String],
-    sql_sources: &HashMap<String, String>,
-    yaml_schemas: &HashMap<String, Arc<RelSchema>>,
+    topo_order: &[ModelName],
+    sql_sources: &HashMap<ModelName, String>,
+    yaml_schemas: &HashMap<ModelName, Arc<RelSchema>>,
     initial_catalog: SchemaCatalog,
     user_functions: &[UserFunctionStub],
     user_table_functions: &[UserTableFunctionStub],
 ) -> PropagationResult {
     let mut catalog = initial_catalog;
-    let mut model_plans: HashMap<String, ModelPlanResult> =
+    let mut model_plans: HashMap<ModelName, ModelPlanResult> =
         HashMap::with_capacity(topo_order.len());
-    let mut failures: HashMap<String, String> = HashMap::new();
+    let mut failures: HashMap<ModelName, String> = HashMap::new();
 
     let registry = FunctionRegistry::with_user_functions(user_functions, user_table_functions);
 
@@ -167,13 +168,13 @@ pub fn propagate_schemas(
 
         let inferred_schema = Arc::new(extract_schema_from_plan(&plan));
 
-        let mismatches = if let Some(yaml_schema) = yaml_schemas.get(model_name) {
+        let mismatches = if let Some(yaml_schema) = yaml_schemas.get(model_name.as_str()) {
             compare_schemas(yaml_schema, &inferred_schema)
         } else {
             vec![]
         };
 
-        catalog.insert(model_name.clone(), Arc::clone(&inferred_schema));
+        catalog.insert(model_name.to_string(), Arc::clone(&inferred_schema));
 
         model_plans.insert(
             model_name.clone(),
@@ -248,7 +249,6 @@ fn compare_schemas(yaml: &RelSchema, inferred: &RelSchema) -> Vec<SchemaMismatch
                 let yaml_nullable = !matches!(yaml_col.nullability, Nullability::NotNull);
                 let inferred_nullable = !matches!(inferred_col.nullability, Nullability::NotNull);
                 if !yaml_nullable && inferred_nullable {
-                    // YAML says NOT NULL but SQL infers nullable — potential issue
                     mismatches.push(SchemaMismatch::NullabilityMismatch {
                         column: yaml_col.name.clone(),
                         yaml_nullable,

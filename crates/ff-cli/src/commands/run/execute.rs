@@ -89,8 +89,8 @@ fn record_execution_to_meta(
     };
 
     let sql_checksum = ff_core::compute_checksum(&compiled.sql);
-    let schema_checksum = compute_schema_checksum(name, ctx.compiled_models);
-    let input_checksums = compute_input_checksums(name, ctx.compiled_models);
+    let schema_checksum = compute_schema_checksum(name, &ctx.compiled_models);
+    let input_checksums = compute_input_checksums(name, &ctx.compiled_models);
 
     let record = ff_meta::populate::execution::ModelRunRecord {
         model_id,
@@ -162,8 +162,8 @@ fn recover_mutex<T>(lock: &Mutex<T>) -> MutexGuard<'_, T> {
 pub(super) struct ExecutionContext<'a> {
     /// Database connection handle
     pub(super) db: &'a Arc<dyn Database>,
-    /// All compiled models keyed by name
-    pub(super) compiled_models: &'a HashMap<String, CompiledModel>,
+    /// All compiled models keyed by name (shared via Arc to avoid cloning)
+    pub(super) compiled_models: Arc<HashMap<String, CompiledModel>>,
     /// Models to execute in topological order
     pub(super) execution_order: &'a [String],
     /// CLI arguments controlling execution behavior
@@ -422,7 +422,7 @@ async fn execute_models_sequential(
     let mut run_results: Vec<ModelRunResult> = Vec::with_capacity(ctx.execution_order.len());
     let mut stopped_early = false;
     let mut failed_models: HashSet<String> = HashSet::new();
-    let reverse_deps = build_reverse_deps(ctx.compiled_models);
+    let reverse_deps = build_reverse_deps(&ctx.compiled_models);
 
     let executable_models: Vec<&String> = ctx
         .execution_order
@@ -486,7 +486,7 @@ async fn execute_models_sequential(
                 ctx.db,
                 name,
                 compiled,
-                ctx.compiled_models,
+                &ctx.compiled_models,
                 ctx.db_path.unwrap_or(":memory:"),
             )
             .await
@@ -649,7 +649,7 @@ async fn execute_model_task(
 async fn execute_models_parallel(
     ctx: &ExecutionContext<'_>,
 ) -> (Vec<ModelRunResult>, usize, usize, bool) {
-    let levels = compute_execution_levels(ctx.execution_order, ctx.compiled_models);
+    let levels = compute_execution_levels(ctx.execution_order, &ctx.compiled_models);
 
     let executable_count = ctx
         .execution_order
@@ -683,7 +683,7 @@ async fn execute_models_parallel(
         completed: Arc::new(Mutex::new(HashSet::new())),
         progress,
         output_lock: Arc::new(AsyncMutex::new(())),
-        all_compiled_models: Arc::new(ctx.compiled_models.clone()),
+        all_compiled_models: Arc::clone(&ctx.compiled_models),
         full_refresh: ctx.args.full_refresh,
         fail_fast: ctx.args.fail_fast,
         wap_schema: ctx.wap_schema.map(String::from),

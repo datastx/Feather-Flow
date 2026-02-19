@@ -132,7 +132,6 @@ impl RunState {
             })?;
         }
 
-        // Write to a temporary file first
         let temp_path = path.with_extension(format!("json.{}.tmp", std::process::id()));
         let json = serde_json::to_string_pretty(self)?;
         fs::write(&temp_path, &json).map_err(|e| crate::error::CoreError::IoWithPath {
@@ -140,7 +139,6 @@ impl RunState {
             source: e,
         })?;
 
-        // Atomically rename to the target path
         fs::rename(&temp_path, path).map_err(|e| {
             let _ = fs::remove_file(&temp_path);
             crate::error::CoreError::IoWithPath {
