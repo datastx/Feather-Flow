@@ -492,6 +492,10 @@ vscode-package: vscode-build-production ## Package VS Code extension as .vsix
 	mkdir -p $(DIST_DIR)
 	cd $(vscode_dir) && npx vsce package --out ../$(DIST_DIR)/
 
+.PHONY: vscode-install-local
+vscode-install-local: vscode-build-production ## Package and install VS Code extension locally
+	cd $(vscode_dir) && npx @vscode/vsce package --no-dependencies && code --install-extension featherflow-*.vsix && rm -f featherflow-*.vsix
+
 .PHONY: vscode-publish
 vscode-publish: vscode-build-production ## Publish VS Code extension to Marketplace (requires VSCE_PAT)
 	cd $(vscode_dir) && npx vsce publish
