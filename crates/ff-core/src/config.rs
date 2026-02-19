@@ -436,7 +436,11 @@ impl Config {
                             message: format!(
                                 "Target '{}' not found. Available targets: {}",
                                 name,
-                                self.targets.keys().cloned().collect::<Vec<_>>().join(", ")
+                                self.targets
+                                    .keys()
+                                    .map(|k| k.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
                             ),
                         })?;
 

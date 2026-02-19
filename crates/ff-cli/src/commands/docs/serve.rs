@@ -412,28 +412,38 @@ fn export_static_site(state: &AppState, export_path: &str) -> Result<()> {
 
     let base = path::Path::new(export_path);
     let api_dir = base.join("api");
-    fs::create_dir_all(&api_dir)?;
+    fs::create_dir_all(&api_dir).context(format!(
+        "failed to create API directory {}",
+        api_dir.display()
+    ))?;
 
-    // Write API JSON files
-    fs::write(api_dir.join("index.json"), &*state.index_json)?;
-    fs::write(api_dir.join("lineage.json"), &*state.lineage_json)?;
-    fs::write(api_dir.join("search-index.json"), &*state.search_index_json)?;
+    fs::write(api_dir.join("index.json"), &*state.index_json)
+        .context("failed to write api/index.json")?;
+    fs::write(api_dir.join("lineage.json"), &*state.lineage_json)
+        .context("failed to write api/lineage.json")?;
+    fs::write(api_dir.join("search-index.json"), &*state.search_index_json)
+        .context("failed to write api/search-index.json")?;
 
-    // Write individual model docs
     let models_dir = api_dir.join("models");
-    fs::create_dir_all(&models_dir)?;
+    fs::create_dir_all(&models_dir).context(format!(
+        "failed to create models directory {}",
+        models_dir.display()
+    ))?;
     for (name, json) in &state.model_docs {
-        fs::write(models_dir.join(format!("{}.json", name)), &**json)?;
+        let model_path = models_dir.join(format!("{}.json", name));
+        fs::write(&model_path, &**json)
+            .context(format!("failed to write {}", model_path.display()))?;
     }
 
-    // Write embedded static assets
     for file_path in StaticAssets::iter() {
         if let Some(content) = StaticAssets::get(file_path.as_ref()) {
             let out_path = base.join(file_path.as_ref());
             if let Some(parent) = out_path.parent() {
-                fs::create_dir_all(parent)?;
+                fs::create_dir_all(parent)
+                    .context(format!("failed to create directory {}", parent.display()))?;
             }
-            fs::write(&out_path, content.data.as_ref())?;
+            fs::write(&out_path, content.data.as_ref())
+                .context(format!("failed to write {}", out_path.display()))?;
         }
     }
 

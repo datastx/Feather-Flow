@@ -68,7 +68,8 @@ impl fmt::Display for ResolvedPart {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ResolvedIdent {
     /// The individual resolved parts (1–3 parts typically).
-    pub parts: Vec<ResolvedPart>,
+    /// Private — use [`Self::parts()`] accessor.
+    parts: Vec<ResolvedPart>,
     /// Dot-joined resolved name (e.g. `"ANALYTICS.STG_CUSTOMERS"` on Snowflake).
     pub name: String,
     /// `true` if **any** part was quoted (meaning the whole reference
@@ -84,7 +85,16 @@ impl fmt::Display for ResolvedIdent {
 
 impl ResolvedIdent {
     /// Build a `ResolvedIdent` from already-resolved parts.
+    ///
+    /// # Panics (debug only)
+    ///
+    /// Debug-asserts that `parts` is non-empty. Every call-site in production
+    /// passes at least one part (from `resolve_object_name`).
     pub fn from_parts(parts: Vec<ResolvedPart>) -> Self {
+        debug_assert!(
+            !parts.is_empty(),
+            "ResolvedIdent requires at least one part"
+        );
         let is_case_sensitive = parts
             .iter()
             .any(|p| p.sensitivity == CaseSensitivity::CaseSensitive);
@@ -98,6 +108,11 @@ impl ResolvedIdent {
             name,
             is_case_sensitive,
         }
+    }
+
+    /// The individual resolved parts (1–3 for typical table references).
+    pub fn parts(&self) -> &[ResolvedPart] {
+        &self.parts
     }
 
     /// Return the last part (the table/object name).

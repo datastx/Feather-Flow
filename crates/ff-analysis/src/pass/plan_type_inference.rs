@@ -7,6 +7,7 @@
 use arrow::datatypes::DataType as ArrowDataType;
 use datafusion_common::DFSchemaRef;
 use datafusion_expr::{Expr, ExprSchemable, LogicalPlan};
+use ff_core::ModelName;
 
 use crate::context::AnalysisContext;
 use crate::datafusion_bridge::types::arrow_to_sql_type;
@@ -104,7 +105,7 @@ fn check_union_column_types(
                 "UNION branch {} has {} columns, but first branch has {}",
                 branch_idx, input_len, first_len
             ),
-            model: model.to_string(),
+            model: ModelName::new(model),
             column: None,
             hint: None,
             pass_name: "plan_type_inference".into(),
@@ -129,7 +130,7 @@ fn check_union_column_types(
                     l_type.display_name(),
                     r_type.display_name()
                 ),
-                model: model.to_string(),
+                model: ModelName::new(model),
                 column: Some(l.name().clone()),
                 hint: Some("Add explicit CASTs to ensure matching types".to_string()),
                 pass_name: "plan_type_inference".into(),
@@ -171,7 +172,7 @@ fn check_aggregate_type(
             code: DiagnosticCode::A004,
             severity: Severity::Warning,
             message: format!("{}() applied to string column '{}'", func_name, col_name),
-            model: model.to_string(),
+            model: ModelName::new(model),
             column: Some(col_name),
             hint: Some("Ensure the column is numeric, or add a CAST".to_string()),
             pass_name: "plan_type_inference".into(),
@@ -188,26 +189,28 @@ fn check_cast_expr(
 ) {
     match expr {
         Expr::Cast(cast) => {
-            if let Ok(source_arrow) = cast.expr.get_type(input_plan.schema().as_ref()) {
-                let source = arrow_to_sql_type(&source_arrow);
-                let target = arrow_to_sql_type(&cast.data_type);
-                if is_lossy_cast(&source, &target) {
-                    let context = expr_display_name(expr);
-                    diags.push(Diagnostic {
-                        code: DiagnosticCode::A005,
-                        severity: Severity::Info,
-                        message: format!(
-                            "Potentially lossy cast from {} to {} in '{}'",
-                            source.display_name(),
-                            target.display_name(),
-                            context
-                        ),
-                        model: model.to_string(),
-                        column: Some(context),
-                        hint: Some("Consider using TRY_CAST for safer conversion".to_string()),
-                        pass_name: "plan_type_inference".into(),
-                    });
-                }
+            let Ok(source_arrow) = cast.expr.get_type(input_plan.schema().as_ref()) else {
+                check_cast_expr(model, &cast.expr, input_plan, diags);
+                return;
+            };
+            let source = arrow_to_sql_type(&source_arrow);
+            let target = arrow_to_sql_type(&cast.data_type);
+            if is_lossy_cast(&source, &target) {
+                let context = expr_display_name(expr);
+                diags.push(Diagnostic {
+                    code: DiagnosticCode::A005,
+                    severity: Severity::Info,
+                    message: format!(
+                        "Potentially lossy cast from {} to {} in '{}'",
+                        source.display_name(),
+                        target.display_name(),
+                        context
+                    ),
+                    model: ModelName::new(model),
+                    column: Some(context),
+                    hint: Some("Consider using TRY_CAST for safer conversion".to_string()),
+                    pass_name: "plan_type_inference".into(),
+                });
             }
             check_cast_expr(model, &cast.expr, input_plan, diags);
         }

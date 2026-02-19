@@ -6,6 +6,7 @@
 use std::collections::HashSet;
 
 use datafusion_expr::{Expr, JoinType, LogicalPlan};
+use ff_core::ModelName;
 
 use crate::context::AnalysisContext;
 use crate::types::Nullability;
@@ -49,24 +50,25 @@ impl PlanPass for PlanNullability {
         collect_null_guarded_columns(plan, &mut guarded_columns);
         collect_aggregate_guarded_columns(plan, &mut guarded_columns);
 
-        for col_name in &nullable_from_join {
-            if !guarded_columns.contains(col_name) {
-                diagnostics.push(Diagnostic {
+        diagnostics.extend(
+            nullable_from_join
+                .iter()
+                .filter(|col_name| !guarded_columns.contains(*col_name))
+                .map(|col_name| Diagnostic {
                     code: DiagnosticCode::A010,
                     severity: Severity::Warning,
                     message: format!(
                         "Column '{}' is nullable after JOIN but used without a null guard (e.g., COALESCE)",
                         col_name
                     ),
-                    model: model_name.to_string(),
+                    model: ModelName::new(model_name),
                     column: Some(col_name.clone()),
                     hint: Some(
                         "Wrap with COALESCE() or add an IS NOT NULL filter".to_string(),
                     ),
                     pass_name: "plan_nullability".into(),
-                });
-            }
-        }
+                }),
+        );
 
         check_yaml_nullability_conflicts(model_name, ctx, &nullable_from_join, &mut diagnostics);
 
@@ -97,7 +99,7 @@ fn check_yaml_nullability_conflicts(
                 "Column '{}' is declared NOT NULL in YAML but becomes nullable after JOIN",
                 col.name
             ),
-            model: model_name.to_string(),
+            model: ModelName::new(model_name),
             column: Some(col.name.clone()),
             hint: Some("Add a COALESCE or filter to ensure NOT NULL".to_string()),
             pass_name: "plan_nullability".into(),
@@ -305,7 +307,7 @@ fn emit_redundant_null_check(
             "{} check on column '{}' which is always NOT NULL",
             check_type, col.name
         ),
-        model: model.to_string(),
+        model: ModelName::new(model),
         column: Some(col.name.clone()),
         hint: Some("This check is redundant and can be removed".to_string()),
         pass_name: "plan_nullability".into(),

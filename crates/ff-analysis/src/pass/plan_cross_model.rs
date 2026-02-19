@@ -5,6 +5,8 @@
 
 use std::collections::HashMap;
 
+use ff_core::ModelName;
+
 use crate::context::AnalysisContext;
 use crate::datafusion_bridge::propagation::{ModelPlanResult, SchemaMismatch};
 
@@ -22,7 +24,7 @@ fn mismatch_to_diagnostic(
             code: DiagnosticCode::A040,
             severity: Severity::Warning,
             message: format!("Column '{column}' is in SQL output but not declared in YAML"),
-            model: model_name.to_string(),
+            model: ModelName::new(model_name),
             column: Some(column.clone()),
             hint: Some(format!(
                 "Add '{column}' to the YAML schema or remove it from SELECT"
@@ -33,7 +35,7 @@ fn mismatch_to_diagnostic(
             code: DiagnosticCode::A040,
             severity: Severity::Error,
             message: format!("Column '{column}' declared in YAML but missing from SQL output"),
-            model: model_name.to_string(),
+            model: ModelName::new(model_name),
             column: Some(column.clone()),
             hint: Some(format!("Add '{column}' to SELECT or remove it from YAML")),
             pass_name: pass_name.into(),
@@ -48,7 +50,7 @@ fn mismatch_to_diagnostic(
             message: format!(
                 "Column '{column}' type mismatch: YAML declares {yaml_type}, SQL infers {inferred_type}"
             ),
-            model: model_name.to_string(),
+            model: ModelName::new(model_name),
             column: Some(column.clone()),
             hint: Some(format!(
                 "Update YAML type to '{inferred_type}' or add explicit CAST"
@@ -71,7 +73,7 @@ fn mismatch_to_diagnostic(
                 message: format!(
                     "Column '{column}' nullability mismatch: YAML declares nullable={yaml_nullable}, SQL infers nullable={inferred_nullable}"
                 ),
-                model: model_name.to_string(),
+                model: ModelName::new(model_name),
                 column: Some(column.clone()),
                 hint: Some(hint.to_string()),
                 pass_name: pass_name.into(),
@@ -98,7 +100,7 @@ impl DagPlanPass for CrossModelConsistency {
 
     fn run_project(
         &self,
-        models: &HashMap<String, ModelPlanResult>,
+        models: &HashMap<ModelName, ModelPlanResult>,
         _ctx: &AnalysisContext,
     ) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();

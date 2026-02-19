@@ -273,15 +273,11 @@ impl Selector {
         pattern: &str,
         models: &HashMap<ModelName, Model>,
     ) -> CoreResult<Vec<String>> {
-        let mut selected = Vec::new();
-
-        for (name, model) in models {
-            if Self::matches_path_pattern(&model.path, pattern) {
-                selected.push(name.to_string());
-            }
-        }
-
-        Ok(selected)
+        Ok(models
+            .iter()
+            .filter(|(_, model)| Self::matches_path_pattern(&model.path, pattern))
+            .map(|(name, _)| name.to_string())
+            .collect())
     }
 
     /// Check if a path matches a glob-like pattern
@@ -345,22 +341,18 @@ impl Selector {
         tag: &str,
         models: &HashMap<ModelName, Model>,
     ) -> CoreResult<Vec<String>> {
-        let mut selected = Vec::new();
         let tag_str = tag.to_string();
-
-        for (name, model) in models {
-            let in_config = model.config.tags.contains(&tag_str);
-            let in_schema = model
-                .schema
-                .as_ref()
-                .map(|s| s.tags.contains(&tag_str))
-                .unwrap_or(false);
-            if in_config || in_schema {
-                selected.push(name.to_string());
-            }
-        }
-
-        Ok(selected)
+        Ok(models
+            .iter()
+            .filter(|(_, model)| {
+                model.config.tags.contains(&tag_str)
+                    || model
+                        .schema
+                        .as_ref()
+                        .is_some_and(|s| s.tags.contains(&tag_str))
+            })
+            .map(|(name, _)| name.to_string())
+            .collect())
     }
 
     /// Select models by owner (matches owner field or meta.owner, supports partial matching)
@@ -369,20 +361,16 @@ impl Selector {
         owner: &str,
         models: &HashMap<ModelName, Model>,
     ) -> CoreResult<Vec<String>> {
-        let mut selected = Vec::new();
         let owner_lower = owner.to_lowercase();
-
-        for (name, model) in models {
-            // Use the get_owner() method which checks both direct owner and meta.owner
-            if let Some(model_owner) = model.get_owner() {
-                // Support partial matching (e.g., "data-team" matches "data-team@company.com")
-                if model_owner.to_lowercase().contains(&owner_lower) {
-                    selected.push(name.to_string());
-                }
-            }
-        }
-
-        Ok(selected)
+        Ok(models
+            .iter()
+            .filter(|(_, model)| {
+                model
+                    .get_owner()
+                    .is_some_and(|o| o.to_lowercase().contains(&owner_lower))
+            })
+            .map(|(name, _)| name.to_string())
+            .collect())
     }
 
     /// Select models by state comparison (unordered)
@@ -435,7 +423,7 @@ impl Selector {
             return true;
         }
 
-        if let Some(ref current_mat) = current.config.materialized {
+        if let Some(current_mat) = &current.config.materialized {
             if current_mat != &reference.materialized {
                 return true;
             }

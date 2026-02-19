@@ -284,7 +284,7 @@ async fn run_wap_tests(
                 );
                 failures += 1;
             }
-            _ => {} // pass
+            _ => {}
         }
     }
 

@@ -111,7 +111,6 @@ impl SourceFile {
                 details: e.to_string(),
             })?;
 
-        // Validate tables not empty (SRC004)
         if source.tables.is_empty() {
             return Err(CoreError::SourceEmptyTables {
                 name: source.name.clone(),
@@ -119,7 +118,6 @@ impl SourceFile {
             });
         }
 
-        // Validate for duplicate tables within this source (SRC007)
         let mut seen_tables = std::collections::HashSet::new();
         for table in &source.tables {
             if !seen_tables.insert(&table.name) {

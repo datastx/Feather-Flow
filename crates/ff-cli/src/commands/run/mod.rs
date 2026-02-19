@@ -21,6 +21,7 @@ use ff_core::run_state::RunState;
 use ff_core::ModelName;
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::cli::{GlobalArgs, OutputFormat, RunArgs};
@@ -68,6 +69,8 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
             }
         }
     }
+
+    let compiled_models = Arc::new(compiled_models);
 
     common::run_static_analysis_gate(
         &project,
@@ -239,7 +242,7 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
 
     let exec_ctx = ExecutionContext {
         db: &db,
-        compiled_models: &compiled_models,
+        compiled_models: Arc::clone(&compiled_models),
         execution_order: &execution_order,
         args,
         wap_schema,

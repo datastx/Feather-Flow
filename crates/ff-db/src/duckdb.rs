@@ -133,6 +133,10 @@ fn relation_exists_on(conn: &Connection, name: &str) -> DbResult<bool> {
 /// We try common types in order: String (covers VARCHAR, DATE, TIMESTAMP,
 /// etc. via DuckDB's implicit cast), i64, f64, bool.  If all fail, the
 /// value is treated as SQL NULL.
+///
+/// NOTE: Near-duplicate exists in `ff-meta/src/row_helpers.rs` (uses
+/// `Option<T>` wrappers).  They live in separate crates because `ff-meta`
+/// does not depend on `ff-db`, and `ff-core` should not depend on `duckdb`.
 fn extract_cell_as_string(row: &duckdb::Row<'_>, idx: usize) -> String {
     if let Ok(s) = row.get::<_, String>(idx) {
         return s;
@@ -146,7 +150,7 @@ fn extract_cell_as_string(row: &duckdb::Row<'_>, idx: usize) -> String {
     if let Ok(b) = row.get::<_, bool>(idx) {
         return b.to_string();
     }
-    "NULL".to_string()
+    "null".to_string()
 }
 
 /// Allowlist of known SQL base type tokens for interpolation safety.

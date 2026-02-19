@@ -345,22 +345,27 @@ pub(crate) fn run_static_analysis_pipeline(
     let overrides = SeverityOverrides::from_config(&project.config.analysis.severity_overrides);
     let (schema_catalog, yaml_schemas) = build_schema_catalog(project, external_tables);
 
-    let filtered_order: Vec<String> = topo_order
+    let filtered_order: Vec<ff_core::ModelName> = topo_order
         .iter()
         .filter(|n| sql_sources.contains_key(n.as_str()))
-        .cloned()
+        .map(|n| ff_core::ModelName::new(n.clone()))
         .collect();
 
-    let yaml_string_map: HashMap<String, Arc<ff_analysis::RelSchema>> = yaml_schemas
+    let sql_model_sources: HashMap<ff_core::ModelName, String> = sql_sources
         .iter()
-        .map(|(k, v)| (k.to_string(), Arc::clone(v)))
+        .map(|(k, v)| (ff_core::ModelName::new(k.clone()), v.clone()))
+        .collect();
+
+    let yaml_model_map: HashMap<ff_core::ModelName, Arc<ff_analysis::RelSchema>> = yaml_schemas
+        .iter()
+        .map(|(k, v)| (k.clone(), Arc::clone(v)))
         .collect();
 
     let (user_fn_stubs, user_table_fn_stubs) = ff_analysis::build_user_function_stubs(project);
     let result = propagate_schemas(
         &filtered_order,
-        sql_sources,
-        &yaml_string_map,
+        &sql_model_sources,
+        &yaml_model_map,
         schema_catalog,
         &user_fn_stubs,
         &user_table_fn_stubs,
@@ -406,24 +411,21 @@ pub(crate) fn report_static_analysis_results(
 
     let mut mismatch_count = 0;
 
-    // Sort model names for deterministic output ordering
-    let mut model_names: Vec<&String> = result.model_plans.keys().collect();
+    let mut model_names: Vec<&ff_core::ModelName> = result.model_plans.keys().collect();
     model_names.sort();
 
     for model_name in model_names {
-        let plan_result = &result.model_plans[model_name];
+        let plan_result = &result.model_plans[model_name.as_str()];
         for mismatch in &plan_result.mismatches {
             let sa_code = mismatch.code();
             match overrides.get_for_sa(sa_code) {
                 Some(OverriddenSeverity::Off) => {
-                    // Suppress this diagnostic entirely
                     continue;
                 }
                 Some(OverriddenSeverity::Level(ff_analysis::Severity::Error)) => {
                     on_mismatch(model_name, mismatch, true);
                 }
                 Some(OverriddenSeverity::Level(_)) => {
-                    // Info or Warning — not an error
                     on_mismatch(model_name, mismatch, false);
                 }
                 None => {
@@ -434,12 +436,11 @@ pub(crate) fn report_static_analysis_results(
         }
     }
 
-    // Sort failure keys for deterministic output ordering
-    let mut failure_names: Vec<&String> = result.failures.keys().collect();
+    let mut failure_names: Vec<&ff_core::ModelName> = result.failures.keys().collect();
     failure_names.sort();
 
     for model in failure_names {
-        let err = &result.failures[model];
+        let err = &result.failures[model.as_str()];
         on_failure(model, &err.to_string());
     }
 

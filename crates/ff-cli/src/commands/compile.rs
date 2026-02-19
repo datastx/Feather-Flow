@@ -733,10 +733,10 @@ fn run_static_analysis(
 
     // Handle --explain flag
     if let Some(ref explain_model) = args.explain {
-        if let Some(plan_result) = result.model_plans.get(explain_model) {
+        if let Some(plan_result) = result.model_plans.get(explain_model.as_str()) {
             println!("LogicalPlan for '{}':\n", explain_model);
             println!("{}", plan_result.plan.display_indent_schema());
-        } else if let Some(err) = result.failures.get(explain_model) {
+        } else if let Some(err) = result.failures.get(explain_model.as_str()) {
             eprintln!("Cannot explain '{}': {}", explain_model, err);
         } else {
             eprintln!("Model '{}' not found in compilation results", explain_model);

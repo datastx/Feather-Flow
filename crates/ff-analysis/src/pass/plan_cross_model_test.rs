@@ -5,6 +5,23 @@ use crate::datafusion_bridge::propagation::propagate_schemas;
 use crate::schema::{RelSchema, SchemaCatalog};
 use crate::test_utils::*;
 use crate::types::Nullability;
+use ff_core::ModelName;
+
+fn mn(names: Vec<String>) -> Vec<ModelName> {
+    names.into_iter().map(ModelName::new).collect()
+}
+
+fn ms(map: HashMap<String, String>) -> HashMap<ModelName, String> {
+    map.into_iter()
+        .map(|(k, v)| (ModelName::new(k), v))
+        .collect()
+}
+
+fn my(map: HashMap<String, Arc<RelSchema>>) -> HashMap<ModelName, Arc<RelSchema>> {
+    map.into_iter()
+        .map(|(k, v)| (ModelName::new(k), v))
+        .collect()
+}
 
 #[test]
 fn test_a040_extra_column_in_sql() {
@@ -36,9 +53,9 @@ fn test_a040_extra_column_in_sql() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
-        &yaml_schemas,
+        &mn(topo_order),
+        &ms(sql_sources),
+        &my(yaml_schemas),
         initial_catalog.clone(),
         &[],
         &[],
@@ -85,9 +102,9 @@ fn test_a040_missing_column_from_sql() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
-        &yaml_schemas,
+        &mn(topo_order),
+        &ms(sql_sources),
+        &my(yaml_schemas),
         initial_catalog.clone(),
         &[],
         &[],
@@ -132,9 +149,9 @@ fn test_no_diagnostics_for_matching_schema() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
-        &yaml_schemas,
+        &mn(topo_order),
+        &ms(sql_sources),
+        &my(yaml_schemas),
         initial_catalog.clone(),
         &[],
         &[],
@@ -182,9 +199,9 @@ fn test_a040_type_mismatch() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
-        &yaml_schemas,
+        &mn(topo_order),
+        &ms(sql_sources),
+        &my(yaml_schemas),
         initial_catalog.clone(),
         &[],
         &[],
@@ -232,9 +249,9 @@ fn test_a040_multiple_extras() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
-        &yaml_schemas,
+        &mn(topo_order),
+        &ms(sql_sources),
+        &my(yaml_schemas),
         initial_catalog.clone(),
         &[],
         &[],
@@ -282,9 +299,9 @@ fn test_a040_combo_extra_and_missing() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
-        &yaml_schemas,
+        &mn(topo_order),
+        &ms(sql_sources),
+        &my(yaml_schemas),
         initial_catalog.clone(),
         &[],
         &[],
@@ -336,9 +353,9 @@ fn test_a040_compatible_types_no_diagnostic() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
-        &yaml_schemas,
+        &mn(topo_order),
+        &ms(sql_sources),
+        &my(yaml_schemas),
         initial_catalog.clone(),
         &[],
         &[],
@@ -389,9 +406,9 @@ fn test_a041_left_join_nullable_vs_yaml_not_null() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
-        &yaml_schemas,
+        &mn(topo_order),
+        &ms(sql_sources),
+        &my(yaml_schemas),
         initial_catalog.clone(),
         &[],
         &[],
@@ -440,9 +457,9 @@ fn test_a041_both_nullable_no_diagnostic() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
-        &yaml_schemas,
+        &mn(topo_order),
+        &ms(sql_sources),
+        &my(yaml_schemas),
         initial_catalog.clone(),
         &[],
         &[],
@@ -481,9 +498,9 @@ fn test_a041_both_not_null_no_diagnostic() {
     );
 
     let result = propagate_schemas(
-        &topo_order,
-        &sql_sources,
-        &yaml_schemas,
+        &mn(topo_order),
+        &ms(sql_sources),
+        &my(yaml_schemas),
         initial_catalog.clone(),
         &[],
         &[],

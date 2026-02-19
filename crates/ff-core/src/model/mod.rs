@@ -138,19 +138,14 @@ impl Model {
             });
         }
 
-        // Look for matching 1:1 schema file (required)
-        let yml_path = path.with_extension("yml");
-        let yaml_path = path.with_extension("yaml");
-
-        let schema = if yml_path.exists() {
-            Some(ModelSchema::load(&yml_path)?)
-        } else if yaml_path.exists() {
-            Some(ModelSchema::load(&yaml_path)?)
-        } else {
-            return Err(crate::error::CoreError::MissingSchemaFile {
-                model: name,
-                expected_path: yml_path.display().to_string(),
-            });
+        let schema = match crate::project::find_yaml_path(&path) {
+            Some(p) => Some(ModelSchema::load(&p)?),
+            None => {
+                return Err(crate::error::CoreError::MissingSchemaFile {
+                    model: name,
+                    expected_path: path.with_extension("yml").display().to_string(),
+                });
+            }
         };
 
         // Parse version from name (e.g., "fct_orders_v2" -> base="fct_orders", version=2)

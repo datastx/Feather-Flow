@@ -4,6 +4,7 @@
 //! non-equi join conditions.
 
 use datafusion_expr::{Expr, ExprSchemable, LogicalPlan};
+use ff_core::ModelName;
 
 use crate::context::AnalysisContext;
 use crate::datafusion_bridge::types::arrow_to_sql_type;
@@ -48,7 +49,7 @@ fn walk_for_joins(model: &str, plan: &LogicalPlan, diags: &mut Vec<Diagnostic>) 
                     code: DiagnosticCode::A032,
                     severity: Severity::Info,
                     message: format!("{:?} JOIN without any condition", join.join_type),
-                    model: model.to_string(),
+                    model: ModelName::new(model),
                     column: None,
                     hint: Some("This may produce a Cartesian product".to_string()),
                     pass_name: "plan_join_keys".into(),
@@ -101,7 +102,7 @@ fn check_equi_join_types(
                 expr_display_name(right_key),
                 r_sql.display_name()
             ),
-            model: model.to_string(),
+            model: ModelName::new(model),
             column: None,
             hint: Some("Add explicit CASTs to ensure matching types".to_string()),
             pass_name: "plan_join_keys".into(),
@@ -126,7 +127,7 @@ fn check_non_equi_condition(model: &str, expr: &Expr, diags: &mut Vec<Diagnostic
                 code: DiagnosticCode::A033,
                 severity: Severity::Info,
                 message: format!("Non-equi join condition detected (operator: {})", other),
-                model: model.to_string(),
+                model: ModelName::new(model),
                 column: None,
                 hint: Some("Non-equi joins may have performance implications".to_string()),
                 pass_name: "plan_join_keys".into(),

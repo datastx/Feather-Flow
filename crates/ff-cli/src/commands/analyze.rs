@@ -9,6 +9,7 @@ use ff_core::classification::{
     build_classification_lookup, propagate_classifications_topo, ClassificationEdge,
 };
 use ff_core::dag::ModelDag;
+use ff_core::ModelName;
 use ff_sql::{extract_column_lineage, extract_dependencies, ExprType, ProjectLineage, SqlParser};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -67,13 +68,14 @@ pub(crate) async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<(
     let resolved = super::common::resolve_nodes(&project, &dag, &args.nodes)?;
     let resolved_set: HashSet<String> = resolved.into_iter().collect();
 
-    let order: Vec<String> = topo_order
+    let order: Vec<ModelName> = topo_order
         .into_iter()
         .filter(|n| resolved_set.contains(n))
         .filter(|n| project.models.contains_key(n.as_str()))
+        .map(ModelName::new)
         .collect();
 
-    let sql_sources: HashMap<String, String> = order
+    let sql_sources: HashMap<ModelName, String> = order
         .iter()
         .filter_map(|name| {
             let model = project.models.get(name.as_str())?;
@@ -94,7 +96,7 @@ pub(crate) async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<(
         return Ok(());
     }
 
-    let order: Vec<String> = order
+    let order: Vec<ModelName> = order
         .into_iter()
         .filter(|n| sql_sources.contains_key(n))
         .collect();
@@ -104,11 +106,6 @@ pub(crate) async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<(
 
     let ctx = AnalysisContext::new(project, dag, yaml_schemas, project_lineage);
 
-    let yaml_string_map: HashMap<String, Arc<RelSchema>> = ctx
-        .yaml_schemas()
-        .iter()
-        .map(|(k, v)| (k.to_string(), Arc::clone(v)))
-        .collect();
     let mut plan_catalog: SchemaCatalog = schema_catalog;
     for ext in &external_tables {
         if !plan_catalog.contains_key(ext) {
@@ -121,7 +118,7 @@ pub(crate) async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<(
     let propagation = propagate_schemas(
         &order,
         &sql_sources,
-        &yaml_string_map,
+        ctx.yaml_schemas(),
         plan_catalog,
         &user_fn_stubs,
         &user_table_fn_stubs,
@@ -183,7 +180,9 @@ pub(crate) async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<(
                 // Propagate classifications through lineage and persist
                 let declared = build_classification_lookup(ctx.project());
                 let cls_edges = build_classification_edges(ctx.lineage());
-                let effective = propagate_classifications_topo(&order, &cls_edges, &declared);
+                let order_strings: Vec<String> = order.iter().map(|n| n.to_string()).collect();
+                let effective =
+                    propagate_classifications_topo(&order_strings, &cls_edges, &declared);
                 let entries = build_effective_entries(&effective, &model_id_map);
                 ff_meta::populate::analysis::populate_effective_classifications(conn, &entries)?;
                 Ok(())
