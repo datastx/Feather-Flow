@@ -2,6 +2,7 @@
 
 use crate::error::CoreError;
 use crate::model_name::ModelName;
+use crate::test_name::TestName;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -78,7 +79,7 @@ pub struct SchemaTest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SingularTest {
     /// Test name (derived from filename without extension)
-    pub name: String,
+    pub name: TestName,
 
     /// Path to the SQL test file
     pub path: PathBuf,
@@ -90,14 +91,12 @@ pub struct SingularTest {
 impl SingularTest {
     /// Load a singular test from a SQL file
     pub fn from_file(path: PathBuf) -> Result<Self, CoreError> {
-        let name = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .ok_or_else(|| CoreError::TestValidationError {
+        let name = TestName::new(path.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {
+            CoreError::TestValidationError {
                 name: path.display().to_string(),
                 message: "Invalid file name".to_string(),
-            })?
-            .to_string();
+            }
+        })?);
 
         let sql = std::fs::read_to_string(&path).map_err(|e| CoreError::IoWithPath {
             path: path.display().to_string(),
@@ -106,7 +105,7 @@ impl SingularTest {
 
         if sql.trim().is_empty() {
             return Err(CoreError::TestValidationError {
-                name: name.clone(),
+                name: name.to_string(),
                 message: "Test file is empty".to_string(),
             });
         }

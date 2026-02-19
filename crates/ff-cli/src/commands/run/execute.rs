@@ -207,6 +207,57 @@ async fn execute_materialization(
     }
 }
 
+/// Run post-hooks and contract validation after successful materialization.
+///
+/// Encapsulates the Ok arm of `run_single_model` so the caller stays flat.
+async fn handle_successful_execution(
+    db: &Arc<dyn Database>,
+    name: &str,
+    compiled: &CompiledModel,
+    qualified_name: &str,
+    quoted_name: &str,
+    model_start: Instant,
+) -> ModelRunResult {
+    if let Err(e) = execute_hooks(db, &compiled.post_hook, quoted_name).await {
+        let duration = model_start.elapsed();
+        return ModelRunResult {
+            model: name.to_string(),
+            status: RunStatus::Error,
+            materialization: compiled.materialization.to_string(),
+            duration_secs: duration.as_secs_f64(),
+            error: Some(format!("post-hook failed: {}", e)),
+        };
+    }
+
+    if let Err(contract_error) = validate_model_contract(
+        db,
+        name,
+        qualified_name,
+        compiled.model_schema.as_ref(),
+        false,
+    )
+    .await
+    {
+        let duration = model_start.elapsed();
+        return ModelRunResult {
+            model: name.to_string(),
+            status: RunStatus::Error,
+            materialization: compiled.materialization.to_string(),
+            duration_secs: duration.as_secs_f64(),
+            error: Some(format!("contract failed: {}", contract_error)),
+        };
+    }
+
+    let duration = model_start.elapsed();
+    ModelRunResult {
+        model: name.to_string(),
+        status: RunStatus::Success,
+        materialization: compiled.materialization.to_string(),
+        duration_secs: duration.as_secs_f64(),
+        error: None,
+    }
+}
+
 /// Execute a single model: pre-hooks -> materialize -> post-hooks -> contract validation.
 ///
 /// Returns a `ModelRunResult` with the outcome. Callers handle state-file updates
@@ -288,44 +339,15 @@ pub(crate) async fn run_single_model(
 
     match result {
         Ok(_) => {
-            if let Err(e) = execute_hooks(db, &compiled.post_hook, &quoted_name).await {
-                let duration = model_start.elapsed();
-                return ModelRunResult {
-                    model: name.to_string(),
-                    status: RunStatus::Error,
-                    materialization: compiled.materialization.to_string(),
-                    duration_secs: duration.as_secs_f64(),
-                    error: Some(format!("post-hook failed: {}", e)),
-                };
-            }
-
-            if let Err(contract_error) = validate_model_contract(
+            handle_successful_execution(
                 db,
                 name,
+                compiled,
                 &qualified_name,
-                compiled.model_schema.as_ref(),
-                false,
+                &quoted_name,
+                model_start,
             )
             .await
-            {
-                let duration = model_start.elapsed();
-                return ModelRunResult {
-                    model: name.to_string(),
-                    status: RunStatus::Error,
-                    materialization: compiled.materialization.to_string(),
-                    duration_secs: duration.as_secs_f64(),
-                    error: Some(format!("contract failed: {}", contract_error)),
-                };
-            }
-
-            let duration = model_start.elapsed();
-            ModelRunResult {
-                model: name.to_string(),
-                status: RunStatus::Success,
-                materialization: compiled.materialization.to_string(),
-                duration_secs: duration.as_secs_f64(),
-                error: None,
-            }
         }
         Err(e) => {
             let duration = model_start.elapsed();

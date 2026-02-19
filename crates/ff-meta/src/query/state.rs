@@ -50,14 +50,12 @@ pub fn is_model_modified(
         }
     };
 
-    // Check SQL checksum
     match prev_sql_checksum {
         Some(ref prev) if prev != current_sql_checksum => return Ok(true),
         None => return Ok(true),
         _ => {}
     }
 
-    // Check schema checksum
     match (&prev_schema_checksum, current_schema_checksum) {
         (Some(old), Some(new)) if old != new => return Ok(true),
         (None, Some(_)) => return Ok(true),
@@ -65,7 +63,6 @@ pub fn is_model_modified(
         _ => {}
     }
 
-    // Check input checksums from model_run_input_checksums
     let prev_inputs = load_input_checksums(conn, model_id, run_id)?;
 
     // Check for changed or new upstream checksums
@@ -77,7 +74,6 @@ pub fn is_model_modified(
         }
     }
 
-    // Check for removed upstream dependencies
     for input_name in prev_inputs.keys() {
         if !current_input_checksums.contains_key(input_name) {
             return Ok(true);

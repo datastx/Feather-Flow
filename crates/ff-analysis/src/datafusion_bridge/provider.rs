@@ -140,16 +140,7 @@ impl FunctionRegistry {
         let mut table_functions: HashMap<String, Arc<dyn TableSource>> =
             HashMap::with_capacity(user_table_functions.len());
         for tf in user_table_functions {
-            let fields: Vec<Field> = tf
-                .columns()
-                .iter()
-                .map(|(col_name, col_type)| {
-                    let arrow_type = sql_type_to_arrow(&crate::types::parse_sql_type(col_type));
-                    Field::new(col_name, arrow_type, true)
-                })
-                .collect();
-            let schema = Arc::new(Schema::new(fields));
-            let source: Arc<dyn TableSource> = Arc::new(LogicalTableSource { schema });
+            let source = build_table_function_source(tf);
             table_functions.insert(tf.name().to_uppercase(), source);
         }
 
@@ -165,6 +156,20 @@ impl Default for FunctionRegistry {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Build an Arrow-backed `TableSource` from a user table function stub.
+fn build_table_function_source(tf: &UserTableFunctionStub) -> Arc<dyn TableSource> {
+    let fields: Vec<Field> = tf
+        .columns()
+        .iter()
+        .map(|(col_name, col_type)| {
+            let arrow_type = sql_type_to_arrow(&crate::types::parse_sql_type(col_type));
+            Field::new(col_name, arrow_type, true)
+        })
+        .collect();
+    let schema = Arc::new(Schema::new(fields));
+    Arc::new(LogicalTableSource { schema })
 }
 
 /// A ContextProvider backed by a Feather-Flow SchemaCatalog.

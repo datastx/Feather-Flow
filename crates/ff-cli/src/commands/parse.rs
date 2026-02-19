@@ -35,20 +35,16 @@ pub(crate) async fn execute(args: &ParseArgs, global: &GlobalArgs) -> Result<()>
             .get_model(name)
             .with_context(|| format!("Model not found: {}", name))?;
 
-        // Render Jinja template
         let rendered = jinja
             .render(&model.raw_sql)
             .with_context(|| format!("Failed to render template for model: {}", name))?;
 
-        // Parse SQL
         let statements = parser
             .parse(&rendered)
             .with_context(|| format!("Failed to parse SQL for model: {}", name))?;
 
-        // Extract dependencies
         let deps = extract_dependencies(&statements);
 
-        // Categorize dependencies
         let (model_deps, ext_deps) = ff_sql::extractor::categorize_dependencies(
             deps.clone(),
             &known_models,
@@ -66,7 +62,6 @@ pub(crate) async fn execute(args: &ParseArgs, global: &GlobalArgs) -> Result<()>
         });
     }
 
-    // Build DAG and apply selector filtering
     let dag = ModelDag::build(&dep_map).context("Failed to build dependency DAG")?;
     let model_names = common::resolve_nodes(&project, &dag, &args.nodes)?;
     let model_names_set: HashSet<String> = model_names.iter().cloned().collect();
@@ -76,7 +71,6 @@ pub(crate) async fn execute(args: &ParseArgs, global: &GlobalArgs) -> Result<()>
         eprintln!("[verbose] Parsing {} models", model_names.len());
     }
 
-    // Output results based on format
     match args.output {
         ParseOutput::Json => {
             let json =

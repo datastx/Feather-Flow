@@ -6,6 +6,7 @@
 
 use crate::error::CoreError;
 use crate::model::schema::ModelSchema;
+use crate::seed_name::SeedName;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -14,7 +15,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Seed {
     /// Seed name (derived from filename without extension)
-    pub name: String,
+    pub name: SeedName,
 
     /// Path to the source CSV file
     pub path: PathBuf,
@@ -59,14 +60,13 @@ impl Seed {
     /// The schema must have `kind: seed`. Seed-specific configuration
     /// (delimiter, column_types, etc.) is read from the schema fields.
     pub fn from_schema(path: PathBuf, schema: &ModelSchema) -> Result<Self, CoreError> {
-        let name = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .ok_or_else(|| CoreError::ModelParseError {
+        let stem = path.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {
+            CoreError::ModelParseError {
                 name: path.display().to_string(),
                 message: "Invalid file name".to_string(),
-            })?
-            .to_string();
+            }
+        })?;
+        let name = SeedName::new(stem);
 
         Ok(Self {
             name,
@@ -110,7 +110,7 @@ impl Seed {
         let schema = self.target_schema().or(default_schema);
         match schema {
             Some(s) => format!("{}.{}", s, self.name),
-            None => self.name.clone(),
+            None => self.name.to_string(),
         }
     }
 }

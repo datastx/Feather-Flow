@@ -19,6 +19,67 @@ fn file_extension_str(path: &Path) -> &str {
     path.extension().and_then(|e| e.to_str()).unwrap_or("")
 }
 
+/// Categorized files found in a model/node directory.
+struct CategorizedFiles {
+    /// All visible (non-hidden) files in the directory
+    all_visible: Vec<std::path::PathBuf>,
+    /// `.sql` files
+    sql: Vec<std::path::PathBuf>,
+    /// `.csv` files
+    csv: Vec<std::path::PathBuf>,
+    /// `.py` files
+    py: Vec<std::path::PathBuf>,
+}
+
+/// Scan a directory and categorize its visible files by extension.
+fn categorize_dir_files(dir: &Path) -> CoreResult<CategorizedFiles> {
+    let all_visible: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .map_err(|e| CoreError::IoWithPath {
+            path: dir.display().to_string(),
+            source: e,
+        })?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && !is_hidden_file(p))
+        .collect();
+
+    let sql = all_visible
+        .iter()
+        .filter(|p| p.extension().is_some_and(|e| e == "sql"))
+        .cloned()
+        .collect();
+
+    let csv = all_visible
+        .iter()
+        .filter(|p| p.extension().is_some_and(|e| e == "csv"))
+        .cloned()
+        .collect();
+
+    let py = all_visible
+        .iter()
+        .filter(|p| p.extension().is_some_and(|e| e == "py"))
+        .cloned()
+        .collect();
+
+    Ok(CategorizedFiles {
+        all_visible,
+        sql,
+        csv,
+        py,
+    })
+}
+
+/// Validate the directory name is valid UTF-8 and non-empty.
+fn validate_dir_name(path: &Path) -> CoreResult<String> {
+    match path.file_name().and_then(|n| n.to_str()) {
+        Some(name) if !name.is_empty() => Ok(name.to_string()),
+        _ => Err(CoreError::InvalidModelDirectory {
+            path: path.display().to_string(),
+            reason: "directory name is not valid UTF-8".to_string(),
+        }),
+    }
+}
+
 /// Collected results from unified node discovery.
 struct DiscoveredNodes {
     models: HashMap<ModelName, Model>,
@@ -79,10 +140,7 @@ impl Project {
             (models, seeds, sources, functions)
         };
 
-        let mut tests = Vec::new();
-        for model in models.values() {
-            tests.extend(model.get_schema_tests());
-        }
+        let tests: Vec<_> = models.values().flat_map(|m| m.get_schema_tests()).collect();
 
         let singular_tests = Self::discover_singular_tests(&root, &config)?;
 
@@ -188,15 +246,7 @@ impl Project {
         sources: &mut Vec<SourceFile>,
         functions: &mut Vec<FunctionDef>,
     ) -> CoreResult<()> {
-        let dir_name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(name) if !name.is_empty() => name.to_string(),
-            _ => {
-                return Err(CoreError::InvalidModelDirectory {
-                    path: path.display().to_string(),
-                    reason: "directory name is not valid UTF-8".to_string(),
-                });
-            }
-        };
+        let dir_name = validate_dir_name(path)?;
 
         let config_path = match find_yaml_path(&path.join(&dir_name)) {
             Some(p) => p,
@@ -378,82 +428,9 @@ impl Project {
         models: &mut HashMap<ModelName, Model>,
         seeds: &mut Vec<Seed>,
     ) -> CoreResult<()> {
-        let dir_name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(name) if !name.is_empty() => name.to_string(),
-            _ => {
-                return Err(CoreError::InvalidModelDirectory {
-                    path: path.display().to_string(),
-                    reason: "directory name is not valid UTF-8".to_string(),
-                });
-            }
-        };
-
-        let all_visible_files: Vec<std::path::PathBuf> = std::fs::read_dir(path)
-            .map_err(|e| CoreError::IoWithPath {
-                path: path.display().to_string(),
-                source: e,
-            })?
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.is_file() && !is_hidden_file(p))
-            .collect();
-
-        let sql_files: Vec<&std::path::PathBuf> = all_visible_files
-            .iter()
-            .filter(|p| p.extension().is_some_and(|e| e == "sql"))
-            .collect();
-
-        let csv_files: Vec<&std::path::PathBuf> = all_visible_files
-            .iter()
-            .filter(|p| p.extension().is_some_and(|e| e == "csv"))
-            .collect();
-
-        let py_files: Vec<&std::path::PathBuf> = all_visible_files
-            .iter()
-            .filter(|p| p.extension().is_some_and(|e| e == "py"))
-            .collect();
-
-        enum ResourceType<'a> {
-            Sql(&'a Path),
-            Csv(&'a Path),
-            Python(&'a Path),
-        }
-
-        let resource = match (sql_files.len(), csv_files.len(), py_files.len()) {
-            (1, 0, 0) => ResourceType::Sql(sql_files[0]),
-            (0, 1, 0) => ResourceType::Csv(csv_files[0]),
-            (0, 0, 1) => ResourceType::Python(py_files[0]),
-            (0, 0, 0) => {
-                return Err(CoreError::InvalidModelDirectory {
-                    path: path.display().to_string(),
-                    reason: "directory contains no .sql, .py, or .csv files".to_string(),
-                });
-            }
-            (s, 0, 0) if s > 1 => {
-                return Err(CoreError::InvalidModelDirectory {
-                    path: path.display().to_string(),
-                    reason: format!("directory contains {} .sql files (expected exactly 1)", s),
-                });
-            }
-            (0, c, 0) if c > 1 => {
-                return Err(CoreError::InvalidModelDirectory {
-                    path: path.display().to_string(),
-                    reason: format!("directory contains {} .csv files (expected exactly 1)", c),
-                });
-            }
-            (0, 0, p) if p > 1 => {
-                return Err(CoreError::InvalidModelDirectory {
-                    path: path.display().to_string(),
-                    reason: format!("directory contains {} .py files (expected exactly 1)", p),
-                });
-            }
-            _ => {
-                return Err(CoreError::InvalidModelDirectory {
-                    path: path.display().to_string(),
-                    reason: "directory contains multiple data file types (.sql, .csv, .py) — each directory must contain exactly one data file".to_string(),
-                });
-            }
-        };
+        let dir_name = validate_dir_name(path)?;
+        let files = categorize_dir_files(path)?;
+        let resource = classify_resource_type(path, &files)?;
 
         let data_path = match &resource {
             ResourceType::Sql(p) | ResourceType::Csv(p) | ResourceType::Python(p) => *p,
@@ -476,26 +453,7 @@ impl Project {
             });
         }
 
-        let extra_files: Vec<String> = all_visible_files
-            .iter()
-            .filter(|p| {
-                let ext = file_extension_str(p);
-                !matches!(ext, "sql" | "csv" | "py" | "yml" | "yaml")
-            })
-            .map(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown")
-                    .to_string()
-            })
-            .collect();
-
-        if !extra_files.is_empty() {
-            return Err(CoreError::ExtraFilesInModelDirectory {
-                directory: dir_name,
-                files: extra_files.join(", "),
-            });
-        }
+        check_no_extra_files(&files.all_visible, &dir_name)?;
 
         match resource {
             ResourceType::Csv(_) => {
@@ -635,6 +593,74 @@ impl Project {
 
         Ok(())
     }
+}
+
+/// What kind of data file a legacy model directory contains.
+enum ResourceType<'a> {
+    Sql(&'a Path),
+    Csv(&'a Path),
+    Python(&'a Path),
+}
+
+/// Determine the single resource type in a legacy model directory.
+///
+/// Exactly one of `.sql`, `.csv`, or `.py` must be present. Returns an error
+/// if the directory has zero data files, multiples of one kind, or a mix of kinds.
+fn classify_resource_type<'a>(
+    dir_path: &Path,
+    files: &'a CategorizedFiles,
+) -> CoreResult<ResourceType<'a>> {
+    match (files.sql.len(), files.csv.len(), files.py.len()) {
+        (1, 0, 0) => Ok(ResourceType::Sql(&files.sql[0])),
+        (0, 1, 0) => Ok(ResourceType::Csv(&files.csv[0])),
+        (0, 0, 1) => Ok(ResourceType::Python(&files.py[0])),
+        (0, 0, 0) => Err(CoreError::InvalidModelDirectory {
+            path: dir_path.display().to_string(),
+            reason: "directory contains no .sql, .py, or .csv files".to_string(),
+        }),
+        (s, 0, 0) if s > 1 => Err(CoreError::InvalidModelDirectory {
+            path: dir_path.display().to_string(),
+            reason: format!("directory contains {} .sql files (expected exactly 1)", s),
+        }),
+        (0, c, 0) if c > 1 => Err(CoreError::InvalidModelDirectory {
+            path: dir_path.display().to_string(),
+            reason: format!("directory contains {} .csv files (expected exactly 1)", c),
+        }),
+        (0, 0, p) if p > 1 => Err(CoreError::InvalidModelDirectory {
+            path: dir_path.display().to_string(),
+            reason: format!("directory contains {} .py files (expected exactly 1)", p),
+        }),
+        _ => Err(CoreError::InvalidModelDirectory {
+            path: dir_path.display().to_string(),
+            reason: "directory contains multiple data file types (.sql, .csv, .py) — each directory must contain exactly one data file".to_string(),
+        }),
+    }
+}
+
+/// Reject directories that contain files with unexpected extensions.
+fn check_no_extra_files(all_visible: &[std::path::PathBuf], dir_name: &str) -> CoreResult<()> {
+    let extra_files: Vec<String> = all_visible
+        .iter()
+        .filter(|p| {
+            let ext = file_extension_str(p);
+            !matches!(ext, "sql" | "csv" | "py" | "yml" | "yaml")
+        })
+        .map(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string()
+        })
+        .collect();
+
+    if !extra_files.is_empty() {
+        return Err(CoreError::ExtraFilesInModelDirectory {
+            directory: dir_name.to_string(),
+            files: extra_files.join(", "),
+        });
+    }
+
+    Ok(())
 }
 
 /// Locate a YAML config file by testing `.yml` then `.yaml` extensions.

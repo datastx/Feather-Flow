@@ -48,23 +48,33 @@ fn contains_unquoted_semicolon(sql: &str) -> bool {
     false
 }
 
+/// Truncate a SQL string for inclusion in error messages.
+///
+/// Keeps at most 200 characters (respecting UTF-8 boundaries) and appends `...`.
+fn truncate_sql_for_error(sql: &str) -> String {
+    if sql.len() > 200 {
+        let end = sql
+            .char_indices()
+            .map(|(i, _)| i)
+            .find(|&i| i >= 200)
+            .unwrap_or(sql.len());
+        format!("{}...", &sql[..end])
+    } else {
+        sql.to_string()
+    }
+}
+
 /// Execute SQL on an already-locked connection, returning affected row count.
 ///
 /// Used by transaction-scoped operations that hold the Mutex for their
 /// entire duration, avoiding per-statement lock/unlock overhead.
 fn run_sql(conn: &Connection, sql: &str) -> DbResult<usize> {
     conn.execute(sql, []).map_err(|e| {
-        let truncated = if sql.len() > 200 {
-            let end = sql
-                .char_indices()
-                .map(|(i, _)| i)
-                .find(|&i| i >= 200)
-                .unwrap_or(sql.len());
-            format!("{}...", &sql[..end])
-        } else {
-            sql.to_string()
-        };
-        DbError::ExecutionError(format!("{}: {}", e, truncated))
+        let truncated = truncate_sql_for_error(sql);
+        DbError::ExecutionFailed {
+            context: truncated,
+            source: e,
+        }
     })
 }
 
@@ -88,7 +98,13 @@ where
 {
     run_sql(conn, "BEGIN TRANSACTION")?;
     let result = body(conn);
-    match &result {
+    handle_commit_result(conn, &result)?;
+    result
+}
+
+/// Commit or rollback depending on the body result.
+fn handle_commit_result<T>(conn: &Connection, result: &DbResult<T>) -> DbResult<()> {
+    match result {
         Ok(_) => {
             if let Err(commit_err) = run_sql(conn, "COMMIT") {
                 let _ = run_sql(conn, "ROLLBACK");
@@ -99,7 +115,7 @@ where
             let _ = run_sql(conn, "ROLLBACK");
         }
     }
-    result
+    Ok(())
 }
 
 /// Get table column names and types on an already-locked connection.
@@ -226,7 +242,6 @@ fn validate_sql_type(type_str: &str) -> DbResult<()> {
             s
         )));
     }
-    // Extract the base type token (before any parenthesis)
     let base = s
         .split(|c: char| c == '(' || c.is_ascii_whitespace())
         .next()
@@ -262,16 +277,21 @@ impl std::fmt::Debug for DuckDbBackend {
 impl DuckDbBackend {
     /// Create a new in-memory DuckDB connection
     pub fn in_memory() -> DbResult<Self> {
-        let conn =
-            Connection::open_in_memory().map_err(|e| DbError::ConnectionError(e.to_string()))?;
+        let conn = Connection::open_in_memory().map_err(|e| DbError::ConnectionFailed {
+            message: "in-memory".to_string(),
+            source: e,
+        })?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
     }
 
     /// Create a new DuckDB connection from a file path
-    pub fn from_path(path: &Path) -> DbResult<Self> {
-        let conn = Connection::open(path).map_err(|e| DbError::ConnectionError(e.to_string()))?;
+    fn from_path(path: &Path) -> DbResult<Self> {
+        let conn = Connection::open(path).map_err(|e| DbError::ConnectionFailed {
+            message: path.display().to_string(),
+            source: e,
+        })?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -486,12 +506,12 @@ impl DatabaseSchema for DuckDbBackend {
         // errors and propagate everything else.
         match self.execute_sync(&format!("DROP VIEW IF EXISTS {}", quoted)) {
             Ok(_) => {}
-            Err(DbError::ExecutionError(msg)) if msg.contains("trying to drop type") => {}
+            Err(e) if e.is_wrong_relation_type() => {}
             Err(e) => return Err(e),
         }
         match self.execute_sync(&format!("DROP TABLE IF EXISTS {}", quoted)) {
             Ok(_) => {}
-            Err(DbError::ExecutionError(msg)) if msg.contains("trying to drop type") => {}
+            Err(e) if e.is_wrong_relation_type() => {}
             Err(e) => return Err(e),
         }
         Ok(())
@@ -679,8 +699,6 @@ impl DatabaseIncremental for DuckDbBackend {
 #[async_trait]
 impl DatabaseFunction for DuckDbBackend {
     async fn deploy_function(&self, create_sql: &str) -> DbResult<()> {
-        // Validate: must start with CREATE and not contain unquoted semicolons
-        // (multi-statement injection)
         let trimmed = create_sql.trim_start();
         if !trimmed.to_uppercase().starts_with("CREATE") {
             return Err(DbError::ExecutionError(

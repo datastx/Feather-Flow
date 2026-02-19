@@ -148,7 +148,6 @@ impl Model {
             }
         };
 
-        // Parse version from name (e.g., "fct_orders_v2" -> base="fct_orders", version=2)
         let (base_name, version) = Self::parse_version(&name);
 
         Ok(Self {
@@ -196,7 +195,6 @@ impl Model {
             });
         }
 
-        // Pre-populate depends_on from the schema's explicit dependency list
         let depends_on: HashSet<ModelName> = schema
             .depends_on
             .iter()

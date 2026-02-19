@@ -190,33 +190,42 @@ pub(super) async fn validate_model_contract(
     Ok(Some(result))
 }
 
-fn log_contract_violation(violation: &ContractViolation, severity: &str, verbose: bool) {
+/// Format a contract violation into a human-readable message.
+///
+/// Returns `None` for violations that should be silenced (e.g. extra columns
+/// when verbose is off).
+fn format_contract_violation(
+    violation: &ContractViolation,
+    severity: &str,
+    verbose: bool,
+) -> Option<String> {
     match &violation.violation_type {
-        ViolationType::MissingColumn { column } => {
-            eprintln!(
-                "    [{}] Contract violation: missing column '{}'",
-                severity, column
-            );
-        }
+        ViolationType::MissingColumn { column } => Some(format!(
+            "    [{}] Contract violation: missing column '{}'",
+            severity, column
+        )),
         ViolationType::TypeMismatch {
             column,
             expected,
             actual,
-        } => {
-            eprintln!(
-                "    [{}] Contract violation: column '{}' type mismatch (expected {}, got {})",
-                severity, column, expected, actual
-            );
-        }
-        ViolationType::ExtraColumn { column } if verbose => {
-            eprintln!("    [INFO] Extra column '{}' not in contract", column);
-        }
-        ViolationType::ExtraColumn { .. } => {}
-        ViolationType::ConstraintNotMet { column, constraint } => {
-            eprintln!(
-                "    [{}] Contract violation: column '{}' constraint {:?} not met",
-                severity, column, constraint
-            );
-        }
+        } => Some(format!(
+            "    [{}] Contract violation: column '{}' type mismatch (expected {}, got {})",
+            severity, column, expected, actual
+        )),
+        ViolationType::ExtraColumn { column } if verbose => Some(format!(
+            "    [INFO] Extra column '{}' not in contract",
+            column
+        )),
+        ViolationType::ExtraColumn { .. } => None,
+        ViolationType::ConstraintNotMet { column, constraint } => Some(format!(
+            "    [{}] Contract violation: column '{}' constraint {:?} not met",
+            severity, column, constraint
+        )),
+    }
+}
+
+fn log_contract_violation(violation: &ContractViolation, severity: &str, verbose: bool) {
+    if let Some(msg) = format_contract_violation(violation, severity, verbose) {
+        eprintln!("{}", msg);
     }
 }

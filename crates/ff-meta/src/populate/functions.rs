@@ -70,15 +70,25 @@ fn insert_function(conn: &Connection, project_id: i64, func: &FunctionDef) -> Me
     }
 
     if let ff_core::function::FunctionReturn::Table { columns } = &func.returns {
-        for (i, col) in columns.iter().enumerate() {
-            conn.execute(
-                "INSERT INTO ff_meta.function_return_columns (function_id, name, data_type, ordinal_position)
-                 VALUES (?, ?, ?, ?)",
-                duckdb::params![function_id, col.name, col.data_type, (i + 1) as i32],
-            )
-            .populate_context("insert function_return_columns")?;
-        }
+        insert_function_return_columns(conn, function_id, columns)?;
     }
 
+    Ok(())
+}
+
+/// Insert return columns for a table-returning function.
+fn insert_function_return_columns(
+    conn: &Connection,
+    function_id: i64,
+    columns: &[ff_core::function::FunctionReturnColumn],
+) -> MetaResult<()> {
+    for (i, col) in columns.iter().enumerate() {
+        conn.execute(
+            "INSERT INTO ff_meta.function_return_columns (function_id, name, data_type, ordinal_position)
+             VALUES (?, ?, ?, ?)",
+            duckdb::params![function_id, col.name, col.data_type, (i + 1) as i32],
+        )
+        .populate_context("insert function_return_columns")?;
+    }
     Ok(())
 }

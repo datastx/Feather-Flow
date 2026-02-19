@@ -194,10 +194,8 @@ fn format_comment(value: &Value, style: CommentStyle) -> String {
     }
 }
 
-/// Build the query comment string for a model (legacy convenience function).
-///
-/// Delegates to `format_comment` with compact style.
-pub fn build_query_comment(metadata: &QueryCommentMetadata) -> String {
+#[cfg(test)]
+pub(crate) fn build_query_comment(metadata: &QueryCommentMetadata) -> String {
     let include = CommentInclude::default();
     let value = filter_metadata(metadata, &include);
     format_comment(&value, CommentStyle::Compact)
@@ -211,8 +209,8 @@ pub fn attach_query_comment(sql: &str, comment: &str, placement: CommentPlacemen
     }
 }
 
-/// Append a query comment to SQL (legacy convenience, always appends).
-pub fn append_query_comment(sql: &str, comment: &str) -> String {
+#[cfg(test)]
+pub(crate) fn append_query_comment(sql: &str, comment: &str) -> String {
     attach_query_comment(sql, comment, CommentPlacement::Append)
 }
 

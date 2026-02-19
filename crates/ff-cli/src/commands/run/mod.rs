@@ -293,7 +293,6 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         failure_count,
     )?;
 
-    // Output results based on format
     if json_mode {
         let results = RunResults {
             timestamp: Utc::now(),

@@ -543,31 +543,7 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
             let col_ref = ColumnRef::simple(&ident.value);
             ColumnLineage::direct(&ident.value, col_ref)
         }
-        Expr::CompoundIdentifier(idents) => {
-            if idents.len() >= 2 {
-                let col_name = idents.last().map(|i| i.value.clone()).unwrap_or_default();
-                let table_name = idents[..idents.len() - 1]
-                    .iter()
-                    .map(|i| i.value.clone())
-                    .collect::<Vec<_>>()
-                    .join(".");
-
-                let resolved_table = lineage
-                    .table_aliases
-                    .get(&table_name)
-                    .map(|s| s.as_str())
-                    .unwrap_or(&table_name);
-
-                let col_ref = ColumnRef::qualified(resolved_table, &col_name);
-                ColumnLineage::direct(&col_name, col_ref)
-            } else {
-                let col_name = idents
-                    .last()
-                    .map(|i| i.value.clone())
-                    .unwrap_or_else(|| "unknown".to_string());
-                ColumnLineage::new(&col_name)
-            }
-        }
+        Expr::CompoundIdentifier(idents) => extract_compound_ident_lineage(idents, lineage),
         Expr::Function(func) => {
             let func_name = crate::object_name_to_string(&func.name);
 
@@ -607,30 +583,7 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
             conditions,
             else_result,
             ..
-        } => {
-            let mut sources = HashSet::new();
-
-            if let Some(op) = operand {
-                let op_lineage = extract_lineage_from_expr(op, lineage);
-                sources.extend(op_lineage.source_columns);
-            }
-
-            for case_when in conditions {
-                let cond_lineage = extract_lineage_from_expr(&case_when.condition, lineage);
-                sources.extend(cond_lineage.source_columns);
-                let result_lineage = extract_lineage_from_expr(&case_when.result, lineage);
-                sources.extend(result_lineage.source_columns);
-            }
-            if let Some(else_expr) = else_result {
-                let else_lineage = extract_lineage_from_expr(else_expr, lineage);
-                sources.extend(else_lineage.source_columns);
-            }
-
-            let mut col_lineage = ColumnLineage::new("case_expr");
-            col_lineage.expr_type = ExprType::Case;
-            col_lineage.source_columns = sources;
-            col_lineage
-        }
+        } => extract_case_lineage(operand, conditions, else_result, lineage),
         Expr::Subquery(query) => {
             let sub_lineage = extract_lineage_from_query(query, "subquery");
             let mut col_lineage = ColumnLineage::new("subquery");
@@ -681,6 +634,68 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
         }
         _ => ColumnLineage::new("unknown"),
     }
+}
+
+/// Extract lineage from a compound identifier (e.g. `table.column`).
+fn extract_compound_ident_lineage(
+    idents: &[sqlparser::ast::Ident],
+    lineage: &ModelLineage,
+) -> ColumnLineage {
+    if idents.len() >= 2 {
+        let col_name = idents.last().map(|i| i.value.as_str()).unwrap_or_default();
+        let table_name = idents[..idents.len() - 1]
+            .iter()
+            .map(|i| i.value.as_str())
+            .collect::<Vec<_>>()
+            .join(".");
+
+        let resolved_table = lineage
+            .table_aliases
+            .get(&table_name)
+            .map(|s| s.as_str())
+            .unwrap_or(&table_name);
+
+        let col_ref = ColumnRef::qualified(resolved_table, col_name);
+        ColumnLineage::direct(col_name, col_ref)
+    } else {
+        let col_name = idents
+            .last()
+            .map(|i| i.value.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+        ColumnLineage::new(&col_name)
+    }
+}
+
+/// Extract lineage from a CASE expression, collecting sources from all branches.
+fn extract_case_lineage(
+    operand: &Option<Box<Expr>>,
+    conditions: &[sqlparser::ast::CaseWhen],
+    else_result: &Option<Box<Expr>>,
+    lineage: &ModelLineage,
+) -> ColumnLineage {
+    let mut sources = HashSet::new();
+
+    if let Some(op) = operand {
+        let op_lineage = extract_lineage_from_expr(op, lineage);
+        sources.extend(op_lineage.source_columns);
+    }
+
+    for case_when in conditions {
+        let cond_lineage = extract_lineage_from_expr(&case_when.condition, lineage);
+        sources.extend(cond_lineage.source_columns);
+        let result_lineage = extract_lineage_from_expr(&case_when.result, lineage);
+        sources.extend(result_lineage.source_columns);
+    }
+
+    if let Some(else_expr) = else_result {
+        let else_lineage = extract_lineage_from_expr(else_expr, lineage);
+        sources.extend(else_lineage.source_columns);
+    }
+
+    let mut col_lineage = ColumnLineage::new("case_expr");
+    col_lineage.expr_type = ExprType::Case;
+    col_lineage.source_columns = sources;
+    col_lineage
 }
 
 /// Extract column references from a single function argument expression.

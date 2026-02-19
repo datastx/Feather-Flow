@@ -217,18 +217,14 @@ pub(crate) fn build_model_doc(model: &Model) -> ModelDoc {
         }
     }
 
-    // Get materialization and schema from SQL config()
     let materialized = model.config.materialized.map(|m| m.to_string());
     let schema = model.config.schema.clone();
 
-    // Get dependencies
     let depends_on: Vec<String> = model.depends_on.iter().map(|m| m.to_string()).collect();
     let external_deps: Vec<String> = model.external_deps.iter().map(|t| t.to_string()).collect();
 
-    // Extract column lineage from SQL
     let column_lineage = extract_column_lineage_from_model(model);
 
-    // Generate test suggestions from SQL
     let test_suggestions = generate_test_suggestions(model);
 
     // Get owner - uses get_owner() which checks direct owner field and meta.owner
@@ -315,16 +311,20 @@ pub(crate) fn generate_test_suggestions(model: &Model) -> Vec<TestSuggestionDoc>
     };
 
     // Convert to documentation format
-    let mut docs: Vec<TestSuggestionDoc> = Vec::new();
-    for (column, col_suggestions) in suggestions.columns {
-        for suggestion in col_suggestions.suggestions {
-            docs.push(TestSuggestionDoc {
-                column: column.clone(),
-                test_type: suggestion.test_name().to_string(),
-                reason: suggestion.reason(),
-            });
-        }
-    }
+    let mut docs: Vec<TestSuggestionDoc> = suggestions
+        .columns
+        .into_iter()
+        .flat_map(|(column, col_suggestions)| {
+            col_suggestions
+                .suggestions
+                .into_iter()
+                .map(move |suggestion| TestSuggestionDoc {
+                    column: column.clone(),
+                    test_type: suggestion.test_name().to_string(),
+                    reason: suggestion.reason(),
+                })
+        })
+        .collect();
 
     // Sort by column name
     docs.sort_by(|a, b| a.column.cmp(&b.column));
@@ -366,7 +366,7 @@ pub(crate) fn build_source_doc(source: &SourceFile) -> SourceDoc {
         .collect();
 
     SourceDoc {
-        name: source.name.clone(),
+        name: source.name.to_string(),
         description: source.description.clone(),
         schema: source.schema.clone(),
         owner: source.owner.clone(),

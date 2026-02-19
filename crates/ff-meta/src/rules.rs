@@ -56,8 +56,6 @@ pub fn execute_rule(
         }
     };
 
-    // Collect all rows as raw string values.
-    // We use query_map which executes the statement and yields rows.
     let raw_rows: Vec<Vec<String>> = match stmt.query_map([], |row| {
         let col_count = row.as_ref().column_count();
         Ok((0..col_count)
@@ -84,10 +82,10 @@ pub fn execute_rule(
     let violations: Vec<RuleViolation> = raw_rows
         .into_iter()
         .map(|values| {
-            let pairs: Vec<(String, String)> = column_names
+            let pairs: Vec<(&str, String)> = column_names
                 .iter()
                 .zip(values)
-                .map(|(n, v)| (n.clone(), v))
+                .map(|(n, v)| (n.as_str(), v))
                 .collect();
 
             let message = extract_message(&pairs, message_idx);
@@ -176,15 +174,12 @@ fn make_error_result(rule: &RuleFile, error: String) -> RuleResult {
 }
 
 fn find_column_index(column_names: &[String], candidates: &[&str]) -> Option<usize> {
-    for candidate in candidates {
-        if let Some(idx) = column_names.iter().position(|c| c == candidate) {
-            return Some(idx);
-        }
-    }
-    None
+    candidates
+        .iter()
+        .find_map(|candidate| column_names.iter().position(|c| c == candidate))
 }
 
-fn extract_message(values: &[(String, String)], message_idx: Option<usize>) -> String {
+fn extract_message(values: &[(&str, String)], message_idx: Option<usize>) -> String {
     if let Some(idx) = message_idx {
         return values[idx].1.clone();
     }
@@ -197,7 +192,7 @@ fn extract_message(values: &[(String, String)], message_idx: Option<usize>) -> S
 }
 
 fn build_context_json(
-    values: &[(String, String)],
+    values: &[(&str, String)],
     column_names: &[String],
     message_idx: Option<usize>,
     entity_idx: Option<usize>,

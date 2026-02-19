@@ -40,12 +40,12 @@ pub fn get_model_id_map(conn: &Connection, project_id: i64) -> MetaResult<HashMa
         })
         .populate_context("query get_model_id_map")?;
 
-    let mut map = HashMap::new();
-    for row in rows {
-        let (model_id, name) = row.populate_context("row get_model_id_map")?;
-        map.insert(name, model_id);
-    }
-    Ok(map)
+    rows.into_iter()
+        .map(|row| {
+            let (model_id, name) = row.populate_context("row get_model_id_map")?;
+            Ok((name, model_id))
+        })
+        .collect::<MetaResult<HashMap<String, i64>>>()
 }
 
 fn insert_model(
@@ -194,63 +194,75 @@ fn insert_model_columns(conn: &Connection, model_id: i64, model: &Model) -> Meta
     };
 
     for (i, col) in schema.columns.iter().enumerate() {
-        let nullability = col
-            .constraints
-            .iter()
-            .any(|c| matches!(c, ff_core::ColumnConstraint::NotNull))
-            .then_some("not_null");
+        insert_single_column(conn, model_id, col, i)?;
+    }
 
-        let classification = col.classification.as_ref().map(|c| match c {
-            ff_core::DataClassification::Pii => "pii",
-            ff_core::DataClassification::Sensitive => "sensitive",
-            ff_core::DataClassification::Internal => "internal",
-            ff_core::DataClassification::Public => "public",
-        });
+    Ok(())
+}
 
-        conn.execute(
-            "INSERT INTO ff_meta.model_columns (model_id, name, declared_type, nullability_declared, description, is_primary_key, classification, ordinal_position)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            duckdb::params![
-                model_id,
-                col.name,
-                col.data_type,
-                nullability,
-                col.description,
-                col.primary_key,
-                classification,
-                (i + 1) as i32,
-            ],
+/// Insert a single model column and its constraints/references.
+fn insert_single_column(
+    conn: &Connection,
+    model_id: i64,
+    col: &ff_core::model::SchemaColumnDef,
+    ordinal: usize,
+) -> MetaResult<()> {
+    let nullability = col
+        .constraints
+        .iter()
+        .any(|c| matches!(c, ff_core::ColumnConstraint::NotNull))
+        .then_some("not_null");
+
+    let classification = col.classification.as_ref().map(|c| match c {
+        ff_core::DataClassification::Pii => "pii",
+        ff_core::DataClassification::Sensitive => "sensitive",
+        ff_core::DataClassification::Internal => "internal",
+        ff_core::DataClassification::Public => "public",
+    });
+
+    conn.execute(
+        "INSERT INTO ff_meta.model_columns (model_id, name, declared_type, nullability_declared, description, is_primary_key, classification, ordinal_position)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        duckdb::params![
+            model_id,
+            col.name,
+            col.data_type,
+            nullability,
+            col.description,
+            col.primary_key,
+            classification,
+            (ordinal + 1) as i32,
+        ],
+    )
+    .populate_context("insert model_columns")?;
+
+    let column_id: i64 = conn
+        .query_row(
+            "SELECT column_id FROM ff_meta.model_columns WHERE model_id = ? AND name = ?",
+            duckdb::params![model_id, col.name],
+            |row| row.get(0),
         )
-        .populate_context("insert model_columns")?;
+        .populate_context("select column_id")?;
 
-        let column_id: i64 = conn
-            .query_row(
-                "SELECT column_id FROM ff_meta.model_columns WHERE model_id = ? AND name = ?",
-                duckdb::params![model_id, col.name],
-                |row| row.get(0),
-            )
-            .populate_context("select column_id")?;
+    for constraint in &col.constraints {
+        let ct = match constraint {
+            ff_core::ColumnConstraint::NotNull => "not_null",
+            ff_core::ColumnConstraint::PrimaryKey => "primary_key",
+            ff_core::ColumnConstraint::Unique => "unique",
+        };
+        conn.execute(
+            "INSERT INTO ff_meta.model_column_constraints (column_id, constraint_type) VALUES (?, ?)",
+            duckdb::params![column_id, ct],
+        )
+        .populate_context("insert column_constraints")?;
+    }
 
-        for constraint in &col.constraints {
-            let ct = match constraint {
-                ff_core::ColumnConstraint::NotNull => "not_null",
-                ff_core::ColumnConstraint::PrimaryKey => "primary_key",
-                ff_core::ColumnConstraint::Unique => "unique",
-            };
-            conn.execute(
-                "INSERT INTO ff_meta.model_column_constraints (column_id, constraint_type) VALUES (?, ?)",
-                duckdb::params![column_id, ct],
-            )
-            .populate_context("insert column_constraints")?;
-        }
-
-        if let Some(ref_info) = &col.references {
-            conn.execute(
-                "INSERT INTO ff_meta.model_column_references (column_id, referenced_model_name, referenced_column_name) VALUES (?, ?, ?)",
-                duckdb::params![column_id, ref_info.model.as_ref(), ref_info.column],
-            )
-            .populate_context("insert column_references")?;
-        }
+    if let Some(ref_info) = &col.references {
+        conn.execute(
+            "INSERT INTO ff_meta.model_column_references (column_id, referenced_model_name, referenced_column_name) VALUES (?, ?, ?)",
+            duckdb::params![column_id, ref_info.model.as_ref(), ref_info.column],
+        )
+        .populate_context("insert column_references")?;
     }
 
     Ok(())

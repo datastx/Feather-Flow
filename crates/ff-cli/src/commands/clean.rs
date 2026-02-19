@@ -11,10 +11,11 @@ pub(crate) async fn execute(args: &CleanArgs, global: &GlobalArgs) -> Result<()>
     let project = load_project(global)?;
 
     // Default clean targets if not specified in config
+    let default_targets = vec!["target".to_string()];
     let clean_targets = if project.config.clean_targets.is_empty() {
-        vec!["target".to_string()]
+        &default_targets
     } else {
-        project.config.clean_targets.clone()
+        &project.config.clean_targets
     };
 
     if args.dry_run {
@@ -26,7 +27,7 @@ pub(crate) async fn execute(args: &CleanArgs, global: &GlobalArgs) -> Result<()>
     let mut cleaned_count = 0;
     let mut skipped_count = 0;
 
-    for target in &clean_targets {
+    for target in clean_targets {
         let target_path = project.root.join(target);
 
         if !target_path.exists() {

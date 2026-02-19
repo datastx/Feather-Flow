@@ -189,57 +189,79 @@ pub fn categorize_dependencies_resolved(
     known_models: &HashSet<&str>,
     external_tables: &HashSet<String>,
 ) -> (Vec<String>, Vec<String>, Vec<String>) {
-    let mut model_deps = Vec::new();
-    let mut external_deps = Vec::new();
-    let mut unknown_deps = Vec::new();
+    let lookups = DependencyLookups {
+        known_models_lower: known_models
+            .iter()
+            .map(|s| (s.to_lowercase(), *s))
+            .collect(),
+        known_models_exact: known_models.iter().copied().collect(),
+        external_tables,
+        external_lower: external_tables.iter().map(|t| t.to_lowercase()).collect(),
+    };
 
-    // Build lookup maps
-    // For case-insensitive matching: lowercase → original
-    let known_models_lower: HashMap<String, &str> = known_models
-        .iter()
-        .map(|s| (s.to_lowercase(), *s))
-        .collect();
-    // For case-sensitive matching: exact name → original
-    let known_models_exact: HashSet<&str> = known_models.iter().copied().collect();
-
-    let external_lower: HashSet<String> =
-        external_tables.iter().map(|t| t.to_lowercase()).collect();
+    let mut out = ClassifiedDeps::default();
 
     for dep in deps {
-        let table_part = dep.table_part();
-
-        if dep.is_case_sensitive {
-            // Quoted identifier: require exact match
-            if known_models_exact.contains(table_part.value.as_str()) {
-                model_deps.push(table_part.value.clone());
-            } else if external_tables.contains(&dep.name) {
-                external_deps.push(dep.name.clone());
-            } else {
-                unknown_deps.push(dep.name.clone());
-                external_deps.push(dep.name.clone());
-            }
-        } else {
-            // Unquoted identifier: case-insensitive matching (existing behavior)
-            let dep_lower = table_part.value.to_lowercase();
-
-            if let Some(original_name) = known_models_lower.get(&dep_lower) {
-                model_deps.push(original_name.to_string());
-            } else if external_lower.contains(&dep.name.to_lowercase())
-                || external_lower.contains(&dep_lower)
-            {
-                external_deps.push(dep.name.clone());
-            } else {
-                unknown_deps.push(dep.name.clone());
-                external_deps.push(dep.name.clone());
-            }
-        }
+        classify_single_dependency(&dep, &lookups, &mut out);
     }
 
-    model_deps.sort();
-    external_deps.sort();
-    unknown_deps.sort();
+    out.model_deps.sort();
+    out.external_deps.sort();
+    out.unknown_deps.sort();
 
-    (model_deps, external_deps, unknown_deps)
+    (out.model_deps, out.external_deps, out.unknown_deps)
+}
+
+/// Pre-built lookup tables for dependency classification.
+struct DependencyLookups<'a> {
+    known_models_lower: HashMap<String, &'a str>,
+    known_models_exact: HashSet<&'a str>,
+    external_tables: &'a HashSet<String>,
+    external_lower: HashSet<String>,
+}
+
+/// Accumulator for classified dependencies.
+#[derive(Default)]
+struct ClassifiedDeps {
+    model_deps: Vec<String>,
+    external_deps: Vec<String>,
+    unknown_deps: Vec<String>,
+}
+
+/// Classify a single resolved dependency into model, external, or unknown.
+fn classify_single_dependency(
+    dep: &ResolvedIdent,
+    lookups: &DependencyLookups<'_>,
+    out: &mut ClassifiedDeps,
+) {
+    let table_part = dep.table_part();
+
+    if dep.is_case_sensitive {
+        if lookups
+            .known_models_exact
+            .contains(table_part.value.as_str())
+        {
+            out.model_deps.push(table_part.value.clone());
+        } else if lookups.external_tables.contains(&dep.name) {
+            out.external_deps.push(dep.name.clone());
+        } else {
+            out.unknown_deps.push(dep.name.clone());
+            out.external_deps.push(dep.name.clone());
+        }
+    } else {
+        let dep_lower = table_part.value.to_lowercase();
+
+        if let Some(original_name) = lookups.known_models_lower.get(&dep_lower) {
+            out.model_deps.push(original_name.to_string());
+        } else if lookups.external_lower.contains(&dep.name.to_lowercase())
+            || lookups.external_lower.contains(&dep_lower)
+        {
+            out.external_deps.push(dep.name.clone());
+        } else {
+            out.unknown_deps.push(dep.name.clone());
+            out.external_deps.push(dep.name.clone());
+        }
+    }
 }
 
 #[cfg(test)]

@@ -9,9 +9,25 @@ pub enum DbError {
     #[error("[D001] Database connection failed: {0}")]
     ConnectionError(String),
 
+    /// Connection error with preserved source chain (D001)
+    #[error("[D001] Database connection failed: {message}")]
+    ConnectionFailed {
+        message: String,
+        #[source]
+        source: duckdb::Error,
+    },
+
     /// Query execution error (D002)
     #[error("[D002] SQL execution failed: {0}")]
     ExecutionError(String),
+
+    /// Query execution error with preserved source chain (D002)
+    #[error("[D002] SQL execution failed: {context}")]
+    ExecutionFailed {
+        context: String,
+        #[source]
+        source: duckdb::Error,
+    },
 
     /// DuckDB driver error with preserved source chain (D002)
     #[error("[D002] SQL execution failed")]
@@ -36,6 +52,21 @@ pub enum DbError {
     /// Internal error (D007)
     #[error("[D007] Internal database error: {0}")]
     Internal(String),
+}
+
+impl DbError {
+    /// Check whether this is a DuckDB "wrong relation type" error (e.g. trying
+    /// to DROP VIEW on a TABLE). Used by `drop_if_exists` to silently skip
+    /// type mismatches.
+    pub(crate) fn is_wrong_relation_type(&self) -> bool {
+        match self {
+            DbError::ExecutionError(msg) => msg.contains("trying to drop type"),
+            DbError::ExecutionFailed { source, .. } => {
+                source.to_string().contains("trying to drop type")
+            }
+            _ => false,
+        }
+    }
 }
 
 /// Result type alias for DbError

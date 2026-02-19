@@ -3,6 +3,8 @@
 //! This module provides built-in macros that are available in all templates
 //! without needing to import them from macro files.
 
+use std::collections::BTreeSet;
+
 use ff_core::sql_utils::{escape_sql_string, quote_ident};
 use minijinja::value::Value;
 use minijinja::Error;
@@ -294,29 +296,26 @@ fn cached_builtin_macros() -> &'static [MacroMetadata] {
 }
 
 /// Get metadata for a specific macro by name
-pub fn get_macro_by_name(name: &str) -> Option<MacroMetadata> {
-    cached_builtin_macros()
-        .iter()
-        .find(|m| m.name == name)
-        .cloned()
+pub fn get_macro_by_name(name: &str) -> Option<&'static MacroMetadata> {
+    cached_builtin_macros().iter().find(|m| m.name == name)
 }
 
 /// Get all macros in a specific category
-pub fn get_macros_by_category(category: &str) -> Vec<MacroMetadata> {
+pub fn get_macros_by_category(category: &str) -> Vec<&'static MacroMetadata> {
     cached_builtin_macros()
         .iter()
         .filter(|m| m.category == category)
-        .cloned()
         .collect()
 }
 
 /// Get all available macro categories
 pub fn get_macro_categories() -> Vec<&'static str> {
-    let mut categories: Vec<&'static str> =
-        cached_builtin_macros().iter().map(|m| m.category).collect();
-    categories.sort();
-    categories.dedup();
-    categories
+    cached_builtin_macros()
+        .iter()
+        .map(|m| m.category)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 // ===== Date/Time Macros =====

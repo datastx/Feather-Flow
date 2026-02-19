@@ -87,7 +87,7 @@ fn test_source() -> SourceFile {
     SourceFile {
         kind: SourceKind::Sources,
         version: 1,
-        name: "raw_data".to_string(),
+        name: ff_core::SourceName::new("raw_data"),
         description: Some("Raw data source".to_string()),
         database: Some("main".to_string()),
         schema: "raw".to_string(),
@@ -149,7 +149,7 @@ fn test_function() -> FunctionDef {
 
 fn test_seed() -> Seed {
     Seed {
-        name: "countries".to_string(),
+        name: ff_core::SeedName::new("countries"),
         path: PathBuf::from("models/countries/countries.csv"),
         description: Some("Country codes".to_string()),
         schema: Some("ref".to_string()),
@@ -831,7 +831,7 @@ fn populate_singular_tests() {
             super::project::populate_project(conn, &config, &PathBuf::from("/tmp/project"))?;
 
         let tests = vec![SingularTest {
-            name: "assert_no_orphans".to_string(),
+            name: ff_core::TestName::new("assert_no_orphans"),
             path: PathBuf::from("tests/assert_no_orphans.sql"),
             sql: "SELECT * FROM orders WHERE customer_id NOT IN (SELECT id FROM customers)"
                 .to_string(),

@@ -48,7 +48,7 @@ pub fn populate_singular_tests(
             "INSERT INTO ff_meta.singular_tests (project_id, name, path, sql_text) VALUES (?, ?, ?, ?)",
             duckdb::params![
                 project_id,
-                test.name,
+                test.name.as_str(),
                 test.path.display().to_string(),
                 test.sql,
             ],

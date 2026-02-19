@@ -24,16 +24,13 @@ const COLOR_EPHEMERAL: &str = "#E8E8E8";
 pub(super) async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
     let project = load_project(global)?;
 
-    // Determine output directory
     let output_dir = match &args.output {
         Some(path) => project.root.join(path),
         None => project.target_dir().join("docs"),
     };
 
-    // Create output directory
     fs::create_dir_all(&output_dir).context("Failed to create output directory")?;
 
-    // Get models to document
     let models_to_doc: Vec<String> = if args.nodes.is_some() {
         let (_, dag) = crate::commands::common::build_project_dag(&project)?;
         crate::commands::common::resolve_nodes(&project, &dag, &args.nodes)?
@@ -71,10 +68,8 @@ pub(super) async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> 
                 models_without_schema += 1;
             }
 
-            // Build documentation for this model
             let doc = build_model_doc(model);
 
-            // Add to index
             index_entries.push(ModelSummary {
                 name: model.name.to_string(),
                 description: doc.description.clone(),
@@ -91,7 +86,6 @@ pub(super) async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> 
                     println!("  {} {}.md", CHECKMARK, name);
                 }
                 DocsFormat::Json => {
-                    // For JSON, we collect all docs and output at the end
                     model_docs.push(doc);
                 }
                 DocsFormat::Html => {
@@ -105,7 +99,6 @@ pub(super) async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> 
         }
     }
 
-    // Generate source documentation
     let mut source_docs: Vec<SourceDoc> = Vec::new();
     let mut source_entries: Vec<SourceSummary> = Vec::new();
 
@@ -113,7 +106,7 @@ pub(super) async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> 
         let doc = build_source_doc(source);
 
         source_entries.push(SourceSummary {
-            name: source.name.clone(),
+            name: source.name.to_string(),
             description: source.description.clone(),
             table_count: source.tables.len(),
         });
@@ -139,10 +132,8 @@ pub(super) async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> 
         }
     }
 
-    // Generate index/output
     match args.format {
         DocsFormat::Markdown => {
-            // Generate index.md
             let index_content = generate_index_markdown(
                 &project.config.name,
                 &index_entries,
@@ -155,7 +146,6 @@ pub(super) async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> 
             println!("  {} index.md", CHECKMARK);
         }
         DocsFormat::Json => {
-            // Output all docs as a single JSON file
             let docs_map: HashMap<String, ModelDoc> = model_docs
                 .into_iter()
                 .map(|d| (d.name.clone(), d))
@@ -185,7 +175,6 @@ pub(super) async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> 
             println!("  {} docs.json", CHECKMARK);
         }
         DocsFormat::Html => {
-            // Generate index.html
             let index_content = generate_index_html(
                 &project.config.name,
                 &index_entries,
@@ -199,14 +188,12 @@ pub(super) async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> 
         }
     }
 
-    // Generate lineage diagram (DOT file)
     let lineage_content = generate_lineage_dot(&project);
     let lineage_path = output_dir.join("lineage.dot");
     fs::write(&lineage_path, &lineage_content)
         .context(format!("failed to write {}", lineage_path.display()))?;
     println!("  {} lineage.dot", CHECKMARK);
 
-    // Generate macro documentation
     match args.format {
         DocsFormat::Markdown => {
             let macros_content = generate_macros_markdown(&builtin_macros);
@@ -249,15 +236,12 @@ pub(super) async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> 
 fn generate_markdown(doc: &ModelDoc) -> String {
     let mut md = String::new();
 
-    // Title
     md.push_str(&format!("# {}\n\n", doc.name));
 
-    // Description
     if let Some(desc) = &doc.description {
         md.push_str(&format!("{}\n\n", desc));
     }
 
-    // Metadata
     if doc.owner.is_some()
         || doc.team.is_some()
         || doc.contact.is_some()
@@ -284,7 +268,6 @@ fn generate_markdown(doc: &ModelDoc) -> String {
         }
     }
 
-    // Dependencies
     if !doc.depends_on.is_empty() || !doc.external_deps.is_empty() {
         md.push_str("## Dependencies\n\n");
 
@@ -297,7 +280,6 @@ fn generate_markdown(doc: &ModelDoc) -> String {
         md.push('\n');
     }
 
-    // Columns
     if !doc.columns.is_empty() {
         md.push_str("## Columns\n\n");
         md.push_str("| Column | Type | Description | Classification | Tests |\n");
@@ -319,7 +301,6 @@ fn generate_markdown(doc: &ModelDoc) -> String {
         }
         md.push('\n');
 
-        // Relationships section
         let refs: Vec<_> = doc
             .columns
             .iter()
@@ -339,7 +320,6 @@ fn generate_markdown(doc: &ModelDoc) -> String {
         md.push_str("*No schema file found for this model.*\n\n");
     }
 
-    // Column Lineage section
     if !doc.column_lineage.is_empty() {
         md.push_str("## Column Lineage\n\n");
         md.push_str("| Output Column | Sources | Type | Direct |\n");
@@ -360,7 +340,6 @@ fn generate_markdown(doc: &ModelDoc) -> String {
         md.push('\n');
     }
 
-    // Test Suggestions section
     if !doc.test_suggestions.is_empty() {
         md.push_str("## Suggested Tests\n\n");
         md.push_str("| Column | Suggested Test | Reason |\n");
@@ -382,15 +361,12 @@ fn generate_markdown(doc: &ModelDoc) -> String {
 fn generate_source_markdown(doc: &SourceDoc) -> String {
     let mut md = String::new();
 
-    // Title
     md.push_str(&format!("# Source: {}\n\n", doc.name));
 
-    // Description
     if let Some(desc) = &doc.description {
         md.push_str(&format!("{}\n\n", desc));
     }
 
-    // Metadata
     md.push_str(&format!("**Schema**: {}\n\n", doc.schema));
     if let Some(owner) = &doc.owner {
         md.push_str(&format!("**Owner**: {}\n\n", owner));
@@ -399,7 +375,6 @@ fn generate_source_markdown(doc: &SourceDoc) -> String {
         md.push_str(&format!("**Tags**: {}\n\n", doc.tags.join(", ")));
     }
 
-    // Tables
     md.push_str("## Tables\n\n");
     for table in &doc.tables {
         md.push_str(&format!("### {}\n\n", table.name));
@@ -548,18 +523,14 @@ fn generate_html(doc: &ModelDoc) -> String {
     html.push_str(html_styles());
     html.push_str("</head>\n<body>\n");
 
-    // Navigation
     html.push_str("<nav><a href=\"index.html\">Home</a></nav>\n");
 
-    // Title
     html.push_str(&format!("<h1>{}</h1>\n", doc.name));
 
-    // Description
     if let Some(desc) = &doc.description {
         html.push_str(&format!("<p>{}</p>\n", html_escape(desc)));
     }
 
-    // Metadata
     if doc.owner.is_some()
         || doc.team.is_some()
         || doc.contact.is_some()
@@ -614,7 +585,6 @@ fn generate_html(doc: &ModelDoc) -> String {
         html.push_str("</div>\n");
     }
 
-    // Dependencies
     if !doc.depends_on.is_empty() || !doc.external_deps.is_empty() {
         html.push_str("<h2>Dependencies</h2>\n<ul>\n");
         for dep in &doc.depends_on {
@@ -633,7 +603,6 @@ fn generate_html(doc: &ModelDoc) -> String {
         html.push_str("</ul>\n");
     }
 
-    // Columns
     if !doc.columns.is_empty() {
         html.push_str("<h2>Columns</h2>\n");
         html.push_str("<table>\n<thead><tr><th>Column</th><th>Type</th><th>Description</th><th>Classification</th><th>Tests</th></tr></thead>\n<tbody>\n");
@@ -658,7 +627,6 @@ fn generate_html(doc: &ModelDoc) -> String {
         }
         html.push_str("</tbody></table>\n");
 
-        // Relationships section
         let refs: Vec<_> = doc
             .columns
             .iter()
@@ -681,7 +649,6 @@ fn generate_html(doc: &ModelDoc) -> String {
         html.push_str("<p><em>No schema file found for this model.</em></p>\n");
     }
 
-    // Column Lineage section
     if !doc.column_lineage.is_empty() {
         html.push_str("<h2>Column Lineage</h2>\n");
         html.push_str("<table>\n<thead><tr><th>Output Column</th><th>Sources</th><th>Type</th><th>Direct</th></tr></thead>\n<tbody>\n");
@@ -709,7 +676,6 @@ fn generate_html(doc: &ModelDoc) -> String {
         html.push_str("</tbody></table>\n");
     }
 
-    // Test Suggestions section
     if !doc.test_suggestions.is_empty() {
         html.push_str("<h2>Suggested Tests</h2>\n");
         html.push_str("<table>\n<thead><tr><th>Column</th><th>Suggested Test</th><th>Reason</th></tr></thead>\n<tbody>\n");
@@ -739,18 +705,14 @@ fn generate_source_html(doc: &SourceDoc) -> String {
     html.push_str(html_styles());
     html.push_str("</head>\n<body>\n");
 
-    // Navigation
     html.push_str("<nav><a href=\"index.html\">Home</a></nav>\n");
 
-    // Title
     html.push_str(&format!("<h1>Source: {}</h1>\n", doc.name));
 
-    // Description
     if let Some(desc) = &doc.description {
         html.push_str(&format!("<p>{}</p>\n", html_escape(desc)));
     }
 
-    // Metadata
     html.push_str("<div class=\"metadata\">\n");
     html.push_str(&format!(
         "<p><strong>Schema:</strong> {}</p>\n",
@@ -771,7 +733,6 @@ fn generate_source_html(doc: &SourceDoc) -> String {
     }
     html.push_str("</div>\n");
 
-    // Tables
     html.push_str("<h2>Tables</h2>\n");
     for table in &doc.tables {
         html.push_str(&format!("<h3>{}</h3>\n", table.name));
@@ -930,14 +891,18 @@ fn url_encode_path(s: &str) -> String {
 fn generate_lineage_dot(project: &Project) -> String {
     let mut dot = String::new();
 
-    // Try to load manifest for dependency information
-    let manifest = ff_meta::manifest::Manifest::load(&project.manifest_path()).ok();
+    let manifest = match ff_meta::manifest::Manifest::load(&project.manifest_path()) {
+        Ok(m) => Some(m),
+        Err(e) => {
+            log::warn!("Could not load manifest for lineage graph: {e}");
+            None
+        }
+    };
 
     dot.push_str("digraph lineage {\n");
     dot.push_str("    rankdir=LR;\n");
     dot.push_str("    node [shape=box, style=filled];\n\n");
 
-    // Define node styles for different types
     dot.push_str("    // External/source nodes (grey)\n");
     for source in &project.sources {
         for table in &source.tables {
@@ -985,14 +950,11 @@ fn generate_lineage_dot(project: &Project) -> String {
     if let Some(ref manifest) = manifest {
         // Use manifest for accurate dependencies
         for (name, model) in &manifest.models {
-            // Model dependencies
             for dep in &model.depends_on {
                 dot.push_str(&format!("    \"{}\" -> \"{}\";\n", dep, name));
             }
 
-            // External/source dependencies
             for ext in &model.external_deps {
-                // Try to find matching source table
                 let source_node = project
                     .sources
                     .iter()
@@ -1054,7 +1016,6 @@ fn generate_macros_markdown(builtin_macros: &[MacroMetadata]) -> String {
         "Featherflow provides a set of built-in macros that are available in all templates.\n\n",
     );
 
-    // Get all macros grouped by category
     let categories = get_macro_categories();
     let all_macros = builtin_macros;
 
@@ -1076,7 +1037,6 @@ fn generate_macros_markdown(builtin_macros: &[MacroMetadata]) -> String {
             md.push_str(&format!("### `{}`\n\n", macro_info.name));
             md.push_str(&format!("{}\n\n", macro_info.description));
 
-            // Parameters
             if !macro_info.params.is_empty() {
                 md.push_str("**Parameters:**\n\n");
                 md.push_str("| Parameter | Type | Required | Description |\n");
@@ -1091,7 +1051,6 @@ fn generate_macros_markdown(builtin_macros: &[MacroMetadata]) -> String {
                 md.push('\n');
             }
 
-            // Example
             md.push_str("**Example:**\n\n");
             md.push_str(&format!("```jinja\n{}\n```\n\n", macro_info.example));
             md.push_str("**Output:**\n\n");
@@ -1125,13 +1084,11 @@ fn generate_macros_html(builtin_macros: &[MacroMetadata]) -> String {
     );
     html.push_str("</head>\n<body>\n");
 
-    // Navigation
     html.push_str("<nav><a href=\"index.html\">Home</a></nav>\n");
 
     html.push_str("<h1>Built-in Macros</h1>\n");
     html.push_str("<p>Featherflow provides a set of built-in macros that are available in all templates.</p>\n");
 
-    // Get all macros grouped by category
     let categories = get_macro_categories();
 
     for category in &categories {
@@ -1159,7 +1116,6 @@ fn generate_macros_html(builtin_macros: &[MacroMetadata]) -> String {
             ));
             html.push_str(&format!("<p>{}</p>\n", html_escape(macro_info.description)));
 
-            // Parameters
             if !macro_info.params.is_empty() {
                 html.push_str("<table class=\"param-table\">\n");
                 html.push_str("<thead><tr><th>Parameter</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>\n<tbody>\n");
@@ -1180,7 +1136,6 @@ fn generate_macros_html(builtin_macros: &[MacroMetadata]) -> String {
                 html.push_str("</tbody></table>\n");
             }
 
-            // Example
             html.push_str("<span class=\"example-label\">Example:</span>\n");
             html.push_str(&format!(
                 "<pre><code>{}</code></pre>\n",

@@ -143,11 +143,8 @@ fn walk_plan(plan: &LogicalPlan, edges: &mut Vec<ColumnLineageEdge>) {
                 walk_plan(input.as_ref(), edges);
             }
         }
-        LogicalPlan::TableScan(_) => {
-            // Leaf node — no further traversal needed
-        }
+        LogicalPlan::TableScan(_) => {}
         _ => {
-            // For unhandled plan nodes, try to traverse inputs
             for input in plan.inputs() {
                 walk_plan(input, edges);
             }
