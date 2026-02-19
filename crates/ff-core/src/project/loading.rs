@@ -14,6 +14,50 @@ use std::path::Path;
 
 use super::{Project, ProjectParts};
 
+/// Recursively discover YAML files in a directory, probing each for a matching
+/// `kind` and loading matches with a caller-supplied loader.
+///
+/// This is the shared logic behind `discover_functions_recursive` and
+/// `discover_sources_recursive`.
+pub(crate) fn discover_yaml_recursive<T, P, L>(
+    dir: &Path,
+    items: &mut Vec<T>,
+    probe: P,
+    load: L,
+) -> CoreResult<()>
+where
+    P: Fn(&str) -> bool + Copy,
+    L: Fn(&Path) -> CoreResult<T> + Copy,
+{
+    for entry in std::fs::read_dir(dir).map_err(|e| CoreError::IoWithPath {
+        path: dir.display().to_string(),
+        source: e,
+    })? {
+        let entry = entry.map_err(|e| CoreError::IoWithPath {
+            path: dir.display().to_string(),
+            source: e,
+        })?;
+        let path = entry.path();
+        if path.is_dir() {
+            discover_yaml_recursive(&path, items, probe, load)?;
+        } else if path.extension().is_some_and(|e| e == "yml" || e == "yaml") {
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(e) => {
+                    log::warn!("Cannot read {}: {}", path.display(), e);
+                    continue;
+                }
+            };
+            if !probe(&content) {
+                continue;
+            }
+            let item = load(&path)?;
+            items.push(item);
+        }
+    }
+    Ok(())
+}
+
 /// Extract the file extension as a `&str`, returning `""` for paths without one.
 fn file_extension_str(path: &Path) -> &str {
     path.extension().and_then(|e| e.to_str()).unwrap_or("")

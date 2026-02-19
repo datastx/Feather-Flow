@@ -441,47 +441,21 @@ struct YamlKindProbe {
 
 /// Recursively discover function files in a directory
 fn discover_functions_recursive(dir: &Path, functions: &mut Vec<FunctionDef>) -> CoreResult<()> {
-    for entry in std::fs::read_dir(dir).map_err(|e| CoreError::IoWithPath {
-        path: dir.display().to_string(),
-        source: e,
-    })? {
-        let entry = entry.map_err(|e| CoreError::IoWithPath {
-            path: dir.display().to_string(),
-            source: e,
-        })?;
-        let path = entry.path();
-
-        if path.is_dir() {
-            discover_functions_recursive(&path, functions)?;
-        } else if path.extension().is_some_and(|e| e == "yml" || e == "yaml") {
-            let content = match std::fs::read_to_string(&path) {
-                Ok(c) => c,
-                Err(e) => {
-                    log::warn!("Cannot read {}: {}", path.display(), e);
-                    continue;
-                }
-            };
-
-            // Deserialize just the `kind` field to decide whether this is a function YAML
-            let probe: YamlKindProbe = match serde_yaml::from_str(&content) {
+    crate::project::loading::discover_yaml_recursive(
+        dir,
+        functions,
+        |content| {
+            let probe: YamlKindProbe = match serde_yaml::from_str(content) {
                 Ok(p) => p,
-                Err(_) => continue, // Not valid YAML or unrelated file
+                Err(_) => return false,
             };
-
-            if !matches!(
+            matches!(
                 probe.kind,
                 Some(FunctionKind::Functions | FunctionKind::Function)
-            ) {
-                continue;
-            }
-
-            // Kind probe confirmed this is a function file — parse errors are real
-            let func = FunctionDef::load(&path)?;
-            functions.push(func);
-        }
-    }
-
-    Ok(())
+            )
+        },
+        FunctionDef::load,
+    )
 }
 
 /// Build a lookup map from function name to function definition.

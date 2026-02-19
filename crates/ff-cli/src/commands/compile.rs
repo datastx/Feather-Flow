@@ -88,7 +88,6 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
     let comment_ctx =
         common::build_query_comment_context(&project.config, global.target.as_deref());
 
-    // Get vars merged with target overrides, then merge with CLI --vars
     let base_vars = project.config.get_merged_vars(target.as_deref());
     let vars = merge_vars(&base_vars, &args.vars)?;
 
@@ -104,7 +103,7 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
     let template_ctx = common::build_template_context(&project, global.target.as_deref(), false);
     let jinja = JinjaEnvironment::with_context(&vars, &macro_paths, &template_ctx);
 
-    // Compile all models first — filtering happens after DAG build
+    // Filtering happens after DAG build, so compile all models first
     let all_model_names: Vec<String> = project
         .model_names()
         .into_iter()
@@ -186,17 +185,14 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
         }
     }
 
-    // Validate DAG (always done even in parse-only mode)
     let dag = ModelDag::build(&dependencies).context("Failed to build dependency graph")?;
     let topo_order = dag
         .topological_order()
         .context("Circular dependency detected")?;
 
-    // Apply selector filtering now that DAG is available
     let model_names: Vec<String> = common::resolve_nodes(&project, &dag, &args.nodes)?;
     let model_names_set: HashSet<String> = model_names.iter().cloned().collect();
 
-    // Filter compiled_models to only those selected
     compiled_models.retain(|m| model_names_set.contains(&m.name));
 
     if !json_mode && args.nodes.is_some() {
@@ -215,7 +211,6 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
         );
     }
 
-    // Static analysis phase (DataFusion LogicalPlan)
     if !args.skip_static_analysis {
         let analysis_result = run_static_analysis(
             &project,
@@ -273,7 +268,6 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
     }
 
     for compiled in compiled_models {
-        // Skip ephemeral models - they don't get written as files
         if compiled.materialization == Materialization::Ephemeral {
             if !json_mode {
                 println!("  \u{2713} {} (ephemeral) [inlined]", compiled.name);
@@ -283,44 +277,21 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
                 model: compiled.name,
                 status: RunStatus::Success,
                 materialization: "ephemeral".to_string(),
-                output_path: None, // Ephemeral models don't have output files
+                output_path: None,
                 dependencies: compiled.dependencies,
                 error: None,
             });
             continue;
         }
 
-        // Inline ephemeral dependencies into this model's SQL
-        let final_sql = if !ephemeral_sql.is_empty() {
-            // Collect ephemeral dependencies for this model
-            let is_ephemeral =
-                |name: &str| materializations.get(name) == Some(&Materialization::Ephemeral);
-            let get_sql = |name: &str| ephemeral_sql.get(name).cloned();
+        let final_sql = resolve_final_sql(
+            &compiled,
+            &ephemeral_sql,
+            &dependencies,
+            &materializations,
+            global,
+        )?;
 
-            let (ephemeral_deps, order) = collect_ephemeral_dependencies(
-                &compiled.name,
-                &dependencies,
-                is_ephemeral,
-                get_sql,
-            );
-
-            if !ephemeral_deps.is_empty() {
-                if global.verbose {
-                    eprintln!(
-                        "[verbose] Inlining {} ephemeral model(s) into {}",
-                        ephemeral_deps.len(),
-                        compiled.name
-                    );
-                }
-                inline_ephemeral_ctes(&compiled.sql, &ephemeral_deps, &order)?
-            } else {
-                compiled.sql
-            }
-        } else {
-            compiled.sql
-        };
-
-        // Write the compiled SQL (with inlined ephemerals)
         if args.parse_only {
             if !json_mode {
                 println!(
@@ -341,47 +312,14 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
                 error: None,
             });
         } else {
-            if let Some(parent) = compiled.output_path.parent() {
-                std::fs::create_dir_all(parent).with_context(|| {
-                    format!("Failed to create directory for model: {}", compiled.name)
-                })?;
-            }
-
-            // Attach query comment to written file, but keep in-memory SQL clean for checksums
-            let placement = comment_ctx
-                .as_ref()
-                .map(|c| c.config.placement)
-                .unwrap_or_default();
-            let sql_to_write = match &compiled.query_comment {
-                Some(comment) => {
-                    ff_core::query_comment::attach_query_comment(&final_sql, comment, placement)
-                }
-                None => final_sql.clone(),
-            };
-            std::fs::write(&compiled.output_path, &sql_to_write).with_context(|| {
-                format!("Failed to write compiled SQL for model: {}", compiled.name)
-            })?;
-
-            // Also update the model's compiled_sql with the clean version (no comment)
-            if let Some(model) = project.get_model_mut(&compiled.name) {
-                model.compiled_sql = Some(final_sql);
-            }
-
-            if !json_mode {
-                println!(
-                    "  \u{2713} {} ({})",
-                    compiled.name, compiled.materialization
-                );
-            }
-
-            if global.verbose {
-                eprintln!(
-                    "[verbose] Compiled {} -> {}",
-                    compiled.name,
-                    compiled.output_path.display()
-                );
-            }
-
+            write_compiled_output(
+                &compiled,
+                &final_sql,
+                &comment_ctx,
+                &mut project,
+                global,
+                json_mode,
+            )?;
             success_count += 1;
             compile_results.push(ModelCompileResult {
                 model: compiled.name,
@@ -434,6 +372,91 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
 
     if failure_count > 0 {
         return Err(crate::commands::common::ExitCode(1).into());
+    }
+
+    Ok(())
+}
+
+/// Resolve the final SQL for a non-ephemeral model, inlining any ephemeral dependencies.
+fn resolve_final_sql(
+    compiled: &CompileOutput,
+    ephemeral_sql: &HashMap<String, String>,
+    dependencies: &HashMap<String, Vec<String>>,
+    materializations: &HashMap<String, Materialization>,
+    global: &GlobalArgs,
+) -> Result<String> {
+    if ephemeral_sql.is_empty() {
+        return Ok(compiled.sql.clone());
+    }
+
+    let is_ephemeral = |name: &str| materializations.get(name) == Some(&Materialization::Ephemeral);
+    let get_sql = |name: &str| ephemeral_sql.get(name).cloned();
+
+    let (ephemeral_deps, order) =
+        collect_ephemeral_dependencies(&compiled.name, dependencies, is_ephemeral, get_sql);
+
+    if ephemeral_deps.is_empty() {
+        return Ok(compiled.sql.clone());
+    }
+
+    if global.verbose {
+        eprintln!(
+            "[verbose] Inlining {} ephemeral model(s) into {}",
+            ephemeral_deps.len(),
+            compiled.name
+        );
+    }
+    Ok(inline_ephemeral_ctes(
+        &compiled.sql,
+        &ephemeral_deps,
+        &order,
+    )?)
+}
+
+/// Write compiled SQL to disk, attaching query comments and updating the in-memory model.
+fn write_compiled_output(
+    compiled: &CompileOutput,
+    final_sql: &str,
+    comment_ctx: &Option<ff_core::query_comment::QueryCommentContext>,
+    project: &mut Project,
+    global: &GlobalArgs,
+    json_mode: bool,
+) -> Result<()> {
+    if let Some(parent) = compiled.output_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create directory for model: {}", compiled.name))?;
+    }
+
+    let placement = comment_ctx
+        .as_ref()
+        .map(|c| c.config.placement)
+        .unwrap_or_default();
+    let sql_to_write = match &compiled.query_comment {
+        Some(comment) => {
+            ff_core::query_comment::attach_query_comment(final_sql, comment, placement)
+        }
+        None => final_sql.to_string(),
+    };
+    std::fs::write(&compiled.output_path, &sql_to_write)
+        .with_context(|| format!("Failed to write compiled SQL for model: {}", compiled.name))?;
+
+    if let Some(model) = project.get_model_mut(&compiled.name) {
+        model.compiled_sql = Some(final_sql.to_string());
+    }
+
+    if !json_mode {
+        println!(
+            "  \u{2713} {} ({})",
+            compiled.name, compiled.materialization
+        );
+    }
+
+    if global.verbose {
+        eprintln!(
+            "[verbose] Compiled {} -> {}",
+            compiled.name,
+            compiled.output_path.display()
+        );
     }
 
     Ok(())

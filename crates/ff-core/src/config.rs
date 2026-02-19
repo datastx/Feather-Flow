@@ -296,7 +296,10 @@ impl Config {
             path: path.display().to_string(),
             source: e,
         })?;
-        let config: Config = serde_yaml::from_str(&content)?;
+        let config: Config =
+            serde_yaml::from_str(&content).map_err(|e| CoreError::ConfigParseError {
+                message: format!("{}: {}", path.display(), e),
+            })?;
         config.validate()?;
         Ok(config)
     }

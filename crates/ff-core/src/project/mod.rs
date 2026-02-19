@@ -1,6 +1,6 @@
 //! Project discovery and loading
 
-mod loading;
+pub(crate) mod loading;
 mod versioning;
 
 pub(crate) use loading::find_yaml_path;

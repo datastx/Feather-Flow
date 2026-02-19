@@ -254,11 +254,9 @@ impl ModelSchema {
 
     /// Get owner - prefers direct owner field, falls back to meta.owner
     pub fn get_owner(&self) -> Option<String> {
-        // First check direct owner field
         if let Some(owner) = &self.owner {
             return Some(owner.clone());
         }
-        // Fall back to meta.owner
         self.get_meta_string("owner")
     }
 

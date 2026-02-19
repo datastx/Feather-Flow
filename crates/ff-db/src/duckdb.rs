@@ -381,7 +381,11 @@ impl DuckDbBackend {
     /// Execute batch SQL synchronously
     fn execute_batch_sync(&self, sql: &str) -> DbResult<()> {
         let conn = self.lock_conn()?;
-        conn.execute_batch(sql)?;
+        conn.execute_batch(sql)
+            .map_err(|e| DbError::ExecutionFailed {
+                context: truncate_sql_for_error(sql),
+                source: e,
+            })?;
         Ok(())
     }
 
@@ -402,7 +406,12 @@ impl DuckDbBackend {
         let conn = self.lock_conn()?;
         let limited_sql = format!("SELECT * FROM ({}) AS subq LIMIT {}", sql, limit);
 
-        let mut stmt = conn.prepare(&limited_sql)?;
+        let mut stmt = conn
+            .prepare(&limited_sql)
+            .map_err(|e| DbError::ExecutionFailed {
+                context: truncate_sql_for_error(&limited_sql),
+                source: e,
+            })?;
         let mut rows = Vec::new();
         let mut result_rows = stmt.query([])?;
         let column_count = result_rows.as_ref().map_or(0, |r| r.column_count());
@@ -448,8 +457,14 @@ impl DatabaseCore for DuckDbBackend {
     async fn query_one(&self, sql: &str) -> DbResult<Option<String>> {
         let conn = self.lock_conn()?;
 
-        let mut stmt = conn.prepare(sql)?;
-        let mut result_rows = stmt.query([])?;
+        let mut stmt = conn.prepare(sql).map_err(|e| DbError::ExecutionFailed {
+            context: truncate_sql_for_error(sql),
+            source: e,
+        })?;
+        let mut result_rows = stmt.query([]).map_err(|e| DbError::ExecutionFailed {
+            context: truncate_sql_for_error(sql),
+            source: e,
+        })?;
 
         let Some(row) = result_rows.next()? else {
             return Ok(None);

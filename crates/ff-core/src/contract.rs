@@ -70,7 +70,6 @@ impl ContractValidationResult {
             violation_type,
             message: message.into(),
         });
-        // If enforced, mark as failed
         if self.enforced {
             self.passed = false;
         }

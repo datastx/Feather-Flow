@@ -132,7 +132,6 @@ pub trait SqlDialect: Send + Sync {
     fn parse(&self, sql: &str) -> SqlResult<Vec<Statement>> {
         Parser::parse_sql(self.parser_dialect(), sql).map_err(|e| {
             let msg = e.to_string();
-            // Extract line/column from error message (format: "... at Line: X, Column: Y")
             let (line, column) = parse_location_from_error(&msg);
             SqlError::ParseError {
                 message: msg,
@@ -194,7 +193,7 @@ pub trait SqlDialect: Send + Sync {
 ///
 /// sqlparser 0.60's `ParserError` is a simple string wrapper with no structured
 /// location data, so we extract "Line: N, Column: M" from the error message text.
-fn parse_location_from_error(msg: &str) -> (usize, usize) {
+pub(crate) fn parse_location_from_error(msg: &str) -> (usize, usize) {
     let Some(line_idx) = msg.find("Line: ") else {
         return (0, 0);
     };
