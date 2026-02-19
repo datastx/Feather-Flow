@@ -201,65 +201,10 @@ impl FunctionDef {
                 details: e.to_string(),
             })?;
 
-        if !is_valid_sql_identifier(&schema.name) {
-            return Err(CoreError::FunctionInvalidName {
-                name: schema.name.clone(),
-                path: yaml_path.display().to_string(),
-            });
-        }
-
-        let mut seen_args = std::collections::HashSet::new();
-        for arg in &schema.args {
-            if !seen_args.insert(&arg.name) {
-                return Err(CoreError::FunctionArgError {
-                    name: schema.name.clone(),
-                    details: format!("duplicate argument name '{}'", arg.name),
-                });
-            }
-        }
-
-        let mut seen_default = false;
-        for arg in &schema.args {
-            if arg.default.is_some() {
-                seen_default = true;
-            } else if seen_default {
-                return Err(CoreError::FunctionArgOrderError {
-                    name: schema.name.clone(),
-                    arg: arg.name.clone(),
-                });
-            }
-        }
-
-        // Validate table function has columns (FN006)
-        if schema.function_type == FunctionType::Table {
-            if let FunctionReturn::Table { ref columns } = schema.returns {
-                if columns.is_empty() {
-                    return Err(CoreError::FunctionTableMissingColumns {
-                        name: schema.name.clone(),
-                    });
-                }
-            }
-        }
+        validate_function_schema(&schema, yaml_path)?;
 
         let sql_path = yaml_path.with_extension("sql");
-        if !sql_path.exists() {
-            return Err(CoreError::FunctionMissingSqlFile {
-                name: schema.name.clone(),
-                yaml_path: yaml_path.display().to_string(),
-            });
-        }
-
-        let sql_body = std::fs::read_to_string(&sql_path).map_err(|e| CoreError::IoWithPath {
-            path: sql_path.display().to_string(),
-            source: e,
-        })?;
-
-        if sql_body.trim().is_empty() {
-            return Err(CoreError::FunctionEmptySqlFile {
-                name: schema.name.clone(),
-                sql_path: sql_path.display().to_string(),
-            });
-        }
+        let sql_body = load_function_sql_body(&schema.name, &sql_path, yaml_path)?;
 
         let func_name =
             FunctionName::try_new(&schema.name).ok_or_else(|| CoreError::EmptyName {
@@ -362,6 +307,86 @@ impl FunctionDef {
     }
 }
 
+/// Validate the parsed function schema: name, arguments, and return columns.
+fn validate_function_schema(schema: &FunctionSchema, yaml_path: &Path) -> CoreResult<()> {
+    if !is_valid_sql_identifier(&schema.name) {
+        return Err(CoreError::FunctionInvalidName {
+            name: schema.name.clone(),
+            path: yaml_path.display().to_string(),
+        });
+    }
+
+    validate_function_args(&schema.name, &schema.args)?;
+
+    // Validate table function has columns (FN006)
+    if schema.function_type == FunctionType::Table {
+        if let FunctionReturn::Table { ref columns } = schema.returns {
+            if columns.is_empty() {
+                return Err(CoreError::FunctionTableMissingColumns {
+                    name: schema.name.clone(),
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate function arguments: no duplicate names, defaults must trail.
+fn validate_function_args(func_name: &str, args: &[FunctionArg]) -> CoreResult<()> {
+    let mut seen_args = std::collections::HashSet::new();
+    for arg in args {
+        if !seen_args.insert(&arg.name) {
+            return Err(CoreError::FunctionArgError {
+                name: func_name.to_string(),
+                details: format!("duplicate argument name '{}'", arg.name),
+            });
+        }
+    }
+
+    let mut seen_default = false;
+    for arg in args {
+        if arg.default.is_some() {
+            seen_default = true;
+        } else if seen_default {
+            return Err(CoreError::FunctionArgOrderError {
+                name: func_name.to_string(),
+                arg: arg.name.clone(),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+/// Load and validate the companion SQL file for a function.
+fn load_function_sql_body(
+    func_name: &str,
+    sql_path: &Path,
+    yaml_path: &Path,
+) -> CoreResult<String> {
+    if !sql_path.exists() {
+        return Err(CoreError::FunctionMissingSqlFile {
+            name: func_name.to_string(),
+            yaml_path: yaml_path.display().to_string(),
+        });
+    }
+
+    let sql_body = std::fs::read_to_string(sql_path).map_err(|e| CoreError::IoWithPath {
+        path: sql_path.display().to_string(),
+        source: e,
+    })?;
+
+    if sql_body.trim().is_empty() {
+        return Err(CoreError::FunctionEmptySqlFile {
+            name: func_name.to_string(),
+            sql_path: sql_path.display().to_string(),
+        });
+    }
+
+    Ok(sql_body)
+}
+
 /// Check if a string is a valid SQL identifier
 fn is_valid_sql_identifier(s: &str) -> bool {
     let mut chars = s.chars();
@@ -388,7 +413,7 @@ pub fn discover_functions(function_paths: &[PathBuf]) -> CoreResult<Vec<Function
     }
 
     // Validate no duplicate names (FN003)
-    let mut seen_names: HashMap<String, PathBuf> = HashMap::new();
+    let mut seen_names: HashMap<String, &Path> = HashMap::new();
     for func in &functions {
         let name = func.name.to_string();
         if let Some(existing_path) = seen_names.get(&name) {
@@ -398,7 +423,7 @@ pub fn discover_functions(function_paths: &[PathBuf]) -> CoreResult<Vec<Function
                 path2: func.yaml_path.display().to_string(),
             });
         }
-        seen_names.insert(name, func.yaml_path.clone());
+        seen_names.insert(name, &func.yaml_path);
     }
 
     Ok(functions)

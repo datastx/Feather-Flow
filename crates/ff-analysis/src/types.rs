@@ -349,7 +349,6 @@ pub fn parse_sql_type(s: &str) -> SqlType {
         "UUID" => SqlType::Uuid,
 
         _ => {
-            // Try to parse parameterized types like VARCHAR(255), DECIMAL(10,2)
             if let Some(inner) = try_parse_parameterized(s) {
                 return inner;
             }
@@ -364,20 +363,17 @@ fn try_parse_parameterized(s: &str) -> Option<SqlType> {
     let trimmed = s.trim();
     let upper = trimmed.to_uppercase();
 
-    // Check for array syntax: TYPE[]
     if upper.ends_with("[]") {
         let inner_str = &trimmed[..trimmed.len() - 2];
         let inner_type = parse_sql_type(inner_str);
         return Some(SqlType::Array(Box::new(inner_type)));
     }
 
-    // Check for STRUCT(...) syntax
     if upper.starts_with("STRUCT(") && upper.ends_with(')') {
         let inner = &trimmed[7..trimmed.len() - 1]; // between STRUCT( and )
         return parse_struct_fields(inner);
     }
 
-    // Check for MAP(...) syntax
     if upper.starts_with("MAP(") && upper.ends_with(')') {
         let inner = &trimmed[4..trimmed.len() - 1]; // between MAP( and )
         let parts = split_top_level(inner, ',');

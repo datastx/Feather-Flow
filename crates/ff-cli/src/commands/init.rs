@@ -32,7 +32,6 @@ pub(crate) async fn execute(args: &InitArgs) -> Result<()> {
 
     println!("Creating new Featherflow project: {}\n", args.name);
 
-    // Create directory structure
     let dirs = [
         "",
         "models",
@@ -48,8 +47,6 @@ pub(crate) async fn execute(args: &InitArgs) -> Result<()> {
             .with_context(|| format!("Failed to create directory: {}", path.display()))?;
     }
 
-    // Generate featherflow.yml
-    // Escape YAML special characters in interpolated values
     let safe_name = args.name.replace('"', "\\\"");
     let safe_db_path = args.database_path.replace('"', "\\\"");
     let config_content = format!(
@@ -84,7 +81,6 @@ vars:
     fs::write(project_dir.join("featherflow.yml"), config_content)
         .context("Failed to write featherflow.yml")?;
 
-    // Generate example model SQL
     let example_sql = r#"-- Example model: transforms raw data into a clean format
 SELECT
     id,
@@ -99,7 +95,6 @@ WHERE id IS NOT NULL
     )
     .context("Failed to write example model SQL")?;
 
-    // Generate example model YAML schema (1:1 with SQL)
     let example_yml = r#"version: 1
 description: "Example model that transforms raw data"
 
@@ -125,7 +120,6 @@ columns:
     )
     .context("Failed to write example model YAML")?;
 
-    // Generate example function
     let example_fn_yml = r#"kind: functions
 version: 1
 name: safe_divide
@@ -151,7 +145,6 @@ returns:
     )
     .context("Failed to write example function SQL")?;
 
-    // Generate .gitignore
     let gitignore = "target/\n*.duckdb\n*.duckdb.wal\n";
     fs::write(project_dir.join(".gitignore"), gitignore).context("Failed to write .gitignore")?;
 

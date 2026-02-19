@@ -22,11 +22,14 @@ pub mod reference_manifest;
 pub mod rules;
 pub mod run_state;
 pub mod seed;
+pub mod seed_name;
 pub mod selector;
 pub(crate) mod serde_helpers;
 pub mod source;
+pub mod source_name;
 pub mod sql_utils;
 pub mod table_name;
+pub mod test_name;
 
 pub use checksum::compute_checksum;
 pub use config::{Config, DbType};
@@ -48,6 +51,9 @@ pub use query_comment::{ModelCommentInput, QueryCommentContext, QueryCommentMeta
 pub use reference_manifest::{ReferenceManifest, ReferenceModelRef};
 pub use run_state::{CompletedModel, FailedModel, RunState, RunStateSummary, RunStatus};
 pub use seed::Seed;
+pub use seed_name::SeedName;
 pub use selector::{apply_selectors, Selector, TraversalDepth};
 pub use source::{SourceFile, SourceTable};
+pub use source_name::SourceName;
 pub use table_name::TableName;
+pub use test_name::TestName;

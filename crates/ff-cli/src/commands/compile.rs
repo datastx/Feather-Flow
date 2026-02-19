@@ -522,57 +522,7 @@ fn compile_model_phase1(
         .iter()
         .filter_map(|s| ff_core::TableName::try_new(s.clone()))
         .collect();
-    model.config = ModelConfig {
-        materialized: config_values
-            .get("materialized")
-            .and_then(|v| v.as_str())
-            .map(common::parse_materialization),
-        schema: config_values
-            .get("schema")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        tags: config_values
-            .get("tags")
-            .and_then(|v| {
-                v.try_iter().ok().map(|iter| {
-                    iter.filter_map(|item| item.as_str().map(String::from))
-                        .collect()
-                })
-            })
-            .unwrap_or_default(),
-        unique_key: config_values
-            .get("unique_key")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        incremental_strategy: config_values
-            .get("incremental_strategy")
-            .and_then(|v| v.as_str())
-            .map(common::parse_incremental_strategy),
-        on_schema_change: config_values
-            .get("on_schema_change")
-            .and_then(|v| v.as_str())
-            .map(common::parse_on_schema_change),
-        pre_hook: parse_hooks_from_config(&config_values, "pre_hook"),
-        post_hook: parse_hooks_from_config(&config_values, "post_hook"),
-        wap: config_values.get("wap").map(|v| {
-            v.as_str()
-                .map(|s| s == "true")
-                .unwrap_or_else(|| v.is_true())
-        }),
-        meta: config_values
-            .get("meta")
-            .and_then(|v| {
-                v.try_iter().ok().map(|iter| {
-                    iter.filter_map(|key| {
-                        let key_str = key.as_str()?.to_string();
-                        let val = v.get_attr(&key_str).ok()?;
-                        Some((key_str, val.to_string()))
-                    })
-                    .collect()
-                })
-            })
-            .unwrap_or_default(),
-    };
+    model.config = extract_model_config(&config_values);
 
     let mat = model
         .config
@@ -604,6 +554,61 @@ fn compile_model_phase1(
         output_path,
         query_comment,
     })
+}
+
+/// Extract a `ModelConfig` from Jinja config values returned by `render_with_config`.
+fn extract_model_config(config_values: &HashMap<String, minijinja::Value>) -> ModelConfig {
+    ModelConfig {
+        materialized: config_values
+            .get("materialized")
+            .and_then(|v| v.as_str())
+            .map(common::parse_materialization),
+        schema: config_values
+            .get("schema")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        tags: config_values
+            .get("tags")
+            .and_then(|v| {
+                v.try_iter().ok().map(|iter| {
+                    iter.filter_map(|item| item.as_str().map(String::from))
+                        .collect()
+                })
+            })
+            .unwrap_or_default(),
+        unique_key: config_values
+            .get("unique_key")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        incremental_strategy: config_values
+            .get("incremental_strategy")
+            .and_then(|v| v.as_str())
+            .map(common::parse_incremental_strategy),
+        on_schema_change: config_values
+            .get("on_schema_change")
+            .and_then(|v| v.as_str())
+            .map(common::parse_on_schema_change),
+        pre_hook: parse_hooks_from_config(config_values, "pre_hook"),
+        post_hook: parse_hooks_from_config(config_values, "post_hook"),
+        wap: config_values.get("wap").map(|v| {
+            v.as_str()
+                .map(|s| s == "true")
+                .unwrap_or_else(|| v.is_true())
+        }),
+        meta: config_values
+            .get("meta")
+            .and_then(|v| {
+                v.try_iter().ok().map(|iter| {
+                    iter.filter_map(|key| {
+                        let key_str = key.as_str()?.to_string();
+                        let val = v.get_attr(&key_str).ok()?;
+                        Some((key_str, val.to_string()))
+                    })
+                    .collect()
+                })
+            })
+            .unwrap_or_default(),
+    }
 }
 
 /// Compute the output path for a compiled model, preserving directory structure

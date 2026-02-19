@@ -98,7 +98,6 @@ pub(crate) fn make_config_fn(
             captured.insert(key.to_string(), value);
         }
 
-        // Return empty string (config doesn't output anything)
         Ok(String::new())
     }
 }

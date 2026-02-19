@@ -54,10 +54,8 @@ pub(crate) async fn execute(args: &LineageArgs, global: &GlobalArgs) -> Result<(
         }
     }
 
-    // Resolve cross-model edges
     project_lineage.resolve_edges(&known_models);
 
-    // Propagate classifications from schema definitions
     let classification_lookup = ff_core::classification::build_classification_lookup(&project);
     project_lineage.propagate_classifications(&classification_lookup);
 
@@ -68,7 +66,6 @@ pub(crate) async fn execute(args: &LineageArgs, global: &GlobalArgs) -> Result<(
             .retain(|e| e.classification.as_deref() == Some(cls.as_str()));
     }
 
-    // Filter and output
     match args.output {
         LineageOutput::Json => print_json(&project_lineage, args)?,
         LineageOutput::Dot => print_dot(&project_lineage, args),

@@ -24,7 +24,7 @@ fn insert_source(conn: &Connection, project_id: i64, source: &SourceFile) -> Met
          VALUES (?, ?, ?, ?, ?, ?)",
         duckdb::params![
             project_id,
-            source.name,
+            source.name.as_str(),
             source.description,
             source.database,
             source.schema,
@@ -36,7 +36,7 @@ fn insert_source(conn: &Connection, project_id: i64, source: &SourceFile) -> Met
     let source_id: i64 = conn
         .query_row(
             "SELECT source_id FROM ff_meta.sources WHERE project_id = ? AND name = ?",
-            duckdb::params![project_id, source.name],
+            duckdb::params![project_id, source.name.as_str()],
             |row| row.get(0),
         )
         .populate_context("select source_id")?;
@@ -57,28 +57,39 @@ fn insert_source_tags(conn: &Connection, source_id: i64, source: &SourceFile) ->
 
 fn insert_source_tables(conn: &Connection, source_id: i64, source: &SourceFile) -> MetaResult<()> {
     for table in &source.tables {
-        conn.execute(
-            "INSERT INTO ff_meta.source_tables (source_id, name, identifier, description) VALUES (?, ?, ?, ?)",
-            duckdb::params![source_id, table.name, table.identifier, table.description],
-        )
-        .populate_context(&format!("insert source_tables ({})", table.name))?;
-
-        let table_id: i64 = conn
-            .query_row(
-                "SELECT source_table_id FROM ff_meta.source_tables WHERE source_id = ? AND name = ?",
-                duckdb::params![source_id, table.name],
-                |row| row.get(0),
-            )
-            .populate_context("select source_table_id")?;
-
-        for (i, col) in table.columns.iter().enumerate() {
-            conn.execute(
-                "INSERT INTO ff_meta.source_columns (source_table_id, name, data_type, description, ordinal_position)
-                 VALUES (?, ?, ?, ?, ?)",
-                duckdb::params![table_id, col.name, col.data_type, col.description, (i + 1) as i32],
-            )
-            .populate_context("insert source_columns")?;
-        }
+        insert_single_source_table(conn, source_id, table)?;
     }
+    Ok(())
+}
+
+/// Insert a single source table and its columns.
+fn insert_single_source_table(
+    conn: &Connection,
+    source_id: i64,
+    table: &ff_core::SourceTable,
+) -> MetaResult<()> {
+    conn.execute(
+        "INSERT INTO ff_meta.source_tables (source_id, name, identifier, description) VALUES (?, ?, ?, ?)",
+        duckdb::params![source_id, table.name, table.identifier, table.description],
+    )
+    .populate_context(&format!("insert source_tables ({})", table.name))?;
+
+    let table_id: i64 = conn
+        .query_row(
+            "SELECT source_table_id FROM ff_meta.source_tables WHERE source_id = ? AND name = ?",
+            duckdb::params![source_id, table.name],
+            |row| row.get(0),
+        )
+        .populate_context("select source_table_id")?;
+
+    for (i, col) in table.columns.iter().enumerate() {
+        conn.execute(
+            "INSERT INTO ff_meta.source_columns (source_table_id, name, data_type, description, ordinal_position)
+             VALUES (?, ?, ?, ?, ?)",
+            duckdb::params![table_id, col.name, col.data_type, col.description, (i + 1) as i32],
+        )
+        .populate_context("insert source_columns")?;
+    }
+
     Ok(())
 }

@@ -5,6 +5,7 @@
 
 use crate::error::{CoreError, CoreResult};
 use crate::model::TestDefinition;
+use crate::source_name::SourceName;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -20,7 +21,7 @@ pub struct SourceFile {
     pub version: u32,
 
     /// Logical name for this source group
-    pub name: String,
+    pub name: SourceName,
 
     /// Description of the source group
     #[serde(default)]
@@ -113,7 +114,7 @@ impl SourceFile {
 
         if source.tables.is_empty() {
             return Err(CoreError::SourceEmptyTables {
-                name: source.name.clone(),
+                name: source.name.to_string(),
                 path: path.display().to_string(),
             });
         }
@@ -123,7 +124,7 @@ impl SourceFile {
             if !seen_tables.insert(&table.name) {
                 return Err(CoreError::SourceDuplicateTable {
                     table: table.name.clone(),
-                    source_name: source.name.clone(),
+                    source_name: source.name.to_string(),
                 });
             }
         }
@@ -172,16 +173,16 @@ pub fn discover_sources(source_paths: &[PathBuf]) -> CoreResult<Vec<SourceFile>>
         discover_sources_recursive(source_path, &mut sources)?;
     }
 
-    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     for (idx, source) in sources.iter().enumerate() {
-        if let Some(&prev_idx) = seen.get(&source.name) {
+        if let Some(&prev_idx) = seen.get(source.name.as_str()) {
             return Err(CoreError::SourceDuplicateName {
-                name: source.name.clone(),
+                name: source.name.to_string(),
                 path1: format!("source #{}", prev_idx + 1),
                 path2: format!("source #{}", idx + 1),
             });
         }
-        seen.insert(source.name.clone(), idx);
+        seen.insert(source.name.as_str(), idx);
     }
 
     Ok(sources)

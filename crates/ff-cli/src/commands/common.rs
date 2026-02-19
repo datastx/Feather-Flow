@@ -114,11 +114,13 @@ pub(crate) fn resolve_nodes(
 
 /// Build a lookup set of all external tables including sources.
 pub(crate) fn build_external_tables_lookup(project: &Project) -> HashSet<String> {
-    let mut external_tables: HashSet<String> =
-        project.config.external_tables.iter().cloned().collect();
-    let source_tables = build_source_lookup(&project.sources);
-    external_tables.extend(source_tables);
-    external_tables
+    project
+        .config
+        .external_tables
+        .iter()
+        .cloned()
+        .chain(build_source_lookup(&project.sources))
+        .collect()
 }
 
 /// Parse a materialization string from Jinja config values.
@@ -728,12 +730,7 @@ pub(crate) async fn set_project_search_path(
     db: &Arc<dyn Database>,
     project: &Project,
 ) -> Result<()> {
-    let mut schemas = Vec::new();
-
-    if let Some(ref default_schema) = project.config.schema {
-        schemas.push(default_schema.clone());
-    }
-
+    let mut schemas: Vec<String> = project.config.schema.iter().cloned().collect();
     if !schemas.iter().any(|s| s == "main") {
         schemas.push("main".to_string());
     }

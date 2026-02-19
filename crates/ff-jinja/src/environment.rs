@@ -341,22 +341,7 @@ fn build_macro_preamble(paths: &[PathBuf]) -> String {
             Err(_) => continue,
         };
         for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("sql") {
-                continue;
-            }
-            let contents = match std::fs::read_to_string(&path) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            let names: Vec<String> = re
-                .captures_iter(&contents)
-                .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
-                .collect();
-            if !names.is_empty() {
-                let file_name = entry.file_name().to_string_lossy().to_string();
-                file_macros.insert(file_name, names);
-            }
+            collect_macros_from_entry(&entry, re, &mut file_macros);
         }
     }
 
@@ -366,30 +351,49 @@ fn build_macro_preamble(paths: &[PathBuf]) -> String {
         .collect()
 }
 
+/// Extract macro names from a single directory entry and add them to the map.
+fn collect_macros_from_entry(
+    entry: &std::fs::DirEntry,
+    re: &Regex,
+    file_macros: &mut BTreeMap<String, Vec<String>>,
+) {
+    let path = entry.path();
+    if path.extension().and_then(|e| e.to_str()) != Some("sql") {
+        return;
+    }
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let names: Vec<String> = re
+        .captures_iter(&contents)
+        .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
+        .collect();
+    if !names.is_empty() {
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        file_macros.insert(file_name, names);
+    }
+}
+
 /// Register all built-in macros with the Jinja environment
 fn register_builtins(env: &mut Environment<'_>) {
-    // Date/Time macros
     env.add_function("date_spine", make_date_spine_fn());
     env.add_function("date_trunc", make_date_trunc_fn());
     env.add_function("date_add", make_date_add_fn());
     env.add_function("date_diff", make_date_diff_fn());
 
-    // String macros
     env.add_function("slugify", make_slugify_fn());
     env.add_function("clean_string", make_clean_string_fn());
     env.add_function("split_part", make_split_part_fn());
 
-    // Math macros
     env.add_function("safe_divide", make_safe_divide_fn());
     env.add_function("round_money", make_round_money_fn());
     env.add_function("percent_of", make_percent_of_fn());
 
-    // Cross-DB macros
     env.add_function("limit_zero", make_limit_zero_fn());
     env.add_function("bool_or", make_bool_or_fn());
     env.add_function("hash", make_hash_fn());
 
-    // Utility macros
     env.add_function("hash_columns", make_hash_columns_fn());
     env.add_function("surrogate_key", make_surrogate_key_fn());
     env.add_function("coalesce_columns", make_coalesce_columns_fn());

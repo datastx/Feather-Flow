@@ -109,14 +109,12 @@ impl MetaDb {
     /// DuckDB does not support `ON DELETE CASCADE`, so we delete child tables
     /// first in reverse-dependency order.
     pub fn clear_project_data(&self, project_id: i64) -> MetaResult<()> {
-        // Entity-scoped deletes (shared with clear_models / clear_entity_data)
         for stmt in ENTITY_DELETE_STMTS {
             self.conn
                 .execute(stmt, duckdb::params![project_id])
                 .map_err(|e| MetaError::QueryError(format!("clear_project_data failed: {e}")))?;
         }
 
-        // Project-level deletes (compilation_runs children + project metadata)
         let project_stmts = [
             "DELETE FROM ff_meta.rule_violations WHERE run_id IN (SELECT run_id FROM ff_meta.compilation_runs WHERE project_id = ?)",
             "DELETE FROM ff_meta.diagnostics WHERE run_id IN (SELECT run_id FROM ff_meta.compilation_runs WHERE project_id = ?)",

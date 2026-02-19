@@ -23,7 +23,7 @@ fn insert_seed(conn: &Connection, project_id: i64, seed: &Seed) -> MetaResult<()
          VALUES (?, ?, ?, ?, ?, ?, ?)",
         duckdb::params![
             project_id,
-            seed.name,
+            seed.name.as_str(),
             seed.path.display().to_string(),
             description,
             schema_name,
@@ -36,7 +36,7 @@ fn insert_seed(conn: &Connection, project_id: i64, seed: &Seed) -> MetaResult<()
     let seed_id: i64 = conn
         .query_row(
             "SELECT seed_id FROM ff_meta.seeds WHERE project_id = ? AND name = ?",
-            duckdb::params![project_id, seed.name],
+            duckdb::params![project_id, seed.name.as_str()],
             |row| row.get(0),
         )
         .populate_context("select seed_id")?;

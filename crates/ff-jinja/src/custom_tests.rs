@@ -56,23 +56,28 @@ pub fn discover_custom_test_macros(
             })?;
             let file_path = entry.path();
             if file_path.extension().is_some_and(|e| e == "sql") {
-                let content = fs::read_to_string(&file_path).map_err(|e| {
-                    JinjaError::Internal(format!(
-                        "failed to read macro file {}: {}",
-                        file_path.display(),
-                        e
-                    ))
-                })?;
-                let file_macros = extract_test_macros_from_content(
-                    &content,
-                    file_path.to_string_lossy().as_ref(),
-                );
+                let file_macros = process_macro_file(&file_path)?;
                 discovered.extend(file_macros);
             }
         }
     }
 
     Ok(discovered)
+}
+
+/// Read a single macro file and extract any test macros from it.
+fn process_macro_file(file_path: &std::path::PathBuf) -> JinjaResult<Vec<CustomTestMacro>> {
+    let content = fs::read_to_string(file_path).map_err(|e| {
+        JinjaError::Internal(format!(
+            "failed to read macro file {}: {}",
+            file_path.display(),
+            e
+        ))
+    })?;
+    Ok(extract_test_macros_from_content(
+        &content,
+        file_path.to_string_lossy().as_ref(),
+    ))
 }
 
 /// Extract test macro names from file content

@@ -382,10 +382,9 @@ impl Selector {
         dag: &ModelDag,
         reference_manifest: &dyn ReferenceManifest,
     ) -> CoreResult<HashSet<String>> {
-        let mut selected: HashSet<String> = HashSet::new();
-
-        for (name, model) in models {
-            let should_select = match state_type {
+        let mut selected: HashSet<String> = models
+            .iter()
+            .filter(|(name, model)| match state_type {
                 StateType::New => !reference_manifest.contains_model(name.as_str()),
                 StateType::Modified => {
                     if let Some(ref_model) = reference_manifest.get_model_ref(name.as_str()) {
@@ -394,12 +393,9 @@ impl Selector {
                         true
                     }
                 }
-            };
-
-            if should_select {
-                selected.insert(name.to_string());
-            }
-        }
+            })
+            .map(|(name, _)| name.to_string())
+            .collect();
 
         if include_descendants {
             let descendants: Vec<String> = selected

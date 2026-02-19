@@ -348,6 +348,22 @@ async fn get_search_index(State(state): State<Arc<AppState>>) -> impl IntoRespon
     )
 }
 
+/// Build an HTTP response for an embedded asset with the given content type.
+fn serve_asset(
+    content: rust_embed::EmbeddedFile,
+    content_type: String,
+) -> axum::response::Response {
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CACHE_CONTROL, "no-cache".to_string()),
+        ],
+        content.data.into_owned(),
+    )
+        .into_response()
+}
+
 /// Fallback handler: serve embedded static assets
 async fn static_handler(uri: axum::http::Uri) -> impl IntoResponse {
     let path = uri.path().trim_start_matches('/');
@@ -355,37 +371,19 @@ async fn static_handler(uri: axum::http::Uri) -> impl IntoResponse {
     // Default to index.html for root or SPA routes
     let path = if path.is_empty() { "index.html" } else { path };
 
-    match StaticAssets::get(path) {
-        Some(content) => {
-            let mime = mime_guess::from_path(path)
-                .first_or_octet_stream()
-                .to_string();
-            (
-                StatusCode::OK,
-                [
-                    (header::CONTENT_TYPE, mime),
-                    (header::CACHE_CONTROL, "no-cache".to_string()),
-                ],
-                content.data.into_owned(),
-            )
-                .into_response()
-        }
-        None => {
-            // For SPA routing, serve index.html for paths that don't match a file
-            match StaticAssets::get("index.html") {
-                Some(content) => (
-                    StatusCode::OK,
-                    [
-                        (header::CONTENT_TYPE, "text/html".to_string()),
-                        (header::CACHE_CONTROL, "no-cache".to_string()),
-                    ],
-                    content.data.into_owned(),
-                )
-                    .into_response(),
-                None => (StatusCode::NOT_FOUND, "Not found").into_response(),
-            }
-        }
+    if let Some(content) = StaticAssets::get(path) {
+        let mime = mime_guess::from_path(path)
+            .first_or_octet_stream()
+            .to_string();
+        return serve_asset(content, mime);
     }
+
+    // For SPA routing, serve index.html for paths that don't match a file
+    if let Some(content) = StaticAssets::get("index.html") {
+        return serve_asset(content, "text/html".to_string());
+    }
+
+    (StatusCode::NOT_FOUND, "Not found").into_response()
 }
 
 fn collect_lineage_entries(doc: &ModelDoc, entries: &mut Vec<LineageEntry>) {

@@ -98,7 +98,6 @@ fn collect_consumed_columns(
 ) -> HashSet<String> {
     let mut consumed = HashSet::new();
 
-    // Use lineage edges to find which columns are consumed
     for edge in &ctx.lineage().edges {
         if edge.source_model == source_model {
             consumed.insert(edge.source_column.to_lowercase());

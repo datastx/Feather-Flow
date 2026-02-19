@@ -1077,6 +1077,38 @@ fn check_test_type_compatibility(
     None
 }
 
+/// Process a single rule result, recording issues into the validation context.
+///
+/// Returns `true` if the rule had a failure or error.
+fn process_rule_result(result: &ff_meta::rules::RuleResult, ctx: &mut ValidationContext) -> bool {
+    if let Some(ref err) = result.error {
+        ctx.warning(
+            "R003",
+            format!("Rule '{}' SQL error: {}", result.name, err),
+            Some(result.path.clone()),
+        );
+        return true;
+    }
+
+    if !result.passed {
+        let code = match result.severity {
+            ff_core::rules::RuleSeverity::Error => "R010",
+            ff_core::rules::RuleSeverity::Warn => "R011",
+        };
+        let msg = format!(
+            "Rule '{}' found {} violations",
+            result.name, result.violation_count
+        );
+        match result.severity {
+            ff_core::rules::RuleSeverity::Error => ctx.error(code, msg, Some(result.path.clone())),
+            ff_core::rules::RuleSeverity::Warn => ctx.warning(code, msg, Some(result.path.clone())),
+        }
+        return true;
+    }
+
+    false
+}
+
 /// Run SQL rules against the meta database during validation.
 fn validate_rules(project: &Project, meta_db: &ff_meta::MetaDb, ctx: &mut ValidationContext) {
     let rules_config = match &project.config.rules {
@@ -1112,30 +1144,7 @@ fn validate_rules(project: &Project, meta_db: &ff_meta::MetaDb, ctx: &mut Valida
 
     let mut fail_count = 0;
     for result in &results {
-        if let Some(ref err) = result.error {
-            ctx.warning(
-                "R003",
-                format!("Rule '{}' SQL error: {}", result.name, err),
-                Some(result.path.clone()),
-            );
-            fail_count += 1;
-        } else if !result.passed {
-            let code = match result.severity {
-                ff_core::rules::RuleSeverity::Error => "R010",
-                ff_core::rules::RuleSeverity::Warn => "R011",
-            };
-            let msg = format!(
-                "Rule '{}' found {} violations",
-                result.name, result.violation_count
-            );
-            match result.severity {
-                ff_core::rules::RuleSeverity::Error => {
-                    ctx.error(code, msg, Some(result.path.clone()))
-                }
-                ff_core::rules::RuleSeverity::Warn => {
-                    ctx.warning(code, msg, Some(result.path.clone()))
-                }
-            }
+        if process_rule_result(result, ctx) {
             fail_count += 1;
         }
     }

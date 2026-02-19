@@ -67,7 +67,7 @@ pub(crate) async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
 
     for seed in &project.seeds {
         model_info.push(ModelInfo {
-            name: seed.name.clone(),
+            name: seed.name.to_string(),
             resource_type: InfoResourceType::Seed,
             path: Some(seed.path.display().to_string()),
             materialized: None,
@@ -249,22 +249,17 @@ fn print_table(models: &[&ModelInfo]) {
 
     common::print_table(&headers, &rows);
 
-    let model_count = models
-        .iter()
-        .filter(|m| m.resource_type == InfoResourceType::Model)
-        .count();
-    let seed_count = models
-        .iter()
-        .filter(|m| m.resource_type == InfoResourceType::Seed)
-        .count();
-    let source_count = models
-        .iter()
-        .filter(|m| m.resource_type == InfoResourceType::Source)
-        .count();
-    let function_count = models
-        .iter()
-        .filter(|m| m.resource_type.is_function())
-        .count();
+    let (model_count, seed_count, source_count, function_count) =
+        models
+            .iter()
+            .fold((0, 0, 0, 0), |(models, seeds, sources, functions), m| {
+                (
+                    models + usize::from(m.resource_type == InfoResourceType::Model),
+                    seeds + usize::from(m.resource_type == InfoResourceType::Seed),
+                    sources + usize::from(m.resource_type == InfoResourceType::Source),
+                    functions + usize::from(m.resource_type.is_function()),
+                )
+            });
 
     println!();
     let mut parts = vec![format!("{} models", model_count)];

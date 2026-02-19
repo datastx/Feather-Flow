@@ -175,7 +175,7 @@ impl Manifest {
 
             let manifest_source = ManifestSource {
                 name: table.name.clone(),
-                source_name: source.name.clone(),
+                source_name: source.name.to_string(),
                 schema: source.schema.clone(),
                 database: source.database.clone(),
                 identifier: table.identifier.clone(),

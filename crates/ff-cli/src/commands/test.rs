@@ -524,16 +524,17 @@ async fn run_tests_parallel(
         .await;
 }
 
-/// Process and print schema test result
-async fn process_schema_test_result(
+/// Format the output line and update counters for a schema test result.
+///
+/// Returns `(status_string, error_message)` after incrementing the appropriate
+/// atomic counter and optionally printing to stdout.
+fn format_schema_test_output(
     result: &ff_test::runner::TestResult,
     schema_test: &SchemaTest,
-    generated: &GeneratedTest,
-    failures_dir: &Option<Arc<std::path::PathBuf>>,
     counters: &TestCounters,
     json_mode: bool,
-) {
-    let (status, error_msg) = if result.passed {
+) -> (String, Option<String>) {
+    if result.passed {
         counters.passed.fetch_add(1, Ordering::SeqCst);
         if !json_mode {
             println!(
@@ -542,8 +543,10 @@ async fn process_schema_test_result(
                 result.duration.as_millis()
             );
         }
-        (TestStatus::Pass.to_string(), None)
-    } else if let Some(error) = &result.error {
+        return (TestStatus::Pass.to_string(), None);
+    }
+
+    if let Some(error) = &result.error {
         counters.errors.fetch_add(1, Ordering::SeqCst);
         if !json_mode {
             println!(
@@ -553,33 +556,45 @@ async fn process_schema_test_result(
                 result.duration.as_millis()
             );
         }
-        (TestStatus::Error.to_string(), Some(error.clone()))
-    } else {
-        let is_warning = schema_test.config.severity == TestSeverity::Warn;
-        if is_warning {
-            counters.warned.fetch_add(1, Ordering::SeqCst);
-            if !json_mode {
-                println!(
-                    "  \u{26a0} {} ({} failures, warn) [{}ms]",
-                    result.name,
-                    result.failure_count,
-                    result.duration.as_millis()
-                );
-            }
-            ("warn".to_string(), None)
-        } else {
-            counters.failed.fetch_add(1, Ordering::SeqCst);
-            if !json_mode {
-                println!(
-                    "  \u{2717} {} ({} failures) [{}ms]",
-                    result.name,
-                    result.failure_count,
-                    result.duration.as_millis()
-                );
-            }
-            (TestStatus::Fail.to_string(), None)
+        return (TestStatus::Error.to_string(), Some(error.clone()));
+    }
+
+    let is_warning = schema_test.config.severity == TestSeverity::Warn;
+    if is_warning {
+        counters.warned.fetch_add(1, Ordering::SeqCst);
+        if !json_mode {
+            println!(
+                "  \u{26a0} {} ({} failures, warn) [{}ms]",
+                result.name,
+                result.failure_count,
+                result.duration.as_millis()
+            );
         }
-    };
+        ("warn".to_string(), None)
+    } else {
+        counters.failed.fetch_add(1, Ordering::SeqCst);
+        if !json_mode {
+            println!(
+                "  \u{2717} {} ({} failures) [{}ms]",
+                result.name,
+                result.failure_count,
+                result.duration.as_millis()
+            );
+        }
+        (TestStatus::Fail.to_string(), None)
+    }
+}
+
+/// Process and print schema test result
+async fn process_schema_test_result(
+    result: &ff_test::runner::TestResult,
+    schema_test: &SchemaTest,
+    generated: &GeneratedTest,
+    failures_dir: &Option<Arc<std::path::PathBuf>>,
+    counters: &TestCounters,
+    json_mode: bool,
+) {
+    let (status, error_msg) = format_schema_test_output(result, schema_test, counters, json_mode);
 
     let test_output = TestResultOutput {
         name: result.name.clone(),
@@ -704,7 +719,7 @@ async fn run_singular_test(db: &dyn Database, test: &SingularTest) -> SingularTe
         Ok(count) => {
             if count == 0 {
                 SingularTestResult {
-                    name: test.name.clone(),
+                    name: test.name.to_string(),
                     passed: true,
                     failure_count: 0,
                     sample_failures: Vec::new(),
@@ -724,7 +739,7 @@ async fn run_singular_test(db: &dyn Database, test: &SingularTest) -> SingularTe
                 };
 
                 SingularTestResult {
-                    name: test.name.clone(),
+                    name: test.name.to_string(),
                     passed: false,
                     failure_count: count,
                     sample_failures,
@@ -734,7 +749,7 @@ async fn run_singular_test(db: &dyn Database, test: &SingularTest) -> SingularTe
             }
         }
         Err(e) => SingularTestResult {
-            name: test.name.clone(),
+            name: test.name.to_string(),
             passed: false,
             failure_count: 0,
             sample_failures: Vec::new(),

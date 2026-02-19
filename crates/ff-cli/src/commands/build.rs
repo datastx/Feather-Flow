@@ -34,6 +34,68 @@ fn classify_phase_result(result: Result<()>) -> Result<Option<i32>> {
     }
 }
 
+/// Run schema tests for a single model, stopping on first failure.
+///
+/// Returns `(passed_count, failed_count)`.
+async fn run_model_tests(
+    runner: &TestRunner<'_>,
+    model_tests: &[&ff_core::model::SchemaTest],
+    qualified_name: &str,
+    custom_test_registry: &CustomTestRegistry,
+    custom_test_env: &minijinja::Environment<'static>,
+    quiet: bool,
+) -> (usize, usize) {
+    let mut passed = 0usize;
+    let mut failed = 0usize;
+
+    for schema_test in model_tests {
+        let generated = test::generate_test_with_custom_support(
+            schema_test,
+            qualified_name,
+            custom_test_registry,
+            custom_test_env,
+        );
+        let result = runner.run_test(&generated).await;
+
+        if result.passed {
+            passed += 1;
+            if !quiet {
+                println!(
+                    "    \u{2713} {} [{}ms]",
+                    result.name,
+                    result.duration.as_millis()
+                );
+            }
+        } else if let Some(error) = &result.error {
+            failed += 1;
+            if !quiet {
+                println!(
+                    "    \u{2717} {} - {} [{}ms]",
+                    result.name,
+                    error,
+                    result.duration.as_millis()
+                );
+            }
+        } else {
+            failed += 1;
+            if !quiet {
+                println!(
+                    "    \u{2717} {} ({} failures) [{}ms]",
+                    result.name,
+                    result.failure_count,
+                    result.duration.as_millis()
+                );
+            }
+        }
+
+        if failed > 0 {
+            break;
+        }
+    }
+
+    (passed, failed)
+}
+
 /// Execute the build command: seed → per-model (materialize + test).
 pub(crate) async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()> {
     let quiet = args.quiet || args.output == OutputFormat::Json;
@@ -214,58 +276,21 @@ pub(crate) async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()>
         let model_tests: Vec<_> = project.tests.iter().filter(|t| t.model == *name).collect();
 
         let test_count = model_tests.len();
-        let mut model_tests_passed = 0usize;
-        let mut model_tests_failed = 0usize;
 
         let qualified_name = model_qualified_names
             .get(name)
             .map(|s| s.as_str())
             .unwrap_or(name);
 
-        for schema_test in &model_tests {
-            let generated = test::generate_test_with_custom_support(
-                schema_test,
-                qualified_name,
-                &custom_test_registry,
-                &custom_test_env,
-            );
-            let result = runner.run_test(&generated).await;
-
-            if result.passed {
-                model_tests_passed += 1;
-                if !quiet {
-                    println!(
-                        "    \u{2713} {} [{}ms]",
-                        result.name,
-                        result.duration.as_millis()
-                    );
-                }
-            } else if let Some(error) = &result.error {
-                model_tests_failed += 1;
-                if !quiet {
-                    println!(
-                        "    \u{2717} {} - {} [{}ms]",
-                        result.name,
-                        error,
-                        result.duration.as_millis()
-                    );
-                }
-            } else {
-                model_tests_failed += 1;
-                if !quiet {
-                    println!(
-                        "    \u{2717} {} ({} failures) [{}ms]",
-                        result.name,
-                        result.failure_count,
-                        result.duration.as_millis()
-                    );
-                }
-            }
-
-            if model_tests_failed > 0 {
-                break;
-            }
-        }
+        let (model_tests_passed, model_tests_failed) = run_model_tests(
+            &runner,
+            &model_tests,
+            qualified_name,
+            &custom_test_registry,
+            &custom_test_env,
+            quiet,
+        )
+        .await;
 
         total_tests_passed += model_tests_passed;
         total_tests_failed += model_tests_failed;

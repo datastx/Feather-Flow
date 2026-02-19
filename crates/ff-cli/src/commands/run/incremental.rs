@@ -165,6 +165,38 @@ async fn execute_strategy(
     }
 }
 
+/// Named references for WAP incremental execution.
+struct WapIncrementalCtx<'a> {
+    qualified_name: &'a str,
+    wap_qualified: &'a str,
+    quoted_wap: &'a str,
+    quoted_name: &'a str,
+}
+
+/// Copy the production table to the WAP schema and apply incremental logic.
+///
+/// This is the `Materialization::Incremental` arm of `execute_wap`, extracted
+/// to keep the match body shallow.
+async fn wap_incremental(
+    db: &Arc<dyn Database>,
+    ctx: &WapIncrementalCtx<'_>,
+    compiled: &CompiledModel,
+    full_refresh: bool,
+    exec_sql: &str,
+) -> Result<(), ff_db::error::DbError> {
+    if !full_refresh {
+        let exists = db.relation_exists(ctx.qualified_name).await?;
+        if exists {
+            let copy_sql = format!(
+                "CREATE OR REPLACE TABLE {} AS FROM {}",
+                ctx.quoted_wap, ctx.quoted_name
+            );
+            db.execute(&copy_sql).await?;
+        }
+    }
+    execute_incremental(db, ctx.wap_qualified, compiled, full_refresh, exec_sql).await
+}
+
 /// Execute Write-Audit-Publish flow for a model.
 ///
 /// 1. Create WAP schema if needed
@@ -197,19 +229,13 @@ pub(super) async fn execute_wap(params: &WapParams<'_>) -> Result<(), ff_db::err
             db.create_table_as(&wap_qualified, exec_sql, true).await?;
         }
         Materialization::Incremental => {
-            // Copy existing prod table to WAP schema (if it exists and not full refresh)
-            if !*full_refresh {
-                let exists = db.relation_exists(qualified_name).await?;
-                if exists {
-                    let copy_sql = format!(
-                        "CREATE OR REPLACE TABLE {} AS FROM {}",
-                        quoted_wap, quoted_name
-                    );
-                    db.execute(&copy_sql).await?;
-                }
-            }
-            // Apply incremental logic against the WAP copy
-            execute_incremental(db, &wap_qualified, compiled, *full_refresh, exec_sql).await?;
+            let inc_ctx = WapIncrementalCtx {
+                qualified_name,
+                wap_qualified: &wap_qualified,
+                quoted_wap: &quoted_wap,
+                quoted_name: &quoted_name,
+            };
+            wap_incremental(db, &inc_ctx, compiled, *full_refresh, exec_sql).await?;
         }
         other => {
             return Err(ff_db::error::DbError::ExecutionError(format!(

@@ -42,7 +42,7 @@ pub fn build_classification_lookup(project: &Project) -> HashMap<String, HashMap
 /// - `sensitive` = 3
 /// - `internal` = 2
 /// - `public` = 1 (lowest)
-pub fn classification_rank(cls: &DataClassification) -> u8 {
+pub(crate) fn classification_rank(cls: &DataClassification) -> u8 {
     match cls {
         DataClassification::Pii => 4,
         DataClassification::Sensitive => 3,
@@ -52,7 +52,7 @@ pub fn classification_rank(cls: &DataClassification) -> u8 {
 }
 
 /// Parse a classification string into the enum, returning None for unknown values
-pub fn parse_classification(s: &str) -> Option<DataClassification> {
+pub(crate) fn parse_classification(s: &str) -> Option<DataClassification> {
     match s.to_lowercase().as_str() {
         "pii" => Some(DataClassification::Pii),
         "sensitive" => Some(DataClassification::Sensitive),
@@ -89,6 +89,39 @@ pub struct ClassificationEdge {
     /// Whether this is a direct pass-through (copy) or a transform.
     /// Inspect edges (WHERE/JOIN) should be excluded before calling propagation.
     pub is_direct: bool,
+}
+
+/// Update the effective classification for a single column in a model.
+///
+/// Compares the best upstream classification (from incoming lineage edges)
+/// against the column's current classification and upgrades it if the
+/// upstream is more sensitive.
+fn update_column_classification(
+    model: &str,
+    column: &str,
+    target_index: &HashMap<(&str, &str), Vec<&ClassificationEdge>>,
+    effective_cls: &mut HashMap<String, HashMap<String, String>>,
+) {
+    let Some(incoming) = target_index.get(&(model, column)) else {
+        return;
+    };
+
+    let Some(best_cls) = find_best_upstream_classification(effective_cls, incoming) else {
+        return;
+    };
+
+    let current_rank = effective_cls
+        .get(model)
+        .and_then(|cols| cols.get(column))
+        .map(|c| rank_str(c))
+        .unwrap_or(0);
+
+    if rank_str(&best_cls) > current_rank {
+        effective_cls
+            .entry(model.to_string())
+            .or_default()
+            .insert(column.to_string(), best_cls);
+    }
 }
 
 /// Find the highest-ranked upstream classification among a set of incoming edges.
@@ -163,26 +196,7 @@ pub fn propagate_classifications_topo(
         };
 
         for &column in columns {
-            let Some(incoming) = target_index.get(&(model.as_str(), column)) else {
-                continue;
-            };
-
-            let Some(best_cls) = find_best_upstream_classification(&effective_cls, incoming) else {
-                continue;
-            };
-
-            let current_rank = effective_cls
-                .get(model.as_str())
-                .and_then(|cols| cols.get(column))
-                .map(|c| rank_str(c))
-                .unwrap_or(0);
-
-            if rank_str(&best_cls) > current_rank {
-                effective_cls
-                    .entry(model.to_string())
-                    .or_default()
-                    .insert(column.to_string(), best_cls);
-            }
+            update_column_classification(model, column, &target_index, &mut effective_cls);
         }
     }
 

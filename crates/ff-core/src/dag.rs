@@ -266,12 +266,10 @@ impl ModelDag {
         let mut selected = vec![model_name.clone()];
 
         if prefix {
-            // +model: include ancestors
             selected.extend(self.ancestors(&model_name));
         }
 
         if suffix {
-            // model+: include descendants
             selected.extend(self.descendants(&model_name));
         }
 

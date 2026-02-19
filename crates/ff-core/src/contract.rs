@@ -116,7 +116,6 @@ pub fn validate_contract(
     for column_def in &schema.columns {
         let column_lower = column_def.name.to_lowercase();
 
-        // Check if column exists
         match actual_map.get(&column_lower) {
             None => {
                 result.add_violation(
@@ -182,12 +181,10 @@ pub(crate) fn types_compatible(expected: &str, actual: &str) -> bool {
     let expected_norm = normalize_type(expected);
     let actual_norm = normalize_type(actual);
 
-    // Exact match after normalization
     if expected_norm == actual_norm {
         return true;
     }
 
-    // Check type families
     let expected_family = type_family(&expected_norm);
     let actual_family = type_family(&actual_norm);
 
@@ -198,14 +195,12 @@ pub(crate) fn types_compatible(expected: &str, actual: &str) -> bool {
 fn normalize_type(t: &str) -> String {
     let t = t.to_uppercase();
 
-    // Remove parentheses for precision/scale
     let base = if let Some(paren) = t.find('(') {
         &t[..paren]
     } else {
         &t
     };
 
-    // Normalize common aliases
     match base.trim() {
         "INT" => "INTEGER".to_string(),
         "BOOL" => "BOOLEAN".to_string(),

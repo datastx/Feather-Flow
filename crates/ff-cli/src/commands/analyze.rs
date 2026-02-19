@@ -172,23 +172,7 @@ pub(crate) async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<(
         if let Some((_project_id, run_id, model_id_map)) =
             common::populate_meta_phase1(&meta_db, ctx.project(), "analyze", args.nodes.as_deref())
         {
-            // Persist column lineage edges
-            if let Err(e) = meta_db.transaction(|conn| {
-                let meta_edges = build_meta_lineage_edges(ctx.lineage(), &model_id_map);
-                ff_meta::populate::analysis::populate_column_lineage(conn, &meta_edges)?;
-
-                // Propagate classifications through lineage and persist
-                let declared = build_classification_lookup(ctx.project());
-                let cls_edges = build_classification_edges(ctx.lineage());
-                let order_strings: Vec<String> = order.iter().map(|n| n.to_string()).collect();
-                let effective =
-                    propagate_classifications_topo(&order_strings, &cls_edges, &declared);
-                let entries = build_effective_entries(&effective, &model_id_map);
-                ff_meta::populate::analysis::populate_effective_classifications(conn, &entries)?;
-                Ok(())
-            }) {
-                log::warn!("Meta database: failed to populate lineage/classifications: {e}");
-            }
+            populate_meta_analysis(&meta_db, &ctx, &order, &model_id_map);
 
             let status = if filtered.iter().any(|d| d.severity == Severity::Error) {
                 "error"
@@ -205,6 +189,29 @@ pub(crate) async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<(
     }
 
     Ok(())
+}
+
+/// Persist column lineage and classification data to the meta database.
+fn populate_meta_analysis(
+    meta_db: &ff_meta::MetaDb,
+    ctx: &AnalysisContext,
+    order: &[ModelName],
+    model_id_map: &HashMap<String, i64>,
+) {
+    if let Err(e) = meta_db.transaction(|conn| {
+        let meta_edges = build_meta_lineage_edges(ctx.lineage(), model_id_map);
+        ff_meta::populate::analysis::populate_column_lineage(conn, &meta_edges)?;
+
+        let declared = build_classification_lookup(ctx.project());
+        let cls_edges = build_classification_edges(ctx.lineage());
+        let order_strings: Vec<String> = order.iter().map(|n| n.to_string()).collect();
+        let effective = propagate_classifications_topo(&order_strings, &cls_edges, &declared);
+        let entries = build_effective_entries(&effective, model_id_map);
+        ff_meta::populate::analysis::populate_effective_classifications(conn, &entries)?;
+        Ok(())
+    }) {
+        log::warn!("Meta database: failed to populate lineage/classifications: {e}");
+    }
 }
 
 /// Print diagnostics as a table
@@ -352,18 +359,18 @@ fn build_effective_entries(
     effective: &HashMap<String, HashMap<String, String>>,
     model_id_map: &HashMap<String, i64>,
 ) -> Vec<ff_meta::populate::analysis::EffectiveClassification> {
-    let mut entries = Vec::new();
-    for (model, columns) in effective {
-        let Some(&model_id) = model_id_map.get(model) else {
-            continue;
-        };
-        for (column, classification) in columns {
-            entries.push(ff_meta::populate::analysis::EffectiveClassification {
-                model_id,
-                column_name: column.clone(),
-                effective_classification: classification.clone(),
-            });
-        }
-    }
-    entries
+    effective
+        .iter()
+        .filter_map(|(model, columns)| {
+            let &model_id = model_id_map.get(model)?;
+            Some(columns.iter().map(move |(column, classification)| {
+                ff_meta::populate::analysis::EffectiveClassification {
+                    model_id,
+                    column_name: column.clone(),
+                    effective_classification: classification.clone(),
+                }
+            }))
+        })
+        .flatten()
+        .collect()
 }

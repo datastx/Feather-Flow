@@ -80,14 +80,10 @@ impl PlanPassManager {
         let mut diagnostics = Vec::new();
 
         for name in model_order {
-            if let Some(result) = models.get(name) {
-                for pass in &self.model_passes {
-                    if !super::should_run_pass(pass.name(), pass_filter) {
-                        continue;
-                    }
-                    diagnostics.extend(pass.run_model(name, &result.plan, ctx));
-                }
-            }
+            let Some(result) = models.get(name) else {
+                continue;
+            };
+            self.run_model_passes(name, &result.plan, ctx, pass_filter, &mut diagnostics);
         }
 
         for pass in &self.dag_passes {
@@ -98,6 +94,23 @@ impl PlanPassManager {
         }
 
         diagnostics
+    }
+
+    /// Run all per-model passes on a single model's plan, appending diagnostics.
+    fn run_model_passes(
+        &self,
+        model_name: &ModelName,
+        plan: &LogicalPlan,
+        ctx: &AnalysisContext,
+        pass_filter: Option<&[String]>,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        for pass in &self.model_passes {
+            if !super::should_run_pass(pass.name(), pass_filter) {
+                continue;
+            }
+            diagnostics.extend(pass.run_model(model_name, plan, ctx));
+        }
     }
 
     /// List all available pass names
