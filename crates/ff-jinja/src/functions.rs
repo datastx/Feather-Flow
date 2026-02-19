@@ -188,10 +188,10 @@ pub(crate) fn minijinja_value_to_json(val: &Value) -> serde_json::Value {
         ValueKind::Undefined | ValueKind::None => serde_json::Value::Null,
         ValueKind::Bool => serde_json::Value::Bool(val.is_true()),
         ValueKind::Number => {
-            let owned = val.clone();
-            if let Ok(i) = i64::try_from(owned.clone()) {
+            if let Ok(i) = i64::try_from(val.clone()) {
                 serde_json::Value::Number(i.into())
-            } else if let Ok(f) = f64::try_from(owned) {
+            } else if let Ok(f) = f64::try_from(val.clone()) {
+                // from_f64 returns None for NaN/Infinity, which map to JSON null
                 serde_json::Number::from_f64(f)
                     .map(serde_json::Value::Number)
                     .unwrap_or(serde_json::Value::Null)

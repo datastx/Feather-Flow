@@ -42,3 +42,16 @@ impl From<duckdb::Error> for MetaError {
         MetaError::DuckDb(err)
     }
 }
+
+/// Extension trait for converting `duckdb::Result<T>` to `MetaResult<T>` with
+/// a contextual message, eliminating repetitive `.map_err(|e| MetaError::PopulationError(...))`.
+pub(crate) trait MetaResultExt<T> {
+    /// Wrap a DuckDB error as a [`MetaError::PopulationError`] with context.
+    fn populate_context(self, context: &str) -> MetaResult<T>;
+}
+
+impl<T> MetaResultExt<T> for duckdb::Result<T> {
+    fn populate_context(self, context: &str) -> MetaResult<T> {
+        self.map_err(|e| MetaError::PopulationError(format!("{context}: {e}")))
+    }
+}

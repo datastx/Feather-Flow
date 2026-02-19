@@ -1,6 +1,6 @@
 //! Populate the `functions`, `function_args`, and `function_return_columns` tables.
 
-use crate::error::{MetaError, MetaResult};
+use crate::error::{MetaResult, MetaResultExt};
 use duckdb::Connection;
 use ff_core::FunctionDef;
 
@@ -43,7 +43,7 @@ fn insert_function(conn: &Connection, project_id: i64, func: &FunctionDef) -> Me
             return_type,
         ],
     )
-    .map_err(|e| MetaError::PopulationError(format!("insert functions ({}): {e}", func.name)))?;
+    .populate_context(&format!("insert functions ({})", func.name))?;
 
     let function_id: i64 = conn
         .query_row(
@@ -51,7 +51,7 @@ fn insert_function(conn: &Connection, project_id: i64, func: &FunctionDef) -> Me
             duckdb::params![project_id, func.name.as_ref()],
             |row| row.get(0),
         )
-        .map_err(|e| MetaError::PopulationError(format!("select function_id: {e}")))?;
+        .populate_context("select function_id")?;
 
     for (i, arg) in func.args.iter().enumerate() {
         conn.execute(
@@ -66,7 +66,7 @@ fn insert_function(conn: &Connection, project_id: i64, func: &FunctionDef) -> Me
                 (i + 1) as i32,
             ],
         )
-        .map_err(|e| MetaError::PopulationError(format!("insert function_args: {e}")))?;
+        .populate_context("insert function_args")?;
     }
 
     if let ff_core::function::FunctionReturn::Table { columns } = &func.returns {
@@ -76,9 +76,7 @@ fn insert_function(conn: &Connection, project_id: i64, func: &FunctionDef) -> Me
                  VALUES (?, ?, ?, ?)",
                 duckdb::params![function_id, col.name, col.data_type, (i + 1) as i32],
             )
-            .map_err(|e| {
-                MetaError::PopulationError(format!("insert function_return_columns: {e}"))
-            })?;
+            .populate_context("insert function_return_columns")?;
         }
     }
 

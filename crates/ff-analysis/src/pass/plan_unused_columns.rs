@@ -128,13 +128,7 @@ fn collect_column_refs_from_plan(plan: &LogicalPlan, consumed: &mut HashSet<Stri
             collect_column_refs_from_plan(&filter.input, consumed);
         }
         LogicalPlan::Join(join) => {
-            for (left_key, right_key) in &join.on {
-                collect_column_refs_lowercase(left_key, consumed);
-                collect_column_refs_lowercase(right_key, consumed);
-            }
-            if let Some(ref filter) = join.filter {
-                collect_column_refs_lowercase(filter, consumed);
-            }
+            collect_columns_from_join(join, consumed);
             collect_column_refs_from_plan(&join.left, consumed);
             collect_column_refs_from_plan(&join.right, consumed);
         }
@@ -158,6 +152,20 @@ fn collect_column_refs_from_plan(plan: &LogicalPlan, consumed: &mut HashSet<Stri
                 collect_column_refs_from_plan(input, consumed);
             }
         }
+    }
+}
+
+/// Collect column refs from JOIN keys and optional filter expression
+fn collect_columns_from_join(
+    join: &datafusion_expr::logical_plan::Join,
+    consumed: &mut HashSet<String>,
+) {
+    for (left_key, right_key) in &join.on {
+        collect_column_refs_lowercase(left_key, consumed);
+        collect_column_refs_lowercase(right_key, consumed);
+    }
+    if let Some(ref filter) = join.filter {
+        collect_column_refs_lowercase(filter, consumed);
     }
 }
 

@@ -150,17 +150,7 @@ fn analyze_select(select: &Select, suggestions: &mut ModelSuggestions) {
 /// Analyze table joins for not_null suggestions
 fn analyze_table_joins(table: &TableWithJoins, suggestions: &mut ModelSuggestions) {
     for join in &table.joins {
-        let constraint = match &join.join_operator {
-            JoinOperator::Join(c)
-            | JoinOperator::Inner(c)
-            | JoinOperator::Left(c)
-            | JoinOperator::LeftOuter(c)
-            | JoinOperator::Right(c)
-            | JoinOperator::RightOuter(c)
-            | JoinOperator::FullOuter(c) => Some(c),
-            _ => None,
-        };
-        if let Some(JoinConstraint::On(expr)) = constraint {
+        if let Some(expr) = extract_join_on_expr(&join.join_operator) {
             for col in extract_columns_from_expr(expr) {
                 suggestions.add_suggestion(&col, TestSuggestion::NotNull);
             }
@@ -175,27 +165,46 @@ fn analyze_table_joins(table: &TableWithJoins, suggestions: &mut ModelSuggestion
     }
 }
 
+/// Extract the ON expression from a join operator, if present.
+fn extract_join_on_expr(op: &JoinOperator) -> Option<&Expr> {
+    let constraint = match op {
+        JoinOperator::Join(c)
+        | JoinOperator::Inner(c)
+        | JoinOperator::Left(c)
+        | JoinOperator::LeftOuter(c)
+        | JoinOperator::Right(c)
+        | JoinOperator::RightOuter(c)
+        | JoinOperator::FullOuter(c) => Some(c),
+        _ => None,
+    };
+    match constraint {
+        Some(JoinConstraint::On(expr)) => Some(expr),
+        _ => None,
+    }
+}
+
 /// Analyze an expression for test suggestions
 fn analyze_expression_for_suggestions(
     expr: &Expr,
     output_col: &str,
     suggestions: &mut ModelSuggestions,
 ) {
-    if let Expr::BinaryOp { left, op, right } = expr {
-        // Division or subtraction might indicate amounts
-        if matches!(
-            op,
-            sqlparser::ast::BinaryOperator::Divide | sqlparser::ast::BinaryOperator::Minus
-        ) {
-            let left_cols = extract_columns_from_expr(left);
-            let right_cols = extract_columns_from_expr(right);
-            for col in left_cols.iter().chain(right_cols.iter()) {
-                if is_amount_column_name(col) {
-                    suggestions.add_suggestion(output_col, TestSuggestion::NonNegative);
-                    break;
-                }
-            }
-        }
+    let Expr::BinaryOp { left, op, right } = expr else {
+        return;
+    };
+    if !matches!(
+        op,
+        sqlparser::ast::BinaryOperator::Divide | sqlparser::ast::BinaryOperator::Minus
+    ) {
+        return;
+    }
+    // Division or subtraction might indicate amounts
+    let has_amount = extract_columns_from_expr(left)
+        .iter()
+        .chain(extract_columns_from_expr(right).iter())
+        .any(|col| is_amount_column_name(col));
+    if has_amount {
+        suggestions.add_suggestion(output_col, TestSuggestion::NonNegative);
     }
 }
 
@@ -310,20 +319,25 @@ fn extract_columns_from_function_args(
         return;
     };
     for arg in &arg_list.args {
-        match arg {
-            sqlparser::ast::FunctionArg::Unnamed(sqlparser::ast::FunctionArgExpr::Expr(e))
-            | sqlparser::ast::FunctionArg::Named {
-                arg: sqlparser::ast::FunctionArgExpr::Expr(e),
-                ..
-            }
-            | sqlparser::ast::FunctionArg::ExprNamed {
-                arg: sqlparser::ast::FunctionArgExpr::Expr(e),
-                ..
-            } => {
-                columns.extend(extract_columns_from_expr(e));
-            }
-            _ => {}
+        if let Some(e) = extract_expr_from_function_arg(arg) {
+            columns.extend(extract_columns_from_expr(e));
         }
+    }
+}
+
+/// Extract the inner [`Expr`] from a function argument, if present.
+fn extract_expr_from_function_arg(arg: &sqlparser::ast::FunctionArg) -> Option<&Expr> {
+    match arg {
+        sqlparser::ast::FunctionArg::Unnamed(sqlparser::ast::FunctionArgExpr::Expr(e))
+        | sqlparser::ast::FunctionArg::Named {
+            arg: sqlparser::ast::FunctionArgExpr::Expr(e),
+            ..
+        }
+        | sqlparser::ast::FunctionArg::ExprNamed {
+            arg: sqlparser::ast::FunctionArgExpr::Expr(e),
+            ..
+        } => Some(e),
+        _ => None,
     }
 }
 

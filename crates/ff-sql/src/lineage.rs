@@ -5,10 +5,19 @@
 
 use serde::{Deserialize, Serialize};
 use sqlparser::ast::{
-    Expr, FunctionArg, FunctionArgExpr, ObjectName, Query, Select, SelectItem,
-    SelectItemQualifiedWildcardKind, SetExpr, Statement, TableFactor, TableWithJoins,
+    Expr, FunctionArg, FunctionArgExpr, Query, Select, SelectItem, SelectItemQualifiedWildcardKind,
+    SetExpr, Statement, TableFactor, TableWithJoins,
 };
 use std::collections::{HashMap, HashSet};
+
+/// Direction for recursive lineage tracing.
+#[derive(Debug, Clone, Copy)]
+enum TraceDirection {
+    /// Follow edges from target to source (upstream).
+    Upstream,
+    /// Follow edges from source to target (downstream).
+    Downstream,
+}
 
 /// Expression type for a lineage column
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -252,29 +261,21 @@ impl ProjectLineage {
 
     /// Trace a column upstream recursively — find all transitive source columns
     pub fn trace_column_recursive(&self, model: &str, column: &str) -> Vec<&LineageEdge> {
-        let mut result = Vec::new();
-        let mut visited = HashSet::new();
-        let mut queue = std::collections::VecDeque::new();
-        queue.push_back((model.to_string(), column.to_string()));
-        visited.insert((model.to_string(), column.to_string()));
-
-        while let Some((m, c)) = queue.pop_front() {
-            for edge in &self.edges {
-                if edge.target_model == m && edge.target_column == c {
-                    result.push(edge);
-                    let key = (edge.source_model.clone(), edge.source_column.clone());
-                    if visited.insert(key) {
-                        queue.push_back((edge.source_model.clone(), edge.source_column.clone()));
-                    }
-                }
-            }
-        }
-
-        result
+        self.trace_recursive(model, column, TraceDirection::Upstream)
     }
 
     /// Find all downstream consumers of a column recursively
     pub fn column_consumers_recursive(&self, model: &str, column: &str) -> Vec<&LineageEdge> {
+        self.trace_recursive(model, column, TraceDirection::Downstream)
+    }
+
+    /// BFS traversal of lineage edges in the given direction.
+    fn trace_recursive(
+        &self,
+        model: &str,
+        column: &str,
+        direction: TraceDirection,
+    ) -> Vec<&LineageEdge> {
         let mut result = Vec::new();
         let mut visited = HashSet::new();
         let mut queue = std::collections::VecDeque::new();
@@ -283,11 +284,25 @@ impl ProjectLineage {
 
         while let Some((m, c)) = queue.pop_front() {
             for edge in &self.edges {
-                if edge.source_model == m && edge.source_column == c {
+                let (match_model, match_col, next_model, next_col) = match direction {
+                    TraceDirection::Upstream => (
+                        &edge.target_model,
+                        &edge.target_column,
+                        &edge.source_model,
+                        &edge.source_column,
+                    ),
+                    TraceDirection::Downstream => (
+                        &edge.source_model,
+                        &edge.source_column,
+                        &edge.target_model,
+                        &edge.target_column,
+                    ),
+                };
+                if match_model == &m && match_col == &c {
                     result.push(edge);
-                    let key = (edge.target_model.clone(), edge.target_column.clone());
+                    let key = (next_model.clone(), next_col.clone());
                     if visited.insert(key) {
-                        queue.push_back((edge.target_model.clone(), edge.target_column.clone()));
+                        queue.push_back((next_model.clone(), next_col.clone()));
                     }
                 }
             }
@@ -447,7 +462,7 @@ fn extract_lineage_from_select(select: &Select, lineage: &mut ModelLineage) {
             SelectItem::QualifiedWildcard(kind, _) => {
                 let table_name = match kind {
                     SelectItemQualifiedWildcardKind::ObjectName(name) => {
-                        object_name_to_string(name)
+                        crate::object_name_to_string(name)
                     }
                     SelectItemQualifiedWildcardKind::Expr(expr) => format!("{expr}"),
                 };
@@ -485,7 +500,7 @@ fn extract_table_aliases(table_with_joins: &TableWithJoins, lineage: &mut ModelL
 fn extract_table_factor_alias(factor: &TableFactor, lineage: &mut ModelLineage) {
     match factor {
         TableFactor::Table { name, alias, .. } => {
-            let table_name = object_name_to_string(name);
+            let table_name = crate::object_name_to_string(name);
             lineage.source_tables.insert(table_name.clone());
             if let Some(alias) = alias {
                 lineage
@@ -521,11 +536,6 @@ fn extract_table_factor_alias(factor: &TableFactor, lineage: &mut ModelLineage) 
     }
 }
 
-/// Convert ObjectName to string
-fn object_name_to_string(name: &ObjectName) -> String {
-    crate::object_name_to_string(name)
-}
-
 /// Extract lineage information from an expression
 fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLineage {
     match expr {
@@ -559,7 +569,7 @@ fn extract_lineage_from_expr(expr: &Expr, lineage: &ModelLineage) -> ColumnLinea
             }
         }
         Expr::Function(func) => {
-            let func_name = object_name_to_string(&func.name);
+            let func_name = crate::object_name_to_string(&func.name);
 
             let mut sources = HashSet::new();
             extract_columns_from_function_args(&func.args, lineage, &mut sources);
@@ -685,7 +695,7 @@ fn extract_from_arg_expr(
             sources.extend(expr_lineage.source_columns);
         }
         FunctionArgExpr::QualifiedWildcard(name) => {
-            let table_name = object_name_to_string(name);
+            let table_name = crate::object_name_to_string(name);
             sources.insert(ColumnRef::qualified(&table_name, "*"));
         }
         FunctionArgExpr::Wildcard => {

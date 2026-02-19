@@ -1,6 +1,6 @@
 //! Populate analysis-phase data: inferred schemas, column lineage, diagnostics, mismatches.
 
-use crate::error::{MetaError, MetaResult};
+use crate::error::{MetaResult, MetaResultExt};
 use duckdb::Connection;
 
 /// Inferred column schema from static analysis.
@@ -49,7 +49,7 @@ pub fn populate_inferred_schemas(conn: &Connection, columns: &[InferredColumn]) 
             "UPDATE ff_meta.model_columns SET inferred_type = ?, nullability_inferred = ? WHERE model_id = ? AND name = ?",
             duckdb::params![col.inferred_type, col.nullability_inferred, col.model_id, col.column_name],
         )
-        .map_err(|e| MetaError::PopulationError(format!("update inferred schema: {e}")))?;
+        .populate_context("update inferred schema")?;
     }
     Ok(())
 }
@@ -70,7 +70,7 @@ pub fn populate_column_lineage(conn: &Connection, edges: &[LineageEdge]) -> Meta
                 edge.is_direct,
             ],
         )
-        .map_err(|e| MetaError::PopulationError(format!("insert column_lineage: {e}")))?;
+        .populate_context("insert column_lineage")?;
     }
     Ok(())
 }
@@ -96,7 +96,7 @@ pub fn populate_diagnostics(
                 diag.pass_name,
             ],
         )
-        .map_err(|e| MetaError::PopulationError(format!("insert diagnostics: {e}")))?;
+        .populate_context("insert diagnostics")?;
     }
     Ok(())
 }
@@ -126,9 +126,7 @@ pub fn populate_effective_classifications(
                 entry.column_name,
             ],
         )
-        .map_err(|e| {
-            MetaError::PopulationError(format!("update effective_classification: {e}"))
-        })?;
+        .populate_context("update effective_classification")?;
     }
     Ok(())
 }
@@ -152,7 +150,7 @@ pub fn populate_schema_mismatches(
                 m.inferred_value,
             ],
         )
-        .map_err(|e| MetaError::PopulationError(format!("insert schema_mismatches: {e}")))?;
+        .populate_context("insert schema_mismatches")?;
     }
     Ok(())
 }

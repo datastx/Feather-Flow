@@ -56,7 +56,7 @@ pub(crate) async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
 
         model_info.push(ModelInfo {
             name: name.to_string(),
-            resource_type: "model".to_string(),
+            resource_type: InfoResourceType::Model,
             path: Some(model.path.display().to_string()),
             materialized: Some(mat),
             schema,
@@ -68,7 +68,7 @@ pub(crate) async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
     for seed in &project.seeds {
         model_info.push(ModelInfo {
             name: seed.name.clone(),
-            resource_type: "seed".to_string(),
+            resource_type: InfoResourceType::Seed,
             path: Some(seed.path.display().to_string()),
             materialized: None,
             schema: seed
@@ -85,7 +85,7 @@ pub(crate) async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
             let source_name = format!("{}.{}", source.name, table.name);
             model_info.push(ModelInfo {
                 name: source_name,
-                resource_type: "source".to_string(),
+                resource_type: InfoResourceType::Source,
                 path: None, // Sources don't have a file path
                 materialized: None,
                 schema: Some(source.schema.clone()),
@@ -98,7 +98,7 @@ pub(crate) async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
     for func in &project.functions {
         model_info.push(ModelInfo {
             name: func.name.to_string(),
-            resource_type: format!("function ({})", func.function_type),
+            resource_type: InfoResourceType::Function(func.function_type.to_string()),
             path: Some(func.sql_path.display().to_string()),
             materialized: None,
             schema: None,
@@ -109,7 +109,7 @@ pub(crate) async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
 
     let dag = ModelDag::build(&dependencies).context("Failed to build dependency graph")?;
 
-    let filtered_names: HashSet<String> = if args.nodes.is_some() {
+    let mut selected_names: HashSet<String> = if args.nodes.is_some() {
         common::resolve_nodes(&project, &dag, &args.nodes)?
             .into_iter()
             .collect()
@@ -117,68 +117,82 @@ pub(crate) async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
         model_info.iter().map(|m| m.name.clone()).collect()
     };
 
-    let filtered_names: HashSet<String> = if let Some(exclude) = &args.exclude {
+    if let Some(exclude) = &args.exclude {
         let excluded: HashSet<String> = exclude
             .split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
-        filtered_names
-            .into_iter()
-            .filter(|m| !excluded.contains(m))
-            .collect()
-    } else {
-        filtered_names
-    };
+        selected_names.retain(|m| !excluded.contains(m));
+    }
 
-    let filtered_info: Vec<&ModelInfo> = model_info
+    let mut results: Vec<&ModelInfo> = model_info
         .iter()
-        .filter(|m| filtered_names.contains(&m.name))
+        .filter(|m| selected_names.contains(&m.name))
         .collect();
 
-    let filtered_info: Vec<&ModelInfo> = if let Some(resource_type) = &args.resource_type {
-        filtered_info
-            .into_iter()
-            .filter(|m| match resource_type {
-                ResourceType::Model => m.resource_type == "model",
-                ResourceType::Source => m.resource_type == "source",
-                ResourceType::Seed => m.resource_type == "seed",
-                ResourceType::Test => m.resource_type == "test",
-                ResourceType::Function => m.resource_type.starts_with("function"),
-            })
-            .collect()
-    } else {
-        filtered_info
-    };
+    if let Some(resource_type) = &args.resource_type {
+        results.retain(|m| match resource_type {
+            ResourceType::Model => m.resource_type == InfoResourceType::Model,
+            ResourceType::Source => m.resource_type == InfoResourceType::Source,
+            ResourceType::Seed => m.resource_type == InfoResourceType::Seed,
+            ResourceType::Test => false, // tests are not listed as ModelInfo
+            ResourceType::Function => m.resource_type.is_function(),
+        });
+    }
 
-    let filtered_info: Vec<&ModelInfo> = if let Some(owner_filter) = &args.owner {
+    if let Some(owner_filter) = &args.owner {
         let owner_lower = owner_filter.to_lowercase();
-        filtered_info
-            .into_iter()
-            .filter(|m| {
-                if m.resource_type != "model" {
-                    return true;
+        results.retain(|m| {
+            if m.resource_type != InfoResourceType::Model {
+                return true;
+            }
+            if let Some(model) = project.get_model(&m.name) {
+                if let Some(model_owner) = model.get_owner() {
+                    return model_owner.to_lowercase().contains(&owner_lower);
                 }
-                if let Some(model) = project.get_model(&m.name) {
-                    if let Some(model_owner) = model.get_owner() {
-                        return model_owner.to_lowercase().contains(&owner_lower);
-                    }
-                }
-                false
-            })
-            .collect()
-    } else {
-        filtered_info
-    };
+            }
+            false
+        });
+    }
 
     match args.output {
-        LsOutput::Table => print_table(&filtered_info),
-        LsOutput::Json => print_json(&filtered_info)?,
-        LsOutput::Tree => print_tree(&filtered_info)?,
-        LsOutput::Path => print_paths(&filtered_info),
+        LsOutput::Table => print_table(&results),
+        LsOutput::Json => print_json(&results)?,
+        LsOutput::Tree => print_tree(&results)?,
+        LsOutput::Path => print_paths(&results),
     }
 
     Ok(())
+}
+
+/// Type of resource listed in `ff ls`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum InfoResourceType {
+    Model,
+    Seed,
+    Source,
+    /// Function with its subtype (e.g. "scalar", "table")
+    #[serde(untagged)]
+    Function(String),
+}
+
+impl std::fmt::Display for InfoResourceType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InfoResourceType::Model => write!(f, "model"),
+            InfoResourceType::Seed => write!(f, "seed"),
+            InfoResourceType::Source => write!(f, "source"),
+            InfoResourceType::Function(sub) => write!(f, "function ({sub})"),
+        }
+    }
+}
+
+impl InfoResourceType {
+    fn is_function(&self) -> bool {
+        matches!(self, InfoResourceType::Function(_))
+    }
 }
 
 /// Model information for display
@@ -186,7 +200,7 @@ pub(crate) async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
 struct ModelInfo {
     name: String,
     #[serde(rename = "type")]
-    resource_type: String, // "model", "source", or "function (scalar|table)"
+    resource_type: InfoResourceType,
     #[serde(skip_serializing_if = "Option::is_none")]
     path: Option<String>,
     materialized: Option<Materialization>,
@@ -225,7 +239,7 @@ fn print_table(models: &[&ModelInfo]) {
 
             vec![
                 model.name.clone(),
-                model.resource_type.clone(),
+                model.resource_type.to_string(),
                 mat_str,
                 schema_str,
                 deps_str,
@@ -235,15 +249,21 @@ fn print_table(models: &[&ModelInfo]) {
 
     common::print_table(&headers, &rows);
 
-    let model_count = models.iter().filter(|m| m.resource_type == "model").count();
-    let seed_count = models.iter().filter(|m| m.resource_type == "seed").count();
+    let model_count = models
+        .iter()
+        .filter(|m| m.resource_type == InfoResourceType::Model)
+        .count();
+    let seed_count = models
+        .iter()
+        .filter(|m| m.resource_type == InfoResourceType::Seed)
+        .count();
     let source_count = models
         .iter()
-        .filter(|m| m.resource_type == "source")
+        .filter(|m| m.resource_type == InfoResourceType::Source)
         .count();
     let function_count = models
         .iter()
-        .filter(|m| m.resource_type.starts_with("function"))
+        .filter(|m| m.resource_type.is_function())
         .count();
 
     println!();

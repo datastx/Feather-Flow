@@ -58,6 +58,30 @@ impl std::fmt::Display for DiagnosticCode {
     }
 }
 
+impl std::str::FromStr for DiagnosticCode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "A001" => Ok(DiagnosticCode::A001),
+            "A002" => Ok(DiagnosticCode::A002),
+            "A003" => Ok(DiagnosticCode::A003),
+            "A004" => Ok(DiagnosticCode::A004),
+            "A005" => Ok(DiagnosticCode::A005),
+            "A010" => Ok(DiagnosticCode::A010),
+            "A011" => Ok(DiagnosticCode::A011),
+            "A012" => Ok(DiagnosticCode::A012),
+            "A020" => Ok(DiagnosticCode::A020),
+            "A030" => Ok(DiagnosticCode::A030),
+            "A032" => Ok(DiagnosticCode::A032),
+            "A033" => Ok(DiagnosticCode::A033),
+            "A040" => Ok(DiagnosticCode::A040),
+            "A041" => Ok(DiagnosticCode::A041),
+            _ => Err(format!("unknown diagnostic code: {s}")),
+        }
+    }
+}
+
 /// Diagnostic severity level
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -176,23 +200,7 @@ impl SeverityOverrides {
 
 /// Try to parse a string key into a DiagnosticCode.
 fn parse_diagnostic_code(s: &str) -> Option<DiagnosticCode> {
-    match s {
-        "A001" => Some(DiagnosticCode::A001),
-        "A002" => Some(DiagnosticCode::A002),
-        "A003" => Some(DiagnosticCode::A003),
-        "A004" => Some(DiagnosticCode::A004),
-        "A005" => Some(DiagnosticCode::A005),
-        "A010" => Some(DiagnosticCode::A010),
-        "A011" => Some(DiagnosticCode::A011),
-        "A012" => Some(DiagnosticCode::A012),
-        "A020" => Some(DiagnosticCode::A020),
-        "A030" => Some(DiagnosticCode::A030),
-        "A032" => Some(DiagnosticCode::A032),
-        "A033" => Some(DiagnosticCode::A033),
-        "A040" => Some(DiagnosticCode::A040),
-        "A041" => Some(DiagnosticCode::A041),
-        _ => None,
-    }
+    s.parse().ok()
 }
 
 /// Apply severity overrides to a list of diagnostics.

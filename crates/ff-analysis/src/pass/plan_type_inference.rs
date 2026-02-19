@@ -13,7 +13,7 @@ use crate::context::AnalysisContext;
 use crate::datafusion_bridge::types::arrow_to_sql_type;
 use crate::types::SqlType;
 
-use super::expr_utils::expr_display_name;
+use super::expr_utils::{expr_display_name, for_each_case_subexpr};
 use super::plan_pass::PlanPass;
 use super::{Diagnostic, DiagnosticCode, Severity};
 
@@ -227,16 +227,7 @@ fn check_cast_expr(
             }
         }
         Expr::Case(case) => {
-            if let Some(ref operand) = case.expr {
-                check_cast_expr(model, operand, input_plan, diags);
-            }
-            for (when, then) in &case.when_then_expr {
-                check_cast_expr(model, when, input_plan, diags);
-                check_cast_expr(model, then, input_plan, diags);
-            }
-            if let Some(ref else_expr) = case.else_expr {
-                check_cast_expr(model, else_expr, input_plan, diags);
-            }
+            for_each_case_subexpr(case, |e| check_cast_expr(model, e, input_plan, diags));
         }
         _ => {}
     }

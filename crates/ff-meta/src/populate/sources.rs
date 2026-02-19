@@ -1,6 +1,6 @@
 //! Populate the `sources`, `source_tags`, `source_tables`, and `source_columns` tables.
 
-use crate::error::{MetaError, MetaResult};
+use crate::error::{MetaResult, MetaResultExt};
 use duckdb::Connection;
 use ff_core::SourceFile;
 
@@ -31,7 +31,7 @@ fn insert_source(conn: &Connection, project_id: i64, source: &SourceFile) -> Met
             source.owner,
         ],
     )
-    .map_err(|e| MetaError::PopulationError(format!("insert sources ({}): {e}", source.name)))?;
+    .populate_context(&format!("insert sources ({})", source.name))?;
 
     let source_id: i64 = conn
         .query_row(
@@ -39,7 +39,7 @@ fn insert_source(conn: &Connection, project_id: i64, source: &SourceFile) -> Met
             duckdb::params![project_id, source.name],
             |row| row.get(0),
         )
-        .map_err(|e| MetaError::PopulationError(format!("select source_id: {e}")))?;
+        .populate_context("select source_id")?;
 
     Ok(source_id)
 }
@@ -50,7 +50,7 @@ fn insert_source_tags(conn: &Connection, source_id: i64, source: &SourceFile) ->
             "INSERT INTO ff_meta.source_tags (source_id, tag) VALUES (?, ?)",
             duckdb::params![source_id, tag],
         )
-        .map_err(|e| MetaError::PopulationError(format!("insert source_tags: {e}")))?;
+        .populate_context("insert source_tags")?;
     }
     Ok(())
 }
@@ -61,9 +61,7 @@ fn insert_source_tables(conn: &Connection, source_id: i64, source: &SourceFile) 
             "INSERT INTO ff_meta.source_tables (source_id, name, identifier, description) VALUES (?, ?, ?, ?)",
             duckdb::params![source_id, table.name, table.identifier, table.description],
         )
-        .map_err(|e| {
-            MetaError::PopulationError(format!("insert source_tables ({}): {e}", table.name))
-        })?;
+        .populate_context(&format!("insert source_tables ({})", table.name))?;
 
         let table_id: i64 = conn
             .query_row(
@@ -71,7 +69,7 @@ fn insert_source_tables(conn: &Connection, source_id: i64, source: &SourceFile) 
                 duckdb::params![source_id, table.name],
                 |row| row.get(0),
             )
-            .map_err(|e| MetaError::PopulationError(format!("select source_table_id: {e}")))?;
+            .populate_context("select source_table_id")?;
 
         for (i, col) in table.columns.iter().enumerate() {
             conn.execute(
@@ -79,7 +77,7 @@ fn insert_source_tables(conn: &Connection, source_id: i64, source: &SourceFile) 
                  VALUES (?, ?, ?, ?, ?)",
                 duckdb::params![table_id, col.name, col.data_type, col.description, (i + 1) as i32],
             )
-            .map_err(|e| MetaError::PopulationError(format!("insert source_columns: {e}")))?;
+            .populate_context("insert source_columns")?;
         }
     }
     Ok(())

@@ -193,10 +193,7 @@ impl<'a> JinjaEnvironment<'a> {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .clear();
-        self.warning_capture
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clear();
+        self.read_warnings().clear();
 
         let ctx = RenderContext {
             model: model.cloned(),
@@ -255,12 +252,16 @@ impl<'a> JinjaEnvironment<'a> {
             .unwrap_or_default()
     }
 
-    /// Get warnings captured during the last render.
-    pub fn get_captured_warnings(&self) -> Vec<String> {
+    /// Acquire the warning capture lock, recovering from poison.
+    fn read_warnings(&self) -> std::sync::MutexGuard<'_, Vec<String>> {
         self.warning_capture
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .clone()
+    }
+
+    /// Get warnings captured during the last render.
+    pub fn get_captured_warnings(&self) -> Vec<String> {
+        self.read_warnings().clone()
     }
 }
 

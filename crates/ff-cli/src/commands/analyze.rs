@@ -293,7 +293,8 @@ fn print_table(diagnostics: &[ff_analysis::Diagnostic]) {
 
 /// Print diagnostics as JSON
 fn print_json(diagnostics: &[ff_analysis::Diagnostic]) -> Result<()> {
-    let json = serde_json::to_string_pretty(diagnostics)?;
+    let json =
+        serde_json::to_string_pretty(diagnostics).context("Failed to serialize diagnostics")?;
     println!("{}", json);
     Ok(())
 }

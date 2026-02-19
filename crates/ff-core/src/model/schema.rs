@@ -25,17 +25,16 @@ pub enum ModelKind {
 
 impl PartialEq for ModelKind {
     fn eq(&self, other: &Self) -> bool {
-        self.normalize() == other.normalize()
+        std::mem::discriminant(&self.normalize()) == std::mem::discriminant(&other.normalize())
     }
 }
 
 impl ModelKind {
     /// Collapse legacy `Model` to the canonical `Sql` form.
-    fn normalize(self) -> u8 {
+    fn normalize(self) -> ModelKind {
         match self {
-            ModelKind::Model | ModelKind::Sql => 0,
-            ModelKind::Seed => 1,
-            ModelKind::Python => 2,
+            ModelKind::Model | ModelKind::Sql => ModelKind::Sql,
+            other => other,
         }
     }
 

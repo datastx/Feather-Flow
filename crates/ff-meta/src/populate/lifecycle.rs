@@ -1,6 +1,6 @@
 //! Compilation run lifecycle: begin, complete, and clear.
 
-use crate::error::{MetaError, MetaResult};
+use crate::error::{MetaResult, MetaResultExt};
 use duckdb::Connection;
 
 /// Begin a new population cycle.
@@ -20,7 +20,7 @@ pub fn begin_population(
         "INSERT INTO ff_meta.compilation_runs (project_id, run_type, node_selector) VALUES (?, ?, ?)",
         duckdb::params![project_id, run_type, node_selector],
     )
-    .map_err(|e| MetaError::PopulationError(format!("insert compilation_runs: {e}")))?;
+    .populate_context("insert compilation_runs")?;
 
     let run_id: i64 = conn
         .query_row(
@@ -28,7 +28,7 @@ pub fn begin_population(
             duckdb::params![project_id],
             |row| row.get(0),
         )
-        .map_err(|e| MetaError::PopulationError(format!("select run_id: {e}")))?;
+        .populate_context("select run_id")?;
 
     clear_entity_data(conn, project_id)?;
 
@@ -41,7 +41,7 @@ pub fn complete_population(conn: &Connection, run_id: i64, status: &str) -> Meta
         "UPDATE ff_meta.compilation_runs SET status = ?, completed_at = now() WHERE run_id = ?",
         duckdb::params![status, run_id],
     )
-    .map_err(|e| MetaError::PopulationError(format!("update compilation_runs: {e}")))?;
+    .populate_context("update compilation_runs")?;
     Ok(())
 }
 
@@ -50,7 +50,7 @@ pub fn complete_population(conn: &Connection, run_id: i64, status: &str) -> Meta
 fn clear_entity_data(conn: &Connection, project_id: i64) -> MetaResult<()> {
     for stmt in crate::connection::ENTITY_DELETE_STMTS {
         conn.execute(stmt, duckdb::params![project_id])
-            .map_err(|e| MetaError::PopulationError(format!("clear_entity_data: {e}")))?;
+            .populate_context("clear_entity_data")?;
     }
     Ok(())
 }

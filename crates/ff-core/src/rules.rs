@@ -92,22 +92,24 @@ pub fn discover_rules(
         if !dir.exists() || !dir.is_dir() {
             continue;
         }
-        let entries =
-            std::fs::read_dir(dir).map_err(|e| crate::error::CoreError::ConfigInvalid {
-                message: format!("Failed to read rules directory '{}': {e}", dir.display()),
-            })?;
+        let entries = std::fs::read_dir(dir).map_err(|e| crate::error::CoreError::IoWithPath {
+            path: dir.display().to_string(),
+            source: e,
+        })?;
 
         for entry in entries {
-            let entry = entry.map_err(|e| crate::error::CoreError::ConfigInvalid {
-                message: format!("Failed reading rules dir entry: {e}"),
+            let entry = entry.map_err(|e| crate::error::CoreError::IoWithPath {
+                path: dir.display().to_string(),
+                source: e,
             })?;
             let path: PathBuf = entry.path();
             if path.extension().is_none_or(|e| e != "sql") {
                 continue;
             }
             let content = std::fs::read_to_string(&path).map_err(|e| {
-                crate::error::CoreError::ConfigInvalid {
-                    message: format!("Failed to read rule file '{}': {e}", path.display()),
+                crate::error::CoreError::IoWithPath {
+                    path: path.display().to_string(),
+                    source: e,
                 }
             })?;
             let rule = parse_rule_file(&path, &content, default_severity);

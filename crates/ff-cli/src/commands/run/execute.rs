@@ -583,6 +583,39 @@ struct ParallelExecutionState {
     db_path: Option<String>,
 }
 
+/// Prepare a model for parallel execution.
+///
+/// Returns `None` if the model should be skipped (missing or ephemeral).
+/// Ephemeral models record a success result as a side effect.
+fn prepare_level_model(
+    name: &str,
+    compiled_models: &HashMap<String, CompiledModel>,
+    state: &Arc<ParallelExecutionState>,
+) -> Option<Arc<CompiledModel>> {
+    let Some(compiled) = compiled_models.get(name) else {
+        eprintln!(
+            "[warn] Model '{}' missing from compiled_models, skipping",
+            name
+        );
+        return None;
+    };
+
+    if compiled.materialization == Materialization::Ephemeral {
+        state.success_count.fetch_add(1, Ordering::SeqCst);
+        recover_mutex(&state.run_results).push(ModelRunResult {
+            model: name.to_string(),
+            status: RunStatus::Success,
+            materialization: "ephemeral".to_string(),
+            duration_secs: 0.0,
+            error: None,
+        });
+        recover_mutex(&state.completed).insert(name.to_string());
+        return None;
+    }
+
+    Some(Arc::new(compiled.clone()))
+}
+
 /// Async task body for executing a single model in parallel mode.
 async fn execute_model_task(
     db: Arc<dyn Database>,
@@ -708,31 +741,17 @@ async fn execute_models_parallel(
                 break;
             }
 
-            let name = name.clone();
-            let db = Arc::clone(ctx.db);
-            let Some(compiled) = ctx.compiled_models.get(&name) else {
-                eprintln!(
-                    "[warn] Model '{}' missing from compiled_models, skipping",
-                    name
-                );
+            let Some(compiled) = prepare_level_model(name, &ctx.compiled_models, &state) else {
                 continue;
             };
 
-            if compiled.materialization == Materialization::Ephemeral {
-                state.success_count.fetch_add(1, Ordering::SeqCst);
-                recover_mutex(&state.run_results).push(ModelRunResult {
-                    model: name.clone(),
-                    status: RunStatus::Success,
-                    materialization: "ephemeral".to_string(),
-                    duration_secs: 0.0,
-                    error: None,
-                });
-                recover_mutex(&state.completed).insert(name);
-                continue;
-            }
-
-            let compiled = Arc::new(compiled.clone());
-            set.spawn(execute_model_task(db, name, compiled, Arc::clone(&state)));
+            let db = Arc::clone(ctx.db);
+            set.spawn(execute_model_task(
+                db,
+                name.clone(),
+                compiled,
+                Arc::clone(&state),
+            ));
         }
 
         while let Some(res) = set.join_next().await {

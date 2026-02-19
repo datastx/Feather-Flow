@@ -1,6 +1,6 @@
 //! Populate the `projects`, `project_hooks`, and `project_vars` tables.
 
-use crate::error::{MetaError, MetaResult};
+use crate::error::{MetaResult, MetaResultExt};
 use duckdb::Connection;
 use ff_core::Config;
 use std::path::Path;
@@ -35,7 +35,7 @@ pub fn populate_project(conn: &Connection, config: &Config, root: &Path) -> Meta
             config.target_path,
         ],
     )
-    .map_err(|e| MetaError::PopulationError(format!("insert projects: {e}")))?;
+    .populate_context("insert projects")?;
 
     let project_id: i64 = conn
         .query_row(
@@ -43,7 +43,7 @@ pub fn populate_project(conn: &Connection, config: &Config, root: &Path) -> Meta
             duckdb::params![config.name],
             |row| row.get(0),
         )
-        .map_err(|e| MetaError::PopulationError(format!("select project_id: {e}")))?;
+        .populate_context("select project_id")?;
 
     populate_hooks(conn, project_id, config)?;
     populate_vars(conn, project_id, config)?;
@@ -57,7 +57,7 @@ fn populate_hooks(conn: &Connection, project_id: i64, config: &Config) -> MetaRe
             "INSERT INTO ff_meta.project_hooks (project_id, hook_type, sql_text, ordinal_position) VALUES (?, 'on_run_start', ?, ?)",
             duckdb::params![project_id, sql, (i + 1) as i32],
         )
-        .map_err(|e| MetaError::PopulationError(format!("insert project_hooks: {e}")))?;
+        .populate_context("insert project_hooks")?;
     }
 
     for (i, sql) in config.on_run_end.iter().enumerate() {
@@ -65,7 +65,7 @@ fn populate_hooks(conn: &Connection, project_id: i64, config: &Config) -> MetaRe
             "INSERT INTO ff_meta.project_hooks (project_id, hook_type, sql_text, ordinal_position) VALUES (?, 'on_run_end', ?, ?)",
             duckdb::params![project_id, sql, (i + 1) as i32],
         )
-        .map_err(|e| MetaError::PopulationError(format!("insert project_hooks: {e}")))?;
+        .populate_context("insert project_hooks")?;
     }
 
     Ok(())
@@ -78,7 +78,7 @@ fn populate_vars(conn: &Connection, project_id: i64, config: &Config) -> MetaRes
             "INSERT INTO ff_meta.project_vars (project_id, key, value, value_type) VALUES (?, ?, ?, ?)",
             duckdb::params![project_id, key, serialized, value_type],
         )
-        .map_err(|e| MetaError::PopulationError(format!("insert project_vars: {e}")))?;
+        .populate_context("insert project_vars")?;
     }
     Ok(())
 }

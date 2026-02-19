@@ -11,7 +11,7 @@ use ff_core::ModelName;
 use crate::context::AnalysisContext;
 use crate::types::Nullability;
 
-use super::expr_utils::collect_column_refs;
+use super::expr_utils::{collect_column_refs, for_each_case_output_expr};
 use super::plan_pass::PlanPass;
 use super::{Diagnostic, DiagnosticCode, Severity};
 
@@ -186,12 +186,7 @@ fn collect_coalesce_columns(expr: &Expr, guarded: &mut HashSet<String>) {
             }
         }
         Expr::Case(case) => {
-            for (_, then) in &case.when_then_expr {
-                collect_coalesce_columns(then, guarded);
-            }
-            if let Some(ref e) = case.else_expr {
-                collect_coalesce_columns(e, guarded);
-            }
+            for_each_case_output_expr(case, |e| collect_coalesce_columns(e, guarded));
         }
         _ => {}
     }
