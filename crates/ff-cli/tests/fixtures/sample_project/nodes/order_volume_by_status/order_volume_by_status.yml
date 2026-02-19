@@ -1,4 +1,4 @@
-kind: functions
+kind: function
 version: 1
 name: order_volume_by_status
 description: "Table function that returns order counts grouped by status, filtered by minimum count"

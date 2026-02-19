@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use ff_core::rules::{discover_rules, resolve_rule_paths, OnRuleFailure, RuleSeverity};
 
 /// Execute the rules command.
-pub async fn execute(args: &RulesArgs, global: &GlobalArgs) -> Result<()> {
+pub(crate) async fn execute(args: &RulesArgs, global: &GlobalArgs) -> Result<()> {
     let project = load_project(global)?;
     let rules_config = project.config.rules.clone().unwrap_or_default();
 

@@ -30,15 +30,9 @@ pub fn execute_query(conn: &Connection, sql: &str) -> MetaResult<QueryResult> {
         }
         Ok(vals)
     }) {
-        Ok(mapped) => {
-            let mut collected = Vec::new();
-            for row_result in mapped {
-                let row =
-                    row_result.map_err(|e| MetaError::QueryError(format!("row error: {e}")))?;
-                collected.push(row);
-            }
-            collected
-        }
+        Ok(mapped) => mapped
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| MetaError::QueryError(format!("row error: {e}")))?,
         Err(e) => {
             return Err(MetaError::QueryError(format!("query failed: {e}")));
         }
@@ -71,6 +65,14 @@ pub fn list_tables(conn: &Connection) -> MetaResult<Vec<String>> {
 
 /// Get the row count for a table in the `ff_meta` schema.
 pub fn table_row_count(conn: &Connection, table_name: &str) -> MetaResult<i64> {
+    if !table_name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return Err(MetaError::QueryError(format!(
+            "invalid table name '{table_name}': must contain only alphanumeric characters and underscores"
+        )));
+    }
     let count: i64 = conn
         .query_row(
             &format!("SELECT COUNT(*) FROM ff_meta.{table_name}"),
@@ -84,21 +86,9 @@ pub fn table_row_count(conn: &Connection, table_name: &str) -> MetaResult<i64> {
 /// Read a column value as a String, trying multiple DuckDB types.
 ///
 /// DuckDB integer columns return `None` for `Option<String>`, so we try
-/// String → i64 → f64 → bool → "null".
+/// String -> i64 -> f64 -> bool -> "null".
 pub fn get_column_as_string(row: &duckdb::Row<'_>, idx: usize) -> String {
-    if let Ok(Some(s)) = row.get::<_, Option<String>>(idx) {
-        return s;
-    }
-    if let Ok(Some(n)) = row.get::<_, Option<i64>>(idx) {
-        return n.to_string();
-    }
-    if let Ok(Some(f)) = row.get::<_, Option<f64>>(idx) {
-        return f.to_string();
-    }
-    if let Ok(Some(b)) = row.get::<_, Option<bool>>(idx) {
-        return b.to_string();
-    }
-    "null".to_string()
+    crate::row_helpers::get_column_as_string(row, idx)
 }
 
 #[cfg(test)]

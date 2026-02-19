@@ -7,7 +7,7 @@ use std::path::Path;
 use crate::cli::InitArgs;
 
 /// Execute the init command
-pub async fn execute(args: &InitArgs) -> Result<()> {
+pub(crate) async fn execute(args: &InitArgs) -> Result<()> {
     // Reject names that could cause path traversal or confusing directory names
     if args.name.contains('/')
         || args.name.contains('\\')

@@ -97,7 +97,10 @@ pub fn discover_rules(
                 message: format!("Failed to read rules directory '{}': {e}", dir.display()),
             })?;
 
-        for entry in entries.flatten() {
+        for entry in entries {
+            let entry = entry.map_err(|e| crate::error::CoreError::ConfigInvalid {
+                message: format!("Failed reading rules dir entry: {e}"),
+            })?;
             let path: PathBuf = entry.path();
             if path.extension().is_none_or(|e| e != "sql") {
                 continue;

@@ -1,4 +1,5 @@
 version: 1
+kind: sql
 
 description: "Report showing order volume by status using a table function"
 owner: analytics-team

@@ -118,7 +118,7 @@ fn generate_source_tests(sources: &[SourceFile]) -> Vec<SchemaTest> {
 }
 
 /// Execute the test command
-pub async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
+pub(crate) async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
     use ff_core::config::Config;
 
     let project = load_project(global)?;

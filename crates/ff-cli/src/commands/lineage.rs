@@ -8,7 +8,7 @@ use crate::cli::{GlobalArgs, LineageArgs, LineageDirection, LineageOutput};
 use crate::commands::common::{self, load_project};
 
 /// Execute the lineage command
-pub async fn execute(args: &LineageArgs, global: &GlobalArgs) -> Result<()> {
+pub(crate) async fn execute(args: &LineageArgs, global: &GlobalArgs) -> Result<()> {
     let project = load_project(global)?;
 
     let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())

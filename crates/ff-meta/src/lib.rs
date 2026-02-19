@@ -11,6 +11,7 @@ pub mod manifest;
 pub mod migration;
 pub mod populate;
 pub mod query;
+pub mod row_helpers;
 pub mod rules;
 
 pub use connection::MetaDb;

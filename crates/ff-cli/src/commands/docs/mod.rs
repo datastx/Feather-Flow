@@ -10,7 +10,7 @@ use anyhow::Result;
 use crate::cli::{DocsArgs, GlobalArgs};
 
 /// Execute the docs command, dispatching to subcommands
-pub async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
+pub(crate) async fn execute(args: &DocsArgs, global: &GlobalArgs) -> Result<()> {
     match &args.command {
         Some(crate::cli::DocsCommands::Serve(serve_args)) => {
             #[cfg(feature = "docs-serve")]

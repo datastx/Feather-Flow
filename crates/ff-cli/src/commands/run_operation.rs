@@ -8,7 +8,7 @@ use crate::cli::{GlobalArgs, RunOperationArgs};
 use crate::commands::common::{self, load_project};
 
 /// Execute the run-operation command
-pub async fn execute(args: &RunOperationArgs, global: &GlobalArgs) -> Result<()> {
+pub(crate) async fn execute(args: &RunOperationArgs, global: &GlobalArgs) -> Result<()> {
     let start_time = Instant::now();
     let project = load_project(global)?;
 

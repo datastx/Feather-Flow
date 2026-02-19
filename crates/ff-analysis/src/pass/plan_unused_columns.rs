@@ -53,7 +53,9 @@ fn check_model_unused_columns(
     ctx: &AnalysisContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    let result = &models[model_name];
+    let Some(result) = models.get(model_name) else {
+        return;
+    };
     let output_columns: Vec<String> = result
         .plan
         .schema()

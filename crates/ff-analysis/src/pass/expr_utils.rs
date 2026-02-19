@@ -64,6 +64,33 @@ where
                 walk_expr_columns(item, collector);
             }
         }
+        Expr::WindowFunction(wf) => {
+            for arg in &wf.params.args {
+                walk_expr_columns(arg, collector);
+            }
+            for expr in &wf.params.partition_by {
+                walk_expr_columns(expr, collector);
+            }
+            for sort in &wf.params.order_by {
+                walk_expr_columns(&sort.expr, collector);
+            }
+        }
+        Expr::InSubquery(in_sub) => {
+            walk_expr_columns(&in_sub.expr, collector);
+            // Don't cross into the subquery plan boundary
+        }
+        Expr::Exists(_) => {
+            // No column refs at this expression level
+        }
+        Expr::IsTrue(inner)
+        | Expr::IsFalse(inner)
+        | Expr::IsNotTrue(inner)
+        | Expr::IsNotFalse(inner)
+        | Expr::IsUnknown(inner)
+        | Expr::IsNotUnknown(inner) => {
+            walk_expr_columns(inner, collector);
+        }
+        // Leaf variants (Literal, Placeholder, Wildcard, etc.)
         _ => {}
     }
 }

@@ -103,6 +103,6 @@ fn test_config_json(tt: &TestType) -> Option<String> {
             }
             Some(serde_json::Value::Object(obj).to_string())
         }
-        _ => None,
+        TestType::Unique | TestType::NotNull | TestType::Positive | TestType::NonNegative => None,
     }
 }

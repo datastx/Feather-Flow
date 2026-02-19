@@ -7,7 +7,7 @@ use crate::cli::{CleanArgs, GlobalArgs};
 use crate::commands::common::load_project;
 
 /// Execute the clean command
-pub async fn execute(args: &CleanArgs, global: &GlobalArgs) -> Result<()> {
+pub(crate) async fn execute(args: &CleanArgs, global: &GlobalArgs) -> Result<()> {
     let project = load_project(global)?;
 
     // Default clean targets if not specified in config

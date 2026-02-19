@@ -123,39 +123,74 @@ pub enum OverriddenSeverity {
 /// User-configured severity overrides for diagnostic codes.
 ///
 /// Built from `Config.analysis.severity_overrides` and used to remap or
-/// suppress diagnostics after passes have run.
+/// suppress diagnostics after passes have run. Uses separate maps for
+/// typed `DiagnosticCode` keys (direct lookup, no formatting) and
+/// string SA-codes.
 #[derive(Debug, Clone, Default)]
 pub struct SeverityOverrides {
-    overrides: HashMap<String, OverriddenSeverity>,
+    code_overrides: HashMap<DiagnosticCode, OverriddenSeverity>,
+    sa_overrides: HashMap<String, OverriddenSeverity>,
 }
 
 impl SeverityOverrides {
     /// Build overrides from the config map.
+    ///
+    /// Keys that parse as a `DiagnosticCode` (e.g. `"A020"`) go into the
+    /// typed map for O(1) lookup; everything else (e.g. `"SA01"`) stays
+    /// as a string key.
     pub fn from_config(config_map: &HashMap<String, ConfigSeverity>) -> Self {
-        let overrides = config_map
-            .iter()
-            .map(|(code, sev)| {
-                let resolved = match sev {
-                    ConfigSeverity::Info => OverriddenSeverity::Level(Severity::Info),
-                    ConfigSeverity::Warning => OverriddenSeverity::Level(Severity::Warning),
-                    ConfigSeverity::Error => OverriddenSeverity::Level(Severity::Error),
-                    ConfigSeverity::Off => OverriddenSeverity::Off,
-                };
-                (code.clone(), resolved)
-            })
-            .collect();
-        Self { overrides }
+        let mut code_overrides = HashMap::new();
+        let mut sa_overrides = HashMap::new();
+
+        for (key, sev) in config_map {
+            let resolved = match sev {
+                ConfigSeverity::Info => OverriddenSeverity::Level(Severity::Info),
+                ConfigSeverity::Warning => OverriddenSeverity::Level(Severity::Warning),
+                ConfigSeverity::Error => OverriddenSeverity::Level(Severity::Error),
+                ConfigSeverity::Off => OverriddenSeverity::Off,
+            };
+            if let Some(dc) = parse_diagnostic_code(key) {
+                code_overrides.insert(dc, resolved);
+            } else {
+                sa_overrides.insert(key.clone(), resolved);
+            }
+        }
+
+        Self {
+            code_overrides,
+            sa_overrides,
+        }
     }
 
     /// Look up an override for a `DiagnosticCode` (e.g. `A020`).
     pub fn get_for_code(&self, code: DiagnosticCode) -> Option<OverriddenSeverity> {
-        // DiagnosticCode's Debug representation matches the config keys (e.g. "A020")
-        self.overrides.get(&format!("{:?}", code)).copied()
+        self.code_overrides.get(&code).copied()
     }
 
     /// Look up an override for an SA-code string (e.g. `"SA01"`, `"SA02"`).
     pub fn get_for_sa(&self, code: &str) -> Option<OverriddenSeverity> {
-        self.overrides.get(code).copied()
+        self.sa_overrides.get(code).copied()
+    }
+}
+
+/// Try to parse a string key into a DiagnosticCode.
+fn parse_diagnostic_code(s: &str) -> Option<DiagnosticCode> {
+    match s {
+        "A001" => Some(DiagnosticCode::A001),
+        "A002" => Some(DiagnosticCode::A002),
+        "A003" => Some(DiagnosticCode::A003),
+        "A004" => Some(DiagnosticCode::A004),
+        "A005" => Some(DiagnosticCode::A005),
+        "A010" => Some(DiagnosticCode::A010),
+        "A011" => Some(DiagnosticCode::A011),
+        "A012" => Some(DiagnosticCode::A012),
+        "A020" => Some(DiagnosticCode::A020),
+        "A030" => Some(DiagnosticCode::A030),
+        "A032" => Some(DiagnosticCode::A032),
+        "A033" => Some(DiagnosticCode::A033),
+        "A040" => Some(DiagnosticCode::A040),
+        "A041" => Some(DiagnosticCode::A041),
+        _ => None,
     }
 }
 
