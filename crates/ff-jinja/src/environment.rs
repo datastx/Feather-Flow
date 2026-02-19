@@ -88,11 +88,11 @@ impl<'a> JinjaEnvironment<'a> {
         register_builtins(&mut env);
 
         if let Some(ctx) = template_context {
-            env.add_global("project_name", Value::from(ctx.project_name.clone()));
+            env.add_global("project_name", Value::from(ctx.project_name.as_str()));
             env.add_global("target", Value::from_serialize(&ctx.target));
-            env.add_global("run_id", Value::from(ctx.run_id.clone()));
-            env.add_global("run_started_at", Value::from(ctx.run_started_at.clone()));
-            env.add_global("ff_version", Value::from(ctx.ff_version.clone()));
+            env.add_global("run_id", Value::from(ctx.run_id.as_str()));
+            env.add_global("run_started_at", Value::from(ctx.run_started_at.as_str()));
+            env.add_global("ff_version", Value::from(ctx.ff_version.as_str()));
             env.add_global("executing", Value::from(ctx.executing));
         }
 

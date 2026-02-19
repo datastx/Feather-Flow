@@ -66,7 +66,7 @@ pub fn discover_custom_test_macros(
 }
 
 /// Read a single macro file and extract any test macros from it.
-fn process_macro_file(file_path: &std::path::PathBuf) -> JinjaResult<Vec<CustomTestMacro>> {
+fn process_macro_file(file_path: &std::path::Path) -> JinjaResult<Vec<CustomTestMacro>> {
     let content = fs::read_to_string(file_path).map_err(|e| {
         JinjaError::Internal(format!(
             "failed to read macro file {}: {}",

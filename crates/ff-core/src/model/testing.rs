@@ -9,53 +9,62 @@ use std::path::PathBuf;
 /// Parse a test definition into a TestType
 pub fn parse_test_definition(test_def: &TestDefinition) -> Option<TestType> {
     match test_def {
-        TestDefinition::Simple(name) => match name.as_str() {
-            "unique" => Some(TestType::Unique),
-            "not_null" => Some(TestType::NotNull),
-            "positive" => Some(TestType::Positive),
-            "non_negative" => Some(TestType::NonNegative),
-            _ => None, // Skip unknown test types
-        },
+        TestDefinition::Simple(name) => parse_simple_test(name),
         TestDefinition::Parameterized(map) => {
-            // Get the first (and should be only) key-value pair
             let (test_name, params) = map.iter().next()?;
-
-            match test_name.as_str() {
-                "accepted_values" => {
-                    let values: Vec<String> = params
-                        .values
-                        .iter()
-                        .filter_map(|v| match v {
-                            serde_yaml::Value::String(s) => Some(s.clone()),
-                            serde_yaml::Value::Number(n) => Some(n.to_string()),
-                            serde_yaml::Value::Bool(b) => Some(b.to_string()),
-                            _ => None, // Skip non-stringifiable values
-                        })
-                        .collect();
-                    if values.is_empty() {
-                        return None;
-                    }
-                    Some(TestType::AcceptedValues {
-                        values,
-                        quote: params.quote,
-                    })
-                }
-                "min_value" => params.value.map(|value| TestType::MinValue { value }),
-                "max_value" => params.value.map(|value| TestType::MaxValue { value }),
-                "regex" => params
-                    .pattern
-                    .clone()
-                    .map(|pattern| TestType::Regex { pattern }),
-                "relationship" | "relationships" => {
-                    params.to.clone().map(|to| TestType::Relationship {
-                        to,
-                        field: params.field.clone(),
-                    })
-                }
-                _ => None,
-            }
+            parse_parameterized_test(test_name, params)
         }
     }
+}
+
+/// Parse a simple (unparameterized) test name.
+fn parse_simple_test(name: &str) -> Option<TestType> {
+    match name {
+        "unique" => Some(TestType::Unique),
+        "not_null" => Some(TestType::NotNull),
+        "positive" => Some(TestType::Positive),
+        "non_negative" => Some(TestType::NonNegative),
+        _ => None,
+    }
+}
+
+/// Parse a parameterized test definition.
+fn parse_parameterized_test(test_name: &str, params: &TestParams) -> Option<TestType> {
+    match test_name {
+        "accepted_values" => parse_accepted_values(params),
+        "min_value" => params.value.map(|value| TestType::MinValue { value }),
+        "max_value" => params.value.map(|value| TestType::MaxValue { value }),
+        "regex" => params
+            .pattern
+            .clone()
+            .map(|pattern| TestType::Regex { pattern }),
+        "relationship" | "relationships" => params.to.clone().map(|to| TestType::Relationship {
+            to,
+            field: params.field.clone(),
+        }),
+        _ => None,
+    }
+}
+
+/// Parse accepted_values test parameters into a TestType.
+fn parse_accepted_values(params: &TestParams) -> Option<TestType> {
+    let values: Vec<String> = params
+        .values
+        .iter()
+        .filter_map(|v| match v {
+            serde_yaml::Value::String(s) => Some(s.clone()),
+            serde_yaml::Value::Number(n) => Some(n.to_string()),
+            serde_yaml::Value::Bool(b) => Some(b.to_string()),
+            _ => None,
+        })
+        .collect();
+    if values.is_empty() {
+        return None;
+    }
+    Some(TestType::AcceptedValues {
+        values,
+        quote: params.quote,
+    })
 }
 
 /// Schema test definition from schema.yml

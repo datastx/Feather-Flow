@@ -7,11 +7,10 @@ use std::path::Path;
 
 /// Insert a project row and its hooks/vars. Returns the generated `project_id`.
 pub fn populate_project(conn: &Connection, config: &Config, root: &Path) -> MetaResult<i64> {
-    let materialization = match config.materialization {
-        ff_core::config::Materialization::View => "view",
-        ff_core::config::Materialization::Table => "table",
-        ff_core::config::Materialization::Incremental => "incremental",
-        ff_core::config::Materialization::Ephemeral => "view",
+    let materialization = if config.materialization.is_ephemeral() {
+        "view"
+    } else {
+        config.materialization.as_str()
     };
 
     let dialect = match config.database.db_type {

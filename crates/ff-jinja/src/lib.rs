@@ -9,12 +9,12 @@
 //! `ff_version`, `executing`, `model`) are available when constructed with
 //! [`JinjaEnvironment::with_context`].
 
-pub mod builtins;
-pub mod context;
-pub mod custom_tests;
-pub mod environment;
-pub mod error;
-pub mod functions;
+pub(crate) mod builtins;
+pub(crate) mod context;
+pub(crate) mod custom_tests;
+pub(crate) mod environment;
+pub(crate) mod error;
+pub(crate) mod functions;
 
 pub use builtins::{
     get_builtin_macros, get_macro_by_name, get_macro_categories, get_macros_by_category,

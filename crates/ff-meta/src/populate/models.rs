@@ -12,12 +12,12 @@ pub fn populate_models(
     project_id: i64,
     models: &HashMap<ModelName, Model>,
     config: &Config,
-) -> MetaResult<HashMap<String, i64>> {
+) -> MetaResult<HashMap<ModelName, i64>> {
     let mut id_map = HashMap::with_capacity(models.len());
 
     for model in models.values() {
         let model_id = insert_model(conn, project_id, model, config)?;
-        id_map.insert(model.name.as_ref().to_string(), model_id);
+        id_map.insert(model.name.clone(), model_id);
         insert_model_config(conn, model_id, model)?;
         insert_model_hooks(conn, model_id, model)?;
         insert_model_tags(conn, model_id, model)?;
@@ -29,7 +29,7 @@ pub fn populate_models(
 }
 
 /// Retrieve a mapping of model name → model_id for a given project.
-pub fn get_model_id_map(conn: &Connection, project_id: i64) -> MetaResult<HashMap<String, i64>> {
+pub fn get_model_id_map(conn: &Connection, project_id: i64) -> MetaResult<HashMap<ModelName, i64>> {
     let mut stmt = conn
         .prepare("SELECT model_id, name FROM ff_meta.models WHERE project_id = ?")
         .populate_context("prepare get_model_id_map")?;
@@ -43,9 +43,9 @@ pub fn get_model_id_map(conn: &Connection, project_id: i64) -> MetaResult<HashMa
     rows.into_iter()
         .map(|row| {
             let (model_id, name) = row.populate_context("row get_model_id_map")?;
-            Ok((name, model_id))
+            Ok((ModelName::new(name), model_id))
         })
-        .collect::<MetaResult<HashMap<String, i64>>>()
+        .collect::<MetaResult<HashMap<ModelName, i64>>>()
 }
 
 fn insert_model(
@@ -54,11 +54,11 @@ fn insert_model(
     model: &Model,
     config: &Config,
 ) -> MetaResult<i64> {
-    let materialization = match model.materialization(config.materialization) {
-        ff_core::config::Materialization::View => "view",
-        ff_core::config::Materialization::Table => "table",
-        ff_core::config::Materialization::Incremental => "incremental",
-        ff_core::config::Materialization::Ephemeral => "view",
+    let mat = model.materialization(config.materialization);
+    let materialization = if mat.is_ephemeral() {
+        "view"
+    } else {
+        mat.as_str()
     };
 
     let schema_name = model.target_schema(config.schema.as_deref());

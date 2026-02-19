@@ -56,24 +56,16 @@ pub fn execute_rule(
         }
     };
 
-    let raw_rows: Vec<Vec<String>> = match stmt.query_map([], |row| {
-        let col_count = row.as_ref().column_count();
-        Ok((0..col_count)
-            .map(|i| crate::row_helpers::get_column_as_string(row, i))
-            .collect())
-    }) {
-        Ok(mapped) => mapped
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| MetaError::QueryError(format!("rule row error: {e}")))?,
+    let (raw_column_names, raw_rows) = match crate::row_helpers::execute_and_collect(&mut stmt) {
+        Ok(result) => result,
         Err(e) => {
             return Ok((make_error_result(rule, format!("Query error: {e}")), vec![]));
         }
     };
 
-    // After query_map, the mutable borrow is released and we can read metadata.
-    let column_count = stmt.column_count();
-    let column_names: Vec<String> = (0..column_count)
-        .map(|i| stmt.column_name(i).map_or("?", |v| v).to_lowercase())
+    let column_names: Vec<String> = raw_column_names
+        .into_iter()
+        .map(|n| n.to_lowercase())
         .collect();
 
     let message_idx = find_column_index(&column_names, &["violation", "message"]);

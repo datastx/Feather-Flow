@@ -653,7 +653,7 @@ fn populate_meta_compile(
             if !matches!(result.status, common::RunStatus::Success) {
                 continue;
             }
-            let Some(&model_id) = model_id_map.get(&result.model) else {
+            let Some(&model_id) = model_id_map.get(result.model.as_str()) else {
                 continue;
             };
             let compiled_sql = project
@@ -674,7 +674,7 @@ fn populate_meta_compile(
             if let Some(deps) = dependencies.get(&result.model) {
                 let dep_ids: Vec<i64> = deps
                     .iter()
-                    .filter_map(|d| model_id_map.get(d).copied())
+                    .filter_map(|d| model_id_map.get(d.as_str()).copied())
                     .collect();
                 ff_meta::populate::compilation::populate_dependencies(conn, model_id, &dep_ids)?;
             }

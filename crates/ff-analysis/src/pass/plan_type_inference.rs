@@ -45,14 +45,7 @@ impl PlanPass for PlanTypeInference {
 fn walk_plan(model: &str, plan: &LogicalPlan, diags: &mut Vec<Diagnostic>) {
     match plan {
         LogicalPlan::Union(union) => {
-            if union.inputs.len() >= 2 {
-                let first_schema = union.inputs[0].schema();
-
-                for (i, input) in union.inputs.iter().enumerate().skip(1) {
-                    check_union_column_types(model, first_schema, input.schema(), i + 1, diags);
-                }
-            }
-
+            check_union(model, union, diags);
             for input in &union.inputs {
                 walk_plan(model, input, diags);
             }
@@ -83,6 +76,21 @@ fn walk_plan(model: &str, plan: &LogicalPlan, diags: &mut Vec<Diagnostic>) {
                 walk_plan(model, input, diags);
             }
         }
+    }
+}
+
+/// Check a UNION node for column count (A003) and type (A002) mismatches.
+fn check_union(
+    model: &str,
+    union: &datafusion_expr::logical_plan::Union,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if union.inputs.len() < 2 {
+        return;
+    }
+    let first_schema = union.inputs[0].schema();
+    for (i, input) in union.inputs.iter().enumerate().skip(1) {
+        check_union_column_types(model, first_schema, input.schema(), i + 1, diags);
     }
 }
 

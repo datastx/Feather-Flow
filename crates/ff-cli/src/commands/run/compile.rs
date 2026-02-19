@@ -72,6 +72,16 @@ pub(crate) fn load_or_compile_models(
     )
 }
 
+/// Shared state for compiling SQL models.
+struct CompileEnv<'a> {
+    project: &'a Project,
+    jinja: ff_jinja::JinjaEnvironment<'a>,
+    parser: SqlParser,
+    known_models: HashSet<&'a str>,
+    external_tables: HashSet<String>,
+    comment_ctx: Option<&'a ff_core::query_comment::QueryCommentContext>,
+}
+
 /// Compile all models fresh
 fn compile_all_models(
     project: &Project,
@@ -79,12 +89,15 @@ fn compile_all_models(
     target: Option<&str>,
     comment_ctx: Option<&ff_core::query_comment::QueryCommentContext>,
 ) -> Result<HashMap<String, CompiledModel>> {
-    let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
-        .context("Invalid SQL dialect")?;
-    let jinja = common::build_jinja_env_with_context(project, target, true);
-
-    let external_tables: HashSet<String> = common::build_external_tables_lookup(project);
-    let known_models: HashSet<&str> = project.models.keys().map(|k| k.as_str()).collect();
+    let env = CompileEnv {
+        project,
+        jinja: common::build_jinja_env_with_context(project, target, true),
+        parser: SqlParser::from_dialect_name(&project.config.dialect.to_string())
+            .context("Invalid SQL dialect")?,
+        known_models: project.models.keys().map(|k| k.as_str()).collect(),
+        external_tables: common::build_external_tables_lookup(project),
+        comment_ctx,
+    };
 
     let mut compiled_models = HashMap::with_capacity(model_names.len());
 
@@ -93,162 +106,182 @@ fn compile_all_models(
             .get_model(name)
             .with_context(|| format!("Model not found: {}", name))?;
 
-        // Python models skip Jinja/SQL compilation — deps come from YAML
-        if model.is_python() {
-            let model_deps: Vec<String> = model.depends_on.iter().map(|m| m.to_string()).collect();
-            let schema = model
-                .config
-                .schema
-                .clone()
-                .or_else(|| project.config.schema.clone());
-            let model_schema = model.schema.clone();
+        let compiled = if model.is_python() {
+            compile_python_model(model, project)
+        } else {
+            compile_sql_model(name, model, &env)?
+        };
 
-            compiled_models.insert(
-                name.to_string(),
-                CompiledModel {
-                    sql: String::new(),
-                    materialization: Materialization::Table,
-                    schema,
-                    dependencies: model_deps,
-                    unique_key: None,
-                    incremental_strategy: None,
-                    on_schema_change: None,
-                    pre_hook: Vec::new(),
-                    post_hook: Vec::new(),
-                    model_schema,
-                    query_comment: None,
-                    comment_placement: Default::default(),
-                    wap: false,
-                    is_python: true,
-                    script_path: Some(model.path.clone()),
-                },
-            );
-            continue;
-        }
-
-        let (rendered, config_values) = jinja
-            .render_with_config(&model.raw_sql)
-            .with_context(|| format!("Failed to render template for model: {}", name))?;
-
-        let statements = parser
-            .parse(&rendered)
-            .with_context(|| format!("Failed to parse SQL for model: {}", name))?;
-
-        let deps = extract_dependencies(&statements);
-        let (mut model_deps, _, unknown_deps) =
-            ff_sql::extractor::categorize_dependencies_with_unknown(
-                deps,
-                &known_models,
-                &external_tables,
-            );
-
-        let (func_model_deps, _) = common::resolve_function_dependencies(
-            &unknown_deps,
-            project,
-            &parser,
-            &known_models,
-            &external_tables,
-        );
-        model_deps.extend(func_model_deps);
-        model_deps.sort();
-        model_deps.dedup();
-
-        let mat = config_values
-            .get("materialized")
-            .and_then(|v| v.as_str())
-            .map(common::parse_materialization)
-            .unwrap_or(project.config.materialization);
-
-        let schema = config_values
-            .get("schema")
-            .and_then(|v| v.as_str())
-            .map(String::from)
-            .or_else(|| project.config.schema.clone());
-
-        // Parse incremental config if model is incremental
-        let (unique_key, incremental_strategy, on_schema_change) =
-            if mat == Materialization::Incremental {
-                let unique_key = config_values
-                    .get("unique_key")
-                    .and_then(|v| v.as_str())
-                    .map(|s| {
-                        s.split(',')
-                            .map(|k| k.trim().to_string())
-                            .filter(|k| !k.is_empty())
-                            .collect::<Vec<_>>()
-                    });
-
-                let strategy = config_values
-                    .get("incremental_strategy")
-                    .and_then(|v| v.as_str())
-                    .map(common::parse_incremental_strategy);
-
-                let on_change = config_values
-                    .get("on_schema_change")
-                    .and_then(|v| v.as_str())
-                    .map(common::parse_on_schema_change);
-
-                (unique_key, strategy, on_change)
-            } else {
-                (None, None, None)
-            };
-
-        let pre_hook = parse_hooks_from_config(&config_values, "pre_hook");
-        let post_hook = parse_hooks_from_config(&config_values, "post_hook");
-
-        let model_schema = model.schema.clone();
-
-        let wap = config_values
-            .get("wap")
-            .map(|v| {
-                v.as_str()
-                    .map(|s| s == "true")
-                    .unwrap_or_else(|| v.is_true())
-            })
-            .unwrap_or_else(|| model.wap_enabled());
-
-        // Build query comment for this model
-        let comment_placement = comment_ctx
-            .map(|ctx| ctx.config.placement)
-            .unwrap_or_default();
-        let query_comment = comment_ctx.map(|ctx| {
-            let node_path = model
-                .path
-                .strip_prefix(&project.root)
-                .ok()
-                .map(|p| p.to_string_lossy().to_string());
-            let input = ff_core::query_comment::ModelCommentInput {
-                model_name: name,
-                materialization: &mat.to_string(),
-                node_path: node_path.as_deref(),
-                schema: schema.as_deref(),
-            };
-            ctx.build_comment(&input)
-        });
-
-        compiled_models.insert(
-            name.to_string(),
-            CompiledModel {
-                sql: rendered,
-                materialization: mat,
-                schema,
-                dependencies: model_deps,
-                unique_key,
-                incremental_strategy,
-                on_schema_change,
-                pre_hook,
-                post_hook,
-                model_schema,
-                query_comment,
-                comment_placement,
-                wap,
-                is_python: false,
-                script_path: None,
-            },
-        );
+        compiled_models.insert(name.to_string(), compiled);
     }
 
     Ok(compiled_models)
+}
+
+/// Compile a Python model (no Jinja/SQL — deps come from YAML).
+fn compile_python_model(
+    model: &ff_core::model::Model,
+    project: &ff_core::Project,
+) -> CompiledModel {
+    let model_deps: Vec<String> = model.depends_on.iter().map(|m| m.to_string()).collect();
+    let schema = model
+        .config
+        .schema
+        .clone()
+        .or_else(|| project.config.schema.clone());
+
+    CompiledModel {
+        sql: String::new(),
+        materialization: Materialization::Table,
+        schema,
+        dependencies: model_deps,
+        unique_key: None,
+        incremental_strategy: None,
+        on_schema_change: None,
+        pre_hook: Vec::new(),
+        post_hook: Vec::new(),
+        model_schema: model.schema.clone(),
+        query_comment: None,
+        comment_placement: Default::default(),
+        wap: false,
+        is_python: true,
+        script_path: Some(model.path.clone()),
+    }
+}
+
+/// Compile a single SQL model: render Jinja, parse SQL, extract deps, build config.
+fn compile_sql_model(
+    name: &str,
+    model: &ff_core::model::Model,
+    env: &CompileEnv<'_>,
+) -> Result<CompiledModel> {
+    let (rendered, config_values) = env
+        .jinja
+        .render_with_config(&model.raw_sql)
+        .with_context(|| format!("Failed to render template for model: {}", name))?;
+
+    let statements = env
+        .parser
+        .parse(&rendered)
+        .with_context(|| format!("Failed to parse SQL for model: {}", name))?;
+
+    let deps = extract_dependencies(&statements);
+    let (mut model_deps, _, unknown_deps) = ff_sql::extractor::categorize_dependencies_with_unknown(
+        deps,
+        &env.known_models,
+        &env.external_tables,
+    );
+
+    let (func_model_deps, _) = common::resolve_function_dependencies(
+        &unknown_deps,
+        env.project,
+        &env.parser,
+        &env.known_models,
+        &env.external_tables,
+    );
+    model_deps.extend(func_model_deps);
+    model_deps.sort();
+    model_deps.dedup();
+
+    let mat = config_values
+        .get("materialized")
+        .and_then(|v| v.as_str())
+        .map(common::parse_materialization)
+        .unwrap_or(env.project.config.materialization);
+
+    let schema = config_values
+        .get("schema")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .or_else(|| env.project.config.schema.clone());
+
+    let (unique_key, incremental_strategy, on_schema_change) =
+        parse_incremental_config(&config_values, mat);
+
+    let pre_hook = parse_hooks_from_config(&config_values, "pre_hook");
+    let post_hook = parse_hooks_from_config(&config_values, "post_hook");
+
+    let wap = config_values
+        .get("wap")
+        .map(|v| {
+            v.as_str()
+                .map(|s| s == "true")
+                .unwrap_or_else(|| v.is_true())
+        })
+        .unwrap_or_else(|| model.wap_enabled());
+
+    let comment_placement = env
+        .comment_ctx
+        .map(|ctx| ctx.config.placement)
+        .unwrap_or_default();
+    let query_comment = env.comment_ctx.map(|ctx| {
+        let node_path = model
+            .path
+            .strip_prefix(&env.project.root)
+            .ok()
+            .map(|p| p.to_string_lossy().to_string());
+        let input = ff_core::query_comment::ModelCommentInput {
+            model_name: name,
+            materialization: &mat.to_string(),
+            node_path: node_path.as_deref(),
+            schema: schema.as_deref(),
+        };
+        ctx.build_comment(&input)
+    });
+
+    Ok(CompiledModel {
+        sql: rendered,
+        materialization: mat,
+        schema,
+        dependencies: model_deps,
+        unique_key,
+        incremental_strategy,
+        on_schema_change,
+        pre_hook,
+        post_hook,
+        model_schema: model.schema.clone(),
+        query_comment,
+        comment_placement,
+        wap,
+        is_python: false,
+        script_path: None,
+    })
+}
+
+/// Parse incremental-specific config values (unique_key, strategy, on_schema_change).
+fn parse_incremental_config(
+    config_values: &HashMap<String, minijinja::Value>,
+    mat: Materialization,
+) -> (
+    Option<Vec<String>>,
+    Option<IncrementalStrategy>,
+    Option<OnSchemaChange>,
+) {
+    if mat != Materialization::Incremental {
+        return (None, None, None);
+    }
+
+    let unique_key = config_values
+        .get("unique_key")
+        .and_then(|v| v.as_str())
+        .map(|s| {
+            s.split(',')
+                .map(|k| k.trim().to_string())
+                .filter(|k| !k.is_empty())
+                .collect::<Vec<_>>()
+        });
+
+    let strategy = config_values
+        .get("incremental_strategy")
+        .and_then(|v| v.as_str())
+        .map(common::parse_incremental_strategy);
+
+    let on_change = config_values
+        .get("on_schema_change")
+        .and_then(|v| v.as_str())
+        .map(common::parse_on_schema_change);
+
+    (unique_key, strategy, on_change)
 }
 
 /// Load the deferred manifest from --defer path.

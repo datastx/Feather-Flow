@@ -9,16 +9,18 @@ use sqlparser::ast::{Query, SetExpr, Statement, TableFactor, TableWithJoins};
 /// directory-per-model architecture.
 fn validate_no_ctes(statements: &[Statement]) -> SqlResult<()> {
     for stmt in statements {
-        if let Statement::Query(query) = stmt {
-            if let Some(with) = &query.with {
-                let cte_names: Vec<String> = with
-                    .cte_tables
-                    .iter()
-                    .map(|c| c.alias.name.value.clone())
-                    .collect();
-                return Err(SqlError::CteNotAllowed { cte_names });
-            }
-        }
+        let Statement::Query(query) = stmt else {
+            continue;
+        };
+        let Some(with) = &query.with else {
+            continue;
+        };
+        let cte_names: Vec<String> = with
+            .cte_tables
+            .iter()
+            .map(|c| c.alias.name.value.clone())
+            .collect();
+        return Err(SqlError::CteNotAllowed { cte_names });
     }
     Ok(())
 }

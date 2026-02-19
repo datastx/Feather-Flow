@@ -22,27 +22,7 @@ pub fn execute_query(conn: &Connection, sql: &str) -> MetaResult<QueryResult> {
         .prepare(sql)
         .map_err(|e| MetaError::QueryError(format!("prepare failed: {e}")))?;
 
-    let raw_rows: Vec<Vec<String>> = match stmt.query_map([], |row| {
-        let col_count = row.as_ref().column_count();
-        Ok((0..col_count)
-            .map(|i| get_column_as_string(row, i))
-            .collect())
-    }) {
-        Ok(mapped) => mapped
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| MetaError::QueryError(format!("row error: {e}")))?,
-        Err(e) => {
-            return Err(MetaError::QueryError(format!("query failed: {e}")));
-        }
-    };
-
-    let column_count = stmt.column_count();
-    let column_names: Vec<String> = (0..column_count)
-        .map(|i| {
-            stmt.column_name(i)
-                .map_or("?".to_string(), |v| v.to_string())
-        })
-        .collect();
+    let (column_names, raw_rows) = crate::row_helpers::execute_and_collect(&mut stmt)?;
 
     Ok(QueryResult {
         columns: column_names,
@@ -58,7 +38,11 @@ pub fn list_tables(conn: &Connection) -> MetaResult<Vec<String>> {
          WHERE table_schema = 'ff_meta' \
          ORDER BY table_name",
     )?;
-    Ok(result.rows.into_iter().map(|r| r[0].clone()).collect())
+    Ok(result
+        .rows
+        .into_iter()
+        .filter_map(|r| r.into_iter().next())
+        .collect())
 }
 
 /// Get the row count for a table in the `ff_meta` schema.

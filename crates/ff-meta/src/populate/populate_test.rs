@@ -1,5 +1,5 @@
 use super::analysis::{Diagnostic, InferredColumn, LineageEdge, SchemaMismatch};
-use super::execution::{ConfigSnapshot, InputChecksum, ModelRunRecord};
+use super::execution::{ConfigSnapshot, InputChecksum, ModelRunRecord, ModelRunStatus};
 #[cfg(test)]
 use crate::MetaDb;
 use ff_core::config::{DatabaseConfig, Materialization};
@@ -1490,7 +1490,7 @@ fn record_model_run_success() {
             &ModelRunRecord {
                 model_id,
                 run_id,
-                status: "success".to_string(),
+                status: ModelRunStatus::Success,
                 row_count: Some(42),
                 sql_checksum: Some("sha256abc".to_string()),
                 schema_checksum: Some("sha256def".to_string()),
@@ -1533,7 +1533,7 @@ fn multiple_runs_accumulate() {
             &ModelRunRecord {
                 model_id,
                 run_id: run1,
-                status: "success".to_string(),
+                status: ModelRunStatus::Success,
                 row_count: Some(10),
                 sql_checksum: None,
                 schema_checksum: None,
@@ -1547,7 +1547,7 @@ fn multiple_runs_accumulate() {
             &ModelRunRecord {
                 model_id,
                 run_id: run2,
-                status: "success".to_string(),
+                status: ModelRunStatus::Success,
                 row_count: Some(20),
                 sql_checksum: None,
                 schema_checksum: None,
@@ -1588,7 +1588,7 @@ fn model_latest_state_returns_most_recent_success() {
             &ModelRunRecord {
                 model_id,
                 run_id: run1,
-                status: "success".to_string(),
+                status: ModelRunStatus::Success,
                 row_count: Some(10),
                 sql_checksum: None,
                 schema_checksum: None,
@@ -1602,7 +1602,7 @@ fn model_latest_state_returns_most_recent_success() {
             &ModelRunRecord {
                 model_id,
                 run_id: run2,
-                status: "error".to_string(),
+                status: ModelRunStatus::Error,
                 row_count: None,
                 sql_checksum: None,
                 schema_checksum: None,
@@ -1616,7 +1616,7 @@ fn model_latest_state_returns_most_recent_success() {
             &ModelRunRecord {
                 model_id,
                 run_id: run3,
-                status: "success".to_string(),
+                status: ModelRunStatus::Success,
                 row_count: Some(30),
                 sql_checksum: None,
                 schema_checksum: None,
@@ -1663,7 +1663,7 @@ fn record_input_checksums() {
             &ModelRunRecord {
                 model_id: fct_id,
                 run_id,
-                status: "success".to_string(),
+                status: ModelRunStatus::Success,
                 row_count: Some(100),
                 sql_checksum: None,
                 schema_checksum: None,
@@ -1720,7 +1720,7 @@ fn record_config_snapshot_for_drift_detection() {
             &ModelRunRecord {
                 model_id,
                 run_id,
-                status: "success".to_string(),
+                status: ModelRunStatus::Success,
                 row_count: Some(42),
                 sql_checksum: None,
                 schema_checksum: None,
@@ -1733,11 +1733,11 @@ fn record_config_snapshot_for_drift_detection() {
             model_id,
             run_id,
             &ConfigSnapshot {
-                materialization: "incremental".to_string(),
+                materialization: Materialization::Incremental,
                 schema_name: Some("analytics".to_string()),
                 unique_key: Some("id".to_string()),
-                incremental_strategy: Some("merge".to_string()),
-                on_schema_change: Some("fail".to_string()),
+                incremental_strategy: Some(ff_core::config::IncrementalStrategy::Merge),
+                on_schema_change: Some(ff_core::config::OnSchemaChange::Fail),
             },
         )?;
 

@@ -196,7 +196,7 @@ fn populate_meta_analysis(
     meta_db: &ff_meta::MetaDb,
     ctx: &AnalysisContext,
     order: &[ModelName],
-    model_id_map: &HashMap<String, i64>,
+    model_id_map: &HashMap<ModelName, i64>,
 ) {
     if let Err(e) = meta_db.transaction(|conn| {
         let meta_edges = build_meta_lineage_edges(ctx.lineage(), model_id_map);
@@ -309,14 +309,14 @@ fn print_json(diagnostics: &[ff_analysis::Diagnostic]) -> Result<()> {
 /// Convert ff-sql lineage edges to ff-meta lineage edges using model ID lookup.
 fn build_meta_lineage_edges(
     lineage: &ProjectLineage,
-    model_id_map: &HashMap<String, i64>,
+    model_id_map: &HashMap<ModelName, i64>,
 ) -> Vec<ff_meta::populate::analysis::LineageEdge> {
     lineage
         .edges
         .iter()
         .filter_map(|edge| {
-            let target_model_id = *model_id_map.get(&edge.target_model)?;
-            let source_model_id = model_id_map.get(&edge.source_model).copied();
+            let target_model_id = *model_id_map.get(edge.target_model.as_str())?;
+            let source_model_id = model_id_map.get(edge.source_model.as_str()).copied();
             let lineage_kind = if edge.is_direct && edge.expr_type == ExprType::Column {
                 "copy"
             } else {
@@ -357,12 +357,12 @@ fn build_classification_edges(lineage: &ProjectLineage) -> Vec<ClassificationEdg
 /// Build effective classification entries for meta DB population.
 fn build_effective_entries(
     effective: &HashMap<String, HashMap<String, String>>,
-    model_id_map: &HashMap<String, i64>,
+    model_id_map: &HashMap<ModelName, i64>,
 ) -> Vec<ff_meta::populate::analysis::EffectiveClassification> {
     effective
         .iter()
         .filter_map(|(model, columns)| {
-            let &model_id = model_id_map.get(model)?;
+            let &model_id = model_id_map.get(model.as_str())?;
             Some(columns.iter().map(move |(column, classification)| {
                 ff_meta::populate::analysis::EffectiveClassification {
                     model_id,

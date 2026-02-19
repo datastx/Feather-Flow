@@ -109,8 +109,9 @@ impl DagPlanPass for CrossModelConsistency {
         model_names.sort();
 
         for model_name in model_names {
-            // model_name comes from models.keys(), so get() always succeeds
-            let result = &models[model_name];
+            let Some(result) = models.get(model_name) else {
+                continue;
+            };
             for mismatch in &result.mismatches {
                 diagnostics.push(mismatch_to_diagnostic(model_name, mismatch, self.name()));
             }

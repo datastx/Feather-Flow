@@ -3,6 +3,7 @@
 use crate::error::{MetaResult, MetaResultExt};
 use duckdb::Connection;
 use ff_core::model::testing::{SchemaTest, SingularTest, TestType};
+use ff_core::ModelName;
 use std::collections::HashMap;
 
 /// Insert schema tests. The `model_id_map` maps model name → model_id.
@@ -10,7 +11,7 @@ pub fn populate_schema_tests(
     conn: &Connection,
     project_id: i64,
     tests: &[SchemaTest],
-    model_id_map: &HashMap<String, i64>,
+    model_id_map: &HashMap<ModelName, i64>,
 ) -> MetaResult<()> {
     for test in tests {
         let test_type = test_type_name(&test.test_type);

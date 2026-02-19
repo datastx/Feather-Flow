@@ -214,7 +214,14 @@ impl ModelSchema {
             path: path.display().to_string(),
             source: e,
         })?;
-        let schema: ModelSchema = serde_yaml::from_str(&content)?;
+        let schema: ModelSchema = serde_yaml::from_str(&content).map_err(|e| {
+            use serde::de::Error as _;
+            CoreError::YamlParse(serde_yaml::Error::custom(format!(
+                "{}: {}",
+                path.display(),
+                e
+            )))
+        })?;
         if schema.version != 1 {
             return Err(CoreError::UnsupportedSchemaVersion {
                 version: schema.version,
