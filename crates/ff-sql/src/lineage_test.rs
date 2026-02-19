@@ -253,7 +253,10 @@ fn test_recursive_downstream_diamond() {
     // Should get all 4 edges, no duplicates
     assert_eq!(downstream.len(), 4);
     // D.x appears as target twice (from B and C) — both edges should be present
-    let d_edges: Vec<_> = downstream.iter().filter(|e| e.target_model == "D").collect();
+    let d_edges: Vec<_> = downstream
+        .iter()
+        .filter(|e| e.target_model == "D")
+        .collect();
     assert_eq!(d_edges.len(), 2);
 }
 
