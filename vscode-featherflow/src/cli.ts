@@ -8,7 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import * as vscode from "vscode";
-import type { LsModelEntry, VersionInfo } from "./types.js";
+import type { CliLineageEdge, LsModelEntry, VersionInfo } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -148,6 +148,24 @@ export async function ffLs(
 ): Promise<LsModelEntry[]> {
   const { data } = await runCommand<LsModelEntry[]>(bin, projectDir, [
     "ls",
+    "--output",
+    "json",
+  ]);
+  return data;
+}
+
+/**
+ * Run `ff lineage -n <model> --output json` and return the parsed lineage edges.
+ */
+export async function ffLineage(
+  bin: string,
+  projectDir: string,
+  modelName: string
+): Promise<CliLineageEdge[]> {
+  const { data } = await runCommand<CliLineageEdge[]>(bin, projectDir, [
+    "lineage",
+    "-n",
+    modelName,
     "--output",
     "json",
   ]);

@@ -250,6 +250,52 @@ impl ProjectLineage {
             .collect()
     }
 
+    /// Trace a column upstream recursively — find all transitive source columns
+    pub fn trace_column_recursive(&self, model: &str, column: &str) -> Vec<&LineageEdge> {
+        let mut result = Vec::new();
+        let mut visited = HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back((model.to_string(), column.to_string()));
+        visited.insert((model.to_string(), column.to_string()));
+
+        while let Some((m, c)) = queue.pop_front() {
+            for edge in &self.edges {
+                if edge.target_model == m && edge.target_column == c {
+                    result.push(edge);
+                    let key = (edge.source_model.clone(), edge.source_column.clone());
+                    if visited.insert(key) {
+                        queue.push_back((edge.source_model.clone(), edge.source_column.clone()));
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Find all downstream consumers of a column recursively
+    pub fn column_consumers_recursive(&self, model: &str, column: &str) -> Vec<&LineageEdge> {
+        let mut result = Vec::new();
+        let mut visited = HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back((model.to_string(), column.to_string()));
+        visited.insert((model.to_string(), column.to_string()));
+
+        while let Some((m, c)) = queue.pop_front() {
+            for edge in &self.edges {
+                if edge.source_model == m && edge.source_column == c {
+                    result.push(edge);
+                    let key = (edge.target_model.clone(), edge.target_column.clone());
+                    if visited.insert(key) {
+                        queue.push_back((edge.target_model.clone(), edge.target_column.clone()));
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
     /// Propagate data classifications from schema definitions onto lineage edges
     ///
     /// For each edge, looks up the source column's classification in the provided

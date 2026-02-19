@@ -81,13 +81,13 @@ pub(crate) async fn execute(args: &LineageArgs, global: &GlobalArgs) -> Result<(
 /// Print lineage as JSON
 fn print_json(lineage: &ProjectLineage, args: &LineageArgs) -> Result<()> {
     if let (Some(model), Some(column)) = (&args.node, &args.column) {
-        // Filter to specific column
+        // Filter to specific column (recursive traversal)
         let edges: Vec<_> = match args.direction {
-            LineageDirection::Upstream => lineage.trace_column(model, column),
-            LineageDirection::Downstream => lineage.column_consumers(model, column),
+            LineageDirection::Upstream => lineage.trace_column_recursive(model, column),
+            LineageDirection::Downstream => lineage.column_consumers_recursive(model, column),
             LineageDirection::Both => {
-                let mut all = lineage.trace_column(model, column);
-                all.extend(lineage.column_consumers(model, column));
+                let mut all = lineage.trace_column_recursive(model, column);
+                all.extend(lineage.column_consumers_recursive(model, column));
                 all
             }
         };
@@ -125,11 +125,11 @@ fn print_table(lineage: &ProjectLineage, args: &LineageArgs) {
     let edges: Vec<&ff_sql::LineageEdge> =
         if let (Some(model), Some(column)) = (&args.node, &args.column) {
             match args.direction {
-                LineageDirection::Upstream => lineage.trace_column(model, column),
-                LineageDirection::Downstream => lineage.column_consumers(model, column),
+                LineageDirection::Upstream => lineage.trace_column_recursive(model, column),
+                LineageDirection::Downstream => lineage.column_consumers_recursive(model, column),
                 LineageDirection::Both => {
-                    let mut all = lineage.trace_column(model, column);
-                    all.extend(lineage.column_consumers(model, column));
+                    let mut all = lineage.trace_column_recursive(model, column);
+                    all.extend(lineage.column_consumers_recursive(model, column));
                     all
                 }
             }
