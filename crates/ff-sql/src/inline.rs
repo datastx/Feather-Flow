@@ -237,7 +237,7 @@ fn collect_ephemeral_recursive<F, G>(
             );
             continue;
         };
-        let dep = dep.clone();
+        let dep = dep.to_string();
         ephemeral_sql.insert(dep.clone(), sql);
         order.push(dep);
     }

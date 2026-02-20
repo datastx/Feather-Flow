@@ -91,7 +91,7 @@ impl ResolvedIdent {
     /// Debug-asserts that `parts` is non-empty. Every call-site in production
     /// passes at least one part (from `resolve_object_name`).
     pub fn from_parts(parts: Vec<ResolvedPart>) -> Self {
-        debug_assert!(
+        assert!(
             !parts.is_empty(),
             "ResolvedIdent requires at least one part"
         );

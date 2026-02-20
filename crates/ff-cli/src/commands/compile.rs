@@ -654,6 +654,49 @@ fn compute_compiled_path(
     Ok(output_dir.join(filename))
 }
 
+/// Populate meta database rows for a single successfully compiled model.
+fn populate_single_model_compile(
+    conn: &ff_meta::DuckDbConnection,
+    project: &Project,
+    result: &ModelCompileResult,
+    model_id: i64,
+    dependencies: &HashMap<String, Vec<String>>,
+    model_id_map: &HashMap<ff_core::ModelName, i64>,
+) -> ff_meta::MetaResult<()> {
+    let compiled_sql = project
+        .get_model(&result.model)
+        .and_then(|m| m.compiled_sql.as_deref())
+        .unwrap_or("");
+    let compiled_path = result.output_path.as_deref().unwrap_or("");
+    let checksum = ff_core::compute_checksum(compiled_sql);
+
+    ff_meta::populate::compilation::update_model_compiled(
+        conn,
+        model_id,
+        compiled_sql,
+        compiled_path,
+        &checksum,
+    )?;
+
+    if let Some(deps) = dependencies.get(&result.model) {
+        let dep_ids: Vec<i64> = deps
+            .iter()
+            .filter_map(|d| model_id_map.get(d.as_str()).copied())
+            .collect();
+        ff_meta::populate::compilation::populate_dependencies(conn, model_id, &dep_ids)?;
+    }
+
+    let ext_deps: Vec<&str> = project
+        .get_model(&result.model)
+        .map(|m| m.external_deps.iter().map(|t| t.as_ref()).collect())
+        .unwrap_or_default();
+    if !ext_deps.is_empty() {
+        ff_meta::populate::compilation::populate_external_dependencies(conn, model_id, &ext_deps)?;
+    }
+
+    Ok(())
+}
+
 /// Populate the meta database with compile-phase data (non-fatal).
 fn populate_meta_compile(
     project: &Project,
@@ -679,38 +722,14 @@ fn populate_meta_compile(
             let Some(&model_id) = model_id_map.get(result.model.as_str()) else {
                 continue;
             };
-            let compiled_sql = project
-                .get_model(&result.model)
-                .and_then(|m| m.compiled_sql.as_deref())
-                .unwrap_or("");
-            let compiled_path = result.output_path.as_deref().unwrap_or("");
-            let checksum = ff_core::compute_checksum(compiled_sql);
-
-            ff_meta::populate::compilation::update_model_compiled(
+            populate_single_model_compile(
                 conn,
+                project,
+                result,
                 model_id,
-                compiled_sql,
-                compiled_path,
-                &checksum,
+                dependencies,
+                &model_id_map,
             )?;
-
-            if let Some(deps) = dependencies.get(&result.model) {
-                let dep_ids: Vec<i64> = deps
-                    .iter()
-                    .filter_map(|d| model_id_map.get(d.as_str()).copied())
-                    .collect();
-                ff_meta::populate::compilation::populate_dependencies(conn, model_id, &dep_ids)?;
-            }
-
-            let ext_deps: Vec<&str> = project
-                .get_model(&result.model)
-                .map(|m| m.external_deps.iter().map(|t| t.as_ref()).collect())
-                .unwrap_or_default();
-            if !ext_deps.is_empty() {
-                ff_meta::populate::compilation::populate_external_dependencies(
-                    conn, model_id, &ext_deps,
-                )?;
-            }
         }
         Ok(())
     });

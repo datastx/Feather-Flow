@@ -113,13 +113,18 @@ fn collect_consumed_columns(
     consumed
 }
 
+/// Collect lowercased column refs from a slice of expressions.
+fn collect_refs_from_exprs(exprs: &[Expr], consumed: &mut HashSet<String>) {
+    for expr in exprs {
+        collect_column_refs_lowercase(expr, consumed);
+    }
+}
+
 /// Walk a LogicalPlan tree and collect referenced column names (lowercased)
 fn collect_column_refs_from_plan(plan: &LogicalPlan, consumed: &mut HashSet<String>) {
     match plan {
         LogicalPlan::Projection(proj) => {
-            for expr in &proj.expr {
-                collect_column_refs_lowercase(expr, consumed);
-            }
+            collect_refs_from_exprs(&proj.expr, consumed);
             collect_column_refs_from_plan(&proj.input, consumed);
         }
         LogicalPlan::Filter(filter) => {
@@ -132,12 +137,8 @@ fn collect_column_refs_from_plan(plan: &LogicalPlan, consumed: &mut HashSet<Stri
             collect_column_refs_from_plan(&join.right, consumed);
         }
         LogicalPlan::Aggregate(agg) => {
-            for expr in &agg.group_expr {
-                collect_column_refs_lowercase(expr, consumed);
-            }
-            for expr in &agg.aggr_expr {
-                collect_column_refs_lowercase(expr, consumed);
-            }
+            collect_refs_from_exprs(&agg.group_expr, consumed);
+            collect_refs_from_exprs(&agg.aggr_expr, consumed);
             collect_column_refs_from_plan(&agg.input, consumed);
         }
         LogicalPlan::Sort(sort) => {
