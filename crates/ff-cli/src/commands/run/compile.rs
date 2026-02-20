@@ -342,24 +342,24 @@ fn resolve_deferred_dependencies(
     // Also check for transitive dependencies of deferred models
     let mut to_check: Vec<String> = deferred_models.iter().cloned().collect();
     while let Some(model_name) = to_check.pop() {
-        if let Some(manifest_model) = deferred_manifest.get_model(&model_name) {
-            for dep in &manifest_model.depends_on {
-                let dep_str = dep.as_str();
-                if !selected_set.contains(dep_str)
-                    && !deferred_models.contains(dep_str)
-                    && deferred_manifest.get_model(dep_str).is_some()
-                {
-                    deferred_models.insert(dep_str.to_string());
-                    to_check.push(dep_str.to_string());
-                    if global.verbose {
-                        eprintln!(
-                            "[verbose] Deferring {} to production manifest (transitive)",
-                            dep
-                        );
-                    }
-                }
-                // Note: Don't fail on transitive deps missing from manifest
-                // They might be external tables or already executed
+        let Some(manifest_model) = deferred_manifest.get_model(&model_name) else {
+            continue;
+        };
+        for dep in &manifest_model.depends_on {
+            let dep_str = dep.as_str();
+            if selected_set.contains(dep_str)
+                || deferred_models.contains(dep_str)
+                || deferred_manifest.get_model(dep_str).is_none()
+            {
+                continue;
+            }
+            deferred_models.insert(dep_str.to_string());
+            to_check.push(dep_str.to_string());
+            if global.verbose {
+                eprintln!(
+                    "[verbose] Deferring {} to production manifest (transitive)",
+                    dep
+                );
             }
         }
     }

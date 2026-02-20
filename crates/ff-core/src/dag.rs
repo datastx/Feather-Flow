@@ -29,15 +29,14 @@ impl ModelDag {
     /// Add a model to the DAG
     pub fn add_model(&mut self, name: &str) -> CoreResult<NodeIndex> {
         if let Some(&idx) = self.node_map.get(name) {
-            Ok(idx)
-        } else {
-            let model_name = ModelName::try_new(name).ok_or_else(|| CoreError::EmptyName {
-                context: "model name in DAG".into(),
-            })?;
-            let idx = self.graph.add_node(model_name.clone());
-            self.node_map.insert(model_name, idx);
-            Ok(idx)
+            return Ok(idx);
         }
+        let model_name = ModelName::try_new(name).ok_or_else(|| CoreError::EmptyName {
+            context: "model name in DAG".into(),
+        })?;
+        let idx = self.graph.add_node(model_name.clone());
+        self.node_map.insert(model_name, idx);
+        Ok(idx)
     }
 
     /// Add a dependency edge (from depends on to)

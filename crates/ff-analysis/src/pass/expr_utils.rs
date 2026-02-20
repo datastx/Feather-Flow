@@ -35,16 +35,7 @@ where
         Expr::Cast(cast) => walk_expr_columns(&cast.expr, collector),
         Expr::TryCast(try_cast) => walk_expr_columns(&try_cast.expr, collector),
         Expr::Case(case) => {
-            if let Some(ref operand) = case.expr {
-                walk_expr_columns(operand, collector);
-            }
-            for (when, then) in &case.when_then_expr {
-                walk_expr_columns(when, collector);
-                walk_expr_columns(then, collector);
-            }
-            if let Some(ref else_expr) = case.else_expr {
-                walk_expr_columns(else_expr, collector);
-            }
+            for_each_case_subexpr(case, |e| walk_expr_columns(e, collector));
         }
         Expr::IsNull(inner) | Expr::IsNotNull(inner) | Expr::Not(inner) | Expr::Negative(inner) => {
             walk_expr_columns(inner, collector);

@@ -47,7 +47,6 @@ impl RelSchema {
     /// If `source_table` metadata is available, filters by it first.
     /// Falls back to column-name-only lookup when table info is missing.
     pub fn find_qualified(&self, table: &str, column: &str) -> Option<&TypedColumn> {
-        // Try to find a column that matches both table and name
         let qualified_match = self.columns.iter().find(|c| {
             c.name.eq_ignore_ascii_case(column)
                 && c.source_table
@@ -55,7 +54,6 @@ impl RelSchema {
                     .is_some_and(|t| t.eq_ignore_ascii_case(table))
         });
 
-        // Fall back to column-name-only if no qualified match
         qualified_match.or_else(|| self.find_column(column))
     }
 

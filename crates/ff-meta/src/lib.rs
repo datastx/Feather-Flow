@@ -15,5 +15,6 @@ pub(crate) mod row_helpers;
 pub mod rules;
 
 pub use connection::MetaDb;
+pub use duckdb::Connection as DuckDbConnection;
 pub use error::{MetaError, MetaResult};
 pub use manifest::Manifest;

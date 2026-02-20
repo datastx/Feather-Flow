@@ -345,13 +345,17 @@ impl ProjectLineage {
         let mut dot = String::from("digraph lineage {\n  rankdir=LR;\n  node [shape=record];\n\n");
 
         for (name, lineage) in &self.models {
-            let cols: Vec<&str> = lineage
+            let cols: Vec<String> = lineage
                 .columns
                 .iter()
-                .map(|c| c.output_column.as_str())
+                .map(|c| dot_escape(&c.output_column))
                 .collect();
-            let label = format!("{}|{}", name, cols.join("\\l"));
-            dot.push_str(&format!("  \"{}\" [label=\"{{{}}}\"];\n", name, label));
+            let escaped_name = dot_escape(name);
+            let label = format!("{}|{}", escaped_name, cols.join("\\l"));
+            dot.push_str(&format!(
+                "  \"{}\" [label=\"{{{}}}\"];\n",
+                escaped_name, label
+            ));
         }
 
         dot.push('\n');
@@ -364,13 +368,28 @@ impl ProjectLineage {
             };
             dot.push_str(&format!(
                 "  \"{}\":\"{}\" -> \"{}\":\"{}\"{};\n",
-                edge.source_model, edge.source_column, edge.target_model, edge.target_column, style
+                dot_escape(&edge.source_model),
+                dot_escape(&edge.source_column),
+                dot_escape(&edge.target_model),
+                dot_escape(&edge.target_column),
+                style
             ));
         }
 
         dot.push_str("}\n");
         dot
     }
+}
+
+/// Escape DOT/Graphviz special characters in a string used inside labels or IDs.
+fn dot_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('{', "\\{")
+        .replace('}', "\\}")
+        .replace('<', "\\<")
+        .replace('>', "\\>")
+        .replace('|', "\\|")
 }
 
 fn resolve_single_edge(
@@ -453,6 +472,20 @@ fn extract_lineage_from_set_expr(set_expr: &SetExpr, lineage: &mut ModelLineage)
     }
 }
 
+/// Build lineage for a `table.*` qualified wildcard.
+fn extract_qualified_wildcard_lineage(kind: &SelectItemQualifiedWildcardKind) -> ColumnLineage {
+    let table_name = match kind {
+        SelectItemQualifiedWildcardKind::ObjectName(name) => crate::object_name_to_string(name),
+        SelectItemQualifiedWildcardKind::Expr(expr) => format!("{expr}"),
+    };
+    let mut col_lineage = ColumnLineage::new(&format!("{}.*", table_name));
+    col_lineage.expr_type = ExprType::Wildcard;
+    col_lineage
+        .source_columns
+        .insert(ColumnRef::qualified(&table_name, "*"));
+    col_lineage
+}
+
 /// Extract lineage from a SELECT clause
 fn extract_lineage_from_select(select: &Select, lineage: &mut ModelLineage) {
     for table in &select.from {
@@ -471,18 +504,7 @@ fn extract_lineage_from_select(select: &Select, lineage: &mut ModelLineage) {
                 lineage.add_column(col_lineage);
             }
             SelectItem::QualifiedWildcard(kind, _) => {
-                let table_name = match kind {
-                    SelectItemQualifiedWildcardKind::ObjectName(name) => {
-                        crate::object_name_to_string(name)
-                    }
-                    SelectItemQualifiedWildcardKind::Expr(expr) => format!("{expr}"),
-                };
-                let mut col_lineage = ColumnLineage::new(&format!("{}.*", table_name));
-                col_lineage.expr_type = ExprType::Wildcard;
-                col_lineage
-                    .source_columns
-                    .insert(ColumnRef::qualified(&table_name, "*"));
-                lineage.add_column(col_lineage);
+                lineage.add_column(extract_qualified_wildcard_lineage(kind));
             }
             SelectItem::Wildcard(_) => {
                 let mut col_lineage = ColumnLineage::new("*");

@@ -44,12 +44,10 @@ pub(crate) async fn execute(args: &ParseArgs, global: &GlobalArgs) -> Result<()>
             .with_context(|| format!("Failed to parse SQL for model: {}", name))?;
 
         let deps = extract_dependencies(&statements);
+        let all_tables: Vec<String> = deps.iter().cloned().collect();
 
-        let (model_deps, ext_deps) = ff_sql::extractor::categorize_dependencies(
-            deps.clone(),
-            &known_models,
-            &external_tables,
-        );
+        let (model_deps, ext_deps) =
+            ff_sql::extractor::categorize_dependencies(deps, &known_models, &external_tables);
 
         dep_map.insert(name.clone(), model_deps.clone());
 
@@ -58,7 +56,7 @@ pub(crate) async fn execute(args: &ParseArgs, global: &GlobalArgs) -> Result<()>
             path: model.path.display().to_string(),
             model_dependencies: model_deps,
             external_dependencies: ext_deps,
-            all_tables: deps.into_iter().collect(),
+            all_tables,
         });
     }
 

@@ -40,20 +40,23 @@ where
         let path = entry.path();
         if path.is_dir() {
             discover_yaml_recursive(&path, items, probe, load)?;
-        } else if path.extension().is_some_and(|e| e == "yml" || e == "yaml") {
-            let content = match std::fs::read_to_string(&path) {
-                Ok(c) => c,
-                Err(e) => {
-                    log::warn!("Cannot read {}: {}", path.display(), e);
-                    continue;
-                }
-            };
-            if !probe(&content) {
+            continue;
+        }
+        if !path.extension().is_some_and(|e| e == "yml" || e == "yaml") {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("Cannot read {}: {}", path.display(), e);
                 continue;
             }
-            let item = load(&path)?;
-            items.push(item);
+        };
+        if !probe(&content) {
+            continue;
         }
+        let item = load(&path)?;
+        items.push(item);
     }
     Ok(())
 }
@@ -87,23 +90,17 @@ fn categorize_dir_files(dir: &Path) -> CoreResult<CategorizedFiles> {
         .filter(|p| p.is_file() && !is_hidden_file(p))
         .collect();
 
-    let sql = all_visible
-        .iter()
-        .filter(|p| p.extension().is_some_and(|e| e == "sql"))
-        .cloned()
-        .collect();
-
-    let csv = all_visible
-        .iter()
-        .filter(|p| p.extension().is_some_and(|e| e == "csv"))
-        .cloned()
-        .collect();
-
-    let py = all_visible
-        .iter()
-        .filter(|p| p.extension().is_some_and(|e| e == "py"))
-        .cloned()
-        .collect();
+    let mut sql = Vec::new();
+    let mut csv = Vec::new();
+    let mut py = Vec::new();
+    for p in &all_visible {
+        match file_extension_str(p) {
+            "sql" => sql.push(p.clone()),
+            "csv" => csv.push(p.clone()),
+            "py" => py.push(p.clone()),
+            _ => {}
+        }
+    }
 
     Ok(CategorizedFiles {
         all_visible,

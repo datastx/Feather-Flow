@@ -553,7 +553,6 @@ async fn execute_models_sequential(
         } else {
             success_count += 1;
 
-            // Try to get row count for state tracking (non-blocking)
             let qualified_name = build_qualified_name(compiled.schema.as_deref(), name);
             let row_count = match ctx
                 .db
@@ -608,19 +607,19 @@ struct ParallelExecutionState {
 
 /// Prepare a model for parallel execution.
 ///
-/// Returns `None` if the model should be skipped (missing or ephemeral).
+/// Returns `false` if the model should be skipped (missing or ephemeral).
 /// Ephemeral models record a success result as a side effect.
 fn prepare_level_model(
     name: &str,
     compiled_models: &HashMap<String, CompiledModel>,
     state: &Arc<ParallelExecutionState>,
-) -> Option<Arc<CompiledModel>> {
+) -> bool {
     let Some(compiled) = compiled_models.get(name) else {
         eprintln!(
             "[warn] Model '{}' missing from compiled_models, skipping",
             name
         );
-        return None;
+        return false;
     };
 
     if compiled.materialization == Materialization::Ephemeral {
@@ -633,17 +632,19 @@ fn prepare_level_model(
             error: None,
         });
         recover_mutex(&state.completed).insert(name.to_string());
-        return None;
+        return false;
     }
 
-    Some(Arc::new(compiled.clone()))
+    true
 }
 
 /// Async task body for executing a single model in parallel mode.
+///
+/// Borrows the compiled model from `state.all_compiled_models` instead of
+/// receiving a cloned `Arc<CompiledModel>`, avoiding a deep copy per model.
 async fn execute_model_task(
     db: Arc<dyn Database>,
     name: String,
-    compiled: Arc<CompiledModel>,
     state: Arc<ParallelExecutionState>,
 ) {
     let Ok(_permit) = state.semaphore.acquire().await else {
@@ -654,11 +655,15 @@ async fn execute_model_task(
         return;
     }
 
+    let Some(compiled) = state.all_compiled_models.get(&name) else {
+        return;
+    };
+
     let model_result = if compiled.is_python {
         super::python::run_python_model(
             &db,
             &name,
-            &compiled,
+            compiled,
             &state.all_compiled_models,
             state.db_path.as_deref().unwrap_or(":memory:"),
         )
@@ -667,7 +672,7 @@ async fn execute_model_task(
         run_single_model(
             &db,
             &name,
-            &compiled,
+            compiled,
             state.full_refresh,
             state.wap_schema.as_deref(),
         )
@@ -764,17 +769,12 @@ async fn execute_models_parallel(
                 break;
             }
 
-            let Some(compiled) = prepare_level_model(name, &ctx.compiled_models, &state) else {
+            if !prepare_level_model(name, &ctx.compiled_models, &state) {
                 continue;
-            };
+            }
 
             let db = Arc::clone(ctx.db);
-            set.spawn(execute_model_task(
-                db,
-                name.clone(),
-                compiled,
-                Arc::clone(&state),
-            ));
+            set.spawn(execute_model_task(db, name.clone(), Arc::clone(&state)));
         }
 
         while let Some(res) = set.join_next().await {

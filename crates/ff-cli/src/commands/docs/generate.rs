@@ -914,75 +914,66 @@ fn generate_lineage_dot(project: &Project) -> String {
         }
     }
 
-    dot.push_str(
-        "\n    // Model nodes (blue for views, green for tables, gold for incremental, gray for ephemeral)\n",
-    );
-    if let Some(ref manifest) = manifest {
-        for (name, model) in &manifest.models {
-            let color = match model.materialized {
-                ff_core::config::Materialization::Table => COLOR_TABLE,
-                ff_core::config::Materialization::View => COLOR_VIEW,
-                ff_core::config::Materialization::Incremental => COLOR_INCREMENTAL,
-                ff_core::config::Materialization::Ephemeral => COLOR_EPHEMERAL,
-            };
-            dot.push_str(&format!(
-                "    \"{}\" [label=\"{}\" fillcolor=\"{}\"];\n",
-                name, name, color
-            ));
-        }
+    dot.push('\n');
+
+    // Collect model info from manifest (preferred) or project (fallback)
+    struct ModelDotInfo<'a> {
+        name: &'a str,
+        materialization: ff_core::config::Materialization,
+        depends_on: Vec<&'a str>,
+        external_deps: Vec<&'a str>,
+    }
+    let model_infos: Vec<ModelDotInfo<'_>> = if let Some(ref manifest) = manifest {
+        manifest
+            .models
+            .iter()
+            .map(|(name, model)| ModelDotInfo {
+                name: name.as_str(),
+                materialization: model.materialized,
+                depends_on: model.depends_on.iter().map(|d| d.as_str()).collect(),
+                external_deps: model.external_deps.iter().map(|e| e.as_str()).collect(),
+            })
+            .collect()
     } else {
-        for (name, model) in &project.models {
-            let mat = model.materialization(project.config.materialization);
-            let color = match mat {
-                ff_core::config::Materialization::Table => COLOR_TABLE,
-                ff_core::config::Materialization::View => COLOR_VIEW,
-                ff_core::config::Materialization::Incremental => COLOR_INCREMENTAL,
-                ff_core::config::Materialization::Ephemeral => COLOR_EPHEMERAL,
-            };
-            dot.push_str(&format!(
-                "    \"{}\" [label=\"{}\" fillcolor=\"{}\"];\n",
-                name, name, color
-            ));
-        }
+        project
+            .models
+            .iter()
+            .map(|(name, model)| ModelDotInfo {
+                name: name.as_str(),
+                materialization: model.materialization(project.config.materialization),
+                depends_on: model.depends_on.iter().map(|d| d.as_str()).collect(),
+                external_deps: model.external_deps.iter().map(|e| e.as_ref()).collect(),
+            })
+            .collect()
+    };
+
+    for info in &model_infos {
+        let color = match info.materialization {
+            ff_core::config::Materialization::Table => COLOR_TABLE,
+            ff_core::config::Materialization::View => COLOR_VIEW,
+            ff_core::config::Materialization::Incremental => COLOR_INCREMENTAL,
+            ff_core::config::Materialization::Ephemeral => COLOR_EPHEMERAL,
+        };
+        dot.push_str(&format!(
+            "    \"{}\" [label=\"{}\" fillcolor=\"{}\"];\n",
+            info.name, info.name, color
+        ));
     }
 
-    dot.push_str("\n    // Dependencies (edges)\n");
-    if let Some(ref manifest) = manifest {
-        // Use manifest for accurate dependencies
-        for (name, model) in &manifest.models {
-            for dep in &model.depends_on {
-                dot.push_str(&format!("    \"{}\" -> \"{}\";\n", dep, name));
-            }
-
-            for ext in &model.external_deps {
-                let source_node = project
-                    .sources
-                    .iter()
-                    .flat_map(|s| s.tables.iter().map(move |t| (s, t)))
-                    .find(|(_, t)| *ext == t.name)
-                    .map(|(s, t)| format!("{}_{}", s.name, t.name))
-                    .unwrap_or_else(|| ext.to_string());
-
-                dot.push_str(&format!("    \"{}\" -> \"{}\";\n", source_node, name));
-            }
+    dot.push('\n');
+    for info in &model_infos {
+        for dep in &info.depends_on {
+            dot.push_str(&format!("    \"{}\" -> \"{}\";\n", dep, info.name));
         }
-    } else {
-        // Fall back to project model info (may be incomplete)
-        for (name, model) in &project.models {
-            for dep in &model.depends_on {
-                dot.push_str(&format!("    \"{}\" -> \"{}\";\n", dep, name));
-            }
-            for ext in &model.external_deps {
-                let source_node = project
-                    .sources
-                    .iter()
-                    .flat_map(|s| s.tables.iter().map(move |t| (s, t)))
-                    .find(|(_, t)| *ext == t.name)
-                    .map(|(s, t)| format!("{}_{}", s.name, t.name))
-                    .unwrap_or_else(|| ext.to_string());
-
-                dot.push_str(&format!("    \"{}\" -> \"{}\";\n", source_node, name));
-            }
+        for ext in &info.external_deps {
+            let source_node = project
+                .sources
+                .iter()
+                .flat_map(|s| s.tables.iter().map(move |t| (s, t)))
+                .find(|(_, t)| *ext == t.name)
+                .map(|(s, t)| format!("{}_{}", s.name, t.name))
+                .unwrap_or_else(|| ext.to_string());
+            dot.push_str(&format!("    \"{}\" -> \"{}\";\n", source_node, info.name));
         }
     }
 
