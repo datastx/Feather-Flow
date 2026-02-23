@@ -74,6 +74,10 @@ vars:
 #   severity_overrides:
 #     A020: warning    # promote unused columns from info to warning
 #     A032: off        # disable cross join diagnostics
+
+# format:                    # defaults for `ff fmt`
+#   line_length: 88          # max line length for formatted SQL
+#   no_jinjafmt: false       # disable Jinja formatting
 "#,
         name = safe_name,
         db_path = safe_db_path,

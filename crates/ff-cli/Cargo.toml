@@ -33,6 +33,8 @@ rust-embed = { version = "8", optional = true }
 mime_guess = { version = "2", optional = true }
 open = { version = "5", optional = true }
 
+sqlfmt.workspace = true
+
 ff-core = { path = "../ff-core" }
 ff-sql = { path = "../ff-sql" }
 ff-jinja = { path = "../ff-jinja" }

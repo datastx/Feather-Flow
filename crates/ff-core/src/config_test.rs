@@ -430,6 +430,38 @@ fn test_node_paths_default_empty() {
 }
 
 #[test]
+fn test_format_config_default() {
+    let config: Config = serde_yaml::from_str("name: test").unwrap();
+    assert_eq!(config.format.line_length, 88);
+    assert!(!config.format.no_jinjafmt);
+}
+
+#[test]
+fn test_format_config_custom() {
+    let yaml = r#"
+name: test_project
+format:
+  line_length: 120
+  no_jinjafmt: true
+"#;
+    let config: Config = serde_yaml::from_str(yaml).unwrap();
+    assert_eq!(config.format.line_length, 120);
+    assert!(config.format.no_jinjafmt);
+}
+
+#[test]
+fn test_format_config_partial() {
+    let yaml = r#"
+name: test_project
+format:
+  line_length: 100
+"#;
+    let config: Config = serde_yaml::from_str(yaml).unwrap();
+    assert_eq!(config.format.line_length, 100);
+    assert!(!config.format.no_jinjafmt); // default
+}
+
+#[test]
 fn test_node_paths_with_model_paths_both_accepted() {
     let yaml = r#"
 name: test_project

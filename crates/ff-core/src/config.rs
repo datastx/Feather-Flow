@@ -115,6 +115,39 @@ pub struct Config {
     /// Documentation enforcement settings
     #[serde(default)]
     pub documentation: DocumentationConfig,
+
+    /// SQL formatting configuration
+    #[serde(default)]
+    pub format: FormatConfig,
+}
+
+/// SQL formatting configuration for `ff fmt`.
+///
+/// These settings provide project-level defaults for `ff fmt`.
+/// Formatting never runs automatically during compile or run — it is
+/// a standalone CI / developer tool, like `rustfmt` or `black`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FormatConfig {
+    /// Maximum line length for formatted SQL (default: 88)
+    #[serde(default = "default_format_line_length")]
+    pub line_length: usize,
+
+    /// Disable Jinja formatting within SQL files (default: false)
+    #[serde(default)]
+    pub no_jinjafmt: bool,
+}
+
+impl Default for FormatConfig {
+    fn default() -> Self {
+        Self {
+            line_length: default_format_line_length(),
+            no_jinjafmt: false,
+        }
+    }
+}
+
+fn default_format_line_length() -> usize {
+    88
 }
 
 /// Target-specific configuration overrides

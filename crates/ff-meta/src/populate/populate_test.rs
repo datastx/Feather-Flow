@@ -43,6 +43,7 @@ fn test_config() -> Config {
         documentation: Default::default(),
         query_comment: Default::default(),
         rules: None,
+        format: Default::default(),
     }
 }
 

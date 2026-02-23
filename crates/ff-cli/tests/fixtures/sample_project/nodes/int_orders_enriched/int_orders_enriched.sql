@@ -1,19 +1,13 @@
-{{ config(materialized='view', schema='intermediate') }}
+{{ config(materialized="view", schema="intermediate") }}
 
-SELECT
+select
     o.order_id,
     o.customer_id,
     o.order_date,
-    o.amount AS order_amount,
+    o.amount as order_amount,
     o.status,
-    COALESCE(SUM(p.amount), 0) AS payment_total,
-    COUNT(p.payment_id) AS payment_count
-FROM stg_orders o
-INNER JOIN stg_payments p
-    ON o.order_id = p.order_id
-GROUP BY
-    o.order_id,
-    o.customer_id,
-    o.order_date,
-    o.amount,
-    o.status
+    coalesce(sum(p.amount), 0) as payment_total,
+    count(p.payment_id) as payment_count
+from stg_orders o
+inner join stg_payments p on o.order_id = p.order_id
+group by o.order_id, o.customer_id, o.order_date, o.amount, o.status

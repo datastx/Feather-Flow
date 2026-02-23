@@ -1,12 +1,12 @@
-{{ config(materialized='view', schema='intermediate') }}
+{{ config(materialized="view", schema="intermediate") }}
 
-SELECT
+select
     o.customer_id,
-    COUNT(o.order_id) AS order_count,
-    SUM(o.amount) AS total_amount,
-    MIN(o.amount) AS min_order,
-    MAX(o.amount) AS max_order,
-    AVG(o.amount) AS avg_order
-FROM stg_orders o
-GROUP BY o.customer_id
-HAVING SUM(o.amount) > 100
+    count(o.order_id) as order_count,
+    sum(o.amount) as total_amount,
+    min(o.amount) as min_order,
+    max(o.amount) as max_order,
+    avg(o.amount) as avg_order
+from stg_orders o
+group by o.customer_id
+having sum(o.amount) > 100

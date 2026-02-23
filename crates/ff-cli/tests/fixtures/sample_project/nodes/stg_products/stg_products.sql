@@ -1,9 +1,9 @@
-{{ config(materialized='view', schema='staging') }}
+{{ config(materialized="view", schema="staging") }}
 
-SELECT
-    id AS product_id,
-    name AS product_name,
+select
+    id as product_id,
+    name as product_name,
     category,
-    CAST(price AS DECIMAL(10,2)) AS price,
+    cast(price as decimal(10, 2)) as price,
     active
-FROM raw_products
+from raw_products

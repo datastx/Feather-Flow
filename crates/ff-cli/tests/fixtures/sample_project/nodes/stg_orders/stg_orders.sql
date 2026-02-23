@@ -1,10 +1,5 @@
-{{ config(materialized='view', schema='staging') }}
+{{ config(materialized="view", schema="staging") }}
 
-SELECT
-    id AS order_id,
-    user_id AS customer_id,
-    created_at AS order_date,
-    amount,
-    status
-FROM raw_orders
-WHERE created_at >= '{{ var("start_date") }}'
+select id as order_id, user_id as customer_id, created_at as order_date, amount, status
+from raw_orders
+where created_at >= '{{ var("start_date") }}'

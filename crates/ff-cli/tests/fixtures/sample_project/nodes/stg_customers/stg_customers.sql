@@ -1,9 +1,9 @@
-{{ config(materialized='view', schema='staging') }}
+{{ config(materialized="view", schema="staging") }}
 
-SELECT
-    id AS customer_id,
-    name AS customer_name,
+select
+    id as customer_id,
+    name as customer_name,
     email,
-    created_at AS signup_date,
-    tier AS customer_tier
-FROM raw_customers
+    created_at as signup_date,
+    tier as customer_tier
+from raw_customers
