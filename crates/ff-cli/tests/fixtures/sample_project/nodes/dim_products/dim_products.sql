@@ -1,19 +1,19 @@
-{{ config(materialized='table', schema='analytics') }}
+{{ config(materialized="table", schema="analytics") }}
 
-SELECT
+select
     product_id,
     product_name,
     category,
     price,
-    CASE
-        WHEN category = 'electronics' THEN 'high_value'
-        WHEN category = 'tools' THEN 'medium_value'
-        ELSE 'standard'
-    END AS category_group,
-    CASE
-        WHEN price > 100 THEN 'premium'
-        WHEN price > 25 THEN 'standard'
-        ELSE 'budget'
-    END AS price_tier
-FROM stg_products
-WHERE active = true
+    case
+        when category = 'electronics'
+        then 'high_value'
+        when category = 'tools'
+        then 'medium_value'
+        else 'standard'
+    end as category_group,
+    case
+        when price > 100 then 'premium' when price > 25 then 'standard' else 'budget'
+    end as price_tier
+from stg_products
+where active = true

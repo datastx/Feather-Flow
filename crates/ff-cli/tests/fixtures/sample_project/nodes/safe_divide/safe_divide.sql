@@ -1,1 +1,1 @@
-CASE WHEN denominator = 0 THEN NULL ELSE numerator / denominator END
+case when denominator = 0 then null else numerator / denominator end

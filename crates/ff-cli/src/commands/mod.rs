@@ -6,6 +6,8 @@ pub(crate) mod clean;
 pub(crate) mod common;
 pub(crate) mod compile;
 pub(crate) mod docs;
+pub(crate) mod fmt;
+pub(crate) mod format_helpers;
 pub(crate) mod function;
 pub(crate) mod init;
 pub(crate) mod lineage;

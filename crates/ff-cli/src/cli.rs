@@ -90,6 +90,9 @@ pub(crate) enum Commands {
 
     /// Query and export the meta database
     Meta(MetaArgs),
+
+    /// Format SQL source files with sqlfmt
+    Fmt(FmtArgs),
 }
 
 /// Arguments for the parse command
@@ -680,6 +683,30 @@ pub(crate) struct MetaExportArgs {
     /// Write export to a file instead of stdout
     #[arg(short, long)]
     pub output: Option<String>,
+}
+
+/// Arguments for the fmt command
+#[derive(Args, Debug)]
+pub(crate) struct FmtArgs {
+    /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
+    #[arg(short = 'n', long)]
+    pub nodes: Option<String>,
+
+    /// Check formatting without modifying files (exit 1 if unformatted)
+    #[arg(long)]
+    pub check: bool,
+
+    /// Show diff of formatting changes
+    #[arg(long)]
+    pub diff: bool,
+
+    /// Override max line length
+    #[arg(long)]
+    pub line_length: Option<usize>,
+
+    /// Disable Jinja formatting
+    #[arg(long)]
+    pub no_jinjafmt: bool,
 }
 
 #[cfg(test)]

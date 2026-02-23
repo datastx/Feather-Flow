@@ -1,3 +1,1 @@
-{{ config(materialized='view', schema='staging') }}
-
-SELECT * FROM raw_payments
+{{ config(materialized="view", schema="staging") }} select * from raw_payments

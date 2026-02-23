@@ -1,7 +1,4 @@
-{{ config(materialized='view', schema='staging') }}
+{{ config(materialized="view", schema="staging") }}
 
-SELECT
-    id AS payment_id,
-    order_id,
-    {{ cents_to_dollars('amount') }} AS amount
-FROM raw_payments
+select id as payment_id, order_id, {{ cents_to_dollars("amount") }} as amount
+from raw_payments
