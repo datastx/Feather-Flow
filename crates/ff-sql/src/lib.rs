@@ -29,7 +29,8 @@ pub use lineage::{
     LineageKind, ModelLineage, ProjectLineage,
 };
 pub use parser::SqlParser;
-pub use qualify::qualify_table_references;
+pub use qualify::{qualify_statements, qualify_table_references};
+pub use sqlparser::ast::Statement;
 pub use suggestions::{suggest_tests, ColumnSuggestions, ModelSuggestions, TestSuggestion};
 pub use validator::validate_no_complex_queries;
 

@@ -8,7 +8,8 @@ use ff_core::model::ModelConfig;
 use ff_core::Project;
 use ff_jinja::JinjaEnvironment;
 use ff_sql::{
-    collect_ephemeral_dependencies, extract_dependencies, inline_ephemeral_ctes, SqlParser,
+    collect_ephemeral_dependencies, extract_dependencies, inline_ephemeral_ctes,
+    qualify_statements, SqlParser, Statement,
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -47,6 +48,8 @@ use crate::commands::common::parse_hooks_from_config;
 struct CompileOutput {
     name: String,
     sql: String,
+    /// Parsed AST statements — kept to avoid re-parsing during qualification.
+    statements: Vec<Statement>,
     materialization: Materialization,
     dependencies: Vec<String>,
     output_path: std::path::PathBuf,
@@ -242,15 +245,13 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
     let qualification_map = common::build_qualification_map(&project, &compiled_schemas);
 
     for compiled in &mut compiled_models {
-        match ff_sql::qualify_table_references(&compiled.sql, &qualification_map) {
-            Ok(qualified) => compiled.sql = qualified,
-            Err(e) => {
-                eprintln!(
-                    "Warning: Failed to qualify table references in '{}': {}",
-                    compiled.name, e
-                );
-            }
-        }
+        qualify_statements(&mut compiled.statements, &qualification_map);
+        compiled.sql = compiled
+            .statements
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+            .join(";\n");
     }
 
     let ephemeral_sql: HashMap<String, String> = compiled_models
@@ -484,7 +485,7 @@ fn compile_model_phase1(
     ctx: &CompileContext<'_>,
 ) -> Result<CompileOutput> {
     // Immutable borrow block: render + parse + extract deps + resolve functions
-    let (rendered, config_values, model_deps, ext_deps) = {
+    let (rendered, config_values, model_deps, ext_deps, statements) = {
         let model = project
             .get_model(name)
             .with_context(|| format!("Model not found: {}", name))?;
@@ -528,7 +529,7 @@ fn compile_model_phase1(
             );
         }
 
-        (rendered, config_values, model_deps, ext_deps)
+        (rendered, config_values, model_deps, ext_deps, statements)
     };
 
     // Mutable borrow: apply results to model
@@ -572,6 +573,7 @@ fn compile_model_phase1(
     Ok(CompileOutput {
         name: name.to_string(),
         sql: rendered,
+        statements,
         materialization: mat,
         dependencies: model_deps,
         output_path,

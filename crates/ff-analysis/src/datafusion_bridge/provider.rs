@@ -209,6 +209,14 @@ impl<'a> FeatherFlowProvider<'a> {
         }
     }
 
+    /// Insert (or update) a single schema entry without rebuilding the entire provider.
+    pub fn insert_schema(&mut self, name: String, schema: &RelSchema) {
+        let arrow = Self::rel_schema_to_arrow(schema);
+        self.lowercase_schemas
+            .insert(name.to_lowercase(), arrow.clone());
+        self.arrow_schemas.insert(name, arrow);
+    }
+
     /// Convert a RelSchema to an Arrow SchemaRef
     fn rel_schema_to_arrow(schema: &RelSchema) -> SchemaRef {
         let fields: Vec<Field> = schema

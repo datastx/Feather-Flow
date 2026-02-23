@@ -147,6 +147,7 @@ pub fn propagate_schemas(
     let mut failures: HashMap<ModelName, String> = HashMap::new();
 
     let registry = FunctionRegistry::with_user_functions(user_functions, user_table_functions);
+    let mut provider = FeatherFlowProvider::new(&catalog, &registry);
 
     for model_name in topo_order {
         let sql = match sql_sources.get(model_name) {
@@ -157,7 +158,6 @@ pub fn propagate_schemas(
             }
         };
 
-        let provider = FeatherFlowProvider::new(&catalog, &registry);
         let plan = match sql_to_plan(sql, &provider) {
             Ok(p) => p,
             Err(e) => {
@@ -175,6 +175,7 @@ pub fn propagate_schemas(
         };
 
         catalog.insert(model_name.to_string(), Arc::clone(&inferred_schema));
+        provider.insert_schema(model_name.to_string(), &inferred_schema);
 
         model_plans.insert(
             model_name.clone(),

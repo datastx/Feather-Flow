@@ -194,9 +194,15 @@ impl FunctionDef {
             path: yaml_path.display().to_string(),
             source: e,
         })?;
+        Self::load_from_str(&content, yaml_path)
+    }
 
+    /// Load a function definition from already-read YAML content.
+    ///
+    /// Expects a matching `.sql` file in the same directory as `yaml_path`.
+    pub fn load_from_str(content: &str, yaml_path: &Path) -> CoreResult<Self> {
         let schema: FunctionSchema =
-            serde_yaml::from_str(&content).map_err(|e| CoreError::FunctionParseError {
+            serde_yaml::from_str(content).map_err(|e| CoreError::FunctionParseError {
                 path: yaml_path.display().to_string(),
                 details: e.to_string(),
             })?;

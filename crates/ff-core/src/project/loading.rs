@@ -315,10 +315,10 @@ impl Project {
         };
 
         match raw_kind.normalize() {
-            NodeKind::Sql => Self::load_sql_node(path, &dir_name, models),
+            NodeKind::Sql => Self::load_sql_node(path, &dir_name, &content, &config_path, models),
             NodeKind::Seed => Self::load_seed_node(path, &dir_name, seeds),
-            NodeKind::Source => Self::load_source_node(&config_path, sources),
-            NodeKind::Function => Self::load_function_node(&config_path, functions),
+            NodeKind::Source => Self::load_source_node(&content, &config_path, sources),
+            NodeKind::Function => Self::load_function_node(&content, &config_path, functions),
             kind => Err(CoreError::NodeUnsupportedKind {
                 directory: dir_name,
                 kind: kind.to_string(),
@@ -330,6 +330,8 @@ impl Project {
     fn load_sql_node(
         dir: &Path,
         dir_name: &str,
+        yaml_content: &str,
+        yaml_path: &Path,
         models: &mut HashMap<ModelName, Model>,
     ) -> CoreResult<()> {
         let sql_path = dir.join(format!("{}.sql", dir_name));
@@ -341,7 +343,7 @@ impl Project {
             });
         }
 
-        let model = Model::from_file(sql_path)?;
+        let model = Model::from_file_with_schema_content(sql_path, yaml_content, yaml_path)?;
 
         if models.contains_key(model.name.as_str()) {
             return Err(CoreError::DuplicateModel {
@@ -380,15 +382,23 @@ impl Project {
     }
 
     /// Load a `kind: source` node as a [`SourceFile`].
-    fn load_source_node(yaml_path: &Path, sources: &mut Vec<SourceFile>) -> CoreResult<()> {
-        let source = SourceFile::load(yaml_path)?;
+    fn load_source_node(
+        yaml_content: &str,
+        yaml_path: &Path,
+        sources: &mut Vec<SourceFile>,
+    ) -> CoreResult<()> {
+        let source = SourceFile::load_from_str(yaml_content, yaml_path)?;
         sources.push(source);
         Ok(())
     }
 
     /// Load a `kind: function` node as a [`FunctionDef`].
-    fn load_function_node(yaml_path: &Path, functions: &mut Vec<FunctionDef>) -> CoreResult<()> {
-        let func = FunctionDef::load(yaml_path)?;
+    fn load_function_node(
+        yaml_content: &str,
+        yaml_path: &Path,
+        functions: &mut Vec<FunctionDef>,
+    ) -> CoreResult<()> {
+        let func = FunctionDef::load_from_str(yaml_content, yaml_path)?;
         functions.push(func);
         Ok(())
     }
