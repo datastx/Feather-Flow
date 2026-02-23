@@ -224,6 +224,55 @@ impl Model {
         })
     }
 
+    /// Create a new model from a file path, using already-read YAML schema content.
+    ///
+    /// Avoids re-reading and re-parsing the YAML file when the caller has already
+    /// read the content (e.g., during node discovery).
+    pub fn from_file_with_schema_content(
+        path: PathBuf,
+        schema_content: &str,
+        schema_path: &std::path::Path,
+    ) -> Result<Self, crate::error::CoreError> {
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| crate::error::CoreError::ModelParseError {
+                name: path.display().to_string(),
+                message: "Cannot extract model name from path".to_string(),
+            })?
+            .to_string();
+
+        let raw_sql = std::fs::read_to_string(&path).map_err(|e| CoreError::IoWithPath {
+            path: path.display().to_string(),
+            source: e,
+        })?;
+
+        if raw_sql.trim().is_empty() {
+            return Err(CoreError::ModelParseError {
+                name,
+                message: "SQL file is empty".into(),
+            });
+        }
+
+        let schema = Some(ModelSchema::load_from_str(schema_content, schema_path)?);
+
+        let (base_name, version) = Self::parse_version(&name);
+
+        Ok(Self {
+            name: ModelName::new(name),
+            path,
+            raw_sql,
+            compiled_sql: None,
+            config: ModelConfig::default(),
+            depends_on: HashSet::new(),
+            external_deps: HashSet::new(),
+            schema,
+            base_name,
+            version,
+            kind: ModelKind::Model,
+        })
+    }
+
     /// Parse version suffix from model name
     ///
     /// Returns (base_name, version) where base_name is Some if the model follows _v{N} convention

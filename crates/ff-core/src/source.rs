@@ -105,9 +105,13 @@ impl SourceFile {
             path: path.display().to_string(),
             source: e,
         })?;
+        Self::load_from_str(&content, path)
+    }
 
+    /// Load and validate from already-read YAML content, using `path` only for error messages.
+    pub fn load_from_str(content: &str, path: &Path) -> CoreResult<Self> {
         let source: SourceFile =
-            serde_yaml::from_str(&content).map_err(|e| CoreError::SourceParseError {
+            serde_yaml::from_str(content).map_err(|e| CoreError::SourceParseError {
                 path: path.display().to_string(),
                 details: e.to_string(),
             })?;

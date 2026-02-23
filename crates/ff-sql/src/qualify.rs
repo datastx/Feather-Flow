@@ -6,7 +6,7 @@
 //! only for cross-database (attached) references. Only single-part (bare)
 //! names are qualified; already-qualified references are left unchanged.
 
-use sqlparser::ast::{visit_relations_mut, Ident, ObjectName, ObjectNamePart};
+use sqlparser::ast::{visit_relations_mut, Ident, ObjectName, ObjectNamePart, Statement};
 use sqlparser::dialect::DuckDbDialect;
 use sqlparser::parser::Parser;
 use std::collections::HashMap;
@@ -56,18 +56,32 @@ pub fn qualify_table_references(
         }
     })?;
 
-    for stmt in &mut statements {
-        let _ = visit_relations_mut(stmt, |name: &mut ObjectName| {
-            qualify_single_name(name, qualification_map);
-            std::ops::ControlFlow::<()>::Continue(())
-        });
-    }
+    qualify_statements(&mut statements, qualification_map);
 
     Ok(statements
         .iter()
         .map(|s| s.to_string())
         .collect::<Vec<_>>()
         .join(";\n"))
+}
+
+/// Qualify bare table references in already-parsed statements (no re-parse).
+///
+/// Mutates statements in-place. Use this when you already have a parsed AST
+/// to avoid the cost of re-parsing SQL text.
+pub fn qualify_statements(
+    statements: &mut [Statement],
+    qualification_map: &HashMap<String, QualifiedRef>,
+) {
+    if qualification_map.is_empty() {
+        return;
+    }
+    for stmt in statements.iter_mut() {
+        let _ = visit_relations_mut(stmt, |name: &mut ObjectName| {
+            qualify_single_name(name, qualification_map);
+            std::ops::ControlFlow::<()>::Continue(())
+        });
+    }
 }
 
 /// Qualify a single-part (bare) table name using the qualification map.

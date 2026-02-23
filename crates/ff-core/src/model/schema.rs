@@ -214,7 +214,12 @@ impl ModelSchema {
             path: path.display().to_string(),
             source: e,
         })?;
-        let schema: ModelSchema = serde_yaml::from_str(&content).map_err(|e| {
+        Self::load_from_str(&content, path)
+    }
+
+    /// Load schema from already-read YAML content, using `path` only for error messages.
+    pub fn load_from_str(content: &str, path: &std::path::Path) -> Result<Self, CoreError> {
+        let schema: ModelSchema = serde_yaml::from_str(content).map_err(|e| {
             use serde::de::Error as _;
             CoreError::YamlParse(serde_yaml::Error::custom(format!(
                 "{}: {}",
