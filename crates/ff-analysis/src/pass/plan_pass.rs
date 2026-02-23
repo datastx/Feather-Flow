@@ -63,6 +63,7 @@ impl PlanPassManager {
             dag_passes: vec![
                 Box::new(super::plan_unused_columns::PlanUnusedColumns),
                 Box::new(super::plan_cross_model::CrossModelConsistency),
+                Box::new(super::plan_description_drift::PlanDescriptionDrift),
             ],
         }
     }

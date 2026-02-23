@@ -2121,11 +2121,24 @@ fn test_analysis_sample_project_no_false_diagnostics() {
         errors
     );
 
+    // Filter out description drift diagnostics (A050-A052) — these are expected
+    // info/warning-level diagnostics on projects without full description coverage
+    let non_drift: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| {
+            !matches!(
+                d.code,
+                ff_analysis::DiagnosticCode::A050
+                    | ff_analysis::DiagnosticCode::A051
+                    | ff_analysis::DiagnosticCode::A052
+            )
+        })
+        .collect();
     assert!(
-        diagnostics.is_empty(),
-        "Expected zero diagnostics on sample_project, got {}:\n{:#?}",
-        diagnostics.len(),
-        diagnostics
+        non_drift.is_empty(),
+        "Expected zero non-drift diagnostics on sample_project, got {}:\n{:#?}",
+        non_drift.len(),
+        non_drift
     );
 }
 
@@ -2142,7 +2155,8 @@ fn test_analysis_pass_names() {
     assert!(names.contains(&"plan_join_keys"));
     assert!(names.contains(&"plan_unused_columns"));
     assert!(names.contains(&"cross_model_consistency"));
-    assert_eq!(names.len(), 5);
+    assert!(names.contains(&"description_drift"));
+    assert_eq!(names.len(), 6);
 }
 
 // ── Phase 1: Type Inference (A002, A004, A005) ─────────────────────────
@@ -2625,6 +2639,19 @@ fn test_analysis_dag_ecommerce_all_plan() {
 fn test_analysis_dag_ecommerce_zero_diagnostics() {
     let pipeline = build_analysis_pipeline("tests/fixtures/sa_dag_pass_ecommerce");
     let diags = run_all_passes(&pipeline);
+    // Filter out description drift diagnostics (A050-A052) — these are expected
+    // informational/warning diagnostics from the new description_drift pass
+    let diags: Vec<_> = diags
+        .into_iter()
+        .filter(|d| {
+            !matches!(
+                d.code,
+                ff_analysis::DiagnosticCode::A050
+                    | ff_analysis::DiagnosticCode::A051
+                    | ff_analysis::DiagnosticCode::A052
+            )
+        })
+        .collect();
     assert!(
         diags.is_empty(),
         "Ecommerce project should produce zero diagnostics, got {}:\n{:#?}",
@@ -2691,6 +2718,19 @@ fn test_analysis_deep_expression_plans() {
 fn test_analysis_guard_clean_project_zero_diagnostics() {
     let pipeline = build_analysis_pipeline("tests/fixtures/sa_clean_project");
     let diags = run_all_passes(&pipeline);
+    // Filter out description drift diagnostics (A050-A052) — these are expected
+    // informational/warning diagnostics from the new description_drift pass
+    let diags: Vec<_> = diags
+        .into_iter()
+        .filter(|d| {
+            !matches!(
+                d.code,
+                ff_analysis::DiagnosticCode::A050
+                    | ff_analysis::DiagnosticCode::A051
+                    | ff_analysis::DiagnosticCode::A052
+            )
+        })
+        .collect();
     assert!(
         diags.is_empty(),
         "Clean project should have zero diagnostics, got {}:\n{:#?}",
@@ -3971,4 +4011,1004 @@ fn test_edge_expr_type_across_hops() {
     assert!(from_stg.is_some());
     assert_eq!(from_stg.unwrap().expr_type, ExprType::Column);
     assert!(from_stg.unwrap().is_direct);
+}
+
+// ── Category G: CLI-based DataFusion Lineage Tests ──────────────────────
+//
+// These tests invoke `ff lineage --output json` as a subprocess to exercise
+// the **real DataFusion bridge path** (alias resolution, plan walking, etc.)
+// rather than the AST-only path used in build_analysis_pipeline above.
+// This is the test harness that actually catches alias resolution bugs.
+
+fn ff_bin() -> String {
+    env!("CARGO_BIN_EXE_ff").to_string()
+}
+
+/// Run `ff lineage --output json` and parse the full result
+fn run_lineage_json() -> serde_json::Value {
+    let output = std::process::Command::new(ff_bin())
+        .args([
+            "lineage",
+            "--project-dir",
+            "tests/fixtures/sample_project",
+            "--output",
+            "json",
+        ])
+        .output()
+        .expect("Failed to run ff lineage");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "ff lineage should succeed.\nstdout: {}\nstderr: {}",
+        stdout,
+        stderr
+    );
+
+    serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
+        panic!(
+            "JSON parse failed: {}\nraw: {}",
+            e,
+            &stdout[..stdout.len().min(500)]
+        )
+    })
+}
+
+/// Run `ff lineage -n <model> --column <col> --output json` and return the edge array
+fn run_lineage_column_json(model: &str, column: &str) -> Vec<serde_json::Value> {
+    let output = std::process::Command::new(ff_bin())
+        .args([
+            "lineage",
+            "--project-dir",
+            "tests/fixtures/sample_project",
+            "-n",
+            model,
+            "--column",
+            column,
+            "--output",
+            "json",
+        ])
+        .output()
+        .expect("Failed to run ff lineage");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "ff lineage -n {} --column {} should succeed.\nstdout: {}\nstderr: {}",
+        model,
+        column,
+        stdout,
+        stderr
+    );
+
+    serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
+        panic!(
+            "JSON parse failed for {} {}: {}\nraw: {}",
+            model,
+            column,
+            e,
+            &stdout[..stdout.len().min(500)]
+        )
+    })
+}
+
+/// Helper: extract edges array from full lineage JSON
+fn get_edges(data: &serde_json::Value) -> &Vec<serde_json::Value> {
+    data["edges"]
+        .as_array()
+        .expect("lineage JSON should have 'edges' array")
+}
+
+/// Helper: find edges in an array matching source model/column -> target model/column
+fn find_edge<'a>(
+    edges: &'a [serde_json::Value],
+    source_model: &str,
+    source_column: &str,
+    target_model: &str,
+    target_column: &str,
+) -> Option<&'a serde_json::Value> {
+    edges.iter().find(|e| {
+        e["source_model"] == source_model
+            && e["source_column"] == source_column
+            && e["target_model"] == target_model
+            && e["target_column"] == target_column
+    })
+}
+
+/// G1: Total project lineage has substantial edges (basic sanity)
+#[test]
+fn test_cli_lineage_total_edges() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    assert!(
+        edges.len() >= 50,
+        "Expected at least 50 lineage edges, got {}",
+        edges.len()
+    );
+}
+
+// ── G2: Every raw_customers column traces to stg_customers ──────────────
+
+#[test]
+fn test_cli_lineage_raw_customers_id() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(edges, "raw_customers", "id", "stg_customers", "customer_id");
+    assert!(
+        edge.is_some(),
+        "raw_customers.id -> stg_customers.customer_id edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "rename");
+}
+
+#[test]
+fn test_cli_lineage_raw_customers_name() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(
+        edges,
+        "raw_customers",
+        "name",
+        "stg_customers",
+        "customer_name",
+    );
+    assert!(
+        edge.is_some(),
+        "raw_customers.name -> stg_customers.customer_name edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "rename");
+}
+
+#[test]
+fn test_cli_lineage_raw_customers_email() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(edges, "raw_customers", "email", "stg_customers", "email");
+    assert!(
+        edge.is_some(),
+        "raw_customers.email -> stg_customers.email edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "copy");
+}
+
+#[test]
+fn test_cli_lineage_raw_customers_created_at() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(
+        edges,
+        "raw_customers",
+        "created_at",
+        "stg_customers",
+        "signup_date",
+    );
+    assert!(
+        edge.is_some(),
+        "raw_customers.created_at -> stg_customers.signup_date edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "rename");
+}
+
+#[test]
+fn test_cli_lineage_raw_customers_tier() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(
+        edges,
+        "raw_customers",
+        "tier",
+        "stg_customers",
+        "customer_tier",
+    );
+    assert!(
+        edge.is_some(),
+        "raw_customers.tier -> stg_customers.customer_tier edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "rename");
+}
+
+// ── G3: Every raw_orders column traces to stg_orders ────────────────────
+
+#[test]
+fn test_cli_lineage_raw_orders_id() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(edges, "raw_orders", "id", "stg_orders", "order_id");
+    assert!(
+        edge.is_some(),
+        "raw_orders.id -> stg_orders.order_id edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "rename");
+}
+
+#[test]
+fn test_cli_lineage_raw_orders_user_id() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(edges, "raw_orders", "user_id", "stg_orders", "customer_id");
+    assert!(
+        edge.is_some(),
+        "raw_orders.user_id -> stg_orders.customer_id edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "rename");
+}
+
+#[test]
+fn test_cli_lineage_raw_orders_created_at() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(
+        edges,
+        "raw_orders",
+        "created_at",
+        "stg_orders",
+        "order_date",
+    );
+    assert!(
+        edge.is_some(),
+        "raw_orders.created_at -> stg_orders.order_date edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "rename");
+}
+
+#[test]
+fn test_cli_lineage_raw_orders_amount() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(edges, "raw_orders", "amount", "stg_orders", "amount");
+    assert!(
+        edge.is_some(),
+        "raw_orders.amount -> stg_orders.amount edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "copy");
+}
+
+#[test]
+fn test_cli_lineage_raw_orders_status() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(edges, "raw_orders", "status", "stg_orders", "status");
+    assert!(
+        edge.is_some(),
+        "raw_orders.status -> stg_orders.status edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "copy");
+}
+
+// ── G4: Every raw_payments column traces to stg_payments or stg_payments_star ─
+
+#[test]
+fn test_cli_lineage_raw_payments_id_to_stg_payments() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(edges, "raw_payments", "id", "stg_payments", "payment_id");
+    assert!(
+        edge.is_some(),
+        "raw_payments.id -> stg_payments.payment_id edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "rename");
+}
+
+#[test]
+fn test_cli_lineage_raw_payments_order_id_to_stg_payments() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(
+        edges,
+        "raw_payments",
+        "order_id",
+        "stg_payments",
+        "order_id",
+    );
+    assert!(
+        edge.is_some(),
+        "raw_payments.order_id -> stg_payments.order_id edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "copy");
+}
+
+#[test]
+fn test_cli_lineage_raw_payments_amount_to_stg_payments() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(edges, "raw_payments", "amount", "stg_payments", "amount");
+    assert!(
+        edge.is_some(),
+        "raw_payments.amount -> stg_payments.amount edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "transform");
+}
+
+#[test]
+fn test_cli_lineage_raw_payments_id_to_star() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(edges, "raw_payments", "id", "stg_payments_star", "id");
+    assert!(
+        edge.is_some(),
+        "raw_payments.id -> stg_payments_star.id edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "copy");
+}
+
+#[test]
+fn test_cli_lineage_raw_payments_order_id_to_star() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(
+        edges,
+        "raw_payments",
+        "order_id",
+        "stg_payments_star",
+        "order_id",
+    );
+    assert!(
+        edge.is_some(),
+        "raw_payments.order_id -> stg_payments_star.order_id edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "copy");
+}
+
+#[test]
+fn test_cli_lineage_raw_payments_payment_method_to_star() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(
+        edges,
+        "raw_payments",
+        "payment_method",
+        "stg_payments_star",
+        "payment_method",
+    );
+    assert!(
+        edge.is_some(),
+        "raw_payments.payment_method -> stg_payments_star.payment_method edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "copy");
+}
+
+#[test]
+fn test_cli_lineage_raw_payments_amount_to_star() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(
+        edges,
+        "raw_payments",
+        "amount",
+        "stg_payments_star",
+        "amount",
+    );
+    assert!(
+        edge.is_some(),
+        "raw_payments.amount -> stg_payments_star.amount edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "copy");
+}
+
+#[test]
+fn test_cli_lineage_raw_payments_created_at_to_star() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(
+        edges,
+        "raw_payments",
+        "created_at",
+        "stg_payments_star",
+        "created_at",
+    );
+    assert!(
+        edge.is_some(),
+        "raw_payments.created_at -> stg_payments_star.created_at edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "copy");
+}
+
+// ── G5: Every raw_products column traces to stg_products ────────────────
+
+#[test]
+fn test_cli_lineage_raw_products_id() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(edges, "raw_products", "id", "stg_products", "product_id");
+    assert!(
+        edge.is_some(),
+        "raw_products.id -> stg_products.product_id edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "rename");
+}
+
+#[test]
+fn test_cli_lineage_raw_products_name() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(
+        edges,
+        "raw_products",
+        "name",
+        "stg_products",
+        "product_name",
+    );
+    assert!(
+        edge.is_some(),
+        "raw_products.name -> stg_products.product_name edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "rename");
+}
+
+#[test]
+fn test_cli_lineage_raw_products_category() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(
+        edges,
+        "raw_products",
+        "category",
+        "stg_products",
+        "category",
+    );
+    assert!(
+        edge.is_some(),
+        "raw_products.category -> stg_products.category edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "copy");
+}
+
+#[test]
+fn test_cli_lineage_raw_products_price() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(edges, "raw_products", "price", "stg_products", "price");
+    assert!(
+        edge.is_some(),
+        "raw_products.price -> stg_products.price edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "transform");
+}
+
+#[test]
+fn test_cli_lineage_raw_products_active() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+    let edge = find_edge(edges, "raw_products", "active", "stg_products", "active");
+    assert!(
+        edge.is_some(),
+        "raw_products.active -> stg_products.active edge missing"
+    );
+    assert_eq!(edge.unwrap()["kind"], "copy");
+}
+
+// ── G6: Aliased models — edges resolve through aliases correctly ────────
+//
+// These are the critical tests: models with FROM table AS alias must resolve
+// aliases to real table names. Without extract_alias_map(), these all fail.
+
+#[test]
+fn test_cli_lineage_int_orders_enriched_alias_resolution() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+
+    // stg_orders aliased as `o` — edges must use real name
+    assert!(
+        find_edge(
+            edges,
+            "stg_orders",
+            "order_id",
+            "int_orders_enriched",
+            "order_id"
+        )
+        .is_some(),
+        "stg_orders.order_id -> int_orders_enriched.order_id missing (alias: o)"
+    );
+    assert!(
+        find_edge(
+            edges,
+            "stg_orders",
+            "customer_id",
+            "int_orders_enriched",
+            "customer_id"
+        )
+        .is_some(),
+        "stg_orders.customer_id -> int_orders_enriched.customer_id missing (alias: o)"
+    );
+    assert!(
+        find_edge(
+            edges,
+            "stg_orders",
+            "order_date",
+            "int_orders_enriched",
+            "order_date"
+        )
+        .is_some(),
+        "stg_orders.order_date -> int_orders_enriched.order_date missing (alias: o)"
+    );
+    assert!(
+        find_edge(
+            edges,
+            "stg_orders",
+            "status",
+            "int_orders_enriched",
+            "status"
+        )
+        .is_some(),
+        "stg_orders.status -> int_orders_enriched.status missing (alias: o)"
+    );
+
+    // stg_payments aliased as `p`
+    let has_payment_edge = edges
+        .iter()
+        .any(|e| e["source_model"] == "stg_payments" && e["target_model"] == "int_orders_enriched");
+    assert!(
+        has_payment_edge,
+        "int_orders_enriched should have edges from stg_payments (alias: p)"
+    );
+}
+
+#[test]
+fn test_cli_lineage_int_customer_metrics_alias_resolution() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+
+    // stg_customers aliased as `c`
+    assert!(
+        find_edge(
+            edges,
+            "stg_customers",
+            "customer_id",
+            "int_customer_metrics",
+            "customer_id"
+        )
+        .is_some(),
+        "stg_customers.customer_id -> int_customer_metrics.customer_id missing (alias: c)"
+    );
+    assert!(
+        find_edge(
+            edges,
+            "stg_customers",
+            "customer_name",
+            "int_customer_metrics",
+            "customer_name"
+        )
+        .is_some(),
+        "stg_customers.customer_name -> int_customer_metrics.customer_name missing (alias: c)"
+    );
+
+    // stg_orders aliased as `o` — aggregation columns
+    let has_orders_edge = edges
+        .iter()
+        .any(|e| e["source_model"] == "stg_orders" && e["target_model"] == "int_customer_metrics");
+    assert!(
+        has_orders_edge,
+        "int_customer_metrics should have edges from stg_orders (alias: o)"
+    );
+}
+
+#[test]
+fn test_cli_lineage_int_customer_ranking_alias_resolution() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+
+    // stg_customers aliased as `c`
+    assert!(
+        find_edge(
+            edges,
+            "stg_customers",
+            "customer_id",
+            "int_customer_ranking",
+            "customer_id"
+        )
+        .is_some(),
+        "stg_customers.customer_id -> int_customer_ranking.customer_id missing (alias: c)"
+    );
+    assert!(
+        find_edge(
+            edges,
+            "stg_customers",
+            "customer_name",
+            "int_customer_ranking",
+            "customer_name"
+        )
+        .is_some(),
+        "stg_customers.customer_name -> int_customer_ranking.customer_name missing (alias: c)"
+    );
+
+    // int_customer_metrics aliased as `m`
+    assert!(
+        find_edge(
+            edges,
+            "int_customer_metrics",
+            "lifetime_value",
+            "int_customer_ranking",
+            "lifetime_value"
+        )
+        .is_some(),
+        "int_customer_metrics.lifetime_value -> int_customer_ranking.lifetime_value missing (alias: m)"
+    );
+    assert!(
+        find_edge(
+            edges,
+            "int_customer_metrics",
+            "lifetime_value",
+            "int_customer_ranking",
+            "value_or_zero"
+        )
+        .is_some(),
+        "int_customer_metrics.lifetime_value -> int_customer_ranking.value_or_zero missing (alias: m)"
+    );
+    assert!(
+        find_edge(
+            edges,
+            "int_customer_metrics",
+            "total_orders",
+            "int_customer_ranking",
+            "nonzero_orders"
+        )
+        .is_some(),
+        "int_customer_metrics.total_orders -> int_customer_ranking.nonzero_orders missing (alias: m)"
+    );
+}
+
+#[test]
+fn test_cli_lineage_dim_customers_alias_resolution() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+
+    // int_customer_metrics aliased as `m`
+    assert!(
+        find_edge(
+            edges,
+            "int_customer_metrics",
+            "customer_id",
+            "dim_customers",
+            "customer_id"
+        )
+        .is_some(),
+        "int_customer_metrics.customer_id -> dim_customers.customer_id missing (alias: m)"
+    );
+    assert!(
+        find_edge(
+            edges,
+            "int_customer_metrics",
+            "total_orders",
+            "dim_customers",
+            "total_orders"
+        )
+        .is_some(),
+        "int_customer_metrics.total_orders -> dim_customers.total_orders missing (alias: m)"
+    );
+    assert!(
+        find_edge(
+            edges,
+            "int_customer_metrics",
+            "lifetime_value",
+            "dim_customers",
+            "lifetime_value"
+        )
+        .is_some(),
+        "int_customer_metrics.lifetime_value -> dim_customers.lifetime_value missing (alias: m)"
+    );
+
+    // stg_customers aliased as `c`
+    assert!(
+        find_edge(
+            edges,
+            "stg_customers",
+            "customer_name",
+            "dim_customers",
+            "customer_name"
+        )
+        .is_some(),
+        "stg_customers.customer_name -> dim_customers.customer_name missing (alias: c)"
+    );
+    assert!(
+        find_edge(edges, "stg_customers", "email", "dim_customers", "email").is_some(),
+        "stg_customers.email -> dim_customers.email missing (alias: c)"
+    );
+    assert!(
+        find_edge(
+            edges,
+            "stg_customers",
+            "signup_date",
+            "dim_customers",
+            "signup_date"
+        )
+        .is_some(),
+        "stg_customers.signup_date -> dim_customers.signup_date missing (alias: c)"
+    );
+}
+
+#[test]
+fn test_cli_lineage_fct_orders_alias_resolution() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+
+    // int_orders_enriched aliased as `e`
+    assert!(
+        find_edge(
+            edges,
+            "int_orders_enriched",
+            "order_id",
+            "fct_orders",
+            "order_id"
+        )
+        .is_some(),
+        "int_orders_enriched.order_id -> fct_orders.order_id missing (alias: e)"
+    );
+    assert!(
+        find_edge(
+            edges,
+            "int_orders_enriched",
+            "customer_id",
+            "fct_orders",
+            "customer_id"
+        )
+        .is_some(),
+        "int_orders_enriched.customer_id -> fct_orders.customer_id missing (alias: e)"
+    );
+    assert!(
+        find_edge(
+            edges,
+            "int_orders_enriched",
+            "order_date",
+            "fct_orders",
+            "order_date"
+        )
+        .is_some(),
+        "int_orders_enriched.order_date -> fct_orders.order_date missing (alias: e)"
+    );
+    assert!(
+        find_edge(
+            edges,
+            "int_orders_enriched",
+            "status",
+            "fct_orders",
+            "status"
+        )
+        .is_some(),
+        "int_orders_enriched.status -> fct_orders.status missing (alias: e)"
+    );
+    assert!(
+        find_edge(
+            edges,
+            "int_orders_enriched",
+            "payment_total",
+            "fct_orders",
+            "payment_total"
+        )
+        .is_some(),
+        "int_orders_enriched.payment_total -> fct_orders.payment_total missing (alias: e)"
+    );
+    assert!(
+        find_edge(
+            edges,
+            "int_orders_enriched",
+            "payment_count",
+            "fct_orders",
+            "payment_count"
+        )
+        .is_some(),
+        "int_orders_enriched.payment_count -> fct_orders.payment_count missing (alias: e)"
+    );
+
+    // stg_customers aliased as `c`
+    assert!(
+        find_edge(
+            edges,
+            "stg_customers",
+            "customer_name",
+            "fct_orders",
+            "customer_name"
+        )
+        .is_some(),
+        "stg_customers.customer_name -> fct_orders.customer_name missing (alias: c)"
+    );
+    assert!(
+        find_edge(
+            edges,
+            "stg_customers",
+            "customer_tier",
+            "fct_orders",
+            "customer_tier"
+        )
+        .is_some(),
+        "stg_customers.customer_tier -> fct_orders.customer_tier missing (alias: c)"
+    );
+}
+
+#[test]
+fn test_cli_lineage_rpt_customer_orders_alias_resolution() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+
+    // stg_customers aliased as `c`
+    assert!(
+        find_edge(
+            edges,
+            "stg_customers",
+            "customer_id",
+            "rpt_customer_orders",
+            "customer_id"
+        )
+        .is_some(),
+        "stg_customers.customer_id -> rpt_customer_orders.customer_id missing (alias: c)"
+    );
+    assert!(
+        find_edge(
+            edges,
+            "stg_customers",
+            "customer_name",
+            "rpt_customer_orders",
+            "customer_name"
+        )
+        .is_some(),
+        "stg_customers.customer_name -> rpt_customer_orders.customer_name missing (alias: c)"
+    );
+    assert!(
+        find_edge(
+            edges,
+            "stg_customers",
+            "email",
+            "rpt_customer_orders",
+            "email"
+        )
+        .is_some(),
+        "stg_customers.email -> rpt_customer_orders.email missing (alias: c)"
+    );
+
+    // int_orders_enriched aliased as `e`
+    assert!(
+        find_edge(
+            edges,
+            "int_orders_enriched",
+            "order_id",
+            "rpt_customer_orders",
+            "order_id"
+        )
+        .is_some(),
+        "int_orders_enriched.order_id -> rpt_customer_orders.order_id missing (alias: e)"
+    );
+    assert!(
+        find_edge(
+            edges,
+            "int_orders_enriched",
+            "order_amount",
+            "rpt_customer_orders",
+            "order_amount"
+        )
+        .is_some(),
+        "int_orders_enriched.order_amount -> rpt_customer_orders.order_amount missing (alias: e)"
+    );
+    assert!(
+        find_edge(
+            edges,
+            "int_orders_enriched",
+            "payment_total",
+            "rpt_customer_orders",
+            "payment_total"
+        )
+        .is_some(),
+        "int_orders_enriched.payment_total -> rpt_customer_orders.payment_total missing (alias: e)"
+    );
+}
+
+// ── G7: Per-column recursive tracing through aliased models ─────────────
+
+#[test]
+fn test_cli_lineage_column_trace_customer_id_through_aliases() {
+    // int_customer_ranking.customer_id traces back through stg_customers -> raw_customers
+    let edges = run_lineage_column_json("int_customer_ranking", "customer_id");
+    assert!(
+        !edges.is_empty(),
+        "int_customer_ranking.customer_id should have upstream lineage edges"
+    );
+
+    // Should trace back to raw_customers.id
+    let has_raw = edges.iter().any(|e| e["source_model"] == "raw_customers");
+    assert!(
+        has_raw,
+        "int_customer_ranking.customer_id should trace back to raw_customers"
+    );
+}
+
+#[test]
+fn test_cli_lineage_column_trace_fct_orders_order_id() {
+    // fct_orders.order_id traces: fct_orders <- int_orders_enriched <- stg_orders <- raw_orders
+    let edges = run_lineage_column_json("fct_orders", "order_id");
+    assert!(
+        !edges.is_empty(),
+        "fct_orders.order_id should have upstream lineage edges"
+    );
+
+    let has_raw = edges.iter().any(|e| e["source_model"] == "raw_orders");
+    assert!(
+        has_raw,
+        "fct_orders.order_id should trace back to raw_orders"
+    );
+}
+
+#[test]
+fn test_cli_lineage_column_trace_dim_customers_email() {
+    // dim_customers.email traces: dim_customers <- stg_customers <- raw_customers
+    let edges = run_lineage_column_json("dim_customers", "email");
+    assert!(
+        !edges.is_empty(),
+        "dim_customers.email should have upstream lineage edges"
+    );
+
+    let has_raw = edges.iter().any(|e| e["source_model"] == "raw_customers");
+    assert!(
+        has_raw,
+        "dim_customers.email should trace back to raw_customers"
+    );
+}
+
+#[test]
+fn test_cli_lineage_column_trace_fct_orders_customer_name() {
+    // fct_orders.customer_name traces: fct_orders <- stg_customers <- raw_customers
+    let edges = run_lineage_column_json("fct_orders", "customer_name");
+    assert!(
+        !edges.is_empty(),
+        "fct_orders.customer_name should have upstream lineage edges"
+    );
+
+    let has_stg = edges.iter().any(|e| e["source_model"] == "stg_customers");
+    assert!(
+        has_stg,
+        "fct_orders.customer_name should trace through stg_customers"
+    );
+}
+
+// ── G8: No alias leakage — verify no edges reference alias names ────────
+
+#[test]
+fn test_cli_lineage_no_alias_leakage() {
+    let data = run_lineage_json();
+    let edges = get_edges(&data);
+
+    // Known aliases used in the sample project
+    let alias_names = ["o", "c", "p", "m", "e"];
+
+    for edge in edges {
+        let source = edge["source_model"].as_str().unwrap_or("");
+        let target = edge["target_model"].as_str().unwrap_or("");
+
+        for alias in &alias_names {
+            assert_ne!(
+                source, *alias,
+                "Edge source_model should be a real table name, not alias '{}': {:?}",
+                alias, edge
+            );
+            assert_ne!(
+                target, *alias,
+                "Edge target_model should be a real table name, not alias '{}': {:?}",
+                alias, edge
+            );
+        }
+    }
+}
+
+// ── G9: Model-level lineage data uses real table names in source_tables ─
+
+#[test]
+fn test_cli_lineage_model_source_tables_resolved() {
+    let data = run_lineage_json();
+    let models = data["models"].as_object().expect("models should be object");
+
+    let alias_names = ["o", "c", "p", "m", "e"];
+
+    for (model_name, model_data) in models {
+        if let Some(sources) = model_data["source_tables"].as_array() {
+            for source in sources {
+                let s = source.as_str().unwrap_or("");
+                for alias in &alias_names {
+                    assert_ne!(
+                        s, *alias,
+                        "Model '{}' source_tables contains alias '{}' instead of real table name",
+                        model_name, alias
+                    );
+                }
+            }
+        }
+    }
 }

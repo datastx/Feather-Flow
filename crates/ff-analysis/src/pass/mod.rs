@@ -2,6 +2,7 @@
 
 pub(crate) mod expr_utils;
 pub(crate) mod plan_cross_model;
+pub(crate) mod plan_description_drift;
 pub(crate) mod plan_join_keys;
 pub(crate) mod plan_nullability;
 pub mod plan_pass;
@@ -50,6 +51,12 @@ pub enum DiagnosticCode {
     A040,
     /// A041: Cross-model nullability mismatch
     A041,
+    /// A050: Copy/Rename column with missing description — suggest inheriting from upstream
+    A050,
+    /// A051: Copy/Rename column with modified description — potential documentation drift
+    A051,
+    /// A052: Transform column with missing description — needs new documentation
+    A052,
 }
 
 impl std::fmt::Display for DiagnosticCode {
@@ -77,6 +84,9 @@ impl std::str::FromStr for DiagnosticCode {
             "A033" => Ok(DiagnosticCode::A033),
             "A040" => Ok(DiagnosticCode::A040),
             "A041" => Ok(DiagnosticCode::A041),
+            "A050" => Ok(DiagnosticCode::A050),
+            "A051" => Ok(DiagnosticCode::A051),
+            "A052" => Ok(DiagnosticCode::A052),
             _ => Err(format!("unknown diagnostic code: {s}")),
         }
     }
