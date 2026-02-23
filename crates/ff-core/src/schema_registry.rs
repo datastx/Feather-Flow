@@ -1,0 +1,91 @@
+//! Schema registry for column metadata lookup
+//!
+//! Provides a unified view of column names, types, and descriptions across
+//! all project nodes (models, sources, seeds). Used by lineage to compute
+//! description propagation status.
+
+use crate::project::Project;
+use std::collections::HashMap;
+
+/// Metadata for a single column in a node.
+#[derive(Debug, Clone)]
+pub struct ColumnInfo {
+    /// Column name
+    pub name: String,
+    /// SQL data type
+    pub data_type: String,
+    /// Optional human-readable description
+    pub description: Option<String>,
+}
+
+/// Registry of column metadata indexed by node name then column name.
+#[derive(Debug, Default)]
+pub struct SchemaRegistry {
+    /// node_name -> { column_name_lowercase -> ColumnInfo }
+    nodes: HashMap<String, HashMap<String, ColumnInfo>>,
+}
+
+impl SchemaRegistry {
+    /// Build a registry from a loaded project.
+    ///
+    /// Collects columns from:
+    /// - Model YAML schemas (`project.models`)
+    /// - Source table definitions (`project.sources`)
+    pub fn from_project(project: &Project) -> Self {
+        let mut registry = Self::default();
+
+        // Models
+        for (name, model) in &project.models {
+            if let Some(schema) = &model.schema {
+                let mut cols = HashMap::new();
+                for col in &schema.columns {
+                    cols.insert(
+                        col.name.to_lowercase(),
+                        ColumnInfo {
+                            name: col.name.clone(),
+                            data_type: col.data_type.clone(),
+                            description: col.description.clone(),
+                        },
+                    );
+                }
+                if !cols.is_empty() {
+                    registry.nodes.insert(name.to_string(), cols);
+                }
+            }
+        }
+
+        // Sources
+        for source_file in &project.sources {
+            for table in &source_file.tables {
+                let mut cols = HashMap::new();
+                for col in &table.columns {
+                    cols.insert(
+                        col.name.to_lowercase(),
+                        ColumnInfo {
+                            name: col.name.clone(),
+                            data_type: col.data_type.clone(),
+                            description: col.description.clone(),
+                        },
+                    );
+                }
+                if !cols.is_empty() {
+                    registry.nodes.insert(table.name.clone(), cols);
+                }
+            }
+        }
+
+        registry
+    }
+
+    /// Look up a single column in a node.
+    pub fn get_column(&self, node: &str, column: &str) -> Option<&ColumnInfo> {
+        self.nodes
+            .get(node)
+            .and_then(|cols| cols.get(&column.to_lowercase()))
+    }
+
+    /// Get all columns for a node.
+    pub fn get_columns(&self, node: &str) -> Option<&HashMap<String, ColumnInfo>> {
+        self.nodes.get(node)
+    }
+}

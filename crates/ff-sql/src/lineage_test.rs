@@ -200,6 +200,11 @@ fn build_project_lineage(edges: Vec<LineageEdge>) -> ProjectLineage {
 }
 
 fn make_edge(src_model: &str, src_col: &str, tgt_model: &str, tgt_col: &str) -> LineageEdge {
+    let kind = if src_col == tgt_col {
+        LineageKind::Copy
+    } else {
+        LineageKind::Rename
+    };
     LineageEdge {
         source_model: src_model.to_string(),
         source_column: src_col.to_string(),
@@ -207,6 +212,8 @@ fn make_edge(src_model: &str, src_col: &str, tgt_model: &str, tgt_col: &str) -> 
         target_column: tgt_col.to_string(),
         is_direct: true,
         expr_type: ExprType::Column,
+        kind,
+        description_status: DescriptionStatus::Missing,
         classification: None,
     }
 }
@@ -317,4 +324,276 @@ fn test_recursive_no_matches() {
     // No upstream to A.x
     let upstream = lineage.trace_column_recursive("A", "x");
     assert!(upstream.is_empty());
+}
+
+// --- Unqualified column inference tests ---
+
+#[test]
+fn test_bare_column_resolves_to_single_source_table() {
+    // stg_customers: SELECT id AS customer_id FROM raw_customers
+    // `id` has no table qualifier, but source_tables has exactly one entry
+    let lineage = parse_and_extract_lineage(
+        "SELECT id AS customer_id FROM raw_customers",
+        "stg_customers",
+    )
+    .unwrap();
+
+    assert_eq!(lineage.source_tables.len(), 1);
+    assert!(lineage.source_tables.contains("raw_customers"));
+
+    let customer_id = lineage.get_column("customer_id").unwrap();
+    // source_ref.table is None for bare `id`
+    assert!(customer_id
+        .source_columns
+        .contains(&ColumnRef::simple("id")));
+
+    // Now resolve edges — bare column should infer raw_customers
+    let mut project = ProjectLineage::new();
+    project.add_model_lineage(lineage);
+
+    let known: HashSet<&str> = ["raw_customers", "stg_customers"].iter().copied().collect();
+    project.resolve_edges(&known);
+
+    // Should create edge: raw_customers.id → stg_customers.customer_id
+    assert_eq!(project.edges.len(), 1);
+    assert_eq!(project.edges[0].source_model, "raw_customers");
+    assert_eq!(project.edges[0].source_column, "id");
+    assert_eq!(project.edges[0].target_model, "stg_customers");
+    assert_eq!(project.edges[0].target_column, "customer_id");
+}
+
+#[test]
+fn test_bare_column_with_multiple_sources_stays_unresolved() {
+    // When there are 2+ source tables, bare column cannot be resolved
+    let lineage =
+        parse_and_extract_lineage("SELECT id, name FROM table_a, table_b", "test_model").unwrap();
+
+    assert_eq!(lineage.source_tables.len(), 2);
+
+    let mut project = ProjectLineage::new();
+    project.add_model_lineage(lineage);
+
+    let known: HashSet<&str> = ["table_a", "table_b"].iter().copied().collect();
+    project.resolve_edges(&known);
+
+    // No edges should be created — ambiguous source
+    assert!(project.edges.is_empty());
+}
+
+#[test]
+fn test_multi_hop_chain_with_bare_columns() {
+    // Simulate: raw_customers -> stg_customers -> int_customer_ranking
+    // stg_customers: SELECT id AS customer_id FROM raw_customers (bare column)
+    // int_customer_ranking: SELECT c.customer_id FROM stg_customers c (qualified)
+
+    let stg = parse_and_extract_lineage(
+        "SELECT id AS customer_id FROM raw_customers",
+        "stg_customers",
+    )
+    .unwrap();
+
+    let int_rank = parse_and_extract_lineage(
+        "SELECT c.customer_id FROM stg_customers c",
+        "int_customer_ranking",
+    )
+    .unwrap();
+
+    let mut project = ProjectLineage::new();
+    project.add_model_lineage(stg);
+    project.add_model_lineage(int_rank);
+
+    let known: HashSet<&str> = ["raw_customers", "stg_customers", "int_customer_ranking"]
+        .iter()
+        .copied()
+        .collect();
+    project.resolve_edges(&known);
+
+    // Should have 2 edges forming the full chain
+    assert_eq!(project.edges.len(), 2);
+
+    // Trace upstream from int_customer_ranking.customer_id should find both hops
+    let chain = project.trace_column_recursive("int_customer_ranking", "customer_id");
+    assert_eq!(chain.len(), 2, "Expected 2-hop chain, got {}", chain.len());
+
+    // Verify the chain: raw_customers.id -> stg_customers.customer_id -> int_customer_ranking.customer_id
+    assert!(chain
+        .iter()
+        .any(|e| e.source_model == "raw_customers" && e.source_column == "id"));
+    assert!(chain
+        .iter()
+        .any(|e| e.source_model == "stg_customers" && e.source_column == "customer_id"));
+}
+
+// --- LineageKind tests ---
+
+#[test]
+fn test_lineage_kind_copy() {
+    // SELECT customer_id FROM stg_customers — same name = Copy
+    let lineage =
+        parse_and_extract_lineage("SELECT customer_id FROM stg_customers", "test_model").unwrap();
+
+    let mut project = ProjectLineage::new();
+    project.add_model_lineage(lineage);
+    let known: HashSet<&str> = ["stg_customers"].iter().copied().collect();
+    project.resolve_edges(&known);
+
+    assert_eq!(project.edges.len(), 1);
+    assert_eq!(project.edges[0].kind, LineageKind::Copy);
+}
+
+#[test]
+fn test_lineage_kind_rename() {
+    // SELECT id AS customer_id FROM raw_customers — different name = Rename
+    let lineage = parse_and_extract_lineage(
+        "SELECT id AS customer_id FROM raw_customers",
+        "stg_customers",
+    )
+    .unwrap();
+
+    let mut project = ProjectLineage::new();
+    project.add_model_lineage(lineage);
+    let known: HashSet<&str> = ["raw_customers"].iter().copied().collect();
+    project.resolve_edges(&known);
+
+    assert_eq!(project.edges.len(), 1);
+    assert_eq!(project.edges[0].kind, LineageKind::Rename);
+}
+
+#[test]
+fn test_lineage_kind_transform() {
+    // SELECT COUNT(id) AS cnt FROM orders — function = Transform
+    let lineage =
+        parse_and_extract_lineage("SELECT COUNT(o.id) AS cnt FROM orders o", "test_model").unwrap();
+
+    let mut project = ProjectLineage::new();
+    project.add_model_lineage(lineage);
+    let known: HashSet<&str> = ["orders"].iter().copied().collect();
+    project.resolve_edges(&known);
+
+    assert_eq!(project.edges.len(), 1);
+    assert_eq!(project.edges[0].kind, LineageKind::Transform);
+}
+
+// --- Inspect edge tests ---
+
+#[test]
+fn test_inspect_edges_from_where() {
+    // WHERE references status which is NOT in SELECT output
+    let lineage = parse_and_extract_lineage(
+        "SELECT o.order_id FROM orders o WHERE o.status = 'completed'",
+        "test_model",
+    )
+    .unwrap();
+
+    // status should be in inspect_columns
+    assert!(
+        lineage.inspect_columns.iter().any(|r| r.column == "status"),
+        "WHERE column 'status' should be an inspect column"
+    );
+
+    let mut project = ProjectLineage::new();
+    project.add_model_lineage(lineage);
+    let known: HashSet<&str> = ["orders"].iter().copied().collect();
+    project.resolve_edges(&known);
+
+    // Should have 1 Copy edge (order_id) + 1 Inspect edge (status)
+    let copy_edges: Vec<_> = project
+        .edges
+        .iter()
+        .filter(|e| e.kind != LineageKind::Inspect)
+        .collect();
+    let inspect_edges: Vec<_> = project
+        .edges
+        .iter()
+        .filter(|e| e.kind == LineageKind::Inspect)
+        .collect();
+    assert_eq!(copy_edges.len(), 1, "Expected 1 copy edge for order_id");
+    assert_eq!(inspect_edges.len(), 1, "Expected 1 inspect edge for status");
+    assert_eq!(inspect_edges[0].source_column, "status");
+}
+
+#[test]
+fn test_inspect_edges_from_join_on() {
+    // JOIN ON references customer_id in both tables, but only SELECT output from one
+    let lineage = parse_and_extract_lineage(
+        "SELECT c.customer_name FROM stg_customers c
+         INNER JOIN stg_orders o ON c.customer_id = o.customer_id",
+        "test_model",
+    )
+    .unwrap();
+
+    let mut project = ProjectLineage::new();
+    project.add_model_lineage(lineage);
+    let known: HashSet<&str> = ["stg_customers", "stg_orders"].iter().copied().collect();
+    project.resolve_edges(&known);
+
+    // Should have inspect edges for customer_id from JOIN ON
+    let inspect_edges: Vec<_> = project
+        .edges
+        .iter()
+        .filter(|e| e.kind == LineageKind::Inspect)
+        .collect();
+    assert!(
+        inspect_edges
+            .iter()
+            .any(|e| e.source_column == "customer_id"),
+        "JOIN ON customer_id should create inspect edges"
+    );
+}
+
+#[test]
+fn test_inspect_edges_from_group_by() {
+    // GROUP BY customer_id, but customer_id is also in SELECT — should NOT be inspect
+    // HAVING uses total which is in SELECT — should NOT be inspect
+    let lineage = parse_and_extract_lineage(
+        "SELECT o.customer_id, count(o.order_id) as total
+         FROM orders o
+         GROUP BY o.customer_id
+         HAVING count(o.order_id) > 5",
+        "test_model",
+    )
+    .unwrap();
+
+    let mut project = ProjectLineage::new();
+    project.add_model_lineage(lineage);
+    let known: HashSet<&str> = ["orders"].iter().copied().collect();
+    project.resolve_edges(&known);
+
+    // customer_id is in both SELECT and GROUP BY — should NOT produce an inspect edge
+    let inspect_edges: Vec<_> = project
+        .edges
+        .iter()
+        .filter(|e| e.kind == LineageKind::Inspect)
+        .collect();
+    assert!(
+        !inspect_edges
+            .iter()
+            .any(|e| e.source_column == "customer_id"),
+        "customer_id is already in SELECT, should not be an inspect edge"
+    );
+}
+
+#[test]
+fn test_no_inspect_for_columns_already_in_select() {
+    // WHERE references order_id which IS in SELECT — should NOT be inspect
+    let lineage = parse_and_extract_lineage(
+        "SELECT o.order_id, o.amount FROM orders o WHERE o.order_id > 100",
+        "test_model",
+    )
+    .unwrap();
+
+    let mut project = ProjectLineage::new();
+    project.add_model_lineage(lineage);
+    let known: HashSet<&str> = ["orders"].iter().copied().collect();
+    project.resolve_edges(&known);
+
+    let inspect_edges: Vec<_> = project
+        .edges
+        .iter()
+        .filter(|e| e.kind == LineageKind::Inspect)
+        .collect();
+    assert!(
+        inspect_edges.is_empty(),
+        "No inspect edges expected — all WHERE columns are already in SELECT"
+    );
 }

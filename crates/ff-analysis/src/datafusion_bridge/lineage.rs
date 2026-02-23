@@ -4,7 +4,7 @@
 //! its source columns — whether it's a direct copy, a transformation,
 //! or merely inspected (e.g. in a WHERE clause).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use datafusion_expr::{Expr, LogicalPlan};
 use ff_core::ModelName;
@@ -180,6 +180,35 @@ fn collect_column_refs(expr: &Expr, refs: &mut Vec<(String, String)>) {
             .unwrap_or_default();
         refs.push((table, col.name.clone()));
     });
+}
+
+/// Extract alias → real table name mappings from a LogicalPlan.
+///
+/// Walks the plan tree looking for `SubqueryAlias` nodes wrapping `TableScan`
+/// nodes, which represent `FROM table AS alias` patterns. Returns a map from
+/// alias name to real table name.
+pub fn extract_alias_map(plan: &LogicalPlan) -> HashMap<String, String> {
+    let mut aliases = HashMap::new();
+    collect_aliases(plan, &mut aliases);
+    aliases
+}
+
+fn collect_aliases(plan: &LogicalPlan, aliases: &mut HashMap<String, String>) {
+    match plan {
+        LogicalPlan::SubqueryAlias(sa) => {
+            let alias_name = sa.alias.table().to_string();
+            if let LogicalPlan::TableScan(scan) = sa.input.as_ref() {
+                aliases.insert(alias_name, scan.table_name.table().to_string());
+            } else {
+                collect_aliases(sa.input.as_ref(), aliases);
+            }
+        }
+        _ => {
+            for input in plan.inputs() {
+                collect_aliases(input, aliases);
+            }
+        }
+    }
 }
 
 /// Deduplicate lineage edges, keeping the first occurrence per (output, source) pair

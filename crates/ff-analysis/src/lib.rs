@@ -26,8 +26,8 @@ pub use types::{parse_sql_type, FloatBitWidth, IntBitWidth, Nullability, SqlType
 
 // DataFusion bridge re-exports
 pub use datafusion_bridge::lineage::{
-    deduplicate_edges, extract_column_lineage as extract_plan_column_lineage, ColumnLineageEdge,
-    LineageKind, ModelColumnLineage,
+    deduplicate_edges, extract_alias_map, extract_column_lineage as extract_plan_column_lineage,
+    ColumnLineageEdge, LineageKind, ModelColumnLineage,
 };
 pub use datafusion_bridge::planner::sql_to_plan;
 pub use datafusion_bridge::propagation::{

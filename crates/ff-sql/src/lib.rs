@@ -25,8 +25,8 @@ pub use extractor::{
 };
 pub use inline::{collect_ephemeral_dependencies, inline_ephemeral_ctes};
 pub use lineage::{
-    extract_column_lineage, ColumnLineage, ColumnRef, ExprType, LineageEdge, ModelLineage,
-    ProjectLineage,
+    extract_column_lineage, ColumnLineage, ColumnRef, DescriptionStatus, ExprType, LineageEdge,
+    LineageKind, ModelLineage, ProjectLineage,
 };
 pub use parser::SqlParser;
 pub use qualify::qualify_table_references;
