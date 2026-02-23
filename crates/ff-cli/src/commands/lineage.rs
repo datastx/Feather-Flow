@@ -117,7 +117,7 @@ pub(crate) async fn execute(args: &LineageArgs, global: &GlobalArgs) -> Result<(
             }
 
             // AST fallback for models that failed DataFusion planning
-            for (name, _model) in &project.models {
+            for name in project.models.keys() {
                 if datafusion_models.contains(name.as_str()) {
                     continue;
                 }
@@ -140,7 +140,7 @@ pub(crate) async fn execute(args: &LineageArgs, global: &GlobalArgs) -> Result<(
                     e
                 );
             }
-            for (name, _model) in &project.models {
+            for name in project.models.keys() {
                 if let Some(sql) = rendered_sql.get(name.as_str()) {
                     if let Ok(stmts) = parser.parse(sql) {
                         if let Some(stmt) = stmts.first() {
@@ -275,10 +275,7 @@ fn bridge_datafusion_lineage(
             }
         }
 
-        if all_copy && col_lineage.source_columns.len() == 1 {
-            col_lineage.is_direct = true;
-            col_lineage.expr_type = ExprType::Column;
-        } else if all_copy {
+        if all_copy {
             col_lineage.is_direct = true;
             col_lineage.expr_type = ExprType::Column;
         } else {
@@ -366,7 +363,7 @@ fn print_table(lineage: &ProjectLineage, args: &LineageArgs) {
 
     // Print header
     println!(
-        "{:<25} {:<20} {:<25} {:<20} {:<10} {:<12} {:<12} {}",
+        "{:<25} {:<20} {:<25} {:<20} {:<10} {:<12} {:<12} TYPE",
         "SOURCE MODEL",
         "SOURCE COLUMN",
         "TARGET MODEL",
@@ -374,7 +371,6 @@ fn print_table(lineage: &ProjectLineage, args: &LineageArgs) {
         "KIND",
         "DESC STATUS",
         "CLASS",
-        "TYPE"
     );
     println!("{}", "-".repeat(145));
 
