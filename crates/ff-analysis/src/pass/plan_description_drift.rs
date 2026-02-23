@@ -16,7 +16,7 @@ use super::plan_pass::DagPlanPass;
 use super::{Diagnostic, DiagnosticCode, Severity};
 
 /// DAG-level pass that checks description propagation across lineage edges.
-pub struct PlanDescriptionDrift;
+pub(crate) struct PlanDescriptionDrift;
 
 impl DagPlanPass for PlanDescriptionDrift {
     fn name(&self) -> &'static str {
@@ -36,7 +36,6 @@ impl DagPlanPass for PlanDescriptionDrift {
         let lineage = ctx.lineage();
         let project = ctx.project();
 
-        // Build description lookup from project schemas
         let desc_lookup = build_project_descriptions(project);
 
         for edge in &lineage.edges {
@@ -47,7 +46,6 @@ impl DagPlanPass for PlanDescriptionDrift {
                 .get(&edge.target_model)
                 .and_then(|cols| cols.get(&edge.target_column.to_lowercase()));
 
-            // Only check edges targeting models (skip edges targeting seeds/sources)
             if !project.models.contains_key(edge.target_model.as_str()) {
                 continue;
             }
@@ -117,35 +115,39 @@ impl DagPlanPass for PlanDescriptionDrift {
 fn build_project_descriptions(
     project: &ff_core::Project,
 ) -> HashMap<String, HashMap<String, String>> {
-    let mut lookup: HashMap<String, HashMap<String, String>> = HashMap::new();
-
-    for (name, model) in &project.models {
-        if let Some(schema) = &model.schema {
-            let mut col_descs = HashMap::new();
-            for col in &schema.columns {
-                if let Some(ref desc) = col.description {
-                    col_descs.insert(col.name.to_lowercase(), desc.clone());
-                }
-            }
-            if !col_descs.is_empty() {
-                lookup.insert(name.to_string(), col_descs);
-            }
+    /// Build a non-empty description map, or `None` if no columns have descriptions.
+    fn collect_descs(
+        pairs: impl Iterator<Item = (String, String)>,
+    ) -> Option<HashMap<String, String>> {
+        let map: HashMap<String, String> = pairs.collect();
+        if map.is_empty() {
+            None
+        } else {
+            Some(map)
         }
     }
 
-    for source_file in &project.sources {
-        for table in &source_file.tables {
-            let mut col_descs = HashMap::new();
-            for col in &table.columns {
-                if let Some(ref desc) = col.description {
-                    col_descs.insert(col.name.to_lowercase(), desc.clone());
-                }
-            }
-            if !col_descs.is_empty() {
-                lookup.insert(table.name.clone(), col_descs);
-            }
-        }
-    }
-
-    lookup
+    project
+        .models
+        .iter()
+        .filter_map(|(name, model)| {
+            let schema = model.schema.as_ref()?;
+            let descs = collect_descs(schema.columns.iter().filter_map(|col| {
+                Some((col.name.to_lowercase(), col.description.as_ref()?.clone()))
+            }))?;
+            Some((name.to_string(), descs))
+        })
+        .chain(
+            project
+                .sources
+                .iter()
+                .flat_map(|sf| &sf.tables)
+                .filter_map(|table| {
+                    let descs = collect_descs(table.columns.iter().filter_map(|col| {
+                        Some((col.name.to_lowercase(), col.description.as_ref()?.clone()))
+                    }))?;
+                    Some((table.name.clone(), descs))
+                }),
+        )
+        .collect()
 }

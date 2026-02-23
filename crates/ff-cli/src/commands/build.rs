@@ -45,8 +45,7 @@ async fn run_model_tests(
     custom_test_env: &minijinja::Environment<'static>,
     quiet: bool,
 ) -> (usize, usize) {
-    let mut passed = 0usize;
-    let mut failed = 0usize;
+    let mut results: Vec<bool> = Vec::with_capacity(model_tests.len());
 
     for schema_test in model_tests {
         let generated = test::generate_test_with_custom_support(
@@ -58,7 +57,6 @@ async fn run_model_tests(
         let result = runner.run_test(&generated).await;
 
         if result.passed {
-            passed += 1;
             if !quiet {
                 println!(
                     "    \u{2713} {} [{}ms]",
@@ -66,8 +64,8 @@ async fn run_model_tests(
                     result.duration.as_millis()
                 );
             }
+            results.push(true);
         } else if let Some(error) = &result.error {
-            failed += 1;
             if !quiet {
                 println!(
                     "    \u{2717} {} - {} [{}ms]",
@@ -76,8 +74,9 @@ async fn run_model_tests(
                     result.duration.as_millis()
                 );
             }
+            results.push(false);
+            break;
         } else {
-            failed += 1;
             if !quiet {
                 println!(
                     "    \u{2717} {} ({} failures) [{}ms]",
@@ -86,12 +85,13 @@ async fn run_model_tests(
                     result.duration.as_millis()
                 );
             }
-        }
-
-        if failed > 0 {
+            results.push(false);
             break;
         }
     }
+
+    let passed = results.iter().filter(|&&p| p).count();
+    let failed = results.iter().filter(|&&p| !p).count();
 
     (passed, failed)
 }

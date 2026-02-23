@@ -112,10 +112,10 @@ impl std::fmt::Display for NodeKind {
 /// Used by the unified node discovery to cheaply determine the resource type
 /// before committing to a full parse with the type-specific schema.
 #[derive(Debug, Deserialize)]
-pub struct NodeKindProbe {
+pub(crate) struct NodeKindProbe {
     /// The `kind` field from the YAML file, if present.
     #[serde(default)]
-    pub kind: Option<NodeKind>,
+    pub(crate) kind: Option<NodeKind>,
 }
 
 #[cfg(test)]

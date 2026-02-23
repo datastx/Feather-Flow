@@ -86,10 +86,10 @@ impl fmt::Display for ResolvedIdent {
 impl ResolvedIdent {
     /// Build a `ResolvedIdent` from already-resolved parts.
     ///
-    /// # Panics (debug only)
+    /// # Panics
     ///
-    /// Debug-asserts that `parts` is non-empty. Every call-site in production
-    /// passes at least one part (from `resolve_object_name`).
+    /// Panics if `parts` is empty. Every call-site in production passes at
+    /// least one part (from `resolve_object_name`).
     pub fn from_parts(parts: Vec<ResolvedPart>) -> Self {
         assert!(
             !parts.is_empty(),

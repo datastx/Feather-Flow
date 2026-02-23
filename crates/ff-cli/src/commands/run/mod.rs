@@ -221,9 +221,14 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         eprintln!("Warning: Failed to save initial run state: {}", e);
     }
 
-    let meta_ids = meta_db
-        .as_ref()
-        .and_then(|db| common::populate_meta_phase1(db, &project, "run", args.nodes.as_deref()));
+    let meta_ids = meta_db.as_ref().and_then(|db| {
+        common::populate_meta_phase1(
+            db,
+            &project,
+            ff_meta::populate::lifecycle::RunType::Run,
+            args.nodes.as_deref(),
+        )
+    });
     let (meta_run_id, meta_model_id_map) = match &meta_ids {
         Some((_project_id, run_id, model_id_map)) => (Some(*run_id), Some(model_id_map)),
         None => (None, None),
@@ -254,9 +259,9 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
 
     if let (Some(ref meta_db), Some(run_id)) = (&meta_db, meta_run_id) {
         let status = if failure_count > 0 {
-            "error"
+            ff_meta::populate::lifecycle::PopulationStatus::Error
         } else {
-            "success"
+            ff_meta::populate::lifecycle::PopulationStatus::Success
         };
         common::complete_meta_run(meta_db, run_id, status);
     }

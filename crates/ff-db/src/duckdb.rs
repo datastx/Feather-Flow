@@ -118,20 +118,26 @@ fn handle_commit_result<T>(conn: &Connection, result: &DbResult<T>) -> DbResult<
     Ok(())
 }
 
+/// Collect `(column_0, column_1)` string pairs from an already-prepared query.
+fn collect_column_pairs(
+    stmt: &mut duckdb::Statement<'_>,
+    params: &[&dyn duckdb::types::ToSql],
+) -> DbResult<Vec<(String, String)>> {
+    let mut pairs = Vec::new();
+    let mut rows = stmt.query(params)?;
+    while let Some(row) = rows.next()? {
+        pairs.push((row.get::<_, String>(0)?, row.get::<_, String>(1)?));
+    }
+    Ok(pairs)
+}
+
 /// Get table column names and types on an already-locked connection.
 fn table_columns(conn: &Connection, table: &str) -> DbResult<Vec<(String, String)>> {
     let (schema, table_name) = ff_core::sql_utils::split_qualified_name(table);
     let sql = "SELECT column_name, data_type FROM information_schema.columns \
                WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position";
     let mut stmt = conn.prepare(sql)?;
-    let mut columns: Vec<(String, String)> = Vec::new();
-    let mut rows = stmt.query(duckdb::params![schema, table_name])?;
-    while let Some(row) = rows.next()? {
-        let column_name: String = row.get(0)?;
-        let column_type: String = row.get(1)?;
-        columns.push((column_name, column_type));
-    }
-    Ok(columns)
+    collect_column_pairs(&mut stmt, &[&schema, &table_name])
 }
 
 /// Check if a relation exists on an already-locked connection.
@@ -546,18 +552,8 @@ impl DatabaseSchema for DuckDbBackend {
     async fn describe_query(&self, sql: &str) -> DbResult<Vec<(String, String)>> {
         let conn = self.lock_conn()?;
         let describe_sql = format!("DESCRIBE SELECT * FROM ({}) AS subq", sql);
-
         let mut stmt = conn.prepare(&describe_sql)?;
-        let mut columns: Vec<(String, String)> = Vec::new();
-        let mut rows = stmt.query([])?;
-
-        while let Some(row) = rows.next()? {
-            let column_name: String = row.get(0)?;
-            let column_type: String = row.get(1)?;
-            columns.push((column_name, column_type));
-        }
-
-        Ok(columns)
+        collect_column_pairs(&mut stmt, &[])
     }
 
     async fn add_columns(&self, table: &str, columns: &[(String, String)]) -> DbResult<()> {
@@ -669,18 +665,8 @@ impl DatabaseCsv for DuckDbBackend {
             "DESCRIBE SELECT * FROM read_csv_auto('{}')",
             escape_sql_string(path)
         );
-
         let mut stmt = conn.prepare(&sql)?;
-        let mut schema: Vec<(String, String)> = Vec::new();
-        let mut rows = stmt.query([])?;
-
-        while let Some(row) = rows.next()? {
-            let column_name: String = row.get(0)?;
-            let column_type: String = row.get(1)?;
-            schema.push((column_name, column_type));
-        }
-
-        Ok(schema)
+        collect_column_pairs(&mut stmt, &[])
     }
 }
 

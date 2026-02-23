@@ -96,7 +96,6 @@ impl<'a> JinjaEnvironment<'a> {
             env.add_global("executing", Value::from(ctx.executing));
         }
 
-        // Set up a multi-path loader that searches all configured macro paths.
         let valid_paths: Vec<PathBuf> = macro_paths
             .iter()
             .filter(|p| p.exists() && p.is_dir())

@@ -96,13 +96,13 @@ fn collect_consumed_columns(
     models: &HashMap<ModelName, ModelPlanResult>,
     ctx: &AnalysisContext,
 ) -> HashSet<String> {
-    let mut consumed = HashSet::new();
-
-    for edge in &ctx.lineage().edges {
-        if edge.source_model == source_model {
-            consumed.insert(edge.source_column.to_lowercase());
-        }
-    }
+    let mut consumed: HashSet<String> = ctx
+        .lineage()
+        .edges
+        .iter()
+        .filter(|edge| edge.source_model == source_model)
+        .map(|edge| edge.source_column.to_lowercase())
+        .collect();
 
     for dep_name in dependents {
         if let Some(dep_result) = models.get(dep_name.as_str()) {

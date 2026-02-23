@@ -1781,7 +1781,12 @@ fn begin_population_creates_run_and_clears_data() {
             .unwrap();
         assert_eq!(model_count_before, 1);
 
-        let run_id = super::lifecycle::begin_population(conn, project_id, "compile", None)?;
+        let run_id = super::lifecycle::begin_population(
+            conn,
+            project_id,
+            super::lifecycle::RunType::Compile,
+            None,
+        )?;
         assert!(run_id > 0);
 
         let model_count_after: i64 = conn
@@ -1825,9 +1830,9 @@ fn complete_population_updates_status() {
     meta.transaction(|conn| {
         let project_id =
             super::project::populate_project(conn, &config, &PathBuf::from("/tmp/project"))?;
-        let run_id = super::lifecycle::begin_population(conn, project_id, "validate", None)?;
+        let run_id = super::lifecycle::begin_population(conn, project_id, super::lifecycle::RunType::Validate, None)?;
 
-        super::lifecycle::complete_population(conn, run_id, "success")?;
+        super::lifecycle::complete_population(conn, run_id, super::lifecycle::PopulationStatus::Success)?;
 
         let (status, completed): (String, Option<String>) = conn
             .query_row(
@@ -1852,9 +1857,18 @@ fn complete_population_error_status() {
     meta.transaction(|conn| {
         let project_id =
             super::project::populate_project(conn, &config, &PathBuf::from("/tmp/project"))?;
-        let run_id = super::lifecycle::begin_population(conn, project_id, "run", None)?;
+        let run_id = super::lifecycle::begin_population(
+            conn,
+            project_id,
+            super::lifecycle::RunType::Run,
+            None,
+        )?;
 
-        super::lifecycle::complete_population(conn, run_id, "error")?;
+        super::lifecycle::complete_population(
+            conn,
+            run_id,
+            super::lifecycle::PopulationStatus::Error,
+        )?;
 
         let status: String = conn
             .query_row(
@@ -1881,7 +1895,7 @@ fn begin_population_with_node_selector() {
         let run_id = super::lifecycle::begin_population(
             conn,
             project_id,
-            "compile",
+            super::lifecycle::RunType::Compile,
             Some("orders,+customers"),
         )?;
 
@@ -1908,7 +1922,14 @@ fn all_run_types_accepted() {
         let project_id =
             super::project::populate_project(conn, &config, &PathBuf::from("/tmp/project"))?;
 
-        for run_type in &["compile", "validate", "run", "analyze", "rules"] {
+        use super::lifecycle::RunType;
+        for run_type in [
+            RunType::Compile,
+            RunType::Validate,
+            RunType::Run,
+            RunType::Analyze,
+            RunType::Rules,
+        ] {
             let run_id = super::lifecycle::begin_population(conn, project_id, run_type, None)?;
             assert!(run_id > 0);
         }
@@ -1946,7 +1967,12 @@ fn project_hooks_survive_begin_population() {
             .unwrap();
         assert_eq!(hook_count_before, 1);
 
-        super::lifecycle::begin_population(conn, project_id, "compile", None)?;
+        super::lifecycle::begin_population(
+            conn,
+            project_id,
+            super::lifecycle::RunType::Compile,
+            None,
+        )?;
 
         let hook_count_after: i64 = conn
             .query_row(

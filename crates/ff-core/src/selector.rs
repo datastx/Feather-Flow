@@ -341,15 +341,14 @@ impl Selector {
         tag: &str,
         models: &HashMap<ModelName, Model>,
     ) -> CoreResult<Vec<String>> {
-        let tag_str = tag.to_string();
         Ok(models
             .iter()
             .filter(|(_, model)| {
-                model.config.tags.contains(&tag_str)
+                model.config.tags.iter().any(|t| t == tag)
                     || model
                         .schema
                         .as_ref()
-                        .is_some_and(|s| s.tags.contains(&tag_str))
+                        .is_some_and(|s| s.tags.iter().any(|t| t == tag))
             })
             .map(|(name, _)| name.to_string())
             .collect())

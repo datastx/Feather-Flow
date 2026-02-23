@@ -350,9 +350,11 @@ impl Model {
     /// model dependencies and external table dependencies should use
     /// `depends_on` and `external_deps` fields directly.
     pub fn all_dependencies(&self) -> HashSet<String> {
-        let mut deps: HashSet<String> = self.depends_on.iter().map(|m| m.to_string()).collect();
-        deps.extend(self.external_deps.iter().map(|t| t.to_string()));
-        deps
+        self.depends_on
+            .iter()
+            .map(|m| m.to_string())
+            .chain(self.external_deps.iter().map(|t| t.to_string()))
+            .collect()
     }
 
     /// Get tests from the model's 1:1 schema file
@@ -403,7 +405,7 @@ impl Model {
     }
 
     /// Get the owner for this model from schema metadata
-    pub fn get_owner(&self) -> Option<String> {
+    pub fn get_owner(&self) -> Option<&str> {
         self.schema.as_ref().and_then(|s| s.get_owner())
     }
 
@@ -413,7 +415,7 @@ impl Model {
     }
 
     /// Get a metadata value as a string
-    pub fn get_meta_string(&self, key: &str) -> Option<String> {
+    pub fn get_meta_string(&self, key: &str) -> Option<&str> {
         self.schema.as_ref().and_then(|s| s.get_meta_string(key))
     }
 }

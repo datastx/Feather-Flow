@@ -40,9 +40,12 @@ pub(crate) async fn execute(args: &RulesArgs, global: &GlobalArgs) -> Result<()>
         .context("Failed to execute rules")?;
 
     {
-        if let Some((_project_id, run_id, _model_id_map)) =
-            common::populate_meta_phase1(&meta_db, &project, "rules", None)
-        {
+        if let Some((_project_id, run_id, _model_id_map)) = common::populate_meta_phase1(
+            &meta_db,
+            &project,
+            ff_meta::populate::lifecycle::RunType::Rules,
+            None,
+        ) {
             let _ = meta_db.transaction(|conn| {
                 ff_meta::rules::populate_rule_violations(conn, run_id, &violations)
             });
@@ -50,9 +53,9 @@ pub(crate) async fn execute(args: &RulesArgs, global: &GlobalArgs) -> Result<()>
                 .iter()
                 .any(|r| !r.passed && r.severity == RuleSeverity::Error)
             {
-                "error"
+                ff_meta::populate::lifecycle::PopulationStatus::Error
             } else {
-                "success"
+                ff_meta::populate::lifecycle::PopulationStatus::Success
             };
             common::complete_meta_run(&meta_db, run_id, status);
         }

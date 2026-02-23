@@ -193,14 +193,13 @@ impl<'a> FeatherFlowProvider<'a> {
     /// `SchemaRef` so that `get_table_source` lookups are O(1) HashMap
     /// hits with no per-call allocation.
     pub fn new(catalog: &SchemaCatalog, registry: &'a FunctionRegistry) -> Self {
-        let arrow_schemas: HashMap<String, SchemaRef> = catalog
-            .iter()
-            .map(|(name, schema)| (name.clone(), Self::rel_schema_to_arrow(schema)))
-            .collect();
-        let lowercase_schemas: HashMap<String, SchemaRef> = arrow_schemas
-            .iter()
-            .map(|(k, v)| (k.to_lowercase(), v.clone()))
-            .collect();
+        let mut arrow_schemas = HashMap::with_capacity(catalog.len());
+        let mut lowercase_schemas = HashMap::with_capacity(catalog.len());
+        for (name, schema) in catalog.iter() {
+            let arrow = Self::rel_schema_to_arrow(schema);
+            lowercase_schemas.insert(name.to_lowercase(), arrow.clone());
+            arrow_schemas.insert(name.clone(), arrow);
+        }
         Self {
             arrow_schemas,
             lowercase_schemas,

@@ -152,7 +152,16 @@ fn parse_rule_file(path: &Path, content: &str, default_severity: RuleSeverity) -
         } else if let Some(value) = comment.strip_prefix("description:") {
             description = Some(value.trim().to_string());
         }
-        sql_start += line.len() + 1; // +1 for newline
+        // Advance past the line content, then skip the actual line ending
+        // (\n, \r\n, or \r) — .lines() strips these, so line.len() excludes them.
+        sql_start += line.len();
+        let bytes = content.as_bytes();
+        if bytes.get(sql_start) == Some(&b'\r') {
+            sql_start += 1;
+        }
+        if bytes.get(sql_start) == Some(&b'\n') {
+            sql_start += 1;
+        }
     }
 
     let sql = content[sql_start.min(content.len())..].trim().to_string();

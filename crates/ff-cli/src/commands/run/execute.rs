@@ -15,6 +15,7 @@ use tokio::task::JoinSet;
 
 use crate::cli::{OutputFormat, RunArgs};
 use crate::commands::common::RunStatus;
+use ff_core::ModelName;
 
 use super::compile::CompiledModel;
 use super::hooks::{execute_hooks, validate_model_contract};
@@ -222,7 +223,7 @@ async fn handle_successful_execution(
     if let Err(e) = execute_hooks(db, &compiled.post_hook, quoted_name).await {
         let duration = model_start.elapsed();
         return ModelRunResult {
-            model: name.to_string(),
+            model: ModelName::new(name),
             status: RunStatus::Error,
             materialization: compiled.materialization.to_string(),
             duration_secs: duration.as_secs_f64(),
@@ -241,7 +242,7 @@ async fn handle_successful_execution(
     {
         let duration = model_start.elapsed();
         return ModelRunResult {
-            model: name.to_string(),
+            model: ModelName::new(name),
             status: RunStatus::Error,
             materialization: compiled.materialization.to_string(),
             duration_secs: duration.as_secs_f64(),
@@ -251,7 +252,7 @@ async fn handle_successful_execution(
 
     let duration = model_start.elapsed();
     ModelRunResult {
-        model: name.to_string(),
+        model: ModelName::new(name),
         status: RunStatus::Success,
         materialization: compiled.materialization.to_string(),
         duration_secs: duration.as_secs_f64(),
@@ -278,7 +279,7 @@ pub(crate) async fn run_single_model(
     if let Err(e) = execute_hooks(db, &compiled.pre_hook, &quoted_name).await {
         let duration = model_start.elapsed();
         return ModelRunResult {
-            model: name.to_string(),
+            model: ModelName::new(name),
             status: RunStatus::Error,
             materialization: compiled.materialization.to_string(),
             duration_secs: duration.as_secs_f64(),
@@ -317,7 +318,7 @@ pub(crate) async fn run_single_model(
             // Defensive: is_wap guard above checks is_some(), but avoid panic in production
             let duration = model_start.elapsed();
             return ModelRunResult {
-                model: name.to_string(),
+                model: ModelName::new(name),
                 status: RunStatus::Error,
                 materialization: compiled.materialization.to_string(),
                 duration_secs: duration.as_secs_f64(),
@@ -353,7 +354,7 @@ pub(crate) async fn run_single_model(
         Err(e) => {
             let duration = model_start.elapsed();
             ModelRunResult {
-                model: name.to_string(),
+                model: ModelName::new(name),
                 status: RunStatus::Error,
                 materialization: compiled.materialization.to_string(),
                 duration_secs: duration.as_secs_f64(),
@@ -474,7 +475,7 @@ async fn execute_models_sequential(
         if failed_models.contains(name) {
             failure_count += 1;
             let skipped = ModelRunResult {
-                model: name.clone(),
+                model: ModelName::new(name),
                 status: RunStatus::Skipped,
                 materialization: compiled.materialization.to_string(),
                 duration_secs: 0.0,
@@ -489,7 +490,7 @@ async fn execute_models_sequential(
         if compiled.materialization == Materialization::Ephemeral {
             success_count += 1;
             run_results.push(ModelRunResult {
-                model: name.clone(),
+                model: ModelName::new(name),
                 status: RunStatus::Success,
                 materialization: "ephemeral".to_string(),
                 duration_secs: 0.0,
@@ -625,7 +626,7 @@ fn prepare_level_model(
     if compiled.materialization == Materialization::Ephemeral {
         state.success_count.fetch_add(1, Ordering::SeqCst);
         recover_mutex(&state.run_results).push(ModelRunResult {
-            model: name.to_string(),
+            model: ModelName::new(name),
             status: RunStatus::Success,
             materialization: "ephemeral".to_string(),
             duration_secs: 0.0,
@@ -797,7 +798,7 @@ async fn execute_models_parallel(
         if !matches!(result.status, RunStatus::Success) {
             continue;
         }
-        let Some(compiled) = ctx.compiled_models.get(&result.model) else {
+        let Some(compiled) = ctx.compiled_models.get(result.model.as_str()) else {
             continue;
         };
         let qualified_name = build_qualified_name(compiled.schema.as_deref(), &result.model);

@@ -951,7 +951,7 @@ pub(crate) fn open_meta_db(project: &Project) -> Option<ff_meta::MetaDb> {
 pub(crate) fn populate_meta_phase1(
     meta_db: &ff_meta::MetaDb,
     project: &Project,
-    run_type: &str,
+    run_type: ff_meta::populate::lifecycle::RunType,
     node_selector: Option<&str>,
 ) -> Option<(i64, i64, std::collections::HashMap<ff_core::ModelName, i64>)> {
     let result = meta_db.transaction(|conn| {
@@ -975,7 +975,11 @@ pub(crate) fn populate_meta_phase1(
 }
 
 /// Complete a meta database population run.
-pub(crate) fn complete_meta_run(meta_db: &ff_meta::MetaDb, run_id: i64, status: &str) {
+pub(crate) fn complete_meta_run(
+    meta_db: &ff_meta::MetaDb,
+    run_id: i64,
+    status: ff_meta::populate::lifecycle::PopulationStatus,
+) {
     if let Err(e) = meta_db
         .transaction(|conn| ff_meta::populate::lifecycle::complete_population(conn, run_id, status))
     {

@@ -24,8 +24,13 @@ pub(crate) async fn execute(args: &CleanArgs, global: &GlobalArgs) -> Result<()>
         println!("Cleaning project: {}", project.config.name);
     }
 
-    let mut cleaned_count = 0;
-    let mut skipped_count = 0;
+    enum CleanOutcome {
+        Cleaned,
+        Skipped,
+        Failed,
+    }
+
+    let mut outcomes: Vec<CleanOutcome> = Vec::with_capacity(clean_targets.len());
 
     for target in clean_targets {
         let target_path = project.root.join(target);
@@ -34,26 +39,36 @@ pub(crate) async fn execute(args: &CleanArgs, global: &GlobalArgs) -> Result<()>
             if global.verbose {
                 println!("  Skipping (not found): {}", target_path.display());
             }
-            skipped_count += 1;
+            outcomes.push(CleanOutcome::Skipped);
             continue;
         }
 
         if args.dry_run {
             println!("  Would remove: {}", target_path.display());
-            cleaned_count += 1;
+            outcomes.push(CleanOutcome::Cleaned);
             continue;
         }
 
         match fs::remove_dir_all(&target_path) {
             Ok(_) => {
                 println!("  Removed: {}", target_path.display());
-                cleaned_count += 1;
+                outcomes.push(CleanOutcome::Cleaned);
             }
             Err(e) => {
                 eprintln!("  Failed to remove {}: {}", target_path.display(), e);
+                outcomes.push(CleanOutcome::Failed);
             }
         }
     }
+
+    let cleaned_count = outcomes
+        .iter()
+        .filter(|o| matches!(o, CleanOutcome::Cleaned))
+        .count();
+    let skipped_count = outcomes
+        .iter()
+        .filter(|o| matches!(o, CleanOutcome::Skipped))
+        .count();
 
     // Clean meta database file
     let meta_path = project.target_dir().join("meta.duckdb");

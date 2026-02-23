@@ -131,24 +131,15 @@ fn find_best_upstream_classification(
     effective_cls: &HashMap<String, HashMap<String, String>>,
     incoming: &[&ClassificationEdge],
 ) -> Option<String> {
-    let mut best_rank: u8 = 0;
-    let mut best_cls: Option<String> = None;
-
-    for edge in incoming {
-        let upstream = effective_cls
-            .get(&edge.source_model)
-            .and_then(|cols| cols.get(&edge.source_column));
-
-        if let Some(cls) = upstream {
-            let r = rank_str(cls);
-            if r > best_rank {
-                best_rank = r;
-                best_cls = Some(cls.clone());
-            }
-        }
-    }
-
-    best_cls
+    incoming
+        .iter()
+        .filter_map(|edge| {
+            effective_cls
+                .get(&edge.source_model)
+                .and_then(|cols| cols.get(&edge.source_column))
+        })
+        .max_by_key(|cls| rank_str(cls))
+        .cloned()
 }
 
 /// Propagate data classifications through column lineage in topological order.
@@ -168,7 +159,6 @@ pub fn propagate_classifications_topo(
     edges: &[ClassificationEdge],
     declared: &HashMap<String, HashMap<String, String>>,
 ) -> HashMap<String, HashMap<String, String>> {
-    // Build an index: (target_model, target_column) → list of edges
     let mut target_index: HashMap<(&str, &str), Vec<&ClassificationEdge>> = HashMap::new();
     for edge in edges {
         target_index
@@ -177,7 +167,6 @@ pub fn propagate_classifications_topo(
             .push(edge);
     }
 
-    // Collect all target columns per model so we know what to process
     let mut model_columns: HashMap<&str, Vec<&str>> = HashMap::new();
     for edge in edges {
         let cols = model_columns.entry(edge.target_model.as_str()).or_default();

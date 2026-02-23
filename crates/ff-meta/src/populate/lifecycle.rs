@@ -3,6 +3,44 @@
 use crate::error::{MetaResult, MetaResultExt};
 use duckdb::Connection;
 
+/// The type of population run being performed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunType {
+    Compile,
+    Validate,
+    Run,
+    Analyze,
+    Rules,
+}
+
+impl RunType {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Compile => "compile",
+            Self::Validate => "validate",
+            Self::Run => "run",
+            Self::Analyze => "analyze",
+            Self::Rules => "rules",
+        }
+    }
+}
+
+/// Terminal status of a population run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PopulationStatus {
+    Success,
+    Error,
+}
+
+impl PopulationStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Error => "error",
+        }
+    }
+}
+
 /// Begin a new population cycle.
 ///
 /// Creates a compilation_runs row with status "running" and clears all
@@ -13,12 +51,12 @@ use duckdb::Connection;
 pub fn begin_population(
     conn: &Connection,
     project_id: i64,
-    run_type: &str,
+    run_type: RunType,
     node_selector: Option<&str>,
 ) -> MetaResult<i64> {
     conn.execute(
         "INSERT INTO ff_meta.compilation_runs (project_id, run_type, node_selector) VALUES (?, ?, ?)",
-        duckdb::params![project_id, run_type, node_selector],
+        duckdb::params![project_id, run_type.as_str(), node_selector],
     )
     .populate_context("insert compilation_runs")?;
 
@@ -36,10 +74,14 @@ pub fn begin_population(
 }
 
 /// Mark a compilation run as completed (success or error).
-pub fn complete_population(conn: &Connection, run_id: i64, status: &str) -> MetaResult<()> {
+pub fn complete_population(
+    conn: &Connection,
+    run_id: i64,
+    status: PopulationStatus,
+) -> MetaResult<()> {
     conn.execute(
         "UPDATE ff_meta.compilation_runs SET status = ?, completed_at = now() WHERE run_id = ?",
-        duckdb::params![status, run_id],
+        duckdb::params![status.as_str(), run_id],
     )
     .populate_context("update compilation_runs")?;
     Ok(())

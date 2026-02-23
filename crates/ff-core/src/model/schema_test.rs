@@ -32,7 +32,7 @@ columns:
     assert_eq!(schema.tags, vec!["staging", "orders"]);
     assert_eq!(schema.columns.len(), 2);
     // get_owner should return the direct owner field
-    assert_eq!(schema.get_owner(), Some("data-team".to_string()));
+    assert_eq!(schema.get_owner(), Some("data-team"));
 }
 
 #[test]
@@ -53,22 +53,16 @@ meta:
     // Meta fields should be populated
     assert_eq!(
         schema.get_meta_string("owner"),
-        Some("analytics-team@example.com".to_string())
+        Some("analytics-team@example.com")
     );
-    assert_eq!(
-        schema.get_meta_string("team"),
-        Some("Analytics".to_string())
-    );
+    assert_eq!(schema.get_meta_string("team"), Some("Analytics"));
     assert_eq!(
         schema.get_meta_string("slack_channel"),
-        Some("#data-alerts".to_string())
+        Some("#data-alerts")
     );
 
     // get_owner should fall back to meta.owner
-    assert_eq!(
-        schema.get_owner(),
-        Some("analytics-team@example.com".to_string())
-    );
+    assert_eq!(schema.get_owner(), Some("analytics-team@example.com"));
 }
 
 #[test]
@@ -83,13 +77,10 @@ meta:
     let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
 
     // get_owner should return direct owner over meta.owner
-    assert_eq!(schema.get_owner(), Some("direct-owner".to_string()));
+    assert_eq!(schema.get_owner(), Some("direct-owner"));
 
     // But we can still access meta.owner directly
-    assert_eq!(
-        schema.get_meta_string("owner"),
-        Some("meta-owner".to_string())
-    );
+    assert_eq!(schema.get_meta_string("owner"), Some("meta-owner"));
 }
 
 #[test]

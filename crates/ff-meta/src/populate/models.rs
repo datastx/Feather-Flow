@@ -63,7 +63,7 @@ fn insert_model(
 
     let schema_name = model.target_schema(config.schema.as_deref());
     let description = model.schema.as_ref().and_then(|s| s.description.clone());
-    let owner = model.get_owner();
+    let owner = model.get_owner().map(String::from);
     let deprecated = model.schema.as_ref().map(|s| s.deprecated).unwrap_or(false);
     let deprecation_message = model.get_deprecation_message().map(|s| s.to_string());
     let contract_enforced = model

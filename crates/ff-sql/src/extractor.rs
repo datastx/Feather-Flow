@@ -83,7 +83,6 @@ pub fn categorize_dependencies_with_unknown(
     let mut external_deps = Vec::new();
     let mut unknown_deps = Vec::new();
 
-    // Build lowercase -> original-case map for O(1) case-insensitive lookup
     let known_models_map: HashMap<String, &str> = known_models
         .iter()
         .map(|s| (s.to_lowercase(), *s))
@@ -159,7 +158,6 @@ pub fn extract_dependencies_resolved(
         let _ = visit_relations(stmt, |relation| {
             let resolved = dialect.resolve_object_name(relation);
 
-            // Filter out CTEs (check the last part, which is the table name)
             let table_part_lower = resolved.table_part().value.to_lowercase();
             if all_cte_names.contains(&table_part_lower) {
                 return std::ops::ControlFlow::<()>::Continue(());

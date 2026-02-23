@@ -55,9 +55,8 @@ pub(crate) async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> 
 
     println!("Loading {} seeds...\n", enabled_seeds.len());
 
-    let mut success_count = 0;
-    let mut failure_count = 0;
-    let mut total_rows: usize = 0;
+    // Collect (table_name, Result<row_count>) per seed for post-loop count derivation
+    let mut seed_results: Vec<Result<usize, ()>> = Vec::with_capacity(enabled_seeds.len());
 
     for seed in &enabled_seeds {
         if args.full_refresh {
@@ -96,17 +95,19 @@ pub(crate) async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> 
                     }
                 };
 
-                success_count += 1;
-                total_rows += row_count;
-
                 println!("  \u{2713} {} ({} rows)", table_name, row_count);
+                seed_results.push(Ok(row_count));
             }
             Err(e) => {
-                failure_count += 1;
                 println!("  \u{2717} {} - {}", table_name, e);
+                seed_results.push(Err(()));
             }
         }
     }
+
+    let success_count = seed_results.iter().filter(|r| r.is_ok()).count();
+    let failure_count = seed_results.iter().filter(|r| r.is_err()).count();
+    let total_rows: usize = seed_results.iter().filter_map(|r| r.as_ref().ok()).sum();
 
     println!();
     println!("Loaded {} seeds ({} total rows)", success_count, total_rows);

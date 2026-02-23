@@ -32,49 +32,61 @@ impl SchemaRegistry {
     /// - Model YAML schemas (`project.models`)
     /// - Source table definitions (`project.sources`)
     pub fn from_project(project: &Project) -> Self {
-        let mut registry = Self::default();
+        let nodes = project
+            .models
+            .iter()
+            .filter_map(|(name, model)| {
+                let schema = model.schema.as_ref()?;
+                let cols: HashMap<String, ColumnInfo> = schema
+                    .columns
+                    .iter()
+                    .map(|col| {
+                        (
+                            col.name.to_lowercase(),
+                            ColumnInfo {
+                                name: col.name.clone(),
+                                data_type: col.data_type.clone(),
+                                description: col.description.clone(),
+                            },
+                        )
+                    })
+                    .collect();
+                if cols.is_empty() {
+                    None
+                } else {
+                    Some((name.to_string(), cols))
+                }
+            })
+            .chain(
+                project
+                    .sources
+                    .iter()
+                    .flat_map(|sf| &sf.tables)
+                    .filter_map(|table| {
+                        let cols: HashMap<String, ColumnInfo> = table
+                            .columns
+                            .iter()
+                            .map(|col| {
+                                (
+                                    col.name.to_lowercase(),
+                                    ColumnInfo {
+                                        name: col.name.clone(),
+                                        data_type: col.data_type.clone(),
+                                        description: col.description.clone(),
+                                    },
+                                )
+                            })
+                            .collect();
+                        if cols.is_empty() {
+                            None
+                        } else {
+                            Some((table.name.clone(), cols))
+                        }
+                    }),
+            )
+            .collect();
 
-        // Models
-        for (name, model) in &project.models {
-            if let Some(schema) = &model.schema {
-                let mut cols = HashMap::new();
-                for col in &schema.columns {
-                    cols.insert(
-                        col.name.to_lowercase(),
-                        ColumnInfo {
-                            name: col.name.clone(),
-                            data_type: col.data_type.clone(),
-                            description: col.description.clone(),
-                        },
-                    );
-                }
-                if !cols.is_empty() {
-                    registry.nodes.insert(name.to_string(), cols);
-                }
-            }
-        }
-
-        // Sources
-        for source_file in &project.sources {
-            for table in &source_file.tables {
-                let mut cols = HashMap::new();
-                for col in &table.columns {
-                    cols.insert(
-                        col.name.to_lowercase(),
-                        ColumnInfo {
-                            name: col.name.clone(),
-                            data_type: col.data_type.clone(),
-                            description: col.description.clone(),
-                        },
-                    );
-                }
-                if !cols.is_empty() {
-                    registry.nodes.insert(table.name.clone(), cols);
-                }
-            }
-        }
-
-        registry
+        Self { nodes }
     }
 
     /// Look up a single column in a node.

@@ -424,21 +424,21 @@ fn try_parse_parameterized(s: &str) -> Option<SqlType> {
 
 /// Parse STRUCT fields like "name VARCHAR, age INT"
 fn parse_struct_fields(s: &str) -> Option<SqlType> {
-    let parts = split_top_level(s, ',');
-    let mut fields = Vec::new();
-    for part in parts {
-        let part = part.trim();
-        // Split on first whitespace to get "name TYPE"
-        let space_pos = part.find(|c: char| c.is_ascii_whitespace())?;
-        let name = part[..space_pos].trim().to_string();
-        let type_str = part[space_pos..].trim();
-        let sql_type = parse_sql_type(type_str);
-        fields.push((name, sql_type));
-    }
+    let fields: Vec<(String, SqlType)> = split_top_level(s, ',')
+        .into_iter()
+        .filter_map(|part| {
+            let part = part.trim();
+            let space_pos = part.find(|c: char| c.is_ascii_whitespace())?;
+            let name = part[..space_pos].trim().to_string();
+            let sql_type = parse_sql_type(part[space_pos..].trim());
+            Some((name, sql_type))
+        })
+        .collect();
     if fields.is_empty() {
-        return None;
+        None
+    } else {
+        Some(SqlType::Struct(fields))
     }
-    Some(SqlType::Struct(fields))
 }
 
 /// Split a string on a delimiter, but only at the top level (not inside parentheses)

@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use ff_core::compute_checksum;
 use ff_core::run_state::RunState;
+use ff_core::ModelName;
 use ff_core::Project;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -18,7 +19,7 @@ use super::compile::CompiledModel;
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ModelRunResult {
     /// Model name
-    pub(crate) model: String,
+    pub(crate) model: ModelName,
     /// Execution outcome
     pub(crate) status: RunStatus,
     /// Materialization strategy used (view, table, incremental, ephemeral)

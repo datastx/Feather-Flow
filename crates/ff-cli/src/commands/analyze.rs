@@ -169,15 +169,18 @@ pub(crate) async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<(
 
     // Populate meta database (non-fatal)
     if let Some(meta_db) = common::open_meta_db(ctx.project()) {
-        if let Some((_project_id, run_id, model_id_map)) =
-            common::populate_meta_phase1(&meta_db, ctx.project(), "analyze", args.nodes.as_deref())
-        {
+        if let Some((_project_id, run_id, model_id_map)) = common::populate_meta_phase1(
+            &meta_db,
+            ctx.project(),
+            ff_meta::populate::lifecycle::RunType::Analyze,
+            args.nodes.as_deref(),
+        ) {
             populate_meta_analysis(&meta_db, &ctx, &order, &model_id_map);
 
             let status = if filtered.iter().any(|d| d.severity == Severity::Error) {
-                "error"
+                ff_meta::populate::lifecycle::PopulationStatus::Error
             } else {
-                "success"
+                ff_meta::populate::lifecycle::PopulationStatus::Success
             };
             common::complete_meta_run(&meta_db, run_id, status);
         }
@@ -361,16 +364,15 @@ fn build_effective_entries(
 ) -> Vec<ff_meta::populate::analysis::EffectiveClassification> {
     effective
         .iter()
-        .filter_map(|(model, columns)| {
-            let &model_id = model_id_map.get(model.as_str())?;
-            Some(columns.iter().map(move |(column, classification)| {
-                ff_meta::populate::analysis::EffectiveClassification {
-                    model_id,
+        .flat_map(|(model, columns)| {
+            let model_id = model_id_map.get(model.as_str()).copied();
+            columns.iter().filter_map(move |(column, classification)| {
+                Some(ff_meta::populate::analysis::EffectiveClassification {
+                    model_id: model_id?,
                     column_name: column.clone(),
                     effective_classification: classification.clone(),
-                }
-            }))
+                })
+            })
         })
-        .flatten()
         .collect()
 }

@@ -30,39 +30,39 @@ pub fn discover_custom_test_macros(
     macro_paths: &[impl AsRef<Path>],
 ) -> JinjaResult<Vec<CustomTestMacro>> {
     let mut discovered = Vec::new();
-
     for macro_path in macro_paths {
         let path = macro_path.as_ref();
-        if !path.exists() || !path.is_dir() {
-            continue;
+        if path.exists() && path.is_dir() {
+            discovered.extend(scan_macro_dir(path)?);
         }
+    }
+    Ok(discovered)
+}
 
-        // Scan top-level .sql files in the directory (non-recursive by design)
-        let entries = fs::read_dir(path).map_err(|e| {
+/// Scan a single directory for `.sql` files containing test macros.
+fn scan_macro_dir(dir: &Path) -> JinjaResult<Vec<CustomTestMacro>> {
+    let mut macros = Vec::new();
+    let entries = fs::read_dir(dir).map_err(|e| {
+        JinjaError::Internal(format!(
+            "failed to read macro directory {}: {}",
+            dir.display(),
+            e
+        ))
+    })?;
+    for entry_result in entries {
+        let entry = entry_result.map_err(|e| {
             JinjaError::Internal(format!(
-                "failed to read macro directory {}: {}",
-                path.display(),
+                "failed to read directory entry in {}: {}",
+                dir.display(),
                 e
             ))
         })?;
-
-        for entry_result in entries {
-            let entry = entry_result.map_err(|e| {
-                JinjaError::Internal(format!(
-                    "failed to read directory entry in {}: {}",
-                    path.display(),
-                    e
-                ))
-            })?;
-            let file_path = entry.path();
-            if file_path.extension().is_some_and(|e| e == "sql") {
-                let file_macros = process_macro_file(&file_path)?;
-                discovered.extend(file_macros);
-            }
+        let file_path = entry.path();
+        if file_path.extension().is_some_and(|e| e == "sql") {
+            macros.extend(process_macro_file(&file_path)?);
         }
     }
-
-    Ok(discovered)
+    Ok(macros)
 }
 
 /// Read a single macro file and extract any test macros from it.

@@ -258,17 +258,17 @@ impl ModelSchema {
     }
 
     /// Get owner - prefers direct owner field, falls back to meta.owner
-    pub fn get_owner(&self) -> Option<String> {
+    pub fn get_owner(&self) -> Option<&str> {
         if let Some(owner) = &self.owner {
-            return Some(owner.clone());
+            return Some(owner.as_str());
         }
         self.get_meta_string("owner")
     }
 
     /// Get a metadata value as a string
-    pub fn get_meta_string(&self, key: &str) -> Option<String> {
+    pub fn get_meta_string(&self, key: &str) -> Option<&str> {
         self.meta.get(key).and_then(|v| match v {
-            serde_yaml::Value::String(s) => Some(s.clone()),
+            serde_yaml::Value::String(s) => Some(s.as_str()),
             _ => None,
         })
     }

@@ -91,30 +91,31 @@ impl std::fmt::Debug for TestRunContext<'_> {
 
 /// Generate tests from source files
 fn generate_source_tests(sources: &[SourceFile]) -> Vec<SchemaTest> {
-    let mut tests = Vec::new();
-
-    for source in sources {
-        for table in &source.tables {
-            for column in &table.columns {
-                for test_def in &column.tests {
-                    // Use the same parsing logic as model tests
-                    if let Some(test_type) = parse_test_definition(test_def) {
-                        tests.push(SchemaTest {
-                            model: ff_core::model_name::ModelName::new(format!(
-                                "{}.{}",
-                                source.schema, table.name
-                            )),
-                            column: column.name.clone(),
-                            test_type,
-                            config: ff_core::model::TestConfig::default(),
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    tests
+    sources
+        .iter()
+        .flat_map(|source| {
+            source.tables.iter().flat_map(move |table| {
+                let model = ff_core::model_name::ModelName::new(format!(
+                    "{}.{}",
+                    source.schema, table.name
+                ));
+                table.columns.iter().flat_map(move |column| {
+                    column.tests.iter().filter_map({
+                        let model = model.clone();
+                        let column_name = column.name.clone();
+                        move |test_def| {
+                            Some(SchemaTest {
+                                model: model.clone(),
+                                column: column_name.clone(),
+                                test_type: parse_test_definition(test_def)?,
+                                config: ff_core::model::TestConfig::default(),
+                            })
+                        }
+                    })
+                })
+            })
+        })
+        .collect()
 }
 
 /// Execute the test command

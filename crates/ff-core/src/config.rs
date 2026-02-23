@@ -463,29 +463,27 @@ impl Config {
     /// If target is specified and exists, uses target's database config.
     /// Otherwise, uses the base database config.
     pub fn get_database_config(&self, target: Option<&str>) -> CoreResult<Cow<'_, DatabaseConfig>> {
-        match target {
-            Some(name) => {
-                let target_config =
-                    self.targets
-                        .get(name)
-                        .ok_or_else(|| CoreError::ConfigInvalid {
-                            message: format!(
-                                "Target '{}' not found. Available targets: {}",
-                                name,
-                                self.targets
-                                    .keys()
-                                    .map(|k| k.as_str())
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            ),
-                        })?;
+        let Some(name) = target else {
+            return Ok(Cow::Borrowed(&self.database));
+        };
 
-                // Use target's database config if specified, otherwise fall back to base
-                match &target_config.database {
-                    Some(db) => Ok(Cow::Borrowed(db)),
-                    None => Ok(Cow::Borrowed(&self.database)),
-                }
-            }
+        let target_config = self
+            .targets
+            .get(name)
+            .ok_or_else(|| CoreError::ConfigInvalid {
+                message: format!(
+                    "Target '{}' not found. Available targets: {}",
+                    name,
+                    self.targets
+                        .keys()
+                        .map(|k| k.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            })?;
+
+        match &target_config.database {
+            Some(db) => Ok(Cow::Borrowed(db)),
             None => Ok(Cow::Borrowed(&self.database)),
         }
     }

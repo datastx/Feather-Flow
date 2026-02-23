@@ -159,16 +159,19 @@ pub(crate) async fn execute(args: &ValidateArgs, global: &GlobalArgs) -> Result<
 
     // Populate meta database (non-fatal)
     if let Some(meta_db) = common::open_meta_db(&project) {
-        if let Some((_project_id, run_id, _model_id_map)) =
-            common::populate_meta_phase1(&meta_db, &project, "validate", args.nodes.as_deref())
-        {
+        if let Some((_project_id, run_id, _model_id_map)) = common::populate_meta_phase1(
+            &meta_db,
+            &project,
+            ff_meta::populate::lifecycle::RunType::Validate,
+            args.nodes.as_deref(),
+        ) {
             // Run SQL rules if configured
             validate_rules(&project, &meta_db, &mut ctx);
 
             let status = if ctx.error_count() > 0 {
-                "error"
+                ff_meta::populate::lifecycle::PopulationStatus::Error
             } else {
-                "success"
+                ff_meta::populate::lifecycle::PopulationStatus::Success
             };
             common::complete_meta_run(&meta_db, run_id, status);
         }
@@ -207,7 +210,7 @@ fn validate_sql_syntax(
     ctx: &mut ValidationContext,
 ) -> HashMap<String, Vec<String>> {
     print!("Checking SQL syntax... ");
-    let mut sql_errors = 0;
+    let issues_before = ctx.issues.len();
     let mut dependencies: HashMap<String, Vec<String>> = HashMap::new();
 
     for name in models {
@@ -230,7 +233,6 @@ fn validate_sql_syntax(
                     format!("Jinja render error: {}", e)
                 };
                 ctx.error(code, msg, Some(model.path.display().to_string()));
-                sql_errors += 1;
                 continue;
             }
         };
@@ -243,7 +245,6 @@ fn validate_sql_syntax(
                     format!("SQL parse error: {}", e),
                     Some(model.path.display().to_string()),
                 );
-                sql_errors += 1;
                 continue;
             }
         };
@@ -255,7 +256,6 @@ fn validate_sql_syntax(
                 _ => "S004",
             };
             ctx.error(code, e.to_string(), Some(model.path.display().to_string()));
-            sql_errors += 1;
             continue;
         }
 
@@ -294,6 +294,11 @@ fn validate_sql_syntax(
         dependencies.insert(name.clone(), model_deps);
     }
 
+    let sql_errors = ctx.issues[issues_before..]
+        .iter()
+        .filter(|i| i.severity == Severity::Error)
+        .count();
+
     if sql_errors == 0 {
         println!("✓");
     } else {
@@ -318,7 +323,7 @@ fn validate_jinja_variables(
     ctx: &mut ValidationContext,
 ) {
     print!("Checking Jinja variables... ");
-    let mut var_warnings = 0;
+    let issues_before = ctx.issues.len();
 
     for name in models {
         if let Some(model) = project.get_model(name) {
@@ -330,11 +335,12 @@ fn validate_jinja_variables(
                         format!("Undefined variable: {}", err_str),
                         Some(model.path.display().to_string()),
                     );
-                    var_warnings += 1;
                 }
             }
         }
     }
+
+    let var_warnings = ctx.issues.len() - issues_before;
 
     if var_warnings == 0 {
         println!("✓");
@@ -395,7 +401,7 @@ fn validate_schemas(
     ctx: &mut ValidationContext,
 ) {
     print!("Checking schema files... ");
-    let mut schema_issues = 0;
+    let issues_before = ctx.issues.len();
 
     // Check orphaned schema references
     let models_with_tests: HashSet<&str> = project.tests.iter().map(|t| t.model.as_str()).collect();
@@ -406,7 +412,6 @@ fn validate_schemas(
                 format!("Schema references unknown model: {}", model_ref),
                 None,
             );
-            schema_issues += 1;
         }
     }
 
@@ -429,7 +434,6 @@ fn validate_schemas(
                 ),
                 Some(model.path.with_extension("yml").display().to_string()),
             );
-            schema_issues += 1;
         }
     }
 
@@ -447,7 +451,6 @@ fn validate_schemas(
                     ),
                     Some(model.path.display().to_string()),
                 );
-                schema_issues += 1;
             }
         }
     }
@@ -462,9 +465,11 @@ fn validate_schemas(
         };
         let file_path = model.path.with_extension("yml").display().to_string();
         for column in &schema.columns {
-            schema_issues += check_column_schema(column, name, known_models, &file_path, ctx);
+            check_column_schema(column, name, known_models, &file_path, ctx);
         }
     }
+
+    let schema_issues = ctx.issues.len() - issues_before;
 
     if schema_issues == 0 {
         println!("✓");
@@ -495,7 +500,7 @@ fn validate_macros(
     ctx: &mut ValidationContext,
 ) {
     print!("Checking macro files... ");
-    let mut macro_errors = 0;
+    let issues_before = ctx.issues.len();
     let mut macro_count = 0;
 
     for macro_dir in macro_paths {
@@ -517,7 +522,6 @@ fn validate_macros(
                     "Failed to read macro file",
                     Some(path.display().to_string()),
                 );
-                macro_errors += 1;
                 continue;
             };
             let test_env = JinjaEnvironment::new(vars);
@@ -529,11 +533,12 @@ fn validate_macros(
                         format!("Macro parse error: {}", e),
                         Some(path.display().to_string()),
                     );
-                    macro_errors += 1;
                 }
             }
         }
     }
+
+    let macro_errors = ctx.issues.len() - issues_before;
 
     if macro_count == 0 {
         println!("(none found)");
@@ -609,8 +614,6 @@ fn validate_static_analysis(
     };
     let result = &output.result;
 
-    let mut issue_count = 0;
-
     // Collect issues into vecs first to avoid double-borrow of ctx
     let mut mismatch_issues: Vec<(String, String, bool)> = Vec::new();
     let mut failure_issues: Vec<String> = Vec::new();
@@ -640,7 +643,7 @@ fn validate_static_analysis(
     for msg in failure_issues {
         ctx.error("SA01", msg, None);
     }
-    issue_count += mismatch_count;
+    let issue_count = mismatch_count;
     if issue_count == 0 && failure_count == 0 {
         println!("✓ ({} models analyzed)", plan_count);
     } else if issue_count == 0 {
@@ -685,7 +688,7 @@ fn validate_contracts(
         None
     };
 
-    let mut contract_warnings = 0;
+    let issues_before = ctx.issues.len();
     let mut models_with_contracts = 0;
     let mut enforced_count = 0;
 
@@ -716,7 +719,6 @@ fn validate_contracts(
                 ),
                 Some(file_path.clone()),
             );
-            contract_warnings += 1;
         }
 
         if let Some(ref manifest) = reference_manifest {
@@ -729,10 +731,11 @@ fn validate_contracts(
                     ),
                     Some(model.path.display().to_string()),
                 );
-                contract_warnings += 1;
             }
         }
     }
+
+    let contract_warnings = ctx.issues.len() - issues_before;
 
     if models_with_contracts == 0 {
         println!("(no contracts defined)");
@@ -858,7 +861,7 @@ fn check_column_governance(
 fn validate_governance(project: &Project, models: &[String], ctx: &mut ValidationContext) {
     print!("Checking data governance... ");
     let require_classification = project.config.data_classification.require_classification;
-    let mut governance_issues = 0;
+    let issues_before = ctx.issues.len();
 
     for name in models {
         let Some(model) = project.get_model(name) else {
@@ -870,10 +873,11 @@ fn validate_governance(project: &Project, models: &[String], ctx: &mut Validatio
         let file_path = model.path.with_extension("yml").display().to_string();
 
         for column in &schema.columns {
-            governance_issues +=
-                check_column_governance(column, name, &file_path, require_classification, ctx);
+            check_column_governance(column, name, &file_path, require_classification, ctx);
         }
     }
+
+    let governance_issues = ctx.issues.len() - issues_before;
 
     if governance_issues == 0 {
         if require_classification {
@@ -901,7 +905,7 @@ fn validate_documentation(project: &Project, models: &[String], ctx: &mut Valida
     }
 
     print!("Checking documentation... ");
-    let mut doc_issues = 0;
+    let issues_before = ctx.issues.len();
 
     for name in models {
         let Some(model) = project.get_model(name) else {
@@ -913,15 +917,17 @@ fn validate_documentation(project: &Project, models: &[String], ctx: &mut Valida
         let file_path = model.path.with_extension("yml").display().to_string();
 
         if require_models {
-            doc_issues += check_model_description(schema, name, &file_path, ctx);
+            check_model_description(schema, name, &file_path, ctx);
         }
 
         if require_columns {
             for column in &schema.columns {
-                doc_issues += check_column_description(column, name, &file_path, ctx);
+                check_column_description(column, name, &file_path, ctx);
             }
         }
     }
+
+    let doc_issues = ctx.issues.len() - issues_before;
 
     if doc_issues == 0 {
         println!("✓");
@@ -1142,12 +1148,11 @@ fn validate_rules(project: &Project, meta_db: &ff_meta::MetaDb, ctx: &mut Valida
         }
     };
 
-    let mut fail_count = 0;
+    let issues_before = ctx.issues.len();
     for result in &results {
-        if process_rule_result(result, ctx) {
-            fail_count += 1;
-        }
+        process_rule_result(result, ctx);
     }
+    let fail_count = ctx.issues.len() - issues_before;
 
     if fail_count == 0 {
         println!("\u{2713} ({} rules)", rules.len());

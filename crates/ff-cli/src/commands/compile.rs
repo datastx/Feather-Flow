@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use ff_core::config::Materialization;
 use ff_core::dag::ModelDag;
 use ff_core::model::ModelConfig;
+use ff_core::ModelName;
 use ff_core::Project;
 use ff_jinja::JinjaEnvironment;
 use ff_sql::{
@@ -46,7 +47,7 @@ use crate::commands::common::parse_hooks_from_config;
 
 /// Intermediate compilation result before ephemeral inlining
 struct CompileOutput {
-    name: String,
+    name: ModelName,
     sql: String,
     /// Parsed AST statements — kept to avoid re-parsing during qualification.
     statements: Vec<Statement>,
@@ -144,8 +145,6 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
     let model_count = all_model_names.len();
     let mut dependencies: HashMap<String, Vec<String>> = HashMap::with_capacity(model_count);
     let mut compile_results: Vec<ModelCompileResult> = Vec::with_capacity(model_count);
-    let mut success_count = 0;
-    let mut failure_count = 0;
 
     let default_materialization = project.config.materialization;
 
@@ -172,7 +171,6 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
                 compiled_models.push(compiled);
             }
             Err(e) => {
-                failure_count += 1;
                 compile_results.push(ModelCompileResult {
                     model: name.clone(),
                     status: RunStatus::Error,
@@ -196,7 +194,7 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
     let model_names: Vec<String> = common::resolve_nodes(&project, &dag, &args.nodes)?;
     let model_names_set: HashSet<String> = model_names.iter().cloned().collect();
 
-    compiled_models.retain(|m| model_names_set.contains(&m.name));
+    compiled_models.retain(|m| model_names_set.contains(m.name.as_str()));
 
     if !json_mode && args.nodes.is_some() {
         if args.parse_only {
@@ -239,7 +237,7 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
                 .get_model(&m.name)
                 .and_then(|model| model.config.schema.clone())
                 .or_else(|| project.config.schema.clone());
-            (m.name.clone(), schema)
+            (m.name.to_string(), schema)
         })
         .collect();
     let qualification_map = common::build_qualification_map(&project, &compiled_schemas);
@@ -257,7 +255,7 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
     let ephemeral_sql: HashMap<String, String> = compiled_models
         .iter()
         .filter(|m| m.materialization == Materialization::Ephemeral)
-        .map(|m| (m.name.clone(), m.sql.clone()))
+        .map(|m| (m.name.to_string(), m.sql.clone()))
         .collect();
 
     let ephemeral_count = ephemeral_sql.len();
@@ -273,9 +271,8 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
             if !json_mode {
                 println!("  \u{2713} {} (ephemeral) [inlined]", compiled.name);
             }
-            success_count += 1;
             compile_results.push(ModelCompileResult {
-                model: compiled.name,
+                model: compiled.name.into_inner(),
                 status: RunStatus::Success,
                 materialization: "ephemeral".to_string(),
                 output_path: None,
@@ -303,9 +300,8 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
             if global.verbose {
                 eprintln!("[verbose] Validated {} (parse-only mode)", compiled.name);
             }
-            success_count += 1;
             compile_results.push(ModelCompileResult {
-                model: compiled.name,
+                model: compiled.name.into_inner(),
                 status: RunStatus::Success,
                 materialization: compiled.materialization.to_string(),
                 output_path: None,
@@ -321,9 +317,8 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
                 global,
                 json_mode,
             )?;
-            success_count += 1;
             compile_results.push(ModelCompileResult {
-                model: compiled.name,
+                model: compiled.name.into_inner(),
                 status: RunStatus::Success,
                 materialization: compiled.materialization.to_string(),
                 output_path: Some(compiled.output_path.display().to_string()),
@@ -332,6 +327,15 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
             });
         }
     }
+
+    let success_count = compile_results
+        .iter()
+        .filter(|r| matches!(r.status, RunStatus::Success))
+        .count();
+    let failure_count = compile_results
+        .iter()
+        .filter(|r| matches!(r.status, RunStatus::Error))
+        .count();
 
     if !args.parse_only && failure_count == 0 {
         populate_meta_compile(&project, &compile_results, &dependencies, global);
@@ -484,7 +488,6 @@ fn compile_model_phase1(
     name: &str,
     ctx: &CompileContext<'_>,
 ) -> Result<CompileOutput> {
-    // Immutable borrow block: render + parse + extract deps + resolve functions
     let (rendered, config_values, model_deps, ext_deps, statements) = {
         let model = project
             .get_model(name)
@@ -510,7 +513,6 @@ fn compile_model_phase1(
         let (mut model_deps, ext_deps, unknown_deps) =
             ff_sql::extractor::categorize_dependencies_with_unknown(deps, &km, ctx.external_tables);
 
-        // Resolve table function transitive dependencies
         let (func_model_deps, remaining_unknown) = common::resolve_function_dependencies(
             &unknown_deps,
             project,
@@ -532,7 +534,6 @@ fn compile_model_phase1(
         (rendered, config_values, model_deps, ext_deps, statements)
     };
 
-    // Mutable borrow: apply results to model
     let model = project
         .get_model_mut(name)
         .with_context(|| format!("Model not found: {}", name))?;
@@ -571,7 +572,7 @@ fn compile_model_phase1(
     });
 
     Ok(CompileOutput {
-        name: name.to_string(),
+        name: ModelName::new(name),
         sql: rendered,
         statements,
         materialization: mat,
@@ -710,9 +711,12 @@ fn populate_meta_compile(
         return;
     };
     let node_selector = None;
-    let Some((project_id, run_id, model_id_map)) =
-        common::populate_meta_phase1(&meta_db, project, "compile", node_selector)
-    else {
+    let Some((project_id, run_id, model_id_map)) = common::populate_meta_phase1(
+        &meta_db,
+        project,
+        ff_meta::populate::lifecycle::RunType::Compile,
+        node_selector,
+    ) else {
         return;
     };
 
@@ -737,10 +741,10 @@ fn populate_meta_compile(
     });
 
     let status = match compile_result {
-        Ok(()) => "success",
+        Ok(()) => ff_meta::populate::lifecycle::PopulationStatus::Success,
         Err(e) => {
             log::warn!("Meta database: compilation population failed: {e}");
-            "error"
+            ff_meta::populate::lifecycle::PopulationStatus::Error
         }
     };
     common::complete_meta_run(&meta_db, run_id, status);
@@ -769,7 +773,7 @@ fn run_static_analysis(
 
     let sql_sources: HashMap<String, String> = compiled_models
         .iter()
-        .map(|m| (m.name.clone(), m.sql.clone()))
+        .map(|m| (m.name.to_string(), m.sql.clone()))
         .collect();
 
     let output = super::common::run_static_analysis_pipeline(
@@ -780,7 +784,6 @@ fn run_static_analysis(
     )?;
     let result = &output.result;
 
-    // Handle --explain flag
     if let Some(ref explain_model) = args.explain {
         if let Some(plan_result) = result.model_plans.get(explain_model.as_str()) {
             println!("LogicalPlan for '{}':\n", explain_model);

@@ -5,10 +5,10 @@
 
 use std::collections::BTreeSet;
 
+use chrono::NaiveDate;
 use ff_core::sql_utils::{escape_sql_string, quote_ident};
 use minijinja::value::Value;
 use minijinja::Error;
-use regex::Regex;
 use serde::Serialize;
 use std::sync::OnceLock;
 
@@ -320,12 +320,9 @@ pub fn get_macro_categories() -> Vec<&'static str> {
 
 // ===== Date/Time Macros =====
 
-/// Regex pattern for validating YYYY-MM-DD date format
-static DATE_FORMAT_RE: OnceLock<Regex> = OnceLock::new();
-
-/// Get the compiled date-format regex (built once, reused)
-fn date_format_regex() -> &'static Regex {
-    DATE_FORMAT_RE.get_or_init(|| Regex::new(r"^\d{4}-\d{2}-\d{2}$").expect("valid regex"))
+/// Validate that a string is a valid `YYYY-MM-DD` date.
+fn is_valid_date(s: &str) -> bool {
+    NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok()
 }
 
 /// Generate a date spine (range of dates)
@@ -333,23 +330,22 @@ fn date_format_regex() -> &'static Regex {
 /// Usage: `{{ date_spine('2024-01-01', '2024-12-31') }}`
 /// Returns SQL that generates a series of dates.
 ///
-/// Both `start_date` and `end_date` must be in `YYYY-MM-DD` format.
+/// Both `start_date` and `end_date` must be valid `YYYY-MM-DD` dates.
 pub(crate) fn date_spine(start_date: &str, end_date: &str) -> Result<String, Error> {
-    let re = date_format_regex();
-    if !re.is_match(start_date) {
+    if !is_valid_date(start_date) {
         return Err(Error::new(
             minijinja::ErrorKind::InvalidOperation,
             format!(
-                "date_spine: start_date '{}' is not in YYYY-MM-DD format",
+                "date_spine: start_date '{}' is not a valid YYYY-MM-DD date",
                 start_date
             ),
         ));
     }
-    if !re.is_match(end_date) {
+    if !is_valid_date(end_date) {
         return Err(Error::new(
             minijinja::ErrorKind::InvalidOperation,
             format!(
-                "date_spine: end_date '{}' is not in YYYY-MM-DD format",
+                "date_spine: end_date '{}' is not a valid YYYY-MM-DD date",
                 end_date
             ),
         ));

@@ -124,8 +124,7 @@ async fn deploy(args: &FunctionDeployArgs, global: &GlobalArgs) -> Result<()> {
         return Ok(());
     }
 
-    let mut success_count = 0u32;
-    let mut failure_count = 0u32;
+    let mut deploy_results: Vec<bool> = Vec::with_capacity(functions.len());
 
     for func in &functions {
         let rendered_body = jinja
@@ -137,14 +136,17 @@ async fn deploy(args: &FunctionDeployArgs, global: &GlobalArgs) -> Result<()> {
         match db.deploy_function(&create_sql).await {
             Ok(()) => {
                 println!("  Deployed function: {}", func.name);
-                success_count += 1;
+                deploy_results.push(true);
             }
             Err(e) => {
                 eprintln!("  Failed to deploy function '{}': {}", func.name, e);
-                failure_count += 1;
+                deploy_results.push(false);
             }
         }
     }
+
+    let success_count = deploy_results.iter().filter(|&&ok| ok).count();
+    let failure_count = deploy_results.iter().filter(|&&ok| !ok).count();
 
     println!("\n{success_count} deployed, {failure_count} failed");
 
@@ -228,28 +230,30 @@ async fn validate(_args: &FunctionValidateArgs, global: &GlobalArgs) -> Result<(
         return Ok(());
     }
 
-    let mut issue_count = 0;
+    let mut issues: Vec<String> = Vec::new();
 
     for func in &project.functions {
         // Check that SQL body is non-empty
         if func.sql_body.trim().is_empty() {
-            eprintln!(
+            let msg = format!(
                 "  [FN001] Function '{}': SQL body is empty ({})",
                 func.name,
                 func.sql_path.display()
             );
-            issue_count += 1;
+            eprintln!("{msg}");
+            issues.push(msg);
         }
 
         // Check arg type strings are parseable
         for arg in &func.args {
             let parsed = ff_analysis::parse_sql_type(&arg.data_type);
             if matches!(parsed, ff_analysis::SqlType::Unknown(_)) {
-                eprintln!(
+                let msg = format!(
                     "  [FN008] Function '{}': argument '{}' has unknown type '{}'",
                     func.name, arg.name, arg.data_type
                 );
-                issue_count += 1;
+                eprintln!("{msg}");
+                issues.push(msg);
             }
         }
 
@@ -258,27 +262,31 @@ async fn validate(_args: &FunctionValidateArgs, global: &GlobalArgs) -> Result<(
             ff_core::function::FunctionReturn::Scalar { data_type } => {
                 let parsed = ff_analysis::parse_sql_type(data_type);
                 if matches!(parsed, ff_analysis::SqlType::Unknown(_)) {
-                    eprintln!(
+                    let msg = format!(
                         "  [FN008] Function '{}': return type '{}' is unknown",
                         func.name, data_type
                     );
-                    issue_count += 1;
+                    eprintln!("{msg}");
+                    issues.push(msg);
                 }
             }
             ff_core::function::FunctionReturn::Table { columns } => {
                 for col in columns {
                     let parsed = ff_analysis::parse_sql_type(&col.data_type);
                     if matches!(parsed, ff_analysis::SqlType::Unknown(_)) {
-                        eprintln!(
+                        let msg = format!(
                             "  [FN008] Function '{}': return column '{}' has unknown type '{}'",
                             func.name, col.name, col.data_type
                         );
-                        issue_count += 1;
+                        eprintln!("{msg}");
+                        issues.push(msg);
                     }
                 }
             }
         }
     }
+
+    let issue_count = issues.len();
 
     if issue_count == 0 {
         println!(
@@ -309,22 +317,24 @@ async fn drop(args: &FunctionDropArgs, global: &GlobalArgs) -> Result<()> {
         return Ok(());
     }
 
-    let mut success_count = 0u32;
-    let mut failure_count = 0u32;
+    let mut drop_results: Vec<bool> = Vec::with_capacity(functions.len());
 
     for func in &functions {
         let drop_sql = func.to_drop_sql();
         match db.drop_function(&drop_sql).await {
             Ok(()) => {
                 println!("  Dropped function: {}", func.name);
-                success_count += 1;
+                drop_results.push(true);
             }
             Err(e) => {
                 eprintln!("  Failed to drop function '{}': {}", func.name, e);
-                failure_count += 1;
+                drop_results.push(false);
             }
         }
     }
+
+    let success_count = drop_results.iter().filter(|&&ok| ok).count();
+    let failure_count = drop_results.iter().filter(|&&ok| !ok).count();
 
     println!("\n{success_count} dropped, {failure_count} failed");
 

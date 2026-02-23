@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::commands::common::RunStatus;
+use ff_core::ModelName;
 
 use super::compile::CompiledModel;
 use super::state::ModelRunResult;
@@ -111,7 +112,7 @@ pub(crate) async fn run_python_model(
         Some(p) => p.clone(),
         None => {
             return ModelRunResult {
-                model: name.to_string(),
+                model: ModelName::new(name),
                 status: RunStatus::Error,
                 materialization: "python".to_string(),
                 duration_secs: model_start.elapsed().as_secs_f64(),
@@ -123,7 +124,7 @@ pub(crate) async fn run_python_model(
     // Check uv is available
     if let Err(e) = check_uv_available() {
         return ModelRunResult {
-            model: name.to_string(),
+            model: ModelName::new(name),
             status: RunStatus::Error,
             materialization: "python".to_string(),
             duration_secs: model_start.elapsed().as_secs_f64(),
@@ -138,7 +139,7 @@ pub(crate) async fn run_python_model(
         Ok(output) => {
             if !output.success {
                 return ModelRunResult {
-                    model: name.to_string(),
+                    model: ModelName::new(name),
                     status: RunStatus::Error,
                     materialization: "python".to_string(),
                     duration_secs: model_start.elapsed().as_secs_f64(),
@@ -153,7 +154,7 @@ pub(crate) async fn run_python_model(
             let qualified_name = build_qualified_name(compiled.schema.as_deref(), name);
             if let Err(e) = validate_python_output(db, name, &qualified_name, compiled).await {
                 return ModelRunResult {
-                    model: name.to_string(),
+                    model: ModelName::new(name),
                     status: RunStatus::Error,
                     materialization: "python".to_string(),
                     duration_secs: model_start.elapsed().as_secs_f64(),
@@ -162,7 +163,7 @@ pub(crate) async fn run_python_model(
             }
 
             ModelRunResult {
-                model: name.to_string(),
+                model: ModelName::new(name),
                 status: RunStatus::Success,
                 materialization: "python".to_string(),
                 duration_secs: model_start.elapsed().as_secs_f64(),
@@ -170,7 +171,7 @@ pub(crate) async fn run_python_model(
             }
         }
         Err(e) => ModelRunResult {
-            model: name.to_string(),
+            model: ModelName::new(name),
             status: RunStatus::Error,
             materialization: "python".to_string(),
             duration_secs: model_start.elapsed().as_secs_f64(),

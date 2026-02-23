@@ -85,7 +85,13 @@ fn categorize_dir_files(dir: &Path) -> CoreResult<CategorizedFiles> {
             path: dir.display().to_string(),
             source: e,
         })?
-        .filter_map(|e| e.ok())
+        .filter_map(|e| match e {
+            Ok(entry) => Some(entry),
+            Err(err) => {
+                log::warn!("Cannot read directory entry in {}: {}", dir.display(), err);
+                None
+            }
+        })
         .map(|e| e.path())
         .filter(|p| p.is_file() && !is_hidden_file(p))
         .collect();

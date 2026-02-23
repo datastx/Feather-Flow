@@ -104,16 +104,27 @@ impl MetaDb {
         result
     }
 
+    /// Execute a slice of parameterized statements with a single `project_id` argument.
+    fn execute_param_stmts(
+        &self,
+        stmts: &[&str],
+        project_id: i64,
+        context: &str,
+    ) -> MetaResult<()> {
+        for stmt in stmts {
+            self.conn
+                .execute(stmt, duckdb::params![project_id])
+                .map_err(|e| MetaError::QueryError(format!("{context} failed: {e}")))?;
+        }
+        Ok(())
+    }
+
     /// Delete all data for a project, respecting FK ordering.
     ///
     /// DuckDB does not support `ON DELETE CASCADE`, so we delete child tables
     /// first in reverse-dependency order.
     pub fn clear_project_data(&self, project_id: i64) -> MetaResult<()> {
-        for stmt in ENTITY_DELETE_STMTS {
-            self.conn
-                .execute(stmt, duckdb::params![project_id])
-                .map_err(|e| MetaError::QueryError(format!("clear_project_data failed: {e}")))?;
-        }
+        self.execute_param_stmts(ENTITY_DELETE_STMTS, project_id, "clear_project_data")?;
 
         let project_stmts = [
             "DELETE FROM ff_meta.rule_violations WHERE run_id IN (SELECT run_id FROM ff_meta.compilation_runs WHERE project_id = ?)",
@@ -123,12 +134,7 @@ impl MetaDb {
             "DELETE FROM ff_meta.project_hooks WHERE project_id = ?",
             "DELETE FROM ff_meta.project_vars WHERE project_id = ?",
         ];
-        for stmt in &project_stmts {
-            self.conn
-                .execute(stmt, duckdb::params![project_id])
-                .map_err(|e| MetaError::QueryError(format!("clear_project_data failed: {e}")))?;
-        }
-        Ok(())
+        self.execute_param_stmts(&project_stmts, project_id, "clear_project_data")
     }
 
     /// Delete all models and their child data for a project, preserving the
@@ -136,12 +142,7 @@ impl MetaDb {
     ///
     /// Used in the "clear-and-repopulate" pattern for phases 1-3.
     pub fn clear_models(&self, project_id: i64) -> MetaResult<()> {
-        for stmt in ENTITY_DELETE_STMTS {
-            self.conn
-                .execute(stmt, duckdb::params![project_id])
-                .map_err(|e| MetaError::QueryError(format!("clear_models failed: {e}")))?;
-        }
-        Ok(())
+        self.execute_param_stmts(ENTITY_DELETE_STMTS, project_id, "clear_models")
     }
 }
 
