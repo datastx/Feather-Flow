@@ -138,18 +138,18 @@ async fn execute_models_mode(
 ) -> Result<()> {
     let json_mode = args.output == OutputFormat::Json;
 
-    let db = create_database_connection(&project, global)?;
+    let db = create_database_connection(project, global)?;
 
     let comment_ctx =
         common::build_query_comment_context(&project.config, global.target.as_deref());
 
-    let mut compiled_models = load_or_compile_models(&project, args, global, comment_ctx.as_ref())?;
-    qualify_sql_references(&mut compiled_models, &project, global);
+    let mut compiled_models = load_or_compile_models(project, args, global, comment_ctx.as_ref())?;
+    qualify_sql_references(&mut compiled_models, project, global);
 
     let compiled_models = Arc::new(compiled_models);
 
     common::run_static_analysis_gate(
-        &project,
+        project,
         &compiled_models,
         global,
         args.skip_static_analysis,
@@ -157,7 +157,7 @@ async fn execute_models_mode(
     )?;
 
     // Open meta database early (needed for smart build and execution state)
-    let meta_db = common::open_meta_db(&project);
+    let meta_db = common::open_meta_db(project);
 
     let smart_skipped: HashSet<String> = if args.smart {
         compute_smart_skips(&compiled_models, global, meta_db.as_ref())?
@@ -165,7 +165,7 @@ async fn execute_models_mode(
         HashSet::new()
     };
 
-    let config_hash = compute_config_hash(&project);
+    let config_hash = compute_config_hash(project);
 
     let run_state_path = args
         .state_file
@@ -182,7 +182,7 @@ async fn execute_models_mode(
             &config_hash,
         )?
     } else {
-        let order = determine_execution_order(&compiled_models, &project, args, global)?;
+        let order = determine_execution_order(&compiled_models, project, args, global)?;
         (order, None)
     };
 
@@ -266,7 +266,7 @@ async fn execute_models_mode(
             .with_context(|| format!("Failed to create WAP schema: {}", ws))?;
     }
 
-    set_search_path(&db, &compiled_models, &project, wap_schema, global).await?;
+    set_search_path(&db, &compiled_models, project, wap_schema, global).await?;
 
     if previous_run_state.is_none() {
         common::execute_hooks(
@@ -295,7 +295,7 @@ async fn execute_models_mode(
 
     let meta_ids = meta_db
         .as_ref()
-        .and_then(|db| common::populate_meta_phase1(db, &project, "run", args.nodes.as_deref()));
+        .and_then(|db| common::populate_meta_phase1(db, project, "run", args.nodes.as_deref()));
     let (meta_run_id, meta_model_id_map) = match &meta_ids {
         Some((_project_id, run_id, model_id_map)) => (Some(*run_id), Some(model_id_map)),
         None => (None, None),
@@ -348,7 +348,7 @@ async fn execute_models_mode(
     }
 
     write_run_results(
-        &project,
+        project,
         &run_results,
         start_time,
         success_count,
