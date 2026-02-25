@@ -8,11 +8,13 @@ A lightweight dbt-like CLI tool built in Rust for SQL templating, compilation, a
 - **Custom Macros**: Reusable SQL macros loaded from `macro_paths` directories
 - **AST-based Dependencies**: Automatically extracts dependencies from SQL using `sqlparser-rs` - no need for `ref()` or `source()` functions
 - **Dependency-aware Execution**: Builds a DAG and executes models in topological order
-- **Schema Testing**: Built-in support for 8 test types (`unique`, `not_null`, `positive`, `non_negative`, `accepted_values`, `min_value`, `max_value`, `regex`) with sample failing rows
+- **Schema Testing**: Built-in support for 10 test types (`unique`, `not_null`, `positive`, `non_negative`, `accepted_values`, `min_value`, `max_value`, `regex`, `relationship`, `custom`) with sample failing rows
 - **Source Definitions**: Document and test external data sources
-- **Documentation Generation**: Generate markdown or JSON docs from schema files
+- **Documentation Generation**: Generate markdown, JSON, or HTML docs from schema files, with an interactive docs server
 - **DuckDB Backend**: In-memory or file-based DuckDB database execution
-- **Multiple Output Formats**: JSON, table, and tree output formats
+- **Static Analysis**: DataFusion-based SQL analysis passes for type checking and best practices
+- **SQL Formatting**: Built-in SQL formatter with Jinja support
+- **Column Lineage**: Trace column-level lineage across models
 
 ## Installation
 
@@ -57,9 +59,9 @@ sudo mv ff /usr/local/bin/
 docker pull ghcr.io/datastx/feather-flow:latest
 
 # Run any ff command
-docker run --rm -v "$(pwd)":/workspace -w /workspace ghcr.io/datastx/feather-flow validate
+docker run --rm -v "$(pwd)":/workspace -w /workspace ghcr.io/datastx/feather-flow compile
 docker run --rm -v "$(pwd)":/workspace -w /workspace ghcr.io/datastx/feather-flow run
-docker run --rm -v "$(pwd)":/workspace -w /workspace ghcr.io/datastx/feather-flow test
+docker run --rm -v "$(pwd)":/workspace -w /workspace ghcr.io/datastx/feather-flow run --mode test
 ```
 
 ### From source
@@ -80,18 +82,14 @@ cargo install --path crates/ff-cli
 
 ```yaml
 name: my_project
-version: "1.0"
+version: "1.0.0"
 
 database:
   type: duckdb
   path: ":memory:"
 
-model_paths:
-  - models
-seed_paths:
-  - seeds
-source_paths:
-  - sources
+node_paths:
+  - nodes
 macro_paths:
   - macros
 
@@ -100,10 +98,10 @@ vars:
   start_date: "2024-01-01"
 ```
 
-2. Create SQL models in the `models/` directory:
+2. Create SQL models in the `nodes/` directory. Each node lives in its own directory with a `.sql` file and a `.yml` schema file:
 
 ```sql
--- models/staging/stg_orders.sql
+-- nodes/stg_orders/stg_orders.sql
 {{ config(materialized='view', schema='staging') }}
 
 SELECT
@@ -116,11 +114,12 @@ FROM raw_orders
 WHERE created_at >= '{{ var("start_date") }}'
 ```
 
-3. Create a schema file with the same name as your model (1:1 convention):
+3. Create a schema file alongside your model (1:1 convention):
 
 ```yaml
-# models/staging/stg_orders.yml
+# nodes/stg_orders/stg_orders.yml
 version: 1
+kind: sql
 description: "Staged orders from raw source"
 owner: data-team
 tags:
@@ -140,37 +139,11 @@ columns:
   - name: status
 ```
 
-4. Optionally define external sources in `sources/`:
-
-```yaml
-# sources/raw_ecommerce.yml
-kind: sources
-version: 1
-
-name: raw_ecommerce
-description: "Raw e-commerce data"
-schema: main
-
-tables:
-  - name: raw_orders
-    description: "Raw order data"
-    columns:
-      - name: id
-        type: INTEGER
-        tests:
-          - unique
-          - not_null
-      - name: user_id
-        type: INTEGER
-      - name: amount
-        type: DECIMAL(10,2)
-```
-
-5. Run Featherflow commands:
+4. Run Featherflow commands:
 
 ```bash
 # Load seed data
-ff seed
+ff deploy seeds
 
 # Compile models (renders Jinja, extracts dependencies, builds manifest)
 ff compile
@@ -182,10 +155,10 @@ ff ls
 ff run
 
 # Run schema tests
-ff test
+ff run --mode test
 
 # Validate project without execution
-ff validate
+ff compile --parse-only
 
 # Generate documentation
 ff docs
@@ -198,65 +171,57 @@ ff docs
 Compiles SQL models by rendering Jinja templates, extracting dependencies, and generating a manifest.
 
 ```bash
-ff compile [--project-dir <DIR>] [--models <MODELS>]
+ff compile [--nodes <NODES>] [--parse-only] [--strict] [--output <FORMAT>]
 ```
+
+Use `--parse-only` to validate without writing output files. Use `--strict` to treat warnings as errors.
 
 ### `ff run`
 
-Executes compiled models in topological order.
+Executes models, runs tests, or both depending on the `--mode` flag.
 
 ```bash
-ff run [--target <DB_PATH>] [--select <SELECTOR>] [--full-refresh]
+ff run [--mode <MODE>] [--nodes <NODES>] [--full-refresh] [--fail-fast]
 ```
 
-Selectors:
+Run modes:
+- `build` (default) - Execute models then run their tests in DAG order
+- `models` - Execute models only
+- `test` - Run tests only against existing tables
+
+Node selectors:
 - `model_name` - Run a specific model
 - `+model_name` - Run model and all ancestors
 - `model_name+` - Run model and all descendants
 - `+model_name+` - Run model, ancestors, and descendants
+- `tag:X` - Run models with a specific tag
+- `path:X` - Run models in a specific path
 
 ### `ff ls`
 
 Lists models and sources with their dependencies and materialization settings.
 
 ```bash
-ff ls [--output <FORMAT>] [--select <SELECTOR>]
+ff ls [--output <FORMAT>] [--nodes <NODES>] [--resource-type <TYPE>]
 ```
 
-Output formats: `table` (default), `json`, `tree`
+Output formats: `table` (default), `json`, `tree`, `path`
 
-### `ff parse`
+Resource types: `model`, `source`, `seed`, `test`, `function`
 
-Parses models and outputs AST or dependency information.
+### `ff deploy`
 
-```bash
-ff parse [--models <MODELS>] [--output <FORMAT>]
-```
-
-Output formats: `pretty` (default), `json`, `deps`
-
-### `ff test`
-
-Runs schema tests defined in model and source schema files.
+Deploy seeds or functions to the database.
 
 ```bash
-ff test [--target <DB_PATH>] [--models <MODELS>] [--fail-fast]
-```
+# Load CSV seed files
+ff deploy seeds [--seeds <NAMES>] [--full-refresh]
 
-### `ff seed`
+# Deploy user-defined functions
+ff deploy functions deploy [--functions <NAMES>]
 
-Loads CSV seed files into the database.
-
-```bash
-ff seed [--seeds <NAMES>] [--full-refresh]
-```
-
-### `ff validate`
-
-Validates project configuration, SQL syntax, and schema files without executing.
-
-```bash
-ff validate [--models <MODELS>] [--strict]
+# List, validate, show, or drop functions
+ff deploy functions list|validate|show|drop
 ```
 
 ### `ff docs`
@@ -264,18 +229,57 @@ ff validate [--models <MODELS>] [--strict]
 Generates documentation from schema files.
 
 ```bash
-ff docs [--output <PATH>] [--format <FORMAT>] [--models <MODELS>]
+ff docs [--output <PATH>] [--format <FORMAT>] [--nodes <NODES>]
+
+# Launch interactive documentation server
+ff docs serve [--port <PORT>] [--no-browser] [--static-export <DIR>]
 ```
 
 Output formats: `markdown` (default), `json`, `html`
 
-Generates `lineage.dot` Graphviz diagram for visualization.
+### `ff lineage`
+
+Trace column-level lineage across models.
+
+```bash
+ff lineage --node <NODE> --column <COLUMN> [--direction <DIR>] [--output <FORMAT>]
+```
+
+### `ff analyze`
+
+Run static analysis passes on SQL models.
+
+```bash
+ff analyze [--nodes <NODES>] [--output <FORMAT>] [--severity <LEVEL>]
+```
+
+### `ff fmt`
+
+Format SQL source files.
+
+```bash
+ff fmt [<PATHS>] [--nodes <NODES>] [--check] [--diff]
+```
+
+### `ff init`
+
+Initialize a new Featherflow project.
+
+```bash
+ff init [--name <NAME>] [--database_path <PATH>]
+```
+
+### Other Commands
+
+- `ff clean [--dry-run]` — Remove generated artifacts
+- `ff run-macro <MACRO_NAME> [--args <JSON>]` — Execute a standalone SQL macro
+- `ff meta query <SQL>` / `ff meta export` / `ff meta tables` — Query the metadata database
 
 ## Global Options
 
 - `--project-dir, -p <DIR>`: Project directory (default: current directory)
 - `--config, -c <FILE>`: Config file path
-- `--target, -t <PATH>`: Database path (overrides config)
+- `--target, -t <TARGET>`: Override target (database connection)
 - `--verbose, -v`: Enable verbose output
 
 ## Configuration
@@ -284,25 +288,27 @@ Generates `lineage.dot` Graphviz diagram for visualization.
 
 ```yaml
 name: project_name          # Project name
-version: "1.0"              # Project version
+version: "1.0.0"            # Project version
 
 database:
   type: duckdb              # Database type (duckdb, snowflake)
   path: ":memory:"          # Database path (":memory:" for in-memory)
+  name: main                # Logical database name
 
 dialect: duckdb             # SQL dialect (duckdb, snowflake)
-materialization: view       # Default materialization (view, table)
+materialization: view       # Default materialization (view, table, incremental, ephemeral)
 schema: main                # Default schema
 
-model_paths:                # Directories containing SQL models
-  - models
-seed_paths:                 # Directories containing CSV seed files
-  - seeds
-source_paths:               # Directories containing source definitions
-  - sources
+node_paths:                 # Directories containing all node types (models, seeds, functions, sources)
+  - nodes
 macro_paths:                # Directories containing macro files
   - macros
 target_path: target         # Output directory for compiled files
+
+on_run_start:               # SQL executed before each run
+  - "CREATE TABLE IF NOT EXISTS audit (id INTEGER)"
+on_run_end:                 # SQL executed after each run
+  - "INSERT INTO audit (id) VALUES (1)"
 
 vars:                       # Variables accessible via var()
   env: dev
@@ -320,7 +326,7 @@ SELECT * FROM raw_data
 ```
 
 Supported config options:
-- `materialized`: `'view'` or `'table'`
+- `materialized`: `'view'`, `'table'`, `'incremental'`, or `'ephemeral'`
 - `schema`: Target schema name
 
 ### Variables
@@ -360,27 +366,25 @@ GROUP BY 1
 ```
 my_project/
 ├── featherflow.yml
-├── models/
-│   ├── staging/
-│   │   ├── stg_orders.sql
-│   │   ├── stg_orders.yml      # 1:1 schema file
+├── nodes/
+│   ├── stg_orders/
+│   │   ├── stg_orders.sql      # SQL model
+│   │   └── stg_orders.yml      # Schema + tests
+│   ├── stg_customers/
 │   │   ├── stg_customers.sql
-│   │   └── stg_customers.yml   # 1:1 schema file
-│   └── marts/
-│       ├── fct_orders.sql
-│       └── fct_orders.yml      # 1:1 schema file
-├── seeds/
-│   ├── raw_orders.csv
-│   └── raw_customers.csv
-├── sources/
-│   └── raw_ecommerce.yml       # kind: sources
+│   │   └── stg_customers.yml
+│   ├── fct_orders/
+│   │   ├── fct_orders.sql
+│   │   └── fct_orders.yml
+│   └── raw_orders/
+│       ├── raw_orders.csv      # Seed data (kind: seed)
+│       └── raw_orders.yml
 ├── macros/
 │   └── date_utils.sql
 └── target/
     ├── compiled/
     ├── manifest.json
-    ├── run_results.json
-    └── docs/
+    └── run_results.json
 ```
 
 ## Development
@@ -394,35 +398,23 @@ make build
 # Run tests
 make test
 
+# Run end-to-end tests
+make ci-e2e
+
 # Run CI checks (format, clippy, test, doc)
 make ci
-```
-
-### Make Targets
-
-```bash
-# CLI commands
-make ff-seed          # Load seed data
-make ff-compile       # Compile models
-make ff-run           # Execute models
-make ff-ls            # List models
-make ff-test          # Run tests
-make ff-validate      # Validate project
-make ff-docs          # Generate documentation
-
-# Development workflows
-make dev-cycle        # seed -> run -> test
-make dev-validate     # compile -> validate
 ```
 
 ### Crate Structure
 
 - `ff-cli`: CLI binary and commands
-- `ff-core`: Core library (config, project, DAG, sources)
+- `ff-core`: Core library (config, project, DAG, node types)
 - `ff-sql`: SQL parsing and dependency extraction
 - `ff-jinja`: Jinja templating layer with macro support
 - `ff-db`: Database abstraction and DuckDB backend
 - `ff-test`: Test generation and execution
+- `ff-analysis`: DataFusion-based static SQL analysis
+- `ff-meta`: Metadata database (DuckDB) for schema, population, and rules
 
 ## License
 
