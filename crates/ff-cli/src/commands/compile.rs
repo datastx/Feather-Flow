@@ -18,6 +18,7 @@ use std::time::Instant;
 
 use crate::cli::{CompileArgs, GlobalArgs, OutputFormat};
 use crate::commands::common::{self, load_project, RunStatus};
+use crate::commands::validation::{self, ValidationContext};
 
 /// Compile result for a single model
 #[derive(Debug, Clone, Serialize)]
@@ -337,6 +338,69 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
         populate_meta_compile(&project, &compile_results, &dependencies, global);
     }
 
+    // ── Post-compile validation checks (absorbed from `validate` command) ──
+    let mut validation_failed = false;
+    if failure_count == 0 && !json_mode {
+        let mut vctx = ValidationContext::new();
+        let known_models_ref: HashSet<&str> = known_models.iter().map(|s| s.as_str()).collect();
+        let macro_paths = project.config.macro_paths_absolute(&project.root);
+
+        println!();
+        validation::validate_duplicates(&project, &mut vctx);
+        validation::validate_schemas(&project, &model_names, &known_models_ref, &mut vctx);
+        validation::validate_sources(&project);
+        validation::validate_macros(&project.config.vars, &macro_paths, &mut vctx);
+
+        if args.contracts {
+            validation::validate_contracts(&project, &model_names, &args.state, &mut vctx)?;
+        }
+
+        if args.governance {
+            validation::validate_governance(&project, &model_names, &mut vctx);
+        }
+
+        validation::validate_documentation(&project, &model_names, &mut vctx);
+
+        // Run SQL rules from meta DB if configured
+        if let Some(meta_db) = common::open_meta_db(&project) {
+            if let Some((_project_id, run_id, _model_id_map)) = common::populate_meta_phase1(
+                &meta_db,
+                &project,
+                "compile-validate",
+                args.nodes.as_deref(),
+            ) {
+                validation::validate_rules(&project, &meta_db, &mut vctx);
+                let status = if vctx.error_count() > 0 {
+                    "error"
+                } else {
+                    "success"
+                };
+                common::complete_meta_run(&meta_db, run_id, status);
+            }
+        }
+
+        let error_count = vctx.error_count();
+        let warning_count = vctx.warning_count();
+
+        if error_count > 0 || warning_count > 0 {
+            println!();
+            for issue in &vctx.issues {
+                println!("{}", issue);
+            }
+        }
+
+        if error_count > 0 || (args.strict && warning_count > 0) {
+            validation_failed = true;
+        }
+
+        if error_count > 0 || warning_count > 0 {
+            println!(
+                "\nValidation: {} errors, {} warnings",
+                error_count, warning_count
+            );
+        }
+    }
+
     if json_mode {
         let results = CompileResults {
             timestamp: Utc::now(),
@@ -371,7 +435,7 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
         }
     }
 
-    if failure_count > 0 {
+    if failure_count > 0 || validation_failed {
         return Err(crate::commands::common::ExitCode(1).into());
     }
 

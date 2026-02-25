@@ -44,6 +44,7 @@ fn test_config() -> Config {
         query_comment: Default::default(),
         rules: None,
         format: Default::default(),
+        run: None,
     }
 }
 

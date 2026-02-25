@@ -16,7 +16,7 @@ mod state;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use ff_core::config::Materialization;
+use ff_core::config::{Materialization, RunMode};
 use ff_core::run_state::RunState;
 use ff_core::ModelName;
 use std::collections::{HashMap, HashSet};
@@ -24,7 +24,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::cli::{GlobalArgs, OutputFormat, RunArgs};
+use crate::cli::{CliRunMode, GlobalArgs, OutputFormat, RunArgs};
 use crate::commands::common::{self, load_project};
 
 pub(crate) use compile::{determine_execution_order, load_or_compile_models, CompiledModel};
@@ -59,25 +59,97 @@ fn qualify_sql_references(
     }
 }
 
+/// Map CLI run mode enum to core config enum.
+fn resolve_mode(cli_mode: Option<CliRunMode>, config_mode: Option<&RunMode>) -> RunMode {
+    if let Some(m) = cli_mode {
+        return match m {
+            CliRunMode::Models => RunMode::Models,
+            CliRunMode::Test => RunMode::Test,
+            CliRunMode::Build => RunMode::Build,
+        };
+    }
+    config_mode.copied().unwrap_or(RunMode::Build)
+}
+
 /// Execute the run command
 pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     let start_time = Instant::now();
     let project = load_project(global)?;
 
+    let mode = resolve_mode(
+        args.mode,
+        project.config.run.as_ref().map(|r| &r.default_mode),
+    );
+
+    match mode {
+        RunMode::Models => execute_models_mode(args, global, &project, start_time).await,
+        RunMode::Test => execute_test_mode(args, global, &project).await,
+        RunMode::Build => execute_build_mode(args, global, &project, start_time).await,
+    }
+}
+
+/// Execute `--mode test`: run schema tests against existing tables.
+async fn execute_test_mode(
+    args: &RunArgs,
+    global: &GlobalArgs,
+    _project: &ff_core::Project,
+) -> Result<()> {
+    // Delegate to the test module with equivalent args
+    let test_args = crate::cli::TestArgs {
+        nodes: args.nodes.clone(),
+        fail_fast: args.fail_fast,
+        store_failures: args.store_failures,
+        warn_only: args.warn_only,
+        threads: args.threads,
+        output: args.output,
+        quiet: args.quiet,
+    };
+    crate::commands::test::execute(&test_args, global).await
+}
+
+/// Execute `--mode build`: seeds + functions, then interleaved model+test.
+async fn execute_build_mode(
+    args: &RunArgs,
+    global: &GlobalArgs,
+    _project: &ff_core::Project,
+    _start_time: Instant,
+) -> Result<()> {
+    // Delegate to the build module with equivalent args
+    let build_args = crate::cli::BuildArgs {
+        nodes: args.nodes.clone(),
+        exclude: args.exclude.clone(),
+        full_refresh: args.full_refresh,
+        fail_fast: args.fail_fast,
+        threads: args.threads,
+        store_failures: args.store_failures,
+        skip_static_analysis: args.skip_static_analysis,
+        output: args.output,
+        quiet: args.quiet,
+    };
+    crate::commands::build::execute(&build_args, global).await
+}
+
+/// Execute `--mode models`: the original run behavior (models only, no tests).
+async fn execute_models_mode(
+    args: &RunArgs,
+    global: &GlobalArgs,
+    project: &ff_core::Project,
+    start_time: Instant,
+) -> Result<()> {
     let json_mode = args.output == OutputFormat::Json;
 
-    let db = create_database_connection(&project, global)?;
+    let db = create_database_connection(project, global)?;
 
     let comment_ctx =
         common::build_query_comment_context(&project.config, global.target.as_deref());
 
-    let mut compiled_models = load_or_compile_models(&project, args, global, comment_ctx.as_ref())?;
-    qualify_sql_references(&mut compiled_models, &project, global);
+    let mut compiled_models = load_or_compile_models(project, args, global, comment_ctx.as_ref())?;
+    qualify_sql_references(&mut compiled_models, project, global);
 
     let compiled_models = Arc::new(compiled_models);
 
     common::run_static_analysis_gate(
-        &project,
+        project,
         &compiled_models,
         global,
         args.skip_static_analysis,
@@ -85,7 +157,7 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     )?;
 
     // Open meta database early (needed for smart build and execution state)
-    let meta_db = common::open_meta_db(&project);
+    let meta_db = common::open_meta_db(project);
 
     let smart_skipped: HashSet<String> = if args.smart {
         compute_smart_skips(&compiled_models, global, meta_db.as_ref())?
@@ -93,7 +165,7 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         HashSet::new()
     };
 
-    let config_hash = compute_config_hash(&project);
+    let config_hash = compute_config_hash(project);
 
     let run_state_path = args
         .state_file
@@ -110,7 +182,7 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
             &config_hash,
         )?
     } else {
-        let order = determine_execution_order(&compiled_models, &project, args, global)?;
+        let order = determine_execution_order(&compiled_models, project, args, global)?;
         (order, None)
     };
 
@@ -194,7 +266,7 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
             .with_context(|| format!("Failed to create WAP schema: {}", ws))?;
     }
 
-    set_search_path(&db, &compiled_models, &project, wap_schema, global).await?;
+    set_search_path(&db, &compiled_models, project, wap_schema, global).await?;
 
     if previous_run_state.is_none() {
         common::execute_hooks(
@@ -223,7 +295,7 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
 
     let meta_ids = meta_db
         .as_ref()
-        .and_then(|db| common::populate_meta_phase1(db, &project, "run", args.nodes.as_deref()));
+        .and_then(|db| common::populate_meta_phase1(db, project, "run", args.nodes.as_deref()));
     let (meta_run_id, meta_model_id_map) = match &meta_ids {
         Some((_project_id, run_id, model_id_map)) => (Some(*run_id), Some(model_id_map)),
         None => (None, None),
@@ -276,7 +348,7 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     }
 
     write_run_results(
-        &project,
+        project,
         &run_results,
         start_time,
         success_count,

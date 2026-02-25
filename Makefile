@@ -147,18 +147,6 @@ doc-open: ## Generate and open documentation
 # CLI Commands - Featherflow (ff)
 # =============================================================================
 
-.PHONY: ff-parse
-ff-parse: ## Parse SQL files
-	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) parse
-
-.PHONY: ff-parse-json
-ff-parse-json: ## Parse with JSON output
-	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) parse --output json
-
-.PHONY: ff-parse-deps
-ff-parse-deps: ## Parse with deps output
-	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) parse --output deps
-
 .PHONY: ff-compile
 ff-compile: ## Compile Jinja to SQL
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) compile
@@ -197,31 +185,31 @@ ff-ls-tree: ## List models as tree
 
 .PHONY: ff-test
 ff-test: ## Run schema tests
-	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) test
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) run --mode test
 
 .PHONY: ff-test-verbose
 ff-test-verbose: ## Run tests with verbose output
-	cargo run -p ff-cli -- --verbose --project-dir $(PROJECT_DIR) test
+	cargo run -p ff-cli -- --verbose --project-dir $(PROJECT_DIR) run --mode test
 
 .PHONY: ff-test-fail-fast
 ff-test-fail-fast: ## Run tests, stop on first failure
-	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) test --fail-fast
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) run --mode test --fail-fast
 
 .PHONY: ff-seed
 ff-seed: ## Load seed data
-	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) seed
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) deploy seeds
 
 .PHONY: ff-seed-full-refresh
 ff-seed-full-refresh: ## Load seeds with full refresh
-	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) seed --full-refresh
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) deploy seeds --full-refresh
 
 .PHONY: ff-function-deploy
 ff-function-deploy: ## Deploy user-defined functions
-	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) function deploy
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) deploy functions deploy
 
 .PHONY: ff-function-validate
 ff-function-validate: ## Validate user-defined functions
-	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) function validate
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) deploy functions validate
 
 .PHONY: ff-docs
 ff-docs: ## Generate documentation
@@ -240,12 +228,12 @@ ff-docs-export: ## Export static documentation site
 	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) docs serve --static-export $(PROJECT_DIR)/target/docs-site --no-browser
 
 .PHONY: ff-validate
-ff-validate: ## Validate project
-	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) validate
+ff-validate: ## Validate project (via compile)
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) compile --parse-only
 
 .PHONY: ff-validate-strict
-ff-validate-strict: ## Validate with strict mode
-	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) validate --strict
+ff-validate-strict: ## Validate with strict mode (via compile --strict)
+	cargo run -p ff-cli -- --project-dir $(PROJECT_DIR) compile --parse-only --strict
 
 .PHONY: ff-sources
 ff-sources: ## List sources (JSON filtered)
@@ -264,7 +252,7 @@ dev-cycle: ff-seed ff-run ff-function-deploy ff-test ## Full cycle: seed -> run 
 	@echo "Development cycle complete!"
 
 .PHONY: dev-validate
-dev-validate: ff-compile ff-validate ## Quick validation: compile -> validate
+dev-validate: ff-compile ## Quick validation: compile (includes validate)
 	@echo "Validation complete!"
 
 .PHONY: dev-fresh
@@ -279,19 +267,19 @@ ci-e2e: ## End-to-end pipeline test against sample project
 	@echo "=== E2E: compile ==="
 	cargo run -p ff-cli -- --project-dir $(e2e_dir) compile
 	@echo "=== E2E: seed ==="
-	cargo run -p ff-cli -- --project-dir $(e2e_dir) seed --full-refresh
+	cargo run -p ff-cli -- --project-dir $(e2e_dir) deploy seeds --full-refresh
 	@echo "=== E2E: deploy scalar functions (needed by models like fct_orders) ==="
-	cargo run -p ff-cli -- --project-dir $(e2e_dir) function deploy --functions safe_divide,cents_to_dollars
-	@echo "=== E2E: run (all models — scalar functions available, table functions not yet) ==="
-	-cargo run -p ff-cli -- --project-dir $(e2e_dir) run --full-refresh
+	cargo run -p ff-cli -- --project-dir $(e2e_dir) deploy functions deploy --functions safe_divide,cents_to_dollars
+	@echo "=== E2E: run --mode models (scalar functions available, table functions not yet) ==="
+	-cargo run -p ff-cli -- --project-dir $(e2e_dir) run --mode models --full-refresh
 	@echo "=== E2E: deploy table functions (requires model tables from first run) ==="
-	cargo run -p ff-cli -- --project-dir $(e2e_dir) function deploy --functions order_volume_by_status
-	@echo "=== E2E: run (all models including table-function dependents) ==="
-	cargo run -p ff-cli -- --project-dir $(e2e_dir) run --full-refresh
-	@echo "=== E2E: test (materialized models) ==="
-	cargo run -p ff-cli -- --project-dir $(e2e_dir) test -n dim_customers,fct_orders,dim_products,rpt_order_volume
-	@echo "=== E2E: build (seed + per-model run/test) ==="
-	cargo run -p ff-cli -- --project-dir $(e2e_dir) build --full-refresh
+	cargo run -p ff-cli -- --project-dir $(e2e_dir) deploy functions deploy --functions order_volume_by_status
+	@echo "=== E2E: run --mode models (all models including table-function dependents) ==="
+	cargo run -p ff-cli -- --project-dir $(e2e_dir) run --mode models --full-refresh
+	@echo "=== E2E: run --mode test (materialized models) ==="
+	cargo run -p ff-cli -- --project-dir $(e2e_dir) run --mode test -n dim_customers,fct_orders,dim_products,rpt_order_volume
+	@echo "=== E2E: run --mode build (seed + per-model run/test) ==="
+	cargo run -p ff-cli -- --project-dir $(e2e_dir) run --mode build --full-refresh
 	@echo "E2E pipeline passed!"
 
 # =============================================================================
@@ -320,7 +308,7 @@ ci-quick: check fmt-check clippy ## Quick CI check (no tests)
 	@echo "Quick CI checks passed!"
 
 .PHONY: ci-full
-ci-full: ci ff-compile ff-validate ## CI + compile + validate
+ci-full: ci ff-compile ## CI + compile (includes validate)
 	@echo "Full CI checks passed!"
 
 # =============================================================================

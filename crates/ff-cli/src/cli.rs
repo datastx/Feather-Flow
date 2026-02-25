@@ -43,9 +43,6 @@ pub(crate) enum Commands {
     /// Initialize a new Featherflow project
     Init(InitArgs),
 
-    /// Parse SQL files and output AST/dependencies
-    Parse(ParseArgs),
-
     /// Compile Jinja templates to SQL
     Compile(CompileArgs),
 
@@ -55,23 +52,14 @@ pub(crate) enum Commands {
     /// List models and their dependencies
     Ls(LsArgs),
 
-    /// Run schema tests
-    Test(TestArgs),
-
-    /// Load CSV seed files into the database
-    Seed(SeedArgs),
-
-    /// Validate project without running
-    Validate(ValidateArgs),
-
     /// Generate documentation from schema files
     Docs(DocsArgs),
 
     /// Remove generated artifacts
     Clean(CleanArgs),
 
-    /// Execute a standalone operation (macro that returns SQL)
-    RunOperation(RunOperationArgs),
+    /// Execute a standalone SQL macro
+    RunMacro(RunMacroArgs),
 
     /// Show column-level lineage across models
     Lineage(LineageArgs),
@@ -79,47 +67,14 @@ pub(crate) enum Commands {
     /// Analyze SQL models for potential issues
     Analyze(AnalyzeArgs),
 
-    /// Manage user-defined functions (DuckDB macros)
-    Function(FunctionArgs),
-
-    /// Run seeds, models, and tests in a single invocation
-    Build(BuildArgs),
-
-    /// Run SQL rules against the meta database
-    Rules(RulesArgs),
-
     /// Query and export the meta database
     Meta(MetaArgs),
 
     /// Format SQL source files with sqlfmt
     Fmt(FmtArgs),
-}
 
-/// Arguments for the parse command
-#[derive(Args, Debug)]
-pub(crate) struct ParseArgs {
-    /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
-    #[arg(short = 'n', long)]
-    pub nodes: Option<String>,
-
-    /// Output format
-    #[arg(short, long, value_enum, default_value = "pretty")]
-    pub output: ParseOutput,
-
-    /// Override SQL dialect
-    #[arg(short, long)]
-    pub dialect: Option<String>,
-}
-
-/// Parse output formats
-#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ParseOutput {
-    /// JSON AST output
-    Json,
-    /// Human-readable tree
-    Pretty,
-    /// Dependency list only
-    Deps,
+    /// Deploy seeds or functions to the database
+    Deploy(DeployArgs),
 }
 
 /// Output formats for run/test/compile commands (for CI integration)
@@ -162,11 +117,31 @@ pub(crate) struct CompileArgs {
     /// Output format (text or json for CI integration)
     #[arg(short, long, value_enum, default_value = "text")]
     pub output: OutputFormat,
+
+    /// Enable strict mode (warnings become errors)
+    #[arg(long)]
+    pub strict: bool,
+
+    /// Validate schema contracts against a reference manifest
+    #[arg(long)]
+    pub contracts: bool,
+
+    /// Path to reference manifest for contract validation (used with --contracts)
+    #[arg(long, value_name = "FILE")]
+    pub state: Option<String>,
+
+    /// Enable governance checks (data classification completeness)
+    #[arg(long)]
+    pub governance: bool,
 }
 
 /// Arguments for the run command
 #[derive(Args, Debug)]
 pub(crate) struct RunArgs {
+    /// Run mode: models, test, or build (default from config or "build")
+    #[arg(long, value_enum)]
+    pub mode: Option<CliRunMode>,
+
     /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
     #[arg(short = 'n', long)]
     pub nodes: Option<String>,
@@ -226,6 +201,25 @@ pub(crate) struct RunArgs {
     /// Skip DataFusion static analysis
     #[arg(long)]
     pub skip_static_analysis: bool,
+
+    /// Store test failure rows to target/test_failures/ (test/build modes)
+    #[arg(long)]
+    pub store_failures: bool,
+
+    /// Treat test failures as warnings, exit 0 (test/build modes)
+    #[arg(long)]
+    pub warn_only: bool,
+}
+
+/// CLI-side run mode enum (maps to ff_core::config::RunMode)
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CliRunMode {
+    /// Just execute models, no tests
+    Models,
+    /// Just run tests against existing tables
+    Test,
+    /// Run model then test in DAG order (default)
+    Build,
 }
 
 /// Arguments for the ls command
@@ -368,30 +362,6 @@ pub(crate) struct BuildArgs {
     pub quiet: bool,
 }
 
-/// Arguments for the validate command
-#[derive(Args, Debug)]
-pub(crate) struct ValidateArgs {
-    /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
-    #[arg(short = 'n', long)]
-    pub nodes: Option<String>,
-
-    /// Enable strict mode (warnings become errors)
-    #[arg(long)]
-    pub strict: bool,
-
-    /// Validate schema contracts against a reference manifest
-    #[arg(long)]
-    pub contracts: bool,
-
-    /// Path to reference manifest for contract validation (used with --contracts)
-    #[arg(long, value_name = "FILE")]
-    pub state: Option<String>,
-
-    /// Enable governance checks (data classification completeness)
-    #[arg(long)]
-    pub governance: bool,
-}
-
 /// Arguments for the docs command
 #[derive(Args, Debug)]
 pub(crate) struct DocsArgs {
@@ -462,9 +432,9 @@ pub(crate) struct CleanArgs {
     pub dry_run: bool,
 }
 
-/// Arguments for the run-operation command
+/// Arguments for the run-macro command
 #[derive(Args, Debug)]
-pub(crate) struct RunOperationArgs {
+pub(crate) struct RunMacroArgs {
     /// Name of the macro to execute
     pub macro_name: String,
 
@@ -549,6 +519,14 @@ pub(crate) struct AnalyzeArgs {
     /// Minimum severity to display
     #[arg(short, long, value_enum, default_value = "info")]
     pub severity: AnalyzeSeverity,
+
+    /// Also run SQL rules against the meta database
+    #[arg(long)]
+    pub rules: bool,
+
+    /// List discovered rules without executing them (use with --rules)
+    #[arg(long, requires = "rules")]
+    pub rules_list: bool,
 }
 
 /// Analyze output formats
@@ -637,14 +615,6 @@ pub(crate) enum AnalyzeSeverity {
     Error,
 }
 
-/// Arguments for the rules command
-#[derive(Args, Debug)]
-pub(crate) struct RulesArgs {
-    /// List discovered rules without executing them
-    #[arg(long)]
-    pub list: bool,
-}
-
 /// Arguments for the meta command
 #[derive(Args, Debug)]
 pub(crate) struct MetaArgs {
@@ -688,9 +658,17 @@ pub(crate) struct MetaExportArgs {
 /// Arguments for the fmt command
 #[derive(Args, Debug)]
 pub(crate) struct FmtArgs {
+    /// Files or directories to format (positional args)
+    #[arg()]
+    pub paths: Vec<PathBuf>,
+
     /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
     #[arg(short = 'n', long)]
     pub nodes: Option<String>,
+
+    /// Glob pattern to match SQL files
+    #[arg(long, value_name = "PATTERN")]
+    pub glob: Option<String>,
 
     /// Check formatting without modifying files (exit 1 if unformatted)
     #[arg(long)]
@@ -707,6 +685,24 @@ pub(crate) struct FmtArgs {
     /// Disable Jinja formatting
     #[arg(long)]
     pub no_jinjafmt: bool,
+}
+
+/// Arguments for the deploy command
+#[derive(Args, Debug)]
+pub(crate) struct DeployArgs {
+    /// Deploy subcommand
+    #[command(subcommand)]
+    pub command: DeployCommands,
+}
+
+/// Deploy subcommands
+#[derive(Subcommand, Debug)]
+pub(crate) enum DeployCommands {
+    /// Load CSV seed files into the database
+    Seeds(SeedArgs),
+
+    /// Manage user-defined functions (DuckDB macros)
+    Functions(FunctionArgs),
 }
 
 #[cfg(test)]

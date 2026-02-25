@@ -119,6 +119,10 @@ pub struct Config {
     /// SQL formatting configuration
     #[serde(default)]
     pub format: FormatConfig,
+
+    /// Run/build mode defaults
+    #[serde(default)]
+    pub run: Option<RunConfig>,
 }
 
 /// SQL formatting configuration for `ff fmt`.
@@ -148,6 +152,37 @@ impl Default for FormatConfig {
 
 fn default_format_line_length() -> usize {
     88
+}
+
+/// Run/build mode configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunConfig {
+    /// Default run mode: "models" | "test" | "build"
+    #[serde(default)]
+    pub default_mode: RunMode,
+}
+
+/// Execution mode for `ff run`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum RunMode {
+    /// Just execute models, no tests
+    Models,
+    /// Just run tests against existing tables
+    Test,
+    /// Run model then test in DAG order (default)
+    #[default]
+    Build,
+}
+
+impl std::fmt::Display for RunMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RunMode::Models => write!(f, "models"),
+            RunMode::Test => write!(f, "test"),
+            RunMode::Build => write!(f, "build"),
+        }
+    }
 }
 
 /// Target-specific configuration overrides

@@ -1,14 +1,14 @@
-//! Run-operation command implementation - execute standalone SQL operations
+//! Run-macro command implementation - execute standalone SQL macros
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::time::Instant;
 
-use crate::cli::{GlobalArgs, RunOperationArgs};
+use crate::cli::{GlobalArgs, RunMacroArgs};
 use crate::commands::common::{self, load_project};
 
-/// Execute the run-operation command
-pub(crate) async fn execute(args: &RunOperationArgs, global: &GlobalArgs) -> Result<()> {
+/// Execute the run-macro command
+pub(crate) async fn execute(args: &RunMacroArgs, global: &GlobalArgs) -> Result<()> {
     let start_time = Instant::now();
     let project = load_project(global)?;
 
