@@ -363,11 +363,18 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
 
         // Run SQL rules from meta DB if configured
         if let Some(meta_db) = common::open_meta_db(&project) {
-            if let Some((_project_id, run_id, _model_id_map)) =
-                common::populate_meta_phase1(&meta_db, &project, "compile-validate", args.nodes.as_deref())
-            {
+            if let Some((_project_id, run_id, _model_id_map)) = common::populate_meta_phase1(
+                &meta_db,
+                &project,
+                "compile-validate",
+                args.nodes.as_deref(),
+            ) {
                 validation::validate_rules(&project, &meta_db, &mut vctx);
-                let status = if vctx.error_count() > 0 { "error" } else { "success" };
+                let status = if vctx.error_count() > 0 {
+                    "error"
+                } else {
+                    "success"
+                };
                 common::complete_meta_run(&meta_db, run_id, status);
             }
         }

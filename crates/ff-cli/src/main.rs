@@ -7,7 +7,9 @@ mod cli;
 mod commands;
 
 use cli::Cli;
-use commands::{analyze, clean, compile, deploy, docs, fmt, init, lineage, ls, meta, run, run_macro};
+use commands::{
+    analyze, clean, compile, deploy, docs, fmt, init, lineage, ls, meta, run, run_macro,
+};
 
 #[tokio::main]
 async fn main() {

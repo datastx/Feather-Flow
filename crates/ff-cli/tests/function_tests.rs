@@ -334,8 +334,10 @@ fn test_compile_with_function_stubs() {
 fn test_ls_resource_type_function() {
     let (stdout, stderr, success) = run_ff(&[
         "ls",
-        "--resource-type", "function",
-        "--project-dir", "tests/fixtures/sample_project",
+        "--resource-type",
+        "function",
+        "--project-dir",
+        "tests/fixtures/sample_project",
     ]);
 
     assert!(

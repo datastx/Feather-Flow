@@ -82,13 +82,9 @@ pub(crate) async fn execute(args: &FmtArgs, global: &GlobalArgs) -> Result<()> {
         // Filter by node selector if provided
         if let Some(ref nodes_arg) = args.nodes {
             let (_, dag) = crate::commands::common::build_project_dag(&project)?;
-            let selected = crate::commands::common::resolve_nodes(
-                &project,
-                &dag,
-                &Some(nodes_arg.clone()),
-            )?;
-            let selected_set: std::collections::HashSet<String> =
-                selected.into_iter().collect();
+            let selected =
+                crate::commands::common::resolve_nodes(&project, &dag, &Some(nodes_arg.clone()))?;
+            let selected_set: std::collections::HashSet<String> = selected.into_iter().collect();
 
             files.retain(|path| {
                 for (name, model) in &project.models {

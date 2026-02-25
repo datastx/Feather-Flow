@@ -16,7 +16,8 @@ use std::sync::Arc;
 
 use crate::cli::{AnalyzeArgs, AnalyzeOutput, AnalyzeSeverity, GlobalArgs};
 use crate::commands::common::{
-    self, build_external_tables_lookup, build_schema_catalog, load_project, print_table as print_common_table,
+    self, build_external_tables_lookup, build_schema_catalog, load_project,
+    print_table as print_common_table,
 };
 use ff_core::rules::{discover_rules, resolve_rule_paths, OnRuleFailure, RuleSeverity};
 

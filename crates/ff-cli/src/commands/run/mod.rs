@@ -136,7 +136,6 @@ async fn execute_models_mode(
     project: &ff_core::Project,
     start_time: Instant,
 ) -> Result<()> {
-
     let json_mode = args.output == OutputFormat::Json;
 
     let db = create_database_connection(&project, global)?;
