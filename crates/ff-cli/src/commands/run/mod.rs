@@ -16,7 +16,7 @@ mod state;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use ff_core::config::Materialization;
+use ff_core::config::{Materialization, RunMode};
 use ff_core::run_state::RunState;
 use ff_core::ModelName;
 use std::collections::{HashMap, HashSet};
@@ -24,7 +24,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::cli::{GlobalArgs, OutputFormat, RunArgs};
+use crate::cli::{CliRunMode, GlobalArgs, OutputFormat, RunArgs};
 use crate::commands::common::{self, load_project};
 
 pub(crate) use compile::{determine_execution_order, load_or_compile_models, CompiledModel};
@@ -59,10 +59,83 @@ fn qualify_sql_references(
     }
 }
 
+/// Map CLI run mode enum to core config enum.
+fn resolve_mode(cli_mode: Option<CliRunMode>, config_mode: Option<&RunMode>) -> RunMode {
+    if let Some(m) = cli_mode {
+        return match m {
+            CliRunMode::Models => RunMode::Models,
+            CliRunMode::Test => RunMode::Test,
+            CliRunMode::Build => RunMode::Build,
+        };
+    }
+    config_mode.copied().unwrap_or(RunMode::Build)
+}
+
 /// Execute the run command
 pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     let start_time = Instant::now();
     let project = load_project(global)?;
+
+    let mode = resolve_mode(
+        args.mode,
+        project.config.run.as_ref().map(|r| &r.default_mode),
+    );
+
+    match mode {
+        RunMode::Models => execute_models_mode(args, global, &project, start_time).await,
+        RunMode::Test => execute_test_mode(args, global, &project).await,
+        RunMode::Build => execute_build_mode(args, global, &project, start_time).await,
+    }
+}
+
+/// Execute `--mode test`: run schema tests against existing tables.
+async fn execute_test_mode(
+    args: &RunArgs,
+    global: &GlobalArgs,
+    _project: &ff_core::Project,
+) -> Result<()> {
+    // Delegate to the test module with equivalent args
+    let test_args = crate::cli::TestArgs {
+        nodes: args.nodes.clone(),
+        fail_fast: args.fail_fast,
+        store_failures: args.store_failures,
+        warn_only: args.warn_only,
+        threads: args.threads,
+        output: args.output,
+        quiet: args.quiet,
+    };
+    crate::commands::test::execute(&test_args, global).await
+}
+
+/// Execute `--mode build`: seeds + functions, then interleaved model+test.
+async fn execute_build_mode(
+    args: &RunArgs,
+    global: &GlobalArgs,
+    _project: &ff_core::Project,
+    _start_time: Instant,
+) -> Result<()> {
+    // Delegate to the build module with equivalent args
+    let build_args = crate::cli::BuildArgs {
+        nodes: args.nodes.clone(),
+        exclude: args.exclude.clone(),
+        full_refresh: args.full_refresh,
+        fail_fast: args.fail_fast,
+        threads: args.threads,
+        store_failures: args.store_failures,
+        skip_static_analysis: args.skip_static_analysis,
+        output: args.output,
+        quiet: args.quiet,
+    };
+    crate::commands::build::execute(&build_args, global).await
+}
+
+/// Execute `--mode models`: the original run behavior (models only, no tests).
+async fn execute_models_mode(
+    args: &RunArgs,
+    global: &GlobalArgs,
+    project: &ff_core::Project,
+    start_time: Instant,
+) -> Result<()> {
 
     let json_mode = args.output == OutputFormat::Json;
 

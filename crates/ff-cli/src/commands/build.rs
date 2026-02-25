@@ -131,6 +131,7 @@ pub(crate) async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()>
 
     // Build a RunArgs for compile & execution-order helpers
     let run_args = RunArgs {
+        mode: None,
         nodes: args.nodes.clone(),
         exclude: args.exclude.clone(),
         full_refresh: args.full_refresh,
@@ -146,6 +147,8 @@ pub(crate) async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()>
         quiet: args.quiet,
         smart: false,
         skip_static_analysis: args.skip_static_analysis,
+        store_failures: args.store_failures,
+        warn_only: false,
     };
 
     let comment_ctx =

@@ -159,20 +159,21 @@ fn test_duplicate_function_name_errors() {
 fn test_function_list_command() {
     let output = Command::new(ff_bin())
         .args([
-            "function",
+            "deploy",
+            "functions",
             "list",
             "--project-dir",
             "tests/fixtures/sample_project",
         ])
         .output()
-        .expect("Failed to run ff function list");
+        .expect("Failed to run ff deploy functions list");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
         output.status.success(),
-        "ff function list should succeed.\nstdout: {}\nstderr: {}",
+        "ff deploy functions list should succeed.\nstdout: {}\nstderr: {}",
         stdout,
         stderr
     );
@@ -195,7 +196,8 @@ fn test_function_list_command() {
 fn test_function_list_json_output() {
     let output = Command::new(ff_bin())
         .args([
-            "function",
+            "deploy",
+            "functions",
             "list",
             "--output",
             "json",
@@ -203,7 +205,7 @@ fn test_function_list_json_output() {
             "tests/fixtures/sample_project",
         ])
         .output()
-        .expect("Failed to run ff function list --output json");
+        .expect("Failed to run ff deploy functions list --output json");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -223,14 +225,15 @@ fn test_function_list_json_output() {
 fn test_function_show_command() {
     let output = Command::new(ff_bin())
         .args([
-            "function",
+            "deploy",
+            "functions",
             "show",
             "safe_divide",
             "--project-dir",
             "tests/fixtures/sample_project",
         ])
         .output()
-        .expect("Failed to run ff function show");
+        .expect("Failed to run ff deploy functions show");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -250,7 +253,8 @@ fn test_function_show_command() {
 fn test_function_show_sql_flag() {
     let output = Command::new(ff_bin())
         .args([
-            "function",
+            "deploy",
+            "functions",
             "show",
             "cents_to_dollars",
             "--sql",
@@ -258,7 +262,7 @@ fn test_function_show_sql_flag() {
             "tests/fixtures/sample_project",
         ])
         .output()
-        .expect("Failed to run ff function show --sql");
+        .expect("Failed to run ff deploy functions show --sql");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -275,13 +279,14 @@ fn test_function_show_sql_flag() {
 fn test_function_validate_clean_project() {
     let output = Command::new(ff_bin())
         .args([
-            "function",
+            "deploy",
+            "functions",
             "validate",
             "--project-dir",
             "tests/fixtures/sample_project",
         ])
         .output()
-        .expect("Failed to run ff function validate");
+        .expect("Failed to run ff deploy functions validate");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -329,10 +334,8 @@ fn test_compile_with_function_stubs() {
 fn test_ls_resource_type_function() {
     let (stdout, stderr, success) = run_ff(&[
         "ls",
-        "--resource-type",
-        "function",
-        "--project-dir",
-        "tests/fixtures/sample_project",
+        "--resource-type", "function",
+        "--project-dir", "tests/fixtures/sample_project",
     ]);
 
     assert!(
@@ -353,7 +356,8 @@ fn test_ls_resource_type_function() {
 #[test]
 fn test_function_show_nonexistent() {
     let (stdout, stderr, success) = run_ff(&[
-        "function",
+        "deploy",
+        "functions",
         "show",
         "no_such_function",
         "--project-dir",

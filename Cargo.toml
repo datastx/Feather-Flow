@@ -51,7 +51,7 @@ open = "5"
 log = "0.4"
 
 # SQL formatting W/ Jinja support
-sqlfmt = { git = "https://github.com/datastx/sqlfmt-rust.git", tag = "v0.3.0" }
+sqlfmt = { git = "https://github.com/datastx/sqlfmt-rust.git", tag = "v0.3.2" }
 
 # Utilities
 petgraph = "0.8"
