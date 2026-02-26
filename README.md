@@ -2,6 +2,10 @@
 
 A lightweight dbt-like CLI tool built in Rust for SQL templating, compilation, and execution against DuckDB.
 
+## Architecture
+
+For a deep dive into what Feather-Flow is, why it works the way it does, and how the schema validation framework and static analysis engine fit together, see **[HOW_FEATHERFLOW_WORKS.md](HOW_FEATHERFLOW_WORKS.md)**.
+
 ## Features
 
 - **SQL Templating**: Jinja-style templating with `config()` and `var()` functions

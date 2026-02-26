@@ -2,9 +2,29 @@
 
 ## What Makes Feather-Flow Different
 
-Feather-Flow is a **schema-validated transformation framework**. It is purpose-built for data teams writing transformation pipelines — taking raw data, reshaping it through a DAG of models, and producing clean, typed, validated output. While the architecture could theoretically extend to other domains, that is not the goal. The goal is to make data transformations reliable by treating schema as a first-class, compiler-enforced concept.
+Feather-Flow is a **schema validation framework** for data transformation pipelines. Not a build tool with validation bolted on. Not a SQL runner with optional checks. Schema validation and static analysis are the load-bearing architecture — everything else (templating, execution, DAG scheduling) exists to serve them.
 
-Where tools like dbt focus on SQL transformations with optional testing bolted on after the fact, Feather-Flow enforces that every node in the DAG has a clearly defined schema. This schema-first approach means that the compiler can statically verify that data flowing between nodes is type-safe, structurally correct, and contractually enforced — all **before** any SQL ever executes.
+The design principle is simple and non-negotiable: **every node declares its output schema, and the compiler validates every edge in the DAG against those declarations before anything executes.** There is no opt-out. There is no "run without schemas" mode. If a node lacks a schema, it does not compile. If a schema contradicts the SQL, compilation fails. This is deliberate.
+
+Where tools like dbt treat testing as an optional layer added after transformations are written and run, Feather-Flow inverts the relationship. The schema declaration comes first. The compiler validates the transformation against it. Only then does execution proceed. Testing is not a post-hoc check — it is a precondition.
+
+## Static Analysis as a First-Class Citizen
+
+Static analysis in Feather-Flow is not a linter, not an advisory tool, and not something you enable with a flag. It is an integral stage of the compile pipeline that **blocks execution** when it finds structural violations.
+
+Concretely, this means:
+
+1. **The compiler plans every SQL model through DataFusion** — not to execute it, but to build a `LogicalPlan` that reveals the output schema, column types, nullability, and join semantics. This is the same query planning that a database engine performs, repurposed as a static analysis pass.
+
+2. **Schema mismatches are compile errors, not warnings** — if a YAML declaration says a model produces `customer_id INTEGER` but the SQL output does not contain that column, compilation halts with SA01 (MissingFromSql). The pipeline does not run with missing columns.
+
+3. **Type inference propagates through the entire DAG** — the compiler walks models in topological order, feeding each model's inferred output schema into the catalog before planning downstream models. This means a type error in `stg_customers` is caught when `dim_customers` references it, even if `dim_customers` itself is well-formed in isolation.
+
+4. **Analysis is not optional** — `ff run` executes static analysis before touching the database. The `--skip-static-analysis` flag exists as an escape hatch, but the default is enforcement. The system is designed so that if analysis passes, execution should succeed structurally (data quality is a separate concern).
+
+5. **Non-SQL nodes participate through typed stubs** — Python scripts, seeds, sources, and (planned) Docker containers cannot be statically analyzed internally, but their YAML schemas register in the catalog as typed stubs. This means downstream SQL nodes that reference a Python model's output get the same static validation as if the Python node were pure SQL. The schema contract is the interface; the runtime is opaque.
+
+The result: Feather-Flow catches type mismatches, missing columns, broken references, join key incompatibilities, nullability violations, and cross-model inconsistencies at compile time. The pipeline is validated end-to-end before a single row moves.
 
 The core insight: if every transformation declares what it produces, you can validate the entire pipeline at compile time.
 
@@ -64,6 +84,40 @@ The compiler strictly enforces this structure:
 - **Kind-specific companion**: If `kind: sql`, the compiler expects `<name>.sql`. If `kind: seed`, it expects `<name>.csv`. Missing the expected file is a hard error.
 - **YAML is mandatory**: A node directory without a matching `.yml` file fails with `NodeMissingYaml`.
 - **Kind is mandatory**: A YAML file without a `kind:` field fails with `NodeMissingKind`.
+- **CTEs are banned**: Any SQL model containing a `WITH` clause (Common Table Expression) fails with S005 (CteNotAllowed). This is a hard error, not a warning.
+- **Derived tables are banned**: Inline subqueries in `FROM` clauses (e.g., `SELECT * FROM (SELECT ...)`) fail with S006 (DerivedTableNotAllowed). Scalar subqueries in `SELECT`, `WHERE`, and `HAVING` are still permitted.
+
+## Why CTEs and Derived Tables Are Banned
+
+CTEs and derived tables are banned because they are fundamentally at odds with what Feather-Flow is trying to do.
+
+A CTE is an inline, anonymous transformation. It has no name in the DAG, no YAML schema, no declared output columns, no type contract, and no lineage tracking. It is invisible to the compiler. When a developer writes a 200-line model with four CTEs chained together, they have created four transformations that the schema validation framework cannot see, cannot validate independently, and cannot reuse.
+
+The tradeoff CTEs represent is: **convenience for the author at the cost of correctness for the system.** A CTE lets you avoid creating a separate node. That feels productive in the moment. But what you've actually done is:
+
+1. **Hidden a transformation from static analysis** — the compiler cannot cross-check intermediate CTE outputs against declared schemas, because CTEs don't have schemas. Type errors, nullability violations, and missing columns inside CTEs are only caught if they propagate to the final SELECT. Errors in intermediate steps are invisible.
+
+2. **Made the pipeline harder to debug** — when a model fails, you're debugging the entire CTE chain as a monolith. If those same transformations were separate nodes, each one is independently testable, independently compilable, and independently traceable through lineage.
+
+3. **Created untestable intermediate logic** — you cannot write a schema test against a CTE. You cannot add a contract to a CTE. You cannot tag, classify, or document a CTE's output columns. The CTE exists only inside the model that contains it.
+
+4. **Traded performance for laziness** — this is the core issue. A CTE is almost always a staging transformation that should be its own node. The reason it isn't is that creating a node requires a directory, a YAML file, and a schema declaration. That feels like overhead. But that "overhead" is exactly the schema contract that makes the pipeline reliable. Skipping it is choosing convenience over correctness.
+
+5. **Broken the one-model-one-transformation principle** — Feather-Flow's architecture assumes each node does one thing: take declared inputs, apply a single transformation, produce a declared output. CTEs violate this by nesting multiple transformations inside one node. The DAG becomes a lie — it shows one edge where there are actually four hidden steps.
+
+The same reasoning applies to derived tables (`SELECT * FROM (SELECT ...)`). They are anonymous inline transformations with no schema contract.
+
+**The alternative is always the same: make it a node.** If a transformation is worth writing, it is worth declaring. Create `nodes/stg_whatever/`, add the YAML with its schema, write the SQL as a standalone model. Now the compiler can validate it. Now it has lineage. Now it can be tested, documented, and reused. The marginal cost is one directory and one YAML file. The return is full static analysis coverage.
+
+Scalar subqueries in `SELECT`, `WHERE`, and `HAVING` remain allowed because they are expressions, not transformations — they produce a single value, not a result set that should have its own schema.
+
+### A note on recursive CTEs
+
+Recursive CTEs (`WITH RECURSIVE`) are a legitimate computational primitive. Graph traversal, hierarchy walking, connected components, and iterative convergence algorithms cannot be expressed as a chain of prep tables — the recursion depth is data-dependent and unknowable at compile time. Feather-Flow does not currently support recursive CTEs, but we recognize they should be supported in the future.
+
+When we do, recursive CTEs will be their own `kind:` of node — not a special case inside `kind: sql`. The semantics of recursive CTEs vary significantly between database engines (DuckDB's `USING KEY` upsert semantics, Postgres's optimization fences and cycle detection, Snowflake's iteration limits). Burying those differences inside a generic SQL node would hide complexity that the compiler needs to reason about. A dedicated `kind: recursive` (or similar) gives the compiler the right place to handle engine-specific compilation, validate termination conditions, and apply appropriate static analysis — without compromising the simplicity of the `kind: sql` path.
+
+The ban today is unconditional for simplicity, but recursive CTEs are a genuine gap, not a philosophical disagreement.
 
 ## Schema Definition: The Heart of Feather-Flow
 
@@ -190,11 +244,14 @@ returns:
 ```
 
 The companion SQL file contains a query:
+
 ```sql
 select status, order_count
 from (select status, count(*) as order_count from fct_orders group by status)
 where order_count >= min_count
 ```
+
+Note: function SQL bodies are exempt from the CTE and derived table bans (S005/S006). The bans apply to `kind: sql` models, where the alternative is always "make it a node." Function bodies are different — they are expression or query bodies compiled into DuckDB macros, not standalone transformations in the DAG. A derived table inside a function body is contained within the function's typed interface, not hidden from the compiler.
 
 This deploys as `CREATE OR REPLACE MACRO order_volume_by_status(min_count) AS TABLE (...)`. Table functions are special because they participate in the DAG — the compiler parses the function's SQL body to discover that `order_volume_by_status` depends on `fct_orders`, and propagates that dependency transitively to any model that calls the function. The declared output columns (`status VARCHAR`, `order_count INTEGER`) register as a typed stub so that `SELECT * FROM order_volume_by_status(5)` in a downstream model gets full schema validation.
 
@@ -281,7 +338,7 @@ This is the same pattern that scales to *any* future runtime kind. Whether the t
 The compiler uses **schema + name** to determine where each node exists in dependency space. Here's how:
 
 1. **Name comes from the directory** — `nodes/stg_customers/` → node name is `stg_customers`
-2. **Schema comes from config** — either from the SQL `{{ config(schema="staging") }}` function, from the YAML, or from the project default in `featherflow.yml`
+2. **Schema comes from config** — either from the SQL `{{ config(schema="staging") }}` function or from the project default in `featherflow.yml`. There is no YAML-level schema override for SQL models — config is set exclusively via the `{{ config() }}` Jinja function in the SQL file itself
 3. **The compiler qualifies bare table references** — after Jinja rendering and SQL parsing, `stg_customers` in a downstream model becomes `staging.stg_customers` (or `main.staging.stg_customers` for cross-database references)
 
 This qualification happens via AST manipulation using `visit_relations_mut` from sqlparser. Only single-part (bare) names are qualified; already-qualified references are left unchanged.
@@ -449,22 +506,51 @@ This is the extensibility model: any new `kind` that produces tabular output fol
 
 ## Why This Matters
 
-Feather-Flow is built for one thing: making data transformations reliable. Every design decision serves that goal.
+Feather-Flow exists to answer a single question: **is this pipeline structurally correct before I run it?**
 
-1. **Catch errors at compile time**: Type mismatches, missing columns, and broken references are caught before any SQL executes. The transformation pipeline is validated end-to-end before a single row moves.
+Every design decision — mandatory YAML schemas, DataFusion-based planning, AST dependency extraction, typed stubs for non-SQL nodes — serves that question. The framework is built around the conviction that data pipeline failures caused by missing columns, type mismatches, and broken references are not runtime problems to be caught by tests. They are compile-time problems that should never reach execution.
 
-2. **Documentation as code**: The YAML schema isn't just metadata — it's a contract that the compiler enforces. Documentation can never drift from reality because the compiler won't let it.
+1. **Compile-time correctness**: Type mismatches, missing columns, broken references, join key incompatibilities, and nullability violations are caught before any SQL executes. Static analysis is not a suggestion — it is a gate.
 
-3. **Safe refactoring**: Rename a column and the compiler tells you exactly which downstream transformations break. Refactoring a 50-model pipeline becomes a compile-check, not a prayer.
+2. **Schema as enforced contract**: The YAML schema is not documentation. It is a contract that the compiler validates against the SQL AST. If the SQL produces columns that contradict the declaration, compilation fails. Documentation cannot drift from reality because they are the same artifact.
 
-4. **Cross-model consistency**: The compiler verifies that the same logical concept (e.g., `customer_id`) has consistent types and nullability across the entire transformation chain.
+3. **Safe refactoring**: Rename a column and the compiler tells you exactly which downstream transformations break. The static analysis propagates through the entire DAG — a change in `stg_customers` surfaces errors in `dim_customers`, `fct_orders`, and every other model downstream. Refactoring a 50-model pipeline becomes a compile-check, not a prayer.
 
-5. **Kind-appropriate validation**: SQL models get deep static analysis through AST walking and DataFusion planning. Seeds get type inference. Sources define trust boundaries. Functions get typed interfaces. Python and Docker nodes get explicit contract stubs. Each kind gets the validation that makes sense for how it transforms data.
+4. **Cross-model consistency**: The compiler verifies that the same logical concept (e.g., `customer_id`) has consistent types and nullability across the entire transformation chain. This is only possible because every node declares its schema and the analysis engine propagates types through the DAG.
 
-6. **Deterministic DAGs**: Because dependencies are extracted from rendered SQL AST (not runtime behavior), the transformation graph is always deterministic and complete.
+5. **Kind-appropriate validation depth**: SQL models get full static analysis — AST walking, DataFusion planning, type inference, nullability propagation, join key analysis. Seeds get type inference from CSV data. Sources define typed trust boundaries. Functions get typed interface validation. Python and Docker nodes get explicit contract stubs. The validation depth varies by kind; the requirement to declare a schema does not.
+
+6. **Deterministic DAGs**: Dependencies are extracted from rendered SQL AST (not runtime behavior), so the transformation graph is always deterministic and complete. The compiler can validate every edge without executing anything.
+
+## Where Feather-Flow Sits
+
+Feather-Flow occupies a space between dbt and Airflow, but it is neither.
+
+**dbt is a SQL execution framework.** It templates SQL, resolves `ref()` calls, builds a DAG, and runs queries against a warehouse. Schema tests exist but they are optional, run after execution, and bolt onto the side of the transformation logic. The core value proposition is "write SQL, dbt handles the execution order." The framework trusts your SQL and runs it.
+
+**Airflow is a task orchestrator.** It schedules and coordinates arbitrary units of work — Python callables, Bash scripts, API calls, Spark jobs — with dependency management, retries, and monitoring. It has no opinion about what those tasks do or whether their outputs are structurally correct. The core value proposition is "define tasks and dependencies, Airflow handles scheduling and execution."
+
+**Feather-Flow is a schema validation engine.** It does not exist to run SQL — DuckDB runs the SQL. It does not exist to orchestrate tasks — it has a DAG scheduler, but that is a means to an end, not the product. Feather-Flow exists to answer the question: *is this pipeline structurally correct?* Every node declares a typed schema. The compiler validates every edge in the DAG against those declarations. Execution only proceeds after static analysis confirms the pipeline is sound.
+
+The distinction matters because it changes what the tool is responsible for:
+
+| Concern | dbt | Airflow | Feather-Flow |
+|---|---|---|---|
+| **SQL execution** | Core responsibility | Delegates to operators | Delegates to DuckDB |
+| **Task orchestration** | DAG of models | Core responsibility | DAG of nodes (minimal) |
+| **Schema validation** | Optional post-hoc tests | None | Core responsibility |
+| **Static analysis** | None | None | Compile-time gate |
+| **Type propagation across DAG** | None | None | Full DAG-wide inference |
+| **Cross-model consistency** | None | None | Enforced at compile time |
+
+dbt asks: "did the SQL run?" Airflow asks: "did the task succeed?" Feather-Flow asks: "is the pipeline correct before we run anything?"
+
+This is why Feather-Flow bans CTEs, requires YAML schemas on every node, and runs DataFusion planning before execution. These are not ergonomic choices — they are consequences of being a validation engine. A SQL execution framework can afford to be permissive because it will find out at runtime if something is wrong. A validation engine cannot, because the entire point is to find out before runtime.
 
 ## Scope
 
-Feather-Flow is specialized for data transformation pipelines. It is not a general-purpose workflow orchestrator, a job scheduler, or an application framework. The node system, the schema validation, the AST-based lineage tracking — all of it is designed around the specific problem of taking data from sources, transforming it through a series of typed steps, and producing validated output.
+Feather-Flow is an opinionated framework. It enforces a specific way of writing data transformations: one transformation per node, mandatory schema declarations, no CTEs, static analysis before execution. Not every transformation workflow fits this model — but from years of data engineering experience, the vast majority do.
+
+The transformations that don't fit are the edge cases: recursive graph traversals, highly dynamic schema-on-read pipelines, transformations where the output shape is unknowable until runtime. These are real but rare. The other 99% of data engineering work — staging raw data, joining dimensions to facts, aggregating metrics, building mart tables — is exactly the kind of structured, predictable, schema-stable work that benefits most from compile-time validation. Feather-Flow is built for that 99%.
 
 The architecture supports multiple runtimes (SQL, Python, Docker) not for generality's sake, but because real transformation pipelines sometimes need to step outside SQL — for ML scoring, for complex Python logic, for containerized workloads. In every case, the transformation's output must be schema-declared so the compiler can validate the full pipeline. The runtime varies; the schema contract does not.

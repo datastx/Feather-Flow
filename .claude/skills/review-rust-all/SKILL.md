@@ -7,6 +7,8 @@ description: Run all review-rust* skills as a comprehensive code review. Applies
 
 Orchestrates all three `review-rust*` skills against changed files, then validates with `make ci`. This skill contains no review criteria of its own — all opinions live in the sub-skills.
 
+**Context**: Feather-Flow is a schema validation framework with static analysis as a first-class citizen. See **[HOW_FEATHERFLOW_WORKS.md](../../../HOW_FEATHERFLOW_WORKS.md)** for the full architecture. All code changes should be reviewed in the context of this goal — mandatory schemas, compile-time validation, AST-based dependency extraction, and no CTEs.
+
 ## Project Layout
 
 Cargo workspace with crates under `crates/`:

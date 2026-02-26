@@ -1,6 +1,6 @@
 # Featherflow
 
-A Rust CLI tool for SQL templating and execution, similar to dbt.
+A schema validation framework for data transformation pipelines, built in Rust. See **[HOW_FEATHERFLOW_WORKS.md](HOW_FEATHERFLOW_WORKS.md)** for the full architecture — the design philosophy, why schemas are mandatory, why CTEs are banned, how static analysis works as a compile-time gate, and where Feather-Flow sits relative to dbt and Airflow.
 
 ## Tech Stack
 - Rust (stable toolchain)

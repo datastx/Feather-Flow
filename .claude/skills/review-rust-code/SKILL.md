@@ -5,6 +5,8 @@ description: Review and enforce Rust best practices, clean code principles, and 
 
 # Review Rust Code - Best Practices & Standards
 
+**Context**: Feather-Flow is a schema validation framework with static analysis as a first-class citizen. See **[HOW_FEATHERFLOW_WORKS.md](../../../HOW_FEATHERFLOW_WORKS.md)** for the full architecture. Code review should ensure changes align with the core goal: mandatory schemas, compile-time validation before execution, AST-based analysis, and the one-node-one-transformation principle.
+
 Apply these standards when working with Rust code in this project. These patterns leverage Rust's type system, ownership model, and trait system to make illegal states unrepresentable and enforce clean code at compile time.
 
 ## Core Principles
