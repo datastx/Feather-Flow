@@ -7,10 +7,14 @@ name: test_project
 "#;
     let config: Config = serde_yaml::from_str(yaml).unwrap();
     assert_eq!(config.name, "test_project");
-    assert_eq!(config.model_paths, vec!["models"]);
-    assert_eq!(config.macro_paths, vec!["macros"]);
-    assert_eq!(config.source_paths, vec!["sources"]);
-    assert_eq!(config.target_path, "target");
+    // Paths are hardcoded now — verify via accessor methods
+    let root = std::path::PathBuf::from("/tmp/test");
+    assert_eq!(config.node_paths_absolute(&root), vec![root.join("nodes")]);
+    assert_eq!(
+        config.macro_paths_absolute(&root),
+        vec![root.join("macros")]
+    );
+    assert_eq!(config.target_path_absolute(&root), root.join("target"));
 }
 
 #[test]
@@ -18,16 +22,13 @@ fn test_parse_full_config() {
     let yaml = r#"
 name: my_analytics_project
 version: "1.0.0"
-model_paths: ["models"]
-macro_paths: ["macros", "shared_macros"]
-source_paths: ["sources"]
-target_path: "target"
 materialization: view
-schema: analytics
 dialect: duckdb
 database:
-  type: duckdb
-  path: "./warehouse.duckdb"
+  default:
+    type: duckdb
+    path: "./warehouse.duckdb"
+    schema: analytics
 external_tables:
   - raw.orders
   - raw.customers
@@ -37,11 +38,10 @@ vars:
 "#;
     let config: Config = serde_yaml::from_str(yaml).unwrap();
     assert_eq!(config.name, "my_analytics_project");
-    assert_eq!(config.macro_paths, vec!["macros", "shared_macros"]);
-    assert_eq!(config.source_paths, vec!["sources"]);
     assert_eq!(config.external_tables.len(), 2);
     assert!(config.is_external_table("raw.orders"));
     assert!(!config.is_external_table("stg_orders"));
+    assert_eq!(config.get_schema(None), Some("analytics"));
 }
 
 #[test]
@@ -92,48 +92,46 @@ on_run_end:
 }
 
 #[test]
-fn test_targets_parsing() {
+fn test_named_database_connections() {
     let yaml = r#"
 name: test_project
 database:
-  type: duckdb
-  path: ./dev.duckdb
-schema: dev_schema
+  default:
+    type: duckdb
+    path: ./dev.duckdb
+    schema: dev_schema
+  prod:
+    type: duckdb
+    path: ./prod.duckdb
+    schema: prod_schema
+  staging:
+    type: duckdb
+    path: ./staging.duckdb
+    schema: staging_schema
 vars:
   environment: dev
-targets:
-  prod:
-    database:
-      type: duckdb
-      path: ./prod.duckdb
-    schema: prod_schema
-    vars:
-      environment: prod
-      debug_mode: false
-  staging:
-    database:
-      type: duckdb
-      path: ./staging.duckdb
-    schema: staging_schema
 "#;
     let config: Config = serde_yaml::from_str(yaml).unwrap();
-    assert_eq!(config.targets.len(), 2);
-    assert!(config.targets.contains_key("prod"));
-    assert!(config.targets.contains_key("staging"));
+    let dbs = config.available_databases();
+    assert_eq!(dbs.len(), 3);
+    assert!(dbs.contains(&"default"));
+    assert!(dbs.contains(&"prod"));
+    assert!(dbs.contains(&"staging"));
 
-    let prod = config.targets.get("prod").unwrap();
-    assert_eq!(prod.database.as_ref().unwrap().path, "./prod.duckdb");
-    assert_eq!(prod.schema.as_ref().unwrap(), "prod_schema");
-    assert!(prod.vars.contains_key("environment"));
+    let prod = config.get_database_config(Some("prod")).unwrap();
+    assert_eq!(prod.path, "./prod.duckdb");
+    assert_eq!(prod.schema.as_deref(), Some("prod_schema"));
 }
 
 #[test]
-fn test_get_database_config_base() {
+fn test_database_requires_named_connections() {
+    // Legacy single-object format is no longer supported — must use named connections
     let yaml = r#"
 name: test_project
 database:
-  type: duckdb
-  path: ./base.duckdb
+  default:
+    type: duckdb
+    path: ./base.duckdb
 "#;
     let config: Config = serde_yaml::from_str(yaml).unwrap();
     let db = config.get_database_config(None).unwrap();
@@ -141,17 +139,30 @@ database:
 }
 
 #[test]
-fn test_get_database_config_with_target() {
+fn test_get_database_config_base() {
     let yaml = r#"
 name: test_project
 database:
-  type: duckdb
-  path: ./base.duckdb
-targets:
+  default:
+    type: duckdb
+    path: ./base.duckdb
+"#;
+    let config: Config = serde_yaml::from_str(yaml).unwrap();
+    let db = config.get_database_config(None).unwrap();
+    assert_eq!(db.path, "./base.duckdb");
+}
+
+#[test]
+fn test_get_database_config_by_name() {
+    let yaml = r#"
+name: test_project
+database:
+  default:
+    type: duckdb
+    path: ./base.duckdb
   prod:
-    database:
-      type: duckdb
-      path: ./prod.duckdb
+    type: duckdb
+    path: ./prod.duckdb
 "#;
     let config: Config = serde_yaml::from_str(yaml).unwrap();
     let db = config.get_database_config(Some("prod")).unwrap();
@@ -159,49 +170,37 @@ targets:
 }
 
 #[test]
-fn test_get_database_config_target_without_db_override() {
+fn test_get_database_config_invalid_name() {
     let yaml = r#"
 name: test_project
 database:
-  type: duckdb
-  path: ./base.duckdb
-targets:
+  default:
+    type: duckdb
+    path: ./base.duckdb
   prod:
-    schema: prod_schema
-"#;
-    let config: Config = serde_yaml::from_str(yaml).unwrap();
-    // Target exists but has no database override, should use base
-    let db = config.get_database_config(Some("prod")).unwrap();
-    assert_eq!(db.path, "./base.duckdb");
-}
-
-#[test]
-fn test_get_database_config_invalid_target() {
-    let yaml = r#"
-name: test_project
-database:
-  type: duckdb
-  path: ./base.duckdb
-targets:
-  prod:
-    database:
-      path: ./prod.duckdb
+    type: duckdb
+    path: ./prod.duckdb
 "#;
     let config: Config = serde_yaml::from_str(yaml).unwrap();
     let result = config.get_database_config(Some("nonexistent"));
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("Target 'nonexistent' not found"));
+    assert!(err.contains("nonexistent"));
     assert!(err.contains("prod"));
 }
 
 #[test]
-fn test_get_schema_with_target_override() {
+fn test_get_schema_with_named_connection() {
     let yaml = r#"
 name: test_project
-schema: base_schema
-targets:
+database:
+  default:
+    type: duckdb
+    path: ./dev.duckdb
+    schema: base_schema
   prod:
+    type: duckdb
+    path: ./prod.duckdb
     schema: prod_schema
 "#;
     let config: Config = serde_yaml::from_str(yaml).unwrap();
@@ -217,8 +216,15 @@ vars:
   environment: dev
   debug: true
   common_key: base_value
-targets:
+database:
+  default:
+    type: duckdb
+    path: ./dev.duckdb
+    vars:
+      extra_default: from_default
   prod:
+    type: duckdb
+    path: ./prod.duckdb
     vars:
       environment: prod
       debug: false
@@ -226,12 +232,12 @@ targets:
 "#;
     let config: Config = serde_yaml::from_str(yaml).unwrap();
 
-    // Base vars
+    // Base vars merged with default connection vars
     let base_vars = config.get_merged_vars(None);
     assert_eq!(base_vars.get("environment").unwrap().as_str(), Some("dev"));
     assert_eq!(base_vars.get("debug").unwrap().as_bool(), Some(true));
 
-    // Merged vars with target
+    // Merged vars with named connection
     let merged = config.get_merged_vars(Some("prod"));
     assert_eq!(merged.get("environment").unwrap().as_str(), Some("prod"));
     assert_eq!(merged.get("debug").unwrap().as_bool(), Some(false));
@@ -243,20 +249,26 @@ targets:
 }
 
 #[test]
-fn test_available_targets() {
+fn test_available_databases() {
     let yaml = r#"
 name: test_project
-targets:
-  dev: {}
-  staging: {}
-  prod: {}
+database:
+  default:
+    type: duckdb
+    path: ./dev.duckdb
+  staging:
+    type: duckdb
+    path: ./staging.duckdb
+  prod:
+    type: duckdb
+    path: ./prod.duckdb
 "#;
     let config: Config = serde_yaml::from_str(yaml).unwrap();
-    let targets = config.available_targets();
-    assert_eq!(targets.len(), 3);
-    assert!(targets.contains(&"dev"));
-    assert!(targets.contains(&"staging"));
-    assert!(targets.contains(&"prod"));
+    let dbs = config.available_databases();
+    assert_eq!(dbs.len(), 3);
+    assert!(dbs.contains(&"default"));
+    assert!(dbs.contains(&"staging"));
+    assert!(dbs.contains(&"prod"));
 }
 
 // These tests modify environment variables and must run serially
@@ -264,43 +276,39 @@ use serial_test::serial;
 
 #[test]
 #[serial]
-fn test_resolve_target_cli_takes_precedence() {
-    // CLI flag should take precedence over env var
-    let original = std::env::var("FF_TARGET").ok();
-    std::env::set_var("FF_TARGET", "staging");
-    let result = Config::resolve_target(Some("prod"));
+fn test_resolve_database_cli_takes_precedence() {
+    let original = std::env::var("FF_DATABASE").ok();
+    std::env::set_var("FF_DATABASE", "staging");
+    let result = Config::resolve_database(Some("prod"));
     assert_eq!(result, Some("prod".to_string()));
-    // Restore original state
     match original {
-        Some(v) => std::env::set_var("FF_TARGET", v),
-        None => std::env::remove_var("FF_TARGET"),
+        Some(v) => std::env::set_var("FF_DATABASE", v),
+        None => std::env::remove_var("FF_DATABASE"),
     }
 }
 
 #[test]
 #[serial]
-fn test_resolve_target_uses_env_var() {
-    let original = std::env::var("FF_TARGET").ok();
-    std::env::set_var("FF_TARGET", "staging");
-    let result = Config::resolve_target(None);
+fn test_resolve_database_uses_env_var() {
+    let original = std::env::var("FF_DATABASE").ok();
+    std::env::set_var("FF_DATABASE", "staging");
+    let result = Config::resolve_database(None);
     assert_eq!(result, Some("staging".to_string()));
-    // Restore original state
     match original {
-        Some(v) => std::env::set_var("FF_TARGET", v),
-        None => std::env::remove_var("FF_TARGET"),
+        Some(v) => std::env::set_var("FF_DATABASE", v),
+        None => std::env::remove_var("FF_DATABASE"),
     }
 }
 
 #[test]
 #[serial]
-fn test_resolve_target_none_when_not_set() {
-    let original = std::env::var("FF_TARGET").ok();
-    std::env::remove_var("FF_TARGET");
-    let result = Config::resolve_target(None);
+fn test_resolve_database_none_when_not_set() {
+    let original = std::env::var("FF_DATABASE").ok();
+    std::env::remove_var("FF_DATABASE");
+    let result = Config::resolve_database(None);
     assert_eq!(result, None);
-    // Restore original state
     if let Some(v) = original {
-        std::env::set_var("FF_TARGET", v);
+        std::env::set_var("FF_DATABASE", v);
     }
 }
 
@@ -405,28 +413,18 @@ analysis:
     SA02: error
 "#;
     let config: Config = serde_yaml::from_str(yaml).unwrap();
-    // validate() is called inside Config::load, but we can call it explicitly
-    // by going through from_str + validate
     assert!(config.validate().is_ok());
     assert_eq!(config.analysis.severity_overrides.len(), 15);
 }
 
 #[test]
-fn test_node_paths_parsing() {
+fn test_unknown_fields_rejected() {
     let yaml = r#"
 name: test_project
-node_paths: ["nodes"]
+bogus_field: true
 "#;
-    let config: Config = serde_yaml::from_str(yaml).unwrap();
-    assert_eq!(config.node_paths, vec!["nodes"]);
-    assert!(config.uses_node_paths());
-}
-
-#[test]
-fn test_node_paths_default_empty() {
-    let config: Config = serde_yaml::from_str("name: test").unwrap();
-    assert!(config.node_paths.is_empty());
-    assert!(!config.uses_node_paths());
+    let result: Result<Config, _> = serde_yaml::from_str(yaml);
+    assert!(result.is_err(), "Unknown fields should be rejected");
 }
 
 #[test]
@@ -462,13 +460,45 @@ format:
 }
 
 #[test]
-fn test_node_paths_with_model_paths_both_accepted() {
+fn test_legacy_fields_rejected() {
+    // Legacy fields like schema, targets, model_paths should now be rejected
     let yaml = r#"
 name: test_project
-node_paths: ["nodes"]
-model_paths: ["legacy_models"]
+schema: dev_schema
+"#;
+    let result: Result<Config, _> = serde_yaml::from_str(yaml);
+    assert!(result.is_err(), "Legacy 'schema' field should be rejected");
+
+    let yaml = r#"
+name: test_project
+targets:
+  prod:
+    schema: prod_schema
+"#;
+    let result: Result<Config, _> = serde_yaml::from_str(yaml);
+    assert!(result.is_err(), "Legacy 'targets' field should be rejected");
+
+    let yaml = r#"
+name: test_project
+model_paths: ["models"]
+"#;
+    let result: Result<Config, _> = serde_yaml::from_str(yaml);
+    assert!(
+        result.is_err(),
+        "Legacy 'model_paths' field should be rejected"
+    );
+}
+
+#[test]
+fn test_wap_schema_from_connection() {
+    let yaml = r#"
+name: test_project
+database:
+  default:
+    type: duckdb
+    path: ./dev.duckdb
+    wap_schema: wap_staging
 "#;
     let config: Config = serde_yaml::from_str(yaml).unwrap();
-    assert!(config.uses_node_paths());
-    assert_eq!(config.model_paths, vec!["legacy_models"]);
+    assert_eq!(config.get_wap_schema(None), Some("wap_staging"));
 }

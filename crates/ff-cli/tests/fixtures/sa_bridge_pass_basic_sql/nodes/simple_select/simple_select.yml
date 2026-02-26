@@ -1,0 +1,9 @@
+kind: sql
+version: 1
+name: simple_select
+description: "Basic select from raw_data"
+columns:
+  - name: id
+    data_type: INTEGER
+  - name: name
+    data_type: VARCHAR

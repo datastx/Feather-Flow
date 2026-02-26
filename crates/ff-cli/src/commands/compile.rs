@@ -88,23 +88,26 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
     let mut project = load_project(global)?;
     let json_mode = args.output == OutputFormat::Json;
 
-    let target = Config::resolve_target(global.target.as_deref());
+    let database = Config::resolve_database(global.database.as_deref());
     let comment_ctx =
-        common::build_query_comment_context(&project.config, global.target.as_deref());
+        common::build_query_comment_context(&project.config, global.database.as_deref());
 
-    let base_vars = project.config.get_merged_vars(target.as_deref());
+    let base_vars = project.config.get_merged_vars(database.as_deref());
     let vars = merge_vars(&base_vars, &args.vars)?;
 
     if global.verbose {
-        if let Some(ref target_name) = target {
-            eprintln!("[verbose] Using target '{}' for compilation", target_name);
+        if let Some(ref db_name) = database {
+            eprintln!(
+                "[verbose] Using database connection '{}' for compilation",
+                db_name
+            );
         }
     }
 
     let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
         .context("Invalid SQL dialect")?;
     let macro_paths = project.config.macro_paths_absolute(&project.root);
-    let template_ctx = common::build_template_context(&project, global.target.as_deref(), false);
+    let template_ctx = common::build_template_context(&project, global.database.as_deref(), false);
     let jinja = JinjaEnvironment::with_context(&vars, &macro_paths, &template_ctx);
 
     // Filtering happens after DAG build, so compile all models first
@@ -239,7 +242,7 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
             let schema = project
                 .get_model(&m.name)
                 .and_then(|model| model.config.schema.clone())
-                .or_else(|| project.config.schema.clone());
+                .or_else(|| project.config.get_schema(None).map(|s| s.to_string()));
             (m.name.clone(), schema)
         })
         .collect();

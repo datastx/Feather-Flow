@@ -1,0 +1,13 @@
+kind: sources
+version: 1
+name: raw_ecommerce
+schema: main
+tables:
+  - name: raw_data
+    columns:
+      - name: price
+        type: FLOAT
+      - name: amount
+        type: DECIMAL(10,2)
+      - name: created_at
+        type: TIMESTAMP

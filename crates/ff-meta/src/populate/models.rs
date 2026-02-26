@@ -61,7 +61,7 @@ fn insert_model(
         mat.as_str()
     };
 
-    let schema_name = model.target_schema(config.schema.as_deref());
+    let schema_name = model.target_schema(config.get_schema(None));
     let description = model.schema.as_ref().and_then(|s| s.description.clone());
     let owner = model.get_owner();
     let deprecated = model.schema.as_ref().map(|s| s.deprecated).unwrap_or(false);

@@ -3,6 +3,8 @@ name: test-model
 description: Test a model implementation following project conventions
 ---
 
+Feather-Flow is a schema validation framework — see **[HOW_FEATHERFLOW_WORKS.md](../../HOW_FEATHERFLOW_WORKS.md)** for the full architecture. Testing a model means validating that it compiles against its declared schema, passes static analysis, and executes correctly.
+
 When testing a model:
 
 1. First, verify the model SQL parses correctly:

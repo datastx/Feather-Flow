@@ -62,7 +62,7 @@ pub(crate) async fn execute(args: &RunMacroArgs, global: &GlobalArgs) -> Result<
         eprintln!("[verbose] Generated SQL:\n{}", sql);
     }
 
-    let db = common::create_database_connection(&project.config, global.target.as_deref())?;
+    let db = common::create_database_connection(&project.config, global.database.as_deref())?;
 
     println!("Running operation: {}\n", args.macro_name);
 

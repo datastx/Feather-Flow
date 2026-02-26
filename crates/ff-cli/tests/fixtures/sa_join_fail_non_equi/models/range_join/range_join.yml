@@ -1,6 +1,0 @@
-version: 1
-name: range_join
-description: "Non-equi join with > operator — should trigger A033"
-columns:
-  - name: id
-    data_type: INTEGER

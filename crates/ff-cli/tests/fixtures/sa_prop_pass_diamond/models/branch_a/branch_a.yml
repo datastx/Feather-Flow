@@ -1,8 +1,0 @@
-version: 1
-name: branch_a
-description: "Branch A selecting id and a from stg"
-columns:
-  - name: id
-    data_type: INTEGER
-  - name: a
-    data_type: VARCHAR

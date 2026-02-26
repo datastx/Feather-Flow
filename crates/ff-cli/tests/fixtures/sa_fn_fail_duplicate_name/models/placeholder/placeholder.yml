@@ -1,6 +1,0 @@
-version: 1
-description: "Placeholder model"
-
-columns:
-  - name: id
-    type: INTEGER

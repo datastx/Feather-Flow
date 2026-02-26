@@ -13,10 +13,16 @@ pub fn populate_project(conn: &Connection, config: &Config, root: &Path) -> Meta
         config.materialization.as_str()
     };
 
-    let dialect = match config.database.db_type {
+    let db = config.get_database_config(None).map_err(|e| {
+        crate::error::MetaError::QueryError(format!("default database config: {}", e))
+    })?;
+
+    let dialect = match db.db_type {
         ff_core::DbType::DuckDb => "duckdb",
         ff_core::DbType::Snowflake => "snowflake",
     };
+
+    let target_path = config.target_path_absolute(root);
 
     conn.execute(
         "INSERT INTO ff_meta.projects (name, version, root_path, schema_name, materialization, wap_schema, dialect, db_path, db_name, target_path)
@@ -25,13 +31,13 @@ pub fn populate_project(conn: &Connection, config: &Config, root: &Path) -> Meta
             config.name,
             config.version,
             root.display().to_string(),
-            config.schema,
+            config.get_schema(None),
             materialization,
-            config.wap_schema,
+            config.get_wap_schema(None),
             dialect,
-            config.database.path,
-            config.database.name,
-            config.target_path,
+            db.path,
+            db.name,
+            target_path.display().to_string(),
         ],
     )
     .populate_context("insert projects")?;

@@ -12,7 +12,7 @@ use crate::commands::common::{self, load_project};
 pub(crate) async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> {
     let project = load_project(global)?;
 
-    let db = common::create_database_connection(&project.config, global.target.as_deref())?;
+    let db = common::create_database_connection(&project.config, global.database.as_deref())?;
 
     let all_seeds = &project.seeds;
 
@@ -61,7 +61,7 @@ pub(crate) async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> 
 
     for seed in &enabled_seeds {
         if args.full_refresh {
-            let table_name = seed.qualified_name(project.config.schema.as_deref());
+            let table_name = seed.qualified_name(project.config.get_schema(None));
             if global.verbose {
                 eprintln!("[verbose] Dropping existing table: {}", table_name);
             }
@@ -71,8 +71,8 @@ pub(crate) async fn execute(args: &SeedArgs, global: &GlobalArgs) -> Result<()> 
         }
 
         let path_str = seed.path.display().to_string();
-        let options = build_csv_options(seed, project.config.schema.as_deref());
-        let table_name = seed.qualified_name(project.config.schema.as_deref());
+        let options = build_csv_options(seed, project.config.get_schema(None));
+        let table_name = seed.qualified_name(project.config.get_schema(None));
 
         if global.verbose {
             eprintln!("[verbose] Loading {} from {}", table_name, path_str);

@@ -1,0 +1,14 @@
+kind: sql
+version: 1
+
+description: "Model exercising if/elif/else conditional branches"
+
+columns:
+  - name: id
+    type: INTEGER
+  - name: event_type
+    type: VARCHAR
+  - name: tier_label
+    type: VARCHAR
+  - name: status
+    type: VARCHAR

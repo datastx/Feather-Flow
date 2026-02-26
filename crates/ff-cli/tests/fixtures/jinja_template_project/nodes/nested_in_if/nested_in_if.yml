@@ -1,0 +1,12 @@
+kind: sql
+version: 1
+
+description: "Model with macro call nested inside if block"
+
+columns:
+  - name: id
+    type: INTEGER
+  - name: amount_dollars
+    type: DOUBLE
+  - name: status
+    type: VARCHAR

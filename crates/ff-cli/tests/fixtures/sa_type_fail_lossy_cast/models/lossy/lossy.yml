@@ -1,8 +1,0 @@
-version: 1
-name: lossy
-description: "FLOAT/DECIMAL to INTEGER casts — should trigger A005"
-columns:
-  - name: price_int
-    data_type: INTEGER
-  - name: amount_int
-    data_type: INTEGER

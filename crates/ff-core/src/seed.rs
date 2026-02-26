@@ -1,8 +1,8 @@
 //! Seed file representation and configuration
 //!
 //! Seeds are CSV files that can be loaded into database tables.
-//! Seeds live alongside models in `model_paths` directories and are identified
-//! by `kind: seed` in their YAML schema file.
+//! Seeds live in the `nodes/` directory and are identified by `kind: seed`
+//! in their YAML schema file.
 
 use crate::error::CoreError;
 use crate::model::schema::ModelSchema;

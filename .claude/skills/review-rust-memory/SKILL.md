@@ -5,6 +5,8 @@ description: Review and enforce Rust memory optimization patterns. Use when writ
 
 # Rust Memory Optimization Patterns, Footguns & Standards
 
+**Context**: Feather-Flow is a schema validation framework with static analysis as a first-class citizen. See **[HOW_FEATHERFLOW_WORKS.md](../../../HOW_FEATHERFLOW_WORKS.md)** for the full architecture. Memory efficiency matters most in the compile pipeline: schema propagation walks the entire DAG, DataFusion plans every SQL model, and analysis passes run per-model — so allocation costs scale with model count.
+
 A practical reference for writing memory-efficient Rust — common anti-patterns, the correct alternatives, and rules to enforce in code review.
 
 ## Core Rules

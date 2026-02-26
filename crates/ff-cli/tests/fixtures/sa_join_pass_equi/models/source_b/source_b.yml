@@ -1,8 +1,0 @@
-version: 1
-name: source_b
-description: "Source B with matching types"
-columns:
-  - name: id
-    data_type: INTEGER
-  - name: code
-    data_type: INTEGER

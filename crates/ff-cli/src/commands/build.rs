@@ -152,7 +152,7 @@ pub(crate) async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()>
     };
 
     let comment_ctx =
-        common::build_query_comment_context(&project.config, global.target.as_deref());
+        common::build_query_comment_context(&project.config, global.database.as_deref());
 
     let compiled_models = load_or_compile_models(&project, &run_args, global, comment_ctx.as_ref())
         .context("Failed to compile models")?;
@@ -175,8 +175,8 @@ pub(crate) async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()>
     }
 
     // Resolve WAP schema from config
-    let target = ff_core::config::Config::resolve_target(global.target.as_deref());
-    let wap_schema = project.config.get_wap_schema(target.as_deref());
+    let database = ff_core::config::Config::resolve_database(global.database.as_deref());
+    let wap_schema = project.config.get_wap_schema(database.as_deref());
 
     create_schemas(&db, &compiled_models, global).await?;
 
@@ -198,7 +198,7 @@ pub(crate) async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()>
     .await?;
 
     // Set up test infrastructure
-    let merged_vars = project.config.get_merged_vars(target.as_deref());
+    let merged_vars = project.config.get_merged_vars(database.as_deref());
     let macro_paths = project.config.macro_paths_absolute(&project.root);
     let jinja = JinjaEnvironment::with_macros(&merged_vars, &macro_paths);
 
@@ -217,9 +217,9 @@ pub(crate) async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()>
                 .get("schema")
                 .and_then(|v| v.as_str())
                 .map(String::from)
-                .or_else(|| project.config.schema.clone())
+                .or_else(|| project.config.get_schema(None).map(|s| s.to_string()))
         } else {
-            project.config.schema.clone()
+            project.config.get_schema(None).map(|s| s.to_string())
         };
         let qualified_name = match schema {
             Some(s) => format!("{}.{}", s, name),

@@ -1,0 +1,11 @@
+kind: sql
+version: 1
+name: joined
+description: "Joined model combining branch_a and branch_b on id"
+columns:
+  - name: id
+    data_type: INTEGER
+  - name: a
+    data_type: VARCHAR
+  - name: b
+    data_type: VARCHAR

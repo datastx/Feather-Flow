@@ -1,0 +1,7 @@
+kind: sql
+version: 1
+name: str_source
+description: "Source of string names"
+columns:
+  - name: name
+    data_type: VARCHAR

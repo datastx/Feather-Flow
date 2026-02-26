@@ -1,8 +1,0 @@
-version: 1
-name: stg_customers
-description: "Staged customers from raw source"
-columns:
-  - name: id
-    type: INTEGER
-  - name: name
-    type: VARCHAR

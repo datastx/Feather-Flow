@@ -5,7 +5,8 @@ description: Add a new feature following project conventions
 
 When adding a new feature:
 
-1. First, read the relevant existing code to understand patterns
+0. First, read **[HOW_FEATHERFLOW_WORKS.md](../../HOW_FEATHERFLOW_WORKS.md)** to understand that Feather-Flow is a schema validation framework with static analysis as a first-class citizen. Every feature must respect: mandatory YAML schemas per node, compile-time validation before execution, no CTEs or derived tables in SQL models, and AST-based dependency extraction.
+1. Read the relevant existing code to understand patterns
 2. Create a plan listing files to modify/create
 3. Implement with proper error handling (thiserror for libs)
 4. Add unit tests in the same file

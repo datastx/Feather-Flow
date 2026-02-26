@@ -50,7 +50,7 @@ pub(crate) async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
             .get("schema")
             .and_then(|v| v.as_str())
             .map(String::from)
-            .or_else(|| project.config.schema.clone());
+            .or_else(|| project.config.get_schema(None).map(|s| s.to_string()));
 
         dependencies.insert(name.to_string(), model_deps.clone());
 
@@ -74,7 +74,7 @@ pub(crate) async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
             schema: seed
                 .schema
                 .clone()
-                .or_else(|| project.config.schema.clone()),
+                .or_else(|| project.config.get_schema(None).map(|s| s.to_string())),
             model_deps: Vec::new(),
             external_deps: Vec::new(),
         });

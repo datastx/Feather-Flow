@@ -1,11 +1,9 @@
 name: sa_type_pass_agg_on_numeric
-version: "1.0.0"
-model_paths: ["models"]
-source_paths: ["sources"]
-target_path: "target"
+version: 1.0.0
 materialization: view
-schema: analytics
 dialect: duckdb
 database:
-  type: duckdb
-  path: "target/dev.duckdb"
+  default:
+    type: duckdb
+    path: target/dev.duckdb
+    schema: analytics

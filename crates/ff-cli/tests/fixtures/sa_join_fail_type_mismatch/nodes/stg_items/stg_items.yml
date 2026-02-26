@@ -1,0 +1,9 @@
+kind: sql
+version: 1
+name: stg_items
+description: "Staging items with INTEGER order_code"
+columns:
+  - name: id
+    data_type: INTEGER
+  - name: order_code
+    data_type: INTEGER

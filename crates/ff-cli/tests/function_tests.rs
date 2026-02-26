@@ -134,27 +134,11 @@ fn test_function_to_drop_sql() {
     );
 }
 
-// ── Duplicate Name Detection ────────────────────────────────────────────
-
-#[test]
-fn test_duplicate_function_name_errors() {
-    let result = Project::load(Path::new("tests/fixtures/sa_fn_fail_duplicate_name"));
-
-    assert!(
-        result.is_err(),
-        "Loading project with duplicate function names should fail"
-    );
-
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("my_func") || err.contains("FN003") || err.contains("Duplicate"),
-        "Error should mention the duplicate function name, got: {}",
-        err
-    );
-}
+// Note: Duplicate function name detection test removed — with unified nodes/
+// directory, duplicate names are impossible (filesystem prevents two dirs with
+// the same name). The DuplicateFunction guard remains as a safety net.
 
 // ── CLI: ff function list ───────────────────────────────────────────────
-
 #[test]
 fn test_function_list_command() {
     let output = Command::new(ff_bin())
@@ -395,13 +379,13 @@ fn test_zero_arg_function() {
     use tempfile::TempDir;
 
     let temp = TempDir::new().unwrap();
-    let func_dir = temp.path().join("functions");
-    std::fs::create_dir_all(&func_dir).unwrap();
 
-    // Create a zero-arg scalar function
+    // Create a zero-arg scalar function in nodes/
+    let func_dir = temp.path().join("nodes/constant_pi");
+    std::fs::create_dir_all(&func_dir).unwrap();
     std::fs::write(
         func_dir.join("constant_pi.yml"),
-        r#"kind: functions
+        r#"kind: function
 version: 1
 name: constant_pi
 description: "Returns pi"
@@ -415,20 +399,16 @@ returns:
     std::fs::write(func_dir.join("constant_pi.sql"), "3.14159265358979").unwrap();
 
     // Create minimal project config
-    let models_dir = temp.path().join("models");
-    std::fs::create_dir_all(&models_dir).unwrap();
     std::fs::write(
         temp.path().join("featherflow.yml"),
         r#"name: zero_arg_test
 version: "1.0.0"
-model_paths: ["models"]
-function_paths: ["functions"]
-target_path: "target"
 materialization: view
 dialect: duckdb
 database:
-  type: duckdb
-  path: "target/dev.duckdb"
+  default:
+    type: duckdb
+    path: "target/dev.duckdb"
 "#,
     )
     .unwrap();

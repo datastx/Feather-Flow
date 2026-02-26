@@ -1,6 +1,0 @@
-version: 1
-name: bad_join
-description: "JOIN with type mismatch: VARCHAR = INTEGER"
-columns:
-  - name: id
-    data_type: INTEGER

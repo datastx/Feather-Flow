@@ -161,10 +161,9 @@ impl SourceFile {
     }
 }
 
-/// Discover and load all source files from configured directories
+/// Discover and load all source files from the given directories.
 ///
-/// `source_paths` are expected to be absolute paths (e.g., from
-/// `Config::source_paths_absolute`). If a relative path is passed it is
+/// Paths are expected to be absolute. If a relative path is passed it is
 /// used as-is; callers are responsible for resolving paths beforehand.
 pub fn discover_sources(source_paths: &[PathBuf]) -> CoreResult<Vec<SourceFile>> {
     let mut sources = Vec::new();

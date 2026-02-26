@@ -37,8 +37,12 @@ pub(super) fn compute_config_hash(project: &Project) -> String {
     let config_str = format!(
         "{}:{}:{}",
         project.config.name,
-        project.config.database.path,
-        project.config.schema.as_deref().unwrap_or("default")
+        project
+            .config
+            .get_database_config(None)
+            .map(|c| c.path.as_str())
+            .unwrap_or(""),
+        project.config.get_schema(None).unwrap_or("default")
     );
     compute_checksum(&config_str)
 }

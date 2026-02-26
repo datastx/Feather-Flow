@@ -1,0 +1,9 @@
+kind: sql
+version: 1
+name: source_a
+description: "Source A with matching types"
+columns:
+  - name: id
+    data_type: INTEGER
+  - name: code
+    data_type: INTEGER

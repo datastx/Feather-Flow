@@ -1,0 +1,11 @@
+kind: sources
+version: 1
+name: raw_ecommerce
+schema: main
+tables:
+  - name: raw_data
+    columns:
+      - name: id
+        type: INT
+      - name: name
+        type: VARCHAR

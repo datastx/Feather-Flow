@@ -1,18 +1,12 @@
 name: node_paths_project
-version: "1.0.0"
-
-node_paths: ["nodes"]
-macro_paths: ["macros"]
-target_path: "target"
-
+version: 1.0.0
 materialization: view
-schema: analytics
 dialect: duckdb
-
 database:
-  type: duckdb
-  path: ":memory:"
-  name: main
-
+  default:
+    type: duckdb
+    path: ':memory:'
+    name: main
+    schema: analytics
 vars:
-  start_date: "2024-01-01"
+  start_date: '2024-01-01'
