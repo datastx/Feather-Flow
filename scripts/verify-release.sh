@@ -55,29 +55,25 @@ echo ""
 echo "Step 5: CLI verification"
 PROJECT_DIR="tests/fixtures/sample_project"
 
-# Parse
-cargo run -p ff-cli -- --project-dir "$PROJECT_DIR" parse > /dev/null 2>&1 || fail "ff parse failed"
-pass "ff parse works"
+# Compile (includes parse-only validation)
+cargo run -p ff-cli -- --project-dir "$PROJECT_DIR" dt compile --parse-only > /dev/null 2>&1 || fail "ff dt compile --parse-only failed"
+pass "ff dt compile --parse-only works"
 
 # Compile
-cargo run -p ff-cli -- --project-dir "$PROJECT_DIR" compile > /dev/null 2>&1 || fail "ff compile failed"
-pass "ff compile works"
+cargo run -p ff-cli -- --project-dir "$PROJECT_DIR" dt compile > /dev/null 2>&1 || fail "ff dt compile failed"
+pass "ff dt compile works"
 
 # List
-cargo run -p ff-cli -- --project-dir "$PROJECT_DIR" ls > /dev/null 2>&1 || fail "ff ls failed"
-pass "ff ls works"
+cargo run -p ff-cli -- --project-dir "$PROJECT_DIR" dt ls > /dev/null 2>&1 || fail "ff dt ls failed"
+pass "ff dt ls works"
 
-# Validate
-cargo run -p ff-cli -- --project-dir "$PROJECT_DIR" validate > /dev/null 2>&1 || fail "ff validate failed"
-pass "ff validate works"
-
-# Seed
-cargo run -p ff-cli -- --project-dir "$PROJECT_DIR" seed > /dev/null 2>&1 || fail "ff seed failed"
-pass "ff seed works"
+# Deploy seeds
+cargo run -p ff-cli -- --project-dir "$PROJECT_DIR" dt deploy seeds > /dev/null 2>&1 || fail "ff dt deploy seeds failed"
+pass "ff dt deploy seeds works"
 
 # Docs
-cargo run -p ff-cli -- --project-dir "$PROJECT_DIR" docs > /dev/null 2>&1 || fail "ff docs failed"
-pass "ff docs works"
+cargo run -p ff-cli -- --project-dir "$PROJECT_DIR" dt docs > /dev/null 2>&1 || fail "ff dt docs failed"
+pass "ff dt docs works"
 
 # 6. Version check
 echo ""

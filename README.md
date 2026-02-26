@@ -59,7 +59,7 @@ sudo mv ff /usr/local/bin/
 docker pull ghcr.io/datastx/feather-flow:latest
 
 # Run any ff command
-docker run --rm -v "$(pwd)":/workspace -w /workspace ghcr.io/datastx/feather-flow compile
+docker run --rm -v "$(pwd)":/workspace -w /workspace ghcr.io/datastx/feather-flow dt compile
 docker run --rm -v "$(pwd)":/workspace -w /workspace ghcr.io/datastx/feather-flow run
 docker run --rm -v "$(pwd)":/workspace -w /workspace ghcr.io/datastx/feather-flow run --mode test
 ```
@@ -143,13 +143,13 @@ columns:
 
 ```bash
 # Load seed data
-ff deploy seeds
+ff dt deploy seeds
 
 # Compile models (renders Jinja, extracts dependencies, builds manifest)
-ff compile
+ff dt compile
 
 # List models and sources
-ff ls
+ff dt ls
 
 # Execute models in dependency order
 ff run
@@ -158,25 +158,19 @@ ff run
 ff run --mode test
 
 # Validate project without execution
-ff compile --parse-only
+ff dt compile --parse-only
 
 # Generate documentation
-ff docs
+ff dt docs
 ```
 
 ## Commands
 
-### `ff compile`
+Featherflow commands are organized into **runtime** commands (top-level) and **developer tooling** (`ff dt`):
 
-Compiles SQL models by rendering Jinja templates, extracting dependencies, and generating a manifest.
+### Runtime Commands
 
-```bash
-ff compile [--nodes <NODES>] [--parse-only] [--strict] [--output <FORMAT>]
-```
-
-Use `--parse-only` to validate without writing output files. Use `--strict` to treat warnings as errors.
-
-### `ff run`
+#### `ff run`
 
 Executes models, runs tests, or both depending on the `--mode` flag.
 
@@ -197,83 +191,112 @@ Node selectors:
 - `tag:X` - Run models with a specific tag
 - `path:X` - Run models in a specific path
 
-### `ff ls`
+#### `ff run-macro`
+
+Execute a standalone SQL macro.
+
+```bash
+ff run-macro <MACRO_NAME> [--args <JSON>]
+```
+
+### Developer Tooling (`ff dt`)
+
+#### `ff dt compile`
+
+Compiles SQL models by rendering Jinja templates, extracting dependencies, and generating a manifest.
+
+```bash
+ff dt compile [--nodes <NODES>] [--parse-only] [--strict] [--output <FORMAT>]
+```
+
+Use `--parse-only` to validate without writing output files. Use `--strict` to treat warnings as errors.
+
+#### `ff dt ls`
 
 Lists models and sources with their dependencies and materialization settings.
 
 ```bash
-ff ls [--output <FORMAT>] [--nodes <NODES>] [--resource-type <TYPE>]
+ff dt ls [--output <FORMAT>] [--nodes <NODES>] [--resource-type <TYPE>]
 ```
 
 Output formats: `table` (default), `json`, `tree`, `path`
 
 Resource types: `model`, `source`, `seed`, `test`, `function`
 
-### `ff deploy`
+#### `ff dt deploy`
 
 Deploy seeds or functions to the database.
 
 ```bash
 # Load CSV seed files
-ff deploy seeds [--seeds <NAMES>] [--full-refresh]
+ff dt deploy seeds [--seeds <NAMES>] [--full-refresh]
 
 # Deploy user-defined functions
-ff deploy functions deploy [--functions <NAMES>]
+ff dt deploy functions deploy [--functions <NAMES>]
 
 # List, validate, show, or drop functions
-ff deploy functions list|validate|show|drop
+ff dt deploy functions list|validate|show|drop
 ```
 
-### `ff docs`
+#### `ff dt docs`
 
 Generates documentation from schema files.
 
 ```bash
-ff docs [--output <PATH>] [--format <FORMAT>] [--nodes <NODES>]
+ff dt docs [--output <PATH>] [--format <FORMAT>] [--nodes <NODES>]
 
 # Launch interactive documentation server
-ff docs serve [--port <PORT>] [--no-browser] [--static-export <DIR>]
+ff dt docs serve [--port <PORT>] [--no-browser] [--static-export <DIR>]
 ```
 
-Output formats: `markdown` (default), `json`, `html`
-
-### `ff lineage`
+#### `ff dt lineage`
 
 Trace column-level lineage across models.
 
 ```bash
-ff lineage --node <NODE> --column <COLUMN> [--direction <DIR>] [--output <FORMAT>]
+ff dt lineage --node <NODE> --column <COLUMN> [--direction <DIR>] [--output <FORMAT>]
 ```
 
-### `ff analyze`
+#### `ff dt analyze`
 
 Run static analysis passes on SQL models.
 
 ```bash
-ff analyze [--nodes <NODES>] [--output <FORMAT>] [--severity <LEVEL>]
+ff dt analyze [--nodes <NODES>] [--output <FORMAT>] [--severity <LEVEL>]
+
+# Query the metadata database
+ff dt analyze query <SQL> [--json]
+
+# Export metadata as JSON
+ff dt analyze export [--output <FILE>]
+
+# List metadata tables
+ff dt analyze tables
 ```
 
-### `ff fmt`
+#### `ff dt fmt`
 
 Format SQL source files.
 
 ```bash
-ff fmt [<PATHS>] [--nodes <NODES>] [--check] [--diff]
+ff dt fmt [<PATHS>] [--nodes <NODES>] [--check] [--diff]
 ```
 
-### `ff init`
+#### `ff dt init`
 
 Initialize a new Featherflow project.
 
 ```bash
-ff init [--name <NAME>] [--database_path <PATH>]
+ff dt init [--name <NAME>] [--database_path <PATH>]
 ```
 
-### Other Commands
+#### `ff dt clean`
 
-- `ff clean [--dry-run]` — Remove generated artifacts
-- `ff run-macro <MACRO_NAME> [--args <JSON>]` — Execute a standalone SQL macro
-- `ff meta query <SQL>` / `ff meta export` / `ff meta tables` — Query the metadata database
+Remove generated artifacts.
+
+```bash
+ff dt clean [--dry-run]
+```
 
 ## Global Options
 

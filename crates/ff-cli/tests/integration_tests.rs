@@ -4028,6 +4028,7 @@ fn ff_bin() -> String {
 fn run_lineage_json() -> serde_json::Value {
     let output = std::process::Command::new(ff_bin())
         .args([
+            "dt",
             "lineage",
             "--project-dir",
             "tests/fixtures/sample_project",
@@ -4035,7 +4036,7 @@ fn run_lineage_json() -> serde_json::Value {
             "json",
         ])
         .output()
-        .expect("Failed to run ff lineage");
+        .expect("Failed to run ff dt lineage");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -4059,6 +4060,7 @@ fn run_lineage_json() -> serde_json::Value {
 fn run_lineage_column_json(model: &str, column: &str) -> Vec<serde_json::Value> {
     let output = std::process::Command::new(ff_bin())
         .args([
+            "dt",
             "lineage",
             "--project-dir",
             "tests/fixtures/sample_project",
@@ -4070,7 +4072,7 @@ fn run_lineage_column_json(model: &str, column: &str) -> Vec<serde_json::Value> 
             "json",
         ])
         .output()
-        .expect("Failed to run ff lineage");
+        .expect("Failed to run ff dt lineage");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
