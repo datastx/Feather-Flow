@@ -1,0 +1,14 @@
+kind: sql
+version: 1
+
+description: "Plain SQL with no Jinja syntax"
+
+columns:
+  - name: id
+    type: INTEGER
+  - name: user_id
+    type: INTEGER
+  - name: event_type
+    type: VARCHAR
+  - name: status
+    type: VARCHAR

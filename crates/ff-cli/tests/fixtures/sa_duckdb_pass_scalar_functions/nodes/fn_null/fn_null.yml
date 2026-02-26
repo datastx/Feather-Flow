@@ -1,0 +1,7 @@
+kind: sql
+version: 1
+name: fn_null
+description: "Null-handling function stub: coalesce"
+columns:
+  - name: safe_name
+    data_type: VARCHAR

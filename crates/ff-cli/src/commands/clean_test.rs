@@ -8,17 +8,14 @@ async fn test_clean_removes_target_directory() {
     let temp_dir = tempdir().unwrap();
     let project_path = temp_dir.path();
 
-    // Create a minimal featherflow.yml
     let config_content = r#"
 name: test_project
-model_paths:
-  - models
 database:
-  type: duckdb
-  path: ":memory:"
+  default:
+    type: duckdb
+    path: ":memory:"
 "#;
     fs::write(project_path.join("featherflow.yml"), config_content).unwrap();
-    fs::create_dir_all(project_path.join("models")).unwrap();
 
     // Create target directory with some files
     let target_dir = project_path.join("target");
@@ -31,8 +28,7 @@ database:
     let global = GlobalArgs {
         verbose: false,
         project_dir: project_path.to_path_buf(),
-        config: None,
-        target: None,
+        database: None,
     };
 
     execute(&args, &global).await.unwrap();
@@ -45,17 +41,14 @@ async fn test_clean_dry_run_does_not_remove() {
     let temp_dir = tempdir().unwrap();
     let project_path = temp_dir.path();
 
-    // Create a minimal featherflow.yml
     let config_content = r#"
 name: test_project
-model_paths:
-  - models
 database:
-  type: duckdb
-  path: ":memory:"
+  default:
+    type: duckdb
+    path: ":memory:"
 "#;
     fs::write(project_path.join("featherflow.yml"), config_content).unwrap();
-    fs::create_dir_all(project_path.join("models")).unwrap();
 
     // Create target directory
     let target_dir = project_path.join("target");
@@ -65,8 +58,7 @@ database:
     let global = GlobalArgs {
         verbose: false,
         project_dir: project_path.to_path_buf(),
-        config: None,
-        target: None,
+        database: None,
     };
 
     execute(&args, &global).await.unwrap();
@@ -80,17 +72,14 @@ async fn test_clean_handles_missing_directory() {
     let temp_dir = tempdir().unwrap();
     let project_path = temp_dir.path();
 
-    // Create a minimal featherflow.yml
     let config_content = r#"
 name: test_project
-model_paths:
-  - models
 database:
-  type: duckdb
-  path: ":memory:"
+  default:
+    type: duckdb
+    path: ":memory:"
 "#;
     fs::write(project_path.join("featherflow.yml"), config_content).unwrap();
-    fs::create_dir_all(project_path.join("models")).unwrap();
 
     // Don't create target directory - it should be handled gracefully
     let target_dir = project_path.join("target");
@@ -100,8 +89,7 @@ database:
     let global = GlobalArgs {
         verbose: true,
         project_dir: project_path.to_path_buf(),
-        config: None,
-        target: None,
+        database: None,
     };
 
     // Should not error

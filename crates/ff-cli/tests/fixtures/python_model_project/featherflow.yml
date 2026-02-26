@@ -1,13 +1,9 @@
 name: python_model_project
-version: "1.0.0"
-
-model_paths: ["models"]
-target_path: "target"
-
+version: 1.0.0
 materialization: table
 dialect: duckdb
-
 database:
-  type: duckdb
-  path: ":memory:"
-  name: main
+  default:
+    type: duckdb
+    path: ':memory:'
+    name: main

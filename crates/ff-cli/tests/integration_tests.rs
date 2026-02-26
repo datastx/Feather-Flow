@@ -1049,23 +1049,22 @@ fn test_invalid_yaml_schema_error() {
     let dir = tempdir().unwrap();
     let project_dir = dir.path();
 
-    // Create minimal project structure (directory-per-model)
-    std::fs::create_dir_all(project_dir.join("models/test_model")).unwrap();
+    // Create minimal project structure (directory-per-node)
+    std::fs::create_dir_all(project_dir.join("nodes/test_model")).unwrap();
 
     // Create config file
     let config_content = r#"
 name: test_project
 database:
-  type: duckdb
-  path: ":memory:"
-model_paths:
-  - models
+  default:
+    type: duckdb
+    path: ":memory:"
 "#;
     std::fs::write(project_dir.join("featherflow.yml"), config_content).unwrap();
 
     // Create a valid model SQL file
     std::fs::write(
-        project_dir.join("models/test_model/test_model.sql"),
+        project_dir.join("nodes/test_model/test_model.sql"),
         "SELECT 1 as id",
     )
     .unwrap();
@@ -1074,11 +1073,12 @@ model_paths:
     let invalid_yaml = r#"
 version: "1"
 name: test_model
+kind: sql
   columns:  # Wrong indentation
 - name: id
 "#;
     std::fs::write(
-        project_dir.join("models/test_model/test_model.yml"),
+        project_dir.join("nodes/test_model/test_model.yml"),
         invalid_yaml,
     )
     .unwrap();
@@ -1136,19 +1136,18 @@ fn test_empty_project() {
     let dir = tempdir().unwrap();
     let project_dir = dir.path();
 
-    // Create config file but no models directory
+    // Create config file but no nodes directory
     let config_content = r#"
 name: empty_project
 database:
-  type: duckdb
-  path: ":memory:"
-model_paths:
-  - models
+  default:
+    type: duckdb
+    path: ":memory:"
 "#;
     std::fs::write(project_dir.join("featherflow.yml"), config_content).unwrap();
 
-    // Create empty models directory
-    std::fs::create_dir_all(project_dir.join("models")).unwrap();
+    // Create empty nodes directory
+    std::fs::create_dir_all(project_dir.join("nodes")).unwrap();
 
     let result = Project::load(project_dir);
     match result {

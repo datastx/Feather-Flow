@@ -85,14 +85,6 @@ pub enum CoreError {
     #[error("[E011] Invalid model directory at '{path}': {reason}")]
     InvalidModelDirectory { path: String, reason: String },
 
-    /// E012: Model directory name doesn't match SQL file name
-    #[error("[E012] Model directory mismatch: directory '{directory}' contains SQL file '{sql_file}' (must match)")]
-    ModelDirectoryMismatch { directory: String, sql_file: String },
-
-    /// E013: Model directory contains unexpected extra files
-    #[error("[E013] Model directory '{directory}' contains unexpected files: {files}. Each model directory must contain exactly one .sql and one .yml/.yaml file.")]
-    ExtraFilesInModelDirectory { directory: String, files: String },
-
     /// E014: IO error (no path context — prefer [`IoWithPath`](Self::IoWithPath) for file operations)
     #[error("[E014] IO error: {0}")]
     Io(#[from] std::io::Error),

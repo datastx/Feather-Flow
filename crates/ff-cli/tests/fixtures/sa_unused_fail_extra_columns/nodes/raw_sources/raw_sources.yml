@@ -1,0 +1,15 @@
+kind: sources
+version: 1
+name: raw_ecommerce
+schema: main
+tables:
+  - name: raw_data
+    columns:
+      - name: id
+        type: INTEGER
+      - name: name
+        type: VARCHAR
+      - name: internal_code
+        type: VARCHAR
+      - name: debug_flag
+        type: BOOLEAN

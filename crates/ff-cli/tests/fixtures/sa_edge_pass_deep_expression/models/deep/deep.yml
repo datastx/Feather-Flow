@@ -1,6 +1,0 @@
-version: 1
-name: deep
-description: "Model with deeply nested CASE/COALESCE/CAST expression"
-columns:
-  - name: safe_amount
-    type: BIGINT

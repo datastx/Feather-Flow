@@ -1,6 +1,6 @@
 //! User-defined function definitions and discovery
 //!
-//! Functions are `.yml` + `.sql` pairs discovered from `function_paths` directories.
+//! Functions are `.yml` + `.sql` pairs discovered from the `nodes/` directory.
 //! They deploy to DuckDB as `CREATE OR REPLACE MACRO` and register as stub UDFs
 //! in the DataFusion static analysis engine.
 

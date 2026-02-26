@@ -10,13 +10,7 @@ use crate::commands::common::load_project;
 pub(crate) async fn execute(args: &CleanArgs, global: &GlobalArgs) -> Result<()> {
     let project = load_project(global)?;
 
-    // Default clean targets if not specified in config
-    let default_targets = vec!["target".to_string()];
-    let clean_targets = if project.config.clean_targets.is_empty() {
-        &default_targets
-    } else {
-        &project.config.clean_targets
-    };
+    let clean_targets = project.config.clean_targets();
 
     if args.dry_run {
         println!("Dry run - would clean the following directories:");

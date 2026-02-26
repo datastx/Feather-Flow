@@ -67,7 +67,7 @@ pub(crate) fn load_or_compile_models(
     compile_all_models(
         project,
         &all_model_names,
-        global.target.as_deref(),
+        global.database.as_deref(),
         comment_ctx,
     )
 }
@@ -86,12 +86,12 @@ struct CompileEnv<'a> {
 fn compile_all_models(
     project: &Project,
     model_names: &[String],
-    target: Option<&str>,
+    database: Option<&str>,
     comment_ctx: Option<&ff_core::query_comment::QueryCommentContext>,
 ) -> Result<HashMap<String, CompiledModel>> {
     let env = CompileEnv {
         project,
-        jinja: common::build_jinja_env_with_context(project, target, true),
+        jinja: common::build_jinja_env_with_context(project, database, true),
         parser: SqlParser::from_dialect_name(&project.config.dialect.to_string())
             .context("Invalid SQL dialect")?,
         known_models: project.models.keys().map(|k| k.as_str()).collect(),
@@ -128,7 +128,7 @@ fn compile_python_model(
         .config
         .schema
         .clone()
-        .or_else(|| project.config.schema.clone());
+        .or_else(|| project.config.get_schema(None).map(|s| s.to_string()));
 
     CompiledModel {
         sql: String::new(),
@@ -193,7 +193,7 @@ fn compile_sql_model(
         .get("schema")
         .and_then(|v| v.as_str())
         .map(String::from)
-        .or_else(|| env.project.config.schema.clone());
+        .or_else(|| env.project.config.get_schema(None).map(|s| s.to_string()));
 
     let (unique_key, incremental_strategy, on_schema_change) =
         parse_incremental_config(&config_values, mat);

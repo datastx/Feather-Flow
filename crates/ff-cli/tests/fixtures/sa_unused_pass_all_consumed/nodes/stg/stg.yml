@@ -1,0 +1,11 @@
+kind: sql
+version: 1
+name: stg
+description: "Staging model with id, a, b — all consumed across diamond"
+columns:
+  - name: id
+    data_type: INTEGER
+  - name: a
+    data_type: VARCHAR
+  - name: b
+    data_type: VARCHAR

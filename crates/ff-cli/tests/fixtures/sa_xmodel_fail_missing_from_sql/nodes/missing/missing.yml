@@ -1,0 +1,9 @@
+kind: sql
+version: 1
+name: missing
+description: "YAML declares phantom_col that does not exist in SQL"
+columns:
+  - name: id
+    data_type: INTEGER
+  - name: phantom_col
+    data_type: VARCHAR

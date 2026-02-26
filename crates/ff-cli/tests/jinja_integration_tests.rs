@@ -26,7 +26,7 @@ fn compile_to_tempdir(fixture: &str) -> TempDir {
             "compile",
             "--project-dir",
             fixture,
-            "-d",
+            "--output-dir",
             tmp.path().to_str().unwrap(),
             "--skip-static-analysis",
         ])
@@ -55,7 +55,7 @@ fn compile_with_args(fixture: &str, extra_args: &[&str]) -> (String, String, boo
         "compile",
         "--project-dir",
         fixture,
-        "-d",
+        "--output-dir",
         tmp.path().to_str().unwrap(),
         "--skip-static-analysis",
     ];
@@ -82,7 +82,7 @@ fn compile_to_tempdir_with_args(fixture: &str, extra_args: &[&str]) -> (TempDir,
         "compile",
         "--project-dir",
         fixture,
-        "-d",
+        "--output-dir",
         tmp.path().to_str().unwrap(),
         "--skip-static-analysis",
     ];

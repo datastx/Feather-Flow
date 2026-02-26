@@ -1,15 +1,10 @@
 name: fmt_project
-version: "1.0.0"
-
-model_paths: ["models"]
-target_path: "target"
-
+version: 1.0.0
 materialization: view
 dialect: duckdb
-
 database:
-  type: duckdb
-  path: ":memory:"
-
+  default:
+    type: duckdb
+    path: ':memory:'
 format:
   line_length: 88

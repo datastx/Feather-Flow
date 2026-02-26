@@ -1,0 +1,10 @@
+kind: sql
+version: 1
+
+description: "Model that imports from a nonexistent macro file"
+
+columns:
+  - name: id
+    type: INTEGER
+  - name: transformed_status
+    type: VARCHAR

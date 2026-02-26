@@ -1,8 +1,0 @@
-version: 1
-name: int
-description: "Intermediate model selecting id and name from stg"
-columns:
-  - name: id
-    data_type: INTEGER
-  - name: name
-    data_type: VARCHAR

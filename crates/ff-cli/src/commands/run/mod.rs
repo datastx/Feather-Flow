@@ -141,7 +141,7 @@ async fn execute_models_mode(
     let db = create_database_connection(project, global)?;
 
     let comment_ctx =
-        common::build_query_comment_context(&project.config, global.target.as_deref());
+        common::build_query_comment_context(&project.config, global.database.as_deref());
 
     let mut compiled_models = load_or_compile_models(project, args, global, comment_ctx.as_ref())?;
     qualify_sql_references(&mut compiled_models, project, global);
@@ -255,8 +255,8 @@ async fn execute_models_mode(
         }
     }
 
-    let target = ff_core::config::Config::resolve_target(global.target.as_deref());
-    let wap_schema = project.config.get_wap_schema(target.as_deref());
+    let database = ff_core::config::Config::resolve_database(global.database.as_deref());
+    let wap_schema = project.config.get_wap_schema(database.as_deref());
 
     create_schemas(&db, &compiled_models, global).await?;
 
@@ -301,7 +301,11 @@ async fn execute_models_mode(
         None => (None, None),
     };
 
-    let db_path_str = project.config.database.path.clone();
+    let db_path_str = project
+        .config
+        .get_database_config(None)
+        .map(|c| c.path.clone())
+        .unwrap_or_default();
     let db_path_ref = db_path_str.as_str();
 
     let exec_ctx = ExecutionContext {

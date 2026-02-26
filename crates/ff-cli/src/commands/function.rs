@@ -112,7 +112,7 @@ async fn list(args: &FunctionListArgs, global: &GlobalArgs) -> Result<()> {
 /// Deploy functions to the database as DuckDB macros
 async fn deploy(args: &FunctionDeployArgs, global: &GlobalArgs) -> Result<()> {
     let project = load_project(global)?;
-    let db = create_database_connection(&project.config, global.target.as_deref())?;
+    let db = create_database_connection(&project.config, global.database.as_deref())?;
     let jinja = common::build_jinja_env(&project);
 
     common::set_project_search_path(&db, &project).await?;
@@ -300,7 +300,7 @@ async fn validate(_args: &FunctionValidateArgs, global: &GlobalArgs) -> Result<(
 /// Drop deployed functions from the database
 async fn drop(args: &FunctionDropArgs, global: &GlobalArgs) -> Result<()> {
     let project = load_project(global)?;
-    let db = create_database_connection(&project.config, global.target.as_deref())?;
+    let db = create_database_connection(&project.config, global.database.as_deref())?;
 
     let functions = filter_functions(&args.functions, &project);
 

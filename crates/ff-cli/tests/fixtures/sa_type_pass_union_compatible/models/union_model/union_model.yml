@@ -1,6 +1,0 @@
-version: 1
-name: union_model
-description: "Union of compatible INT columns — no A002"
-columns:
-  - name: id
-    data_type: INTEGER

@@ -21,7 +21,7 @@ pub(crate) async fn execute(args: &LineageArgs, global: &GlobalArgs) -> Result<(
 
     let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
         .context("Invalid SQL dialect")?;
-    let jinja = common::build_jinja_env_with_context(&project, global.target.as_deref(), false);
+    let jinja = common::build_jinja_env_with_context(&project, global.database.as_deref(), false);
 
     let mut known_models: HashSet<&str> = project.models.keys().map(|k| k.as_str()).collect();
     for seed in &project.seeds {

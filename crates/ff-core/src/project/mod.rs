@@ -51,7 +51,7 @@ pub struct Project {
     /// Models discovered in the project
     pub models: HashMap<ModelName, Model>,
 
-    /// Seeds discovered in the project (kind: seed directories in model_paths)
+    /// Seeds discovered in the project (kind: seed in nodes/)
     pub seeds: Vec<Seed>,
 
     /// Schema tests from model YAML files

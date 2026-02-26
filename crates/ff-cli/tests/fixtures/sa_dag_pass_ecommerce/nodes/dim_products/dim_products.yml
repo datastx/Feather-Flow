@@ -1,0 +1,13 @@
+kind: sql
+version: 1
+name: dim_products
+description: "Product dimension table"
+columns:
+  - name: id
+    type: INTEGER
+  - name: name
+    type: VARCHAR
+  - name: price
+    type: "DECIMAL(10,2)"
+  - name: category
+    type: VARCHAR

@@ -1,6 +1,0 @@
-version: 1
-name: redundant
-description: "IS NOT NULL on NOT NULL column — should trigger A012"
-columns:
-  - name: id
-    data_type: INTEGER

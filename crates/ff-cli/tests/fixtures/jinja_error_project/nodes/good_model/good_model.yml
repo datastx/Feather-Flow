@@ -1,0 +1,10 @@
+kind: sql
+version: 1
+
+description: "A valid model that should compile even when siblings fail"
+
+columns:
+  - name: id
+    type: INTEGER
+  - name: status
+    type: VARCHAR

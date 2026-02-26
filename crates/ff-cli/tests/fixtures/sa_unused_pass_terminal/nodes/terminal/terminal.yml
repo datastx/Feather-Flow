@@ -1,0 +1,11 @@
+kind: sql
+version: 1
+name: terminal
+description: "Terminal model with extra columns — no A020 because no downstream"
+columns:
+  - name: id
+    data_type: INTEGER
+  - name: name
+    data_type: VARCHAR
+  - name: extra
+    data_type: VARCHAR

@@ -38,7 +38,7 @@ async fn run_analysis(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
 
     let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
         .context("Invalid SQL dialect")?;
-    let jinja = common::build_jinja_env_with_context(&project, global.target.as_deref(), false);
+    let jinja = common::build_jinja_env_with_context(&project, global.database.as_deref(), false);
 
     let known_models: HashSet<&str> = project.models.keys().map(|k| k.as_str()).collect();
 

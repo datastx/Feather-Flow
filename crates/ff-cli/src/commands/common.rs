@@ -640,34 +640,38 @@ pub(crate) fn build_jinja_env(project: &Project) -> ff_jinja::JinjaEnvironment<'
 /// `false` for compile/validate/analyze.
 pub(crate) fn build_jinja_env_with_context(
     project: &Project,
-    target: Option<&str>,
+    database: Option<&str>,
     executing: bool,
 ) -> ff_jinja::JinjaEnvironment<'static> {
     let macro_paths = project.config.macro_paths_absolute(&project.root);
-    let template_ctx = build_template_context(project, target, executing);
+    let template_ctx = build_template_context(project, database, executing);
     ff_jinja::JinjaEnvironment::with_context(&project.config.vars, &macro_paths, &template_ctx)
 }
 
-/// Build a `TemplateContext` from project and target info.
+/// Build a `TemplateContext` from project and database connection info.
 ///
 /// Populates `project_name`, `target` (name, schema, database_type),
 /// and `executing` flag. `run_id` and `run_started_at` are generated
 /// inside `TemplateContext::new()`.
 pub(crate) fn build_template_context(
     project: &Project,
-    target: Option<&str>,
+    database: Option<&str>,
     executing: bool,
 ) -> ff_jinja::TemplateContext {
-    let resolved_target = ff_core::config::Config::resolve_target(target);
-    let target_name = resolved_target.as_deref().unwrap_or("default").to_string();
+    let resolved = Config::resolve_database(database);
+    let conn_name = resolved.as_deref().unwrap_or("default").to_string();
 
-    let schema = project.config.schema.clone();
-    let database_type = project.config.database.db_type.to_string();
+    let schema = project.config.get_schema(resolved.as_deref()).map(|s| s.to_string());
+    let database_type = project
+        .config
+        .get_database_config(resolved.as_deref())
+        .map(|c| c.db_type.to_string())
+        .unwrap_or_else(|_| "duckdb".to_string());
 
     ff_jinja::TemplateContext::new(
         project.config.name.clone(),
         ff_jinja::TargetContext {
-            name: target_name,
+            name: conn_name,
             schema,
             database_type,
         },
@@ -693,7 +697,7 @@ pub(crate) fn build_model_context(
         .config
         .schema
         .clone()
-        .or_else(|| project.config.schema.clone());
+        .or_else(|| project.config.get_schema(None).map(|s| s.to_string()));
 
     let rel_path = model
         .path
@@ -710,18 +714,18 @@ pub(crate) fn build_model_context(
     }
 }
 
-/// Create a database connection from a config and optional target override.
+/// Create a database connection from a config and optional database name.
 ///
-/// Resolves the target via `Config::resolve_target`, gets the database
+/// Resolves the connection via `Config::resolve_database`, gets the database
 /// configuration with `Config::get_database_config`, and creates a
 /// `DuckDbBackend` wrapped in an `Arc<dyn Database>`.
 pub(crate) fn create_database_connection(
     config: &Config,
-    target: Option<&str>,
+    database: Option<&str>,
 ) -> Result<Arc<dyn Database>> {
-    let resolved_target = Config::resolve_target(target);
+    let resolved = Config::resolve_database(database);
     let db_config = config
-        .get_database_config(resolved_target.as_deref())
+        .get_database_config(resolved.as_deref())
         .context("Failed to get database configuration")?;
     let db: Arc<dyn Database> =
         Arc::new(DuckDbBackend::new(&db_config.path).context("Failed to connect to database")?);
@@ -737,7 +741,12 @@ pub(crate) async fn set_project_search_path(
     db: &Arc<dyn Database>,
     project: &Project,
 ) -> Result<()> {
-    let mut schemas: Vec<String> = project.config.schema.iter().cloned().collect();
+    let mut schemas: Vec<String> = project
+        .config
+        .get_schema(None)
+        .map(|s| s.to_string())
+        .into_iter()
+        .collect();
     if !schemas.iter().any(|s| s == "main") {
         schemas.push("main".to_string());
     }
@@ -851,8 +860,12 @@ pub(crate) fn build_qualification_map(
 ) -> HashMap<String, ff_sql::qualify::QualifiedRef> {
     use ff_sql::qualify::QualifiedRef;
 
-    let db_name = &project.config.database.name;
-    let default_schema = project.config.schema.as_deref().unwrap_or("main");
+    let db_name = project
+        .config
+        .get_database_config(None)
+        .map(|c| c.name.as_str())
+        .unwrap_or("main");
+    let default_schema = project.config.get_schema(None).unwrap_or("main");
     let mut map = HashMap::new();
 
     // Models: bare_name → schema.name (default database, 2-part)
@@ -909,15 +922,15 @@ pub(crate) fn build_qualification_map(
 /// are enabled in the project config, returning `None` otherwise.
 pub(crate) fn build_query_comment_context(
     config: &Config,
-    target: Option<&str>,
+    database: Option<&str>,
 ) -> Option<ff_core::query_comment::QueryCommentContext> {
     if !config.query_comment.enabled {
         return None;
     }
-    let resolved_target = Config::resolve_target(target);
+    let resolved = Config::resolve_database(database);
     Some(ff_core::query_comment::QueryCommentContext::new(
         &config.name,
-        resolved_target.as_deref(),
+        resolved.as_deref(),
         config.query_comment.clone(),
     ))
 }

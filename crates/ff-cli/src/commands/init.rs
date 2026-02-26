@@ -34,12 +34,11 @@ pub(crate) async fn execute(args: &InitArgs) -> Result<()> {
 
     let dirs = [
         "",
-        "models",
-        "models/my_first_model",
-        "sources",
+        "nodes",
+        "nodes/my_first_model",
+        "nodes/safe_divide",
         "macros",
         "tests",
-        "functions",
     ];
     for dir in &dirs {
         let path = project_dir.join(dir);
@@ -53,19 +52,13 @@ pub(crate) async fn execute(args: &InitArgs) -> Result<()> {
         r#"name: "{name}"
 version: "1.0.0"
 
-model_paths: ["models"]
-source_paths: ["sources"]
-macro_paths: ["macros"]
-test_paths: ["tests"]
-function_paths: ["functions"]
-target_path: "target"
-
 materialization: view
 dialect: duckdb
 
 database:
-  type: duckdb
-  path: "{db_path}"
+  default:
+    type: duckdb
+    path: "{db_path}"
 
 vars:
   environment: dev
@@ -94,12 +87,13 @@ FROM raw_example
 WHERE id IS NOT NULL
 "#;
     fs::write(
-        project_dir.join("models/my_first_model/my_first_model.sql"),
+        project_dir.join("nodes/my_first_model/my_first_model.sql"),
         example_sql,
     )
     .context("Failed to write example model SQL")?;
 
-    let example_yml = r#"version: 1
+    let example_yml = r#"kind: sql
+version: 1
 description: "Example model that transforms raw data"
 
 columns:
@@ -119,12 +113,12 @@ columns:
     description: "Timestamp when the record was created"
 "#;
     fs::write(
-        project_dir.join("models/my_first_model/my_first_model.yml"),
+        project_dir.join("nodes/my_first_model/my_first_model.yml"),
         example_yml,
     )
     .context("Failed to write example model YAML")?;
 
-    let example_fn_yml = r#"kind: functions
+    let example_fn_yml = r#"kind: function
 version: 1
 name: safe_divide
 description: "Division that returns NULL on zero denominator"
@@ -139,12 +133,12 @@ returns:
 "#;
     let example_fn_sql = "CASE WHEN denominator = 0 THEN NULL ELSE numerator / denominator END\n";
     fs::write(
-        project_dir.join("functions/safe_divide.yml"),
+        project_dir.join("nodes/safe_divide/safe_divide.yml"),
         example_fn_yml,
     )
     .context("Failed to write example function YAML")?;
     fs::write(
-        project_dir.join("functions/safe_divide.sql"),
+        project_dir.join("nodes/safe_divide/safe_divide.sql"),
         example_fn_sql,
     )
     .context("Failed to write example function SQL")?;
@@ -153,20 +147,19 @@ returns:
     fs::write(project_dir.join(".gitignore"), gitignore).context("Failed to write .gitignore")?;
 
     println!("  Created featherflow.yml");
-    println!("  Created models/my_first_model/my_first_model.sql");
-    println!("  Created models/my_first_model/my_first_model.yml");
-    println!("  Created sources/");
+    println!("  Created nodes/my_first_model/my_first_model.sql");
+    println!("  Created nodes/my_first_model/my_first_model.yml");
+    println!("  Created nodes/safe_divide/safe_divide.yml");
+    println!("  Created nodes/safe_divide/safe_divide.sql");
     println!("  Created macros/");
     println!("  Created tests/");
-    println!("  Created functions/safe_divide.yml");
-    println!("  Created functions/safe_divide.sql");
     println!("  Created .gitignore");
     println!();
     println!("Project '{}' initialized successfully!", args.name);
     println!();
     println!("Next steps:");
     println!("  cd {}", args.name);
-    println!("  ff validate    # Validate the project");
+    println!("  ff dt compile   # Compile and validate the project");
     println!("  ff run          # Run all models");
 
     Ok(())

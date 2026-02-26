@@ -1,0 +1,11 @@
+kind: sql
+version: 1
+name: stg
+description: "Staging model selecting all columns from raw_data"
+columns:
+  - name: id
+    data_type: INTEGER
+  - name: name
+    data_type: VARCHAR
+  - name: amount
+    data_type: DECIMAL(10,2)

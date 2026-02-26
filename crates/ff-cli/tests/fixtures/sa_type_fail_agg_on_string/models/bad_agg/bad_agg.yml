@@ -1,6 +1,0 @@
-version: 1
-name: bad_agg
-description: "SUM on VARCHAR column — should trigger A004"
-columns:
-  - name: name_sum
-    data_type: VARCHAR

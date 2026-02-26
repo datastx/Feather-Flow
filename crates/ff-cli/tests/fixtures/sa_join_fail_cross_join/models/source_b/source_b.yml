@@ -1,6 +1,0 @@
-version: 1
-name: source_b
-description: "Source B"
-columns:
-  - name: id
-    data_type: INTEGER

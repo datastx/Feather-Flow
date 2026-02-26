@@ -28,13 +28,9 @@ pub(crate) struct GlobalArgs {
     #[arg(short = 'p', long, global = true, default_value = ".")]
     pub project_dir: PathBuf,
 
-    /// Override config file path
-    #[arg(short, long, global = true)]
-    pub config: Option<String>,
-
-    /// Override target (database connection)
-    #[arg(short, long, global = true)]
-    pub target: Option<String>,
+    /// Select named database connection (from featherflow.yml)
+    #[arg(short = 'd', long, global = true)]
+    pub database: Option<String>,
 }
 
 /// Available subcommands
@@ -69,7 +65,7 @@ pub(crate) struct CompileArgs {
     pub nodes: Option<String>,
 
     /// Override output directory
-    #[arg(short = 'd', long)]
+    #[arg(long)]
     pub output_dir: Option<String>,
 
     /// Override/add variables as JSON
@@ -441,7 +437,7 @@ pub(crate) struct LineageArgs {
     pub column: Option<String>,
 
     /// Direction to trace lineage
-    #[arg(short, long, value_enum, default_value = "both")]
+    #[arg(long, value_enum, default_value = "both")]
     pub direction: LineageDirection,
 
     /// Output format

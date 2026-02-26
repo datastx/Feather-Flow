@@ -1,0 +1,9 @@
+kind: sql
+version: 1
+name: with_join
+description: "Self-join on raw_data"
+columns:
+  - name: id
+    data_type: INTEGER
+  - name: name
+    data_type: VARCHAR

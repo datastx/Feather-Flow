@@ -25,15 +25,15 @@ pub(crate) fn create_database_connection(
     global: &GlobalArgs,
 ) -> Result<Arc<dyn Database>> {
     if global.verbose {
-        let target = Config::resolve_target(global.target.as_deref());
-        if let Some(ref target_name) = target {
-            eprintln!("[verbose] Using target '{}' database", target_name);
+        let database = Config::resolve_database(global.database.as_deref());
+        if let Some(ref db_name) = database {
+            eprintln!("[verbose] Using database connection '{}'", db_name);
         } else {
             eprintln!("[verbose] Using default database");
         }
     }
 
-    common::create_database_connection(&project.config, global.target.as_deref())
+    common::create_database_connection(&project.config, global.database.as_deref())
 }
 
 /// Create all required schemas before running models
@@ -81,8 +81,8 @@ pub(crate) async fn set_search_path(
             }
         };
 
-    if let Some(default_schema) = &project.config.schema {
-        push_unique(default_schema.clone(), &mut schemas, &mut seen);
+    if let Some(default_schema) = project.config.get_schema(None) {
+        push_unique(default_schema.to_string(), &mut schemas, &mut seen);
     }
 
     for model in compiled_models.values() {

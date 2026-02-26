@@ -1,0 +1,9 @@
+kind: sql
+version: 1
+name: source_a
+description: "Source A with val"
+columns:
+  - name: id
+    data_type: INTEGER
+  - name: val
+    data_type: INTEGER

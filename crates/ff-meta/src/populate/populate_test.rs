@@ -2,7 +2,7 @@ use super::analysis::{Diagnostic, InferredColumn, LineageEdge, SchemaMismatch};
 use super::execution::{ConfigSnapshot, InputChecksum, ModelRunRecord, ModelRunStatus};
 #[cfg(test)]
 use crate::MetaDb;
-use ff_core::config::{DatabaseConfig, Materialization};
+use ff_core::config::Materialization;
 use ff_core::function::{FunctionArg, FunctionConfig, FunctionReturn, FunctionType};
 use ff_core::model::testing::{SchemaTest, SingularTest, TestConfig, TestSeverity, TestType};
 use ff_core::model::ModelConfig;
@@ -17,35 +17,18 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 fn test_config() -> Config {
-    Config {
-        name: "test_project".to_string(),
-        version: "1.0.0".to_string(),
-        node_paths: vec![],
-        model_paths: vec!["models".to_string()],
-        macro_paths: vec!["macros".to_string()],
-        source_paths: vec!["sources".to_string()],
-        test_paths: vec!["tests".to_string()],
-        function_paths: vec!["functions".to_string()],
-        target_path: "target".to_string(),
-        materialization: Materialization::View,
-        schema: Some("main_schema".to_string()),
-        wap_schema: None,
-        dialect: ff_core::config::Dialect::default(),
-        database: DatabaseConfig::default(),
-        external_tables: vec![],
-        vars: HashMap::new(),
-        clean_targets: vec![],
-        on_run_start: vec![],
-        on_run_end: vec![],
-        targets: HashMap::new(),
-        analysis: Default::default(),
-        data_classification: Default::default(),
-        documentation: Default::default(),
-        query_comment: Default::default(),
-        rules: None,
-        format: Default::default(),
-        run: None,
-    }
+    serde_yaml::from_str(
+        r#"
+name: test_project
+version: "1.0.0"
+database:
+  default:
+    type: duckdb
+    path: ":memory:"
+    schema: main_schema
+"#,
+    )
+    .unwrap()
 }
 
 fn test_model(name: &str) -> Model {

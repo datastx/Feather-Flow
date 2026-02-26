@@ -1,0 +1,11 @@
+kind: sql
+version: 1
+name: int
+description: "Intermediate model with self left join"
+columns:
+  - name: id
+    type: INTEGER
+  - name: name
+    type: VARCHAR
+  - name: amount
+    type: "DECIMAL(10,2)"

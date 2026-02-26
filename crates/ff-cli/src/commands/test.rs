@@ -123,11 +123,11 @@ pub(crate) async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> 
 
     let project = load_project(global)?;
 
-    let target = Config::resolve_target(global.target.as_deref());
+    let database = Config::resolve_database(global.database.as_deref());
 
-    let db = common::create_database_connection(&project.config, global.target.as_deref())?;
+    let db = common::create_database_connection(&project.config, global.database.as_deref())?;
 
-    let merged_vars = project.config.get_merged_vars(target.as_deref());
+    let merged_vars = project.config.get_merged_vars(database.as_deref());
 
     let macro_paths = project.config.macro_paths_absolute(&project.root);
     let jinja = JinjaEnvironment::with_macros(&merged_vars, &macro_paths);
@@ -158,9 +158,9 @@ pub(crate) async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> 
                 .get("schema")
                 .and_then(|v| v.as_str())
                 .map(String::from)
-                .or_else(|| project.config.schema.clone())
+                .or_else(|| project.config.get_schema(None).map(|s| s.to_string()))
         } else {
-            project.config.schema.clone()
+            project.config.get_schema(None).map(|s| s.to_string())
         };
 
         let qualified_name = match schema {

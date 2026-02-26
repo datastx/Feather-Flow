@@ -1,6 +1,0 @@
-version: 1
-name: with_agg
-description: "Aggregate count from raw_data"
-columns:
-  - name: cnt
-    data_type: BIGINT

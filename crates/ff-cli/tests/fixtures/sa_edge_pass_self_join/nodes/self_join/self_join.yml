@@ -1,0 +1,9 @@
+kind: sql
+version: 1
+name: self_join
+description: "Self-join on source table for parent lookup"
+columns:
+  - name: id
+    type: INTEGER
+  - name: parent_name
+    type: VARCHAR

@@ -1,8 +1,0 @@
-version: 1
-name: cast_shorthand
-description: "DuckDB cast shorthand syntax"
-columns:
-  - name: big_id
-    data_type: BIGINT
-  - name: id
-    data_type: INTEGER

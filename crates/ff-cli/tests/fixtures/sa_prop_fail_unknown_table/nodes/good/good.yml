@@ -1,0 +1,7 @@
+kind: sql
+version: 1
+name: good
+description: "Good model with a simple literal select"
+columns:
+  - name: val
+    data_type: INTEGER
