@@ -265,15 +265,15 @@ ci-e2e: ## End-to-end pipeline test against sample project
 	@echo "=== E2E: clean ==="
 	rm -rf $(e2e_dir)/target
 	@echo "=== E2E: compile ==="
-	cargo run -p ff-cli -- --project-dir $(e2e_dir) compile
+	cargo run -p ff-cli -- --project-dir $(e2e_dir) dt compile
 	@echo "=== E2E: seed ==="
-	cargo run -p ff-cli -- --project-dir $(e2e_dir) deploy seeds --full-refresh
+	cargo run -p ff-cli -- --project-dir $(e2e_dir) dt deploy seeds --full-refresh
 	@echo "=== E2E: deploy scalar functions (needed by models like fct_orders) ==="
-	cargo run -p ff-cli -- --project-dir $(e2e_dir) deploy functions deploy --functions safe_divide,cents_to_dollars
+	cargo run -p ff-cli -- --project-dir $(e2e_dir) dt deploy functions deploy --functions safe_divide,cents_to_dollars
 	@echo "=== E2E: run --mode models (scalar functions available, table functions not yet) ==="
 	-cargo run -p ff-cli -- --project-dir $(e2e_dir) run --mode models --full-refresh
 	@echo "=== E2E: deploy table functions (requires model tables from first run) ==="
-	cargo run -p ff-cli -- --project-dir $(e2e_dir) deploy functions deploy --functions order_volume_by_status
+	cargo run -p ff-cli -- --project-dir $(e2e_dir) dt deploy functions deploy --functions order_volume_by_status
 	@echo "=== E2E: run --mode models (all models including table-function dependents) ==="
 	cargo run -p ff-cli -- --project-dir $(e2e_dir) run --mode models --full-refresh
 	@echo "=== E2E: run --mode test (materialized models) ==="

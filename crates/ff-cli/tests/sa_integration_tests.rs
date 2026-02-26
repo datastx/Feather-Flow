@@ -27,9 +27,16 @@ fn sample_project_dir() -> &'static str {
 
 fn run_analyze_json(fixture: &str) -> Vec<serde_json::Value> {
     let output = Command::new(ff_bin())
-        .args(["analyze", "--project-dir", fixture, "--output", "json"])
+        .args([
+            "dt",
+            "analyze",
+            "--project-dir",
+            fixture,
+            "--output",
+            "json",
+        ])
         .output()
-        .unwrap_or_else(|e| panic!("Failed to run ff analyze on {}: {}", fixture, e));
+        .unwrap_or_else(|e| panic!("Failed to run ff dt analyze on {}: {}", fixture, e));
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -49,9 +56,16 @@ fn run_analyze_json(fixture: &str) -> Vec<serde_json::Value> {
 /// Like `run_analyze_json` but allows non-zero exit (for projects with error-severity diagnostics).
 fn run_analyze_json_allow_failure(fixture: &str) -> Vec<serde_json::Value> {
     let output = Command::new(ff_bin())
-        .args(["analyze", "--project-dir", fixture, "--output", "json"])
+        .args([
+            "dt",
+            "analyze",
+            "--project-dir",
+            fixture,
+            "--output",
+            "json",
+        ])
         .output()
-        .unwrap_or_else(|e| panic!("Failed to run ff analyze on {}: {}", fixture, e));
+        .unwrap_or_else(|e| panic!("Failed to run ff dt analyze on {}: {}", fixture, e));
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     serde_json::from_str(stdout.trim())
@@ -116,9 +130,9 @@ fn assert_no_error_severity(diagnostics: &[serde_json::Value]) {
 #[test]
 fn test_compile_clean_project_succeeds() {
     let output = Command::new(ff_bin())
-        .args(["compile", "--project-dir", clean_project_dir()])
+        .args(["dt", "compile", "--project-dir", clean_project_dir()])
         .output()
-        .expect("Failed to run ff compile");
+        .expect("Failed to run ff dt compile");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -135,13 +149,14 @@ fn test_compile_clean_project_succeeds() {
 fn test_compile_with_skip_static_analysis() {
     let output = Command::new(ff_bin())
         .args([
+            "dt",
             "compile",
             "--project-dir",
             diagnostic_project_dir(),
             "--skip-static-analysis",
         ])
         .output()
-        .expect("Failed to run ff compile --skip-static-analysis");
+        .expect("Failed to run ff dt compile --skip-static-analysis");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -159,6 +174,7 @@ fn test_compile_with_skip_static_analysis() {
 fn test_compile_json_output() {
     let output = Command::new(ff_bin())
         .args([
+            "dt",
             "compile",
             "--project-dir",
             clean_project_dir(),
@@ -166,7 +182,7 @@ fn test_compile_json_output() {
             "json",
         ])
         .output()
-        .expect("Failed to run ff compile --output json");
+        .expect("Failed to run ff dt compile --output json");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -186,9 +202,9 @@ fn test_compile_json_output() {
 #[test]
 fn test_analyze_clean_project() {
     let output = Command::new(ff_bin())
-        .args(["analyze", "--project-dir", clean_project_dir()])
+        .args(["dt", "analyze", "--project-dir", clean_project_dir()])
         .output()
-        .expect("Failed to run ff analyze");
+        .expect("Failed to run ff dt analyze");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -213,6 +229,7 @@ fn test_analyze_json_output() {
 fn test_analyze_severity_filter() {
     let output = Command::new(ff_bin())
         .args([
+            "dt",
             "analyze",
             "--project-dir",
             clean_project_dir(),
@@ -220,7 +237,7 @@ fn test_analyze_severity_filter() {
             "error",
         ])
         .output()
-        .expect("Failed to run ff analyze --severity error");
+        .expect("Failed to run ff dt analyze --severity error");
 
     // Filtering to error-only should succeed
     assert!(
@@ -233,9 +250,9 @@ fn test_analyze_severity_filter() {
 #[test]
 fn test_analyze_diagnostic_project() {
     let output = Command::new(ff_bin())
-        .args(["analyze", "--project-dir", diagnostic_project_dir()])
+        .args(["dt", "analyze", "--project-dir", diagnostic_project_dir()])
         .output()
-        .expect("Failed to run ff analyze on diagnostic project");
+        .expect("Failed to run ff dt analyze on diagnostic project");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -283,9 +300,9 @@ fn test_analyze_sample_project_no_regressions() {
 #[test]
 fn test_ls_clean_project() {
     let output = Command::new(ff_bin())
-        .args(["ls", "--project-dir", clean_project_dir()])
+        .args(["dt", "ls", "--project-dir", clean_project_dir()])
         .output()
-        .expect("Failed to run ff ls");
+        .expect("Failed to run ff dt ls");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -318,12 +335,13 @@ fn test_ls_clean_project() {
 fn test_compile_nonexistent_project_fails() {
     let output = Command::new(ff_bin())
         .args([
+            "dt",
             "compile",
             "--project-dir",
             "/tmp/nonexistent_ff_project_12345",
         ])
         .output()
-        .expect("Failed to run ff compile");
+        .expect("Failed to run ff dt compile");
 
     assert!(
         !output.status.success(),
@@ -461,6 +479,7 @@ fn test_cli_compile_strict_flag_parses() {
     // Verify --strict flag is accepted by compile (absorbed from validate)
     let output = Command::new(ff_bin())
         .args([
+            "dt",
             "compile",
             "--project-dir",
             clean_project_dir(),
@@ -468,7 +487,7 @@ fn test_cli_compile_strict_flag_parses() {
             "--parse-only",
         ])
         .output()
-        .expect("Failed to run ff compile --strict");
+        .expect("Failed to run ff dt compile --strict");
 
     assert!(
         output.status.success(),
@@ -480,12 +499,13 @@ fn test_cli_compile_strict_flag_parses() {
 fn test_cli_compile_with_sa_error_reports_issue() {
     let output = Command::new(ff_bin())
         .args([
+            "dt",
             "compile",
             "--project-dir",
             "tests/fixtures/sa_xmodel_fail_missing_from_sql",
         ])
         .output()
-        .expect("Failed to run ff compile");
+        .expect("Failed to run ff dt compile");
 
     let combined = format!(
         "{}{}",
@@ -503,13 +523,14 @@ fn test_cli_compile_with_sa_error_reports_issue() {
 fn test_cli_compile_skip_sa_on_error_project() {
     let output = Command::new(ff_bin())
         .args([
+            "dt",
             "compile",
             "--project-dir",
             "tests/fixtures/sa_xmodel_fail_missing_from_sql",
             "--skip-static-analysis",
         ])
         .output()
-        .expect("Failed to run ff compile --skip-static-analysis");
+        .expect("Failed to run ff dt compile --skip-static-analysis");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -557,6 +578,7 @@ fn test_cli_analyze_json_structure() {
 fn test_cli_analyze_model_filter() {
     let output = Command::new(ff_bin())
         .args([
+            "dt",
             "analyze",
             "--project-dir",
             "tests/fixtures/sa_dag_fail_mixed",
@@ -566,7 +588,7 @@ fn test_cli_analyze_model_filter() {
             "json",
         ])
         .output()
-        .expect("Failed to run ff analyze --nodes stg");
+        .expect("Failed to run ff dt analyze --nodes stg");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let diags: Vec<serde_json::Value> = serde_json::from_str(stdout.trim())

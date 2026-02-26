@@ -40,41 +40,15 @@ pub(crate) struct GlobalArgs {
 /// Available subcommands
 #[derive(Subcommand, Debug)]
 pub(crate) enum Commands {
-    /// Initialize a new Featherflow project
-    Init(InitArgs),
-
-    /// Compile Jinja templates to SQL
-    Compile(CompileArgs),
-
     /// Execute compiled SQL against the database
     Run(RunArgs),
-
-    /// List models and their dependencies
-    Ls(LsArgs),
-
-    /// Generate documentation from schema files
-    Docs(DocsArgs),
-
-    /// Remove generated artifacts
-    Clean(CleanArgs),
 
     /// Execute a standalone SQL macro
     RunMacro(RunMacroArgs),
 
-    /// Show column-level lineage across models
-    Lineage(LineageArgs),
-
-    /// Analyze SQL models for potential issues
-    Analyze(AnalyzeArgs),
-
-    /// Query and export the meta database
-    Meta(MetaArgs),
-
-    /// Format SQL source files with sqlfmt
-    Fmt(FmtArgs),
-
-    /// Deploy seeds or functions to the database
-    Deploy(DeployArgs),
+    /// Developer tooling (compile, analyze, format, deploy, etc.)
+    #[command(name = "dt")]
+    Dt(DtArgs),
 }
 
 /// Output formats for run/test/compile commands (for CI integration)
@@ -504,6 +478,10 @@ pub(crate) enum LineageOutput {
 /// Arguments for the analyze command
 #[derive(Args, Debug)]
 pub(crate) struct AnalyzeArgs {
+    /// Analyze subcommand (query, export, tables) — omit to run analysis passes
+    #[command(subcommand)]
+    pub command: Option<AnalyzeCommands>,
+
     /// Node selector (names, +node, node+, N+node, node+N, tag:X, path:X)
     #[arg(short = 'n', long)]
     pub nodes: Option<String>,
@@ -527,6 +505,19 @@ pub(crate) struct AnalyzeArgs {
     /// List discovered rules without executing them (use with --rules)
     #[arg(long, requires = "rules")]
     pub rules_list: bool,
+}
+
+/// Analyze subcommands (meta database operations)
+#[derive(Subcommand, Debug)]
+pub(crate) enum AnalyzeCommands {
+    /// Run a SQL query against the meta database
+    Query(MetaQueryArgs),
+
+    /// Export the entire meta database as JSON
+    Export(MetaExportArgs),
+
+    /// List all meta database tables with row counts
+    Tables,
 }
 
 /// Analyze output formats
@@ -615,27 +606,6 @@ pub(crate) enum AnalyzeSeverity {
     Error,
 }
 
-/// Arguments for the meta command
-#[derive(Args, Debug)]
-pub(crate) struct MetaArgs {
-    /// Meta subcommand
-    #[command(subcommand)]
-    pub command: MetaCommands,
-}
-
-/// Meta subcommands
-#[derive(Subcommand, Debug)]
-pub(crate) enum MetaCommands {
-    /// Run a SQL query against the meta database
-    Query(MetaQueryArgs),
-
-    /// Export the entire meta database as JSON
-    Export(MetaExportArgs),
-
-    /// List all meta database tables with row counts
-    Tables,
-}
-
 /// Arguments for the meta query subcommand
 #[derive(Args, Debug)]
 pub(crate) struct MetaQueryArgs {
@@ -703,6 +673,45 @@ pub(crate) enum DeployCommands {
 
     /// Manage user-defined functions (DuckDB macros)
     Functions(FunctionArgs),
+}
+
+/// Arguments for the dt (developer tooling) command
+#[derive(Args, Debug)]
+pub(crate) struct DtArgs {
+    /// Developer tooling subcommand
+    #[command(subcommand)]
+    pub command: DtCommands,
+}
+
+/// Developer tooling subcommands
+#[derive(Subcommand, Debug)]
+pub(crate) enum DtCommands {
+    /// Initialize a new Featherflow project
+    Init(InitArgs),
+
+    /// Compile Jinja templates to SQL
+    Compile(CompileArgs),
+
+    /// List models and their dependencies
+    Ls(LsArgs),
+
+    /// Remove generated artifacts
+    Clean(CleanArgs),
+
+    /// Format SQL source files with sqlfmt
+    Fmt(FmtArgs),
+
+    /// Show column-level lineage across models
+    Lineage(LineageArgs),
+
+    /// Generate documentation from schema files
+    Docs(DocsArgs),
+
+    /// Deploy seeds or functions to the database
+    Deploy(DeployArgs),
+
+    /// Analyze SQL models for potential issues
+    Analyze(AnalyzeArgs),
 }
 
 #[cfg(test)]

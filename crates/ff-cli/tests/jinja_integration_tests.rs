@@ -22,6 +22,7 @@ fn compile_to_tempdir(fixture: &str) -> TempDir {
     let tmp = tempfile::tempdir().expect("Failed to create temp dir");
     let output = Command::new(ff_bin())
         .args([
+            "dt",
             "compile",
             "--project-dir",
             fixture,
@@ -30,7 +31,7 @@ fn compile_to_tempdir(fixture: &str) -> TempDir {
             "--skip-static-analysis",
         ])
         .output()
-        .expect("Failed to run ff compile");
+        .expect("Failed to run ff dt compile");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -50,6 +51,7 @@ fn compile_to_tempdir(fixture: &str) -> TempDir {
 fn compile_with_args(fixture: &str, extra_args: &[&str]) -> (String, String, bool) {
     let tmp = tempfile::tempdir().expect("Failed to create temp dir");
     let mut args = vec![
+        "dt",
         "compile",
         "--project-dir",
         fixture,
@@ -62,7 +64,7 @@ fn compile_with_args(fixture: &str, extra_args: &[&str]) -> (String, String, boo
     let output = Command::new(ff_bin())
         .args(&args)
         .output()
-        .expect("Failed to run ff compile");
+        .expect("Failed to run ff dt compile");
 
     (
         String::from_utf8_lossy(&output.stdout).to_string(),
@@ -76,6 +78,7 @@ fn compile_with_args(fixture: &str, extra_args: &[&str]) -> (String, String, boo
 fn compile_to_tempdir_with_args(fixture: &str, extra_args: &[&str]) -> (TempDir, String, String) {
     let tmp = tempfile::tempdir().expect("Failed to create temp dir");
     let mut args = vec![
+        "dt",
         "compile",
         "--project-dir",
         fixture,
@@ -88,7 +91,7 @@ fn compile_to_tempdir_with_args(fixture: &str, extra_args: &[&str]) -> (TempDir,
     let output = Command::new(ff_bin())
         .args(&args)
         .output()
-        .expect("Failed to run ff compile");
+        .expect("Failed to run ff dt compile");
 
     (
         tmp,

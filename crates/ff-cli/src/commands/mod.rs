@@ -7,6 +7,7 @@ pub(crate) mod common;
 pub(crate) mod compile;
 pub(crate) mod deploy;
 pub(crate) mod docs;
+pub(crate) mod dt;
 pub(crate) mod fmt;
 pub(crate) mod format_helpers;
 pub(crate) mod function;

@@ -1,19 +1,13 @@
 //! Meta database query and export commands.
 
-use crate::cli::{GlobalArgs, MetaArgs, MetaCommands};
+use crate::cli::GlobalArgs;
 use crate::commands::common::{self, load_project};
 use anyhow::{Context, Result};
 
-/// Execute the meta command.
-pub(crate) async fn execute(args: &MetaArgs, global: &GlobalArgs) -> Result<()> {
-    match &args.command {
-        MetaCommands::Query(query_args) => execute_query(query_args, global).await,
-        MetaCommands::Export(export_args) => execute_export(export_args, global).await,
-        MetaCommands::Tables => execute_tables(global).await,
-    }
-}
-
-async fn execute_query(args: &crate::cli::MetaQueryArgs, global: &GlobalArgs) -> Result<()> {
+pub(crate) async fn execute_query(
+    args: &crate::cli::MetaQueryArgs,
+    global: &GlobalArgs,
+) -> Result<()> {
     let project = load_project(global)?;
     let Some(meta_db) = common::open_meta_db(&project) else {
         anyhow::bail!("Meta database not found. Run `ff compile` or `ff run` first.");
@@ -31,7 +25,10 @@ async fn execute_query(args: &crate::cli::MetaQueryArgs, global: &GlobalArgs) ->
     Ok(())
 }
 
-async fn execute_export(args: &crate::cli::MetaExportArgs, global: &GlobalArgs) -> Result<()> {
+pub(crate) async fn execute_export(
+    args: &crate::cli::MetaExportArgs,
+    global: &GlobalArgs,
+) -> Result<()> {
     let project = load_project(global)?;
     let Some(meta_db) = common::open_meta_db(&project) else {
         anyhow::bail!("Meta database not found. Run `ff compile` or `ff run` first.");
@@ -72,7 +69,7 @@ async fn execute_export(args: &crate::cli::MetaExportArgs, global: &GlobalArgs) 
     Ok(())
 }
 
-async fn execute_tables(global: &GlobalArgs) -> Result<()> {
+pub(crate) async fn execute_tables(global: &GlobalArgs) -> Result<()> {
     let project = load_project(global)?;
     let Some(meta_db) = common::open_meta_db(&project) else {
         anyhow::bail!("Meta database not found. Run `ff compile` or `ff run` first.");

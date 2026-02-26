@@ -14,15 +14,26 @@ use ff_sql::{extract_column_lineage, extract_dependencies, ExprType, ProjectLine
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::cli::{AnalyzeArgs, AnalyzeOutput, AnalyzeSeverity, GlobalArgs};
+use crate::cli::{AnalyzeArgs, AnalyzeCommands, AnalyzeOutput, AnalyzeSeverity, GlobalArgs};
 use crate::commands::common::{
     self, build_external_tables_lookup, build_schema_catalog, load_project,
     print_table as print_common_table,
 };
+use crate::commands::meta;
 use ff_core::rules::{discover_rules, resolve_rule_paths, OnRuleFailure, RuleSeverity};
 
 /// Execute the analyze command
 pub(crate) async fn execute(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
+    match &args.command {
+        None => run_analysis(args, global).await,
+        Some(AnalyzeCommands::Query(sub)) => meta::execute_query(sub, global).await,
+        Some(AnalyzeCommands::Export(sub)) => meta::execute_export(sub, global).await,
+        Some(AnalyzeCommands::Tables) => meta::execute_tables(global).await,
+    }
+}
+
+/// Run static analysis passes (the default behavior when no subcommand is given).
+async fn run_analysis(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
     let project = load_project(global)?;
 
     let parser = SqlParser::from_dialect_name(&project.config.dialect.to_string())
