@@ -483,7 +483,10 @@ name: test_project
 model_paths: ["models"]
 "#;
     let result: Result<Config, _> = serde_yaml::from_str(yaml);
-    assert!(result.is_err(), "Legacy 'model_paths' field should be rejected");
+    assert!(
+        result.is_err(),
+        "Legacy 'model_paths' field should be rejected"
+    );
 }
 
 #[test]

@@ -134,15 +134,11 @@ fn test_function_to_drop_sql() {
     );
 }
 
-// ── Duplicate Name Detection ────────────────────────────────────────────
-
-#[test]
-// Note: With unified nodes/ directory, duplicate function names are impossible
-// (filesystem prevents two dirs with the same name). The DuplicateFunction
-// guard remains in the code but cannot be triggered in normal usage.
+// Note: Duplicate function name detection test removed — with unified nodes/
+// directory, duplicate names are impossible (filesystem prevents two dirs with
+// the same name). The DuplicateFunction guard remains as a safety net.
 
 // ── CLI: ff function list ───────────────────────────────────────────────
-
 #[test]
 fn test_function_list_command() {
     let output = Command::new(ff_bin())

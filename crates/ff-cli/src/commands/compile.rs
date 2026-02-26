@@ -97,7 +97,10 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
 
     if global.verbose {
         if let Some(ref db_name) = database {
-            eprintln!("[verbose] Using database connection '{}' for compilation", db_name);
+            eprintln!(
+                "[verbose] Using database connection '{}' for compilation",
+                db_name
+            );
         }
     }
 

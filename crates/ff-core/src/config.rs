@@ -92,7 +92,6 @@ pub struct Config {
     /// Run/build mode defaults
     #[serde(default)]
     pub run: Option<RunConfig>,
-
 }
 
 // ── DatabaseConfig ──────────────────────────────────────────────────────────
@@ -470,15 +469,16 @@ impl Config {
     /// Get a database connection by name. `None` returns the "default" connection.
     pub fn get_database_config(&self, db: Option<&str>) -> CoreResult<&DatabaseConfig> {
         let key = db.unwrap_or("default");
-        self.database.0.get(key).ok_or_else(|| CoreError::ConfigInvalid {
-            message: format!(
-                "Database connection '{}' not found. Available connections: {}",
-                key,
-                self.database
-                    .connection_names()
-                    .join(", ")
-            ),
-        })
+        self.database
+            .0
+            .get(key)
+            .ok_or_else(|| CoreError::ConfigInvalid {
+                message: format!(
+                    "Database connection '{}' not found. Available connections: {}",
+                    key,
+                    self.database.connection_names().join(", ")
+                ),
+            })
     }
 
     /// Get schema from the selected database connection.
@@ -496,10 +496,7 @@ impl Config {
     }
 
     /// Get merged variables: base vars + connection-specific vars.
-    pub fn get_merged_vars(
-        &self,
-        db: Option<&str>,
-    ) -> Cow<'_, HashMap<String, serde_yaml::Value>> {
+    pub fn get_merged_vars(&self, db: Option<&str>) -> Cow<'_, HashMap<String, serde_yaml::Value>> {
         let conn_vars = self
             .get_database_config(db)
             .ok()

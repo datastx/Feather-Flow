@@ -661,7 +661,10 @@ pub(crate) fn build_template_context(
     let resolved = Config::resolve_database(database);
     let conn_name = resolved.as_deref().unwrap_or("default").to_string();
 
-    let schema = project.config.get_schema(resolved.as_deref()).map(|s| s.to_string());
+    let schema = project
+        .config
+        .get_schema(resolved.as_deref())
+        .map(|s| s.to_string());
     let database_type = project
         .config
         .get_database_config(resolved.as_deref())

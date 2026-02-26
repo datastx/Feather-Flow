@@ -192,7 +192,7 @@ impl Project {
             if entry
                 .file_name()
                 .to_str()
-                .map_or(false, |n| n.starts_with('.'))
+                .is_some_and(|n| n.starts_with('.'))
             {
                 continue;
             }
@@ -439,4 +439,3 @@ pub(crate) fn find_yaml_path(base: &Path) -> Option<std::path::PathBuf> {
     }
     None
 }
-

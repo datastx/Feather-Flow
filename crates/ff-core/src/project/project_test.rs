@@ -75,11 +75,7 @@ fn test_discover_tests() {
 fn test_versioned_model_discovery() {
     let dir = TempDir::new().unwrap();
 
-    std::fs::write(
-        dir.path().join("featherflow.yml"),
-        "name: test_project\n",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("featherflow.yml"), "name: test_project\n").unwrap();
 
     // Create nodes directory with versioned models
     std::fs::create_dir_all(dir.path().join("nodes/fct_orders")).unwrap();
@@ -140,11 +136,7 @@ fn test_versioned_model_discovery() {
 fn test_resolve_latest_version() {
     let dir = TempDir::new().unwrap();
 
-    std::fs::write(
-        dir.path().join("featherflow.yml"),
-        "name: test_project\n",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("featherflow.yml"), "name: test_project\n").unwrap();
 
     std::fs::create_dir_all(dir.path().join("nodes/fct_orders_v1")).unwrap();
     std::fs::write(
@@ -187,11 +179,7 @@ fn test_resolve_latest_version() {
 fn test_resolve_model_reference() {
     let dir = TempDir::new().unwrap();
 
-    std::fs::write(
-        dir.path().join("featherflow.yml"),
-        "name: test_project\n",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("featherflow.yml"), "name: test_project\n").unwrap();
 
     std::fs::create_dir_all(dir.path().join("nodes/fct_orders_v1")).unwrap();
     std::fs::write(
@@ -256,17 +244,12 @@ fn test_resolve_model_reference() {
 fn test_missing_schema_file_enforcement() {
     let dir = TempDir::new().unwrap();
 
-    std::fs::write(
-        dir.path().join("featherflow.yml"),
-        "name: test_project\n",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("featherflow.yml"), "name: test_project\n").unwrap();
 
     // Create a node directory without a matching .yml file — should fail with NodeMissingYaml
     std::fs::create_dir_all(dir.path().join("nodes/no_schema_model")).unwrap();
     std::fs::write(
-        dir.path()
-            .join("nodes/no_schema_model/no_schema_model.sql"),
+        dir.path().join("nodes/no_schema_model/no_schema_model.sql"),
         "SELECT 1 AS id",
     )
     .unwrap();
@@ -285,18 +268,10 @@ fn test_missing_schema_file_enforcement() {
 fn test_extra_files_in_node_directory_ignored() {
     let dir = TempDir::new().unwrap();
 
-    std::fs::write(
-        dir.path().join("featherflow.yml"),
-        "name: test_project\n",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("featherflow.yml"), "name: test_project\n").unwrap();
 
     std::fs::create_dir_all(dir.path().join("nodes/orders")).unwrap();
-    std::fs::write(
-        dir.path().join("nodes/orders/orders.sql"),
-        "SELECT 1 AS id",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("nodes/orders/orders.sql"), "SELECT 1 AS id").unwrap();
     std::fs::write(
         dir.path().join("nodes/orders/orders.yml"),
         "kind: sql\nversion: 1\ncolumns:\n  - name: id\n    type: INTEGER\n",
@@ -306,7 +281,11 @@ fn test_extra_files_in_node_directory_ignored() {
     std::fs::write(dir.path().join("nodes/orders/notes.txt"), "some notes").unwrap();
 
     let result = Project::load(dir.path());
-    assert!(result.is_ok(), "Extra files should be ignored: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Extra files should be ignored: {:?}",
+        result.err()
+    );
     assert_eq!(result.unwrap().models.len(), 1);
 }
 
@@ -314,18 +293,10 @@ fn test_extra_files_in_node_directory_ignored() {
 fn test_hidden_files_in_model_directory_allowed() {
     let dir = TempDir::new().unwrap();
 
-    std::fs::write(
-        dir.path().join("featherflow.yml"),
-        "name: test_project\n",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("featherflow.yml"), "name: test_project\n").unwrap();
 
     std::fs::create_dir_all(dir.path().join("nodes/orders")).unwrap();
-    std::fs::write(
-        dir.path().join("nodes/orders/orders.sql"),
-        "SELECT 1 AS id",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("nodes/orders/orders.sql"), "SELECT 1 AS id").unwrap();
     std::fs::write(
         dir.path().join("nodes/orders/orders.yml"),
         "kind: sql\nversion: 1\ncolumns:\n  - name: id\n    type: INTEGER\n",
@@ -348,11 +319,7 @@ fn test_hidden_files_in_model_directory_allowed() {
 fn test_deprecation_warning_in_resolution() {
     let dir = TempDir::new().unwrap();
 
-    std::fs::write(
-        dir.path().join("featherflow.yml"),
-        "name: test_project\n",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("featherflow.yml"), "name: test_project\n").unwrap();
 
     std::fs::create_dir_all(dir.path().join("nodes/fct_orders_v1")).unwrap();
     std::fs::write(
@@ -380,11 +347,7 @@ fn test_deprecation_warning_in_resolution() {
 fn test_discover_python_model() {
     let dir = TempDir::new().unwrap();
 
-    std::fs::write(
-        dir.path().join("featherflow.yml"),
-        "name: test_project\n",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("featherflow.yml"), "name: test_project\n").unwrap();
 
     // Create a SQL model that the Python model depends on
     std::fs::create_dir_all(dir.path().join("nodes/stg_source")).unwrap();
@@ -452,11 +415,7 @@ columns:
 fn test_python_file_without_python_kind_rejected() {
     let dir = TempDir::new().unwrap();
 
-    std::fs::write(
-        dir.path().join("featherflow.yml"),
-        "name: test_project\n",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("featherflow.yml"), "name: test_project\n").unwrap();
 
     // Create a .py file but YAML says kind: sql — fails because .sql file is missing
     std::fs::create_dir_all(dir.path().join("nodes/bad_model")).unwrap();
@@ -485,11 +444,7 @@ fn test_python_file_without_python_kind_rejected() {
 fn test_sql_file_with_python_kind_rejected() {
     let dir = TempDir::new().unwrap();
 
-    std::fs::write(
-        dir.path().join("featherflow.yml"),
-        "name: test_project\n",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("featherflow.yml"), "name: test_project\n").unwrap();
 
     // Create a .sql file but YAML says kind: python — fails because .py file is missing
     std::fs::create_dir_all(dir.path().join("nodes/mismatch")).unwrap();
@@ -518,11 +473,7 @@ fn test_sql_file_with_python_kind_rejected() {
 fn test_loose_py_file_at_model_root_rejected() {
     let dir = TempDir::new().unwrap();
 
-    std::fs::write(
-        dir.path().join("featherflow.yml"),
-        "name: test_project\n",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("featherflow.yml"), "name: test_project\n").unwrap();
 
     std::fs::create_dir_all(dir.path().join("nodes")).unwrap();
     std::fs::write(dir.path().join("nodes/loose.py"), "print('hello')").unwrap();
@@ -542,11 +493,7 @@ fn test_loose_py_file_at_model_root_rejected() {
 fn setup_node_paths_project() -> TempDir {
     let dir = TempDir::new().unwrap();
 
-    std::fs::write(
-        dir.path().join("featherflow.yml"),
-        "name: node_test\n",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("featherflow.yml"), "name: node_test\n").unwrap();
 
     // SQL model node
     std::fs::create_dir_all(dir.path().join("nodes/stg_orders")).unwrap();
@@ -654,11 +601,7 @@ fn test_node_paths_schema_tests_extracted() {
 fn test_node_paths_missing_kind_fails() {
     let dir = TempDir::new().unwrap();
 
-    std::fs::write(
-        dir.path().join("featherflow.yml"),
-        "name: test\n",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("featherflow.yml"), "name: test\n").unwrap();
 
     std::fs::create_dir_all(dir.path().join("nodes/bad_node")).unwrap();
     std::fs::write(
@@ -681,11 +624,7 @@ fn test_node_paths_missing_kind_fails() {
 fn test_node_paths_missing_yaml_fails() {
     let dir = TempDir::new().unwrap();
 
-    std::fs::write(
-        dir.path().join("featherflow.yml"),
-        "name: test\n",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("featherflow.yml"), "name: test\n").unwrap();
 
     std::fs::create_dir_all(dir.path().join("nodes/no_yaml")).unwrap();
     std::fs::write(dir.path().join("nodes/no_yaml/no_yaml.sql"), "SELECT 1").unwrap();
@@ -704,11 +643,7 @@ fn test_node_paths_missing_yaml_fails() {
 fn test_node_paths_legacy_kind_model_accepted() {
     let dir = TempDir::new().unwrap();
 
-    std::fs::write(
-        dir.path().join("featherflow.yml"),
-        "name: test\n",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("featherflow.yml"), "name: test\n").unwrap();
 
     std::fs::create_dir_all(dir.path().join("nodes/orders")).unwrap();
     std::fs::write(dir.path().join("nodes/orders/orders.sql"), "SELECT 1 AS id").unwrap();
@@ -728,11 +663,7 @@ fn test_node_paths_legacy_kind_model_accepted() {
 fn test_node_paths_source_with_no_data_file_works() {
     let dir = TempDir::new().unwrap();
 
-    std::fs::write(
-        dir.path().join("featherflow.yml"),
-        "name: test\n",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("featherflow.yml"), "name: test\n").unwrap();
 
     // Source nodes don't need a companion data file — just the YAML
     std::fs::create_dir_all(dir.path().join("nodes/my_source")).unwrap();
