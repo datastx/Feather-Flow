@@ -276,7 +276,10 @@ tables:
     let source: SourceFile = serde_yaml::from_str(yaml).unwrap();
     assert_eq!(source.description_ai_generated, Some(true));
     assert_eq!(source.tables[0].description_ai_generated, Some(true));
-    assert_eq!(source.tables[0].columns[0].description_ai_generated, Some(true));
+    assert_eq!(
+        source.tables[0].columns[0].description_ai_generated,
+        Some(true)
+    );
     // Defaults to None when omitted
     assert_eq!(source.tables[0].columns[1].description_ai_generated, None);
 }
