@@ -74,9 +74,14 @@ fn insert_model(
         .unwrap_or(false);
     let checksum = model.sql_checksum();
 
+    let description_ai_generated = model
+        .schema
+        .as_ref()
+        .and_then(|s| s.description_ai_generated);
+
     conn.execute(
-        "INSERT INTO ff_meta.models (project_id, name, source_path, materialization, schema_name, description, owner, deprecated, deprecation_message, base_name, version_number, contract_enforced, raw_sql, sql_checksum)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO ff_meta.models (project_id, name, source_path, materialization, schema_name, description, description_ai_generated, owner, deprecated, deprecation_message, base_name, version_number, contract_enforced, raw_sql, sql_checksum)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         duckdb::params![
             project_id,
             model.name.as_ref(),
@@ -84,6 +89,7 @@ fn insert_model(
             materialization,
             schema_name,
             description,
+            description_ai_generated,
             owner,
             deprecated,
             deprecation_message,
@@ -221,14 +227,15 @@ fn insert_single_column(
     });
 
     conn.execute(
-        "INSERT INTO ff_meta.model_columns (model_id, name, declared_type, nullability_declared, description, is_primary_key, classification, ordinal_position)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO ff_meta.model_columns (model_id, name, declared_type, nullability_declared, description, description_ai_generated, is_primary_key, classification, ordinal_position)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         duckdb::params![
             model_id,
             col.name,
             col.data_type,
             nullability,
             col.description,
+            col.description_ai_generated,
             col.primary_key,
             classification,
             (ordinal + 1) as i32,

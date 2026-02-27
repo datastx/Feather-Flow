@@ -22,4 +22,8 @@ pub static MIGRATIONS: &[Migration] = &[
         version: 2,
         sql: include_str!("v002_effective_classification.sql"),
     },
+    Migration {
+        version: 3,
+        sql: include_str!("v003_description_ai_generated.sql"),
+    },
 ];

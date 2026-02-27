@@ -20,12 +20,13 @@ pub fn populate_sources(
 
 fn insert_source(conn: &Connection, project_id: i64, source: &SourceFile) -> MetaResult<i64> {
     conn.execute(
-        "INSERT INTO ff_meta.sources (project_id, name, description, database_name, schema_name, owner)
-         VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO ff_meta.sources (project_id, name, description, description_ai_generated, database_name, schema_name, owner)
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
         duckdb::params![
             project_id,
             source.name.as_str(),
             source.description,
+            source.description_ai_generated,
             source.database,
             source.schema,
             source.owner,
@@ -69,8 +70,8 @@ fn insert_single_source_table(
     table: &ff_core::SourceTable,
 ) -> MetaResult<()> {
     conn.execute(
-        "INSERT INTO ff_meta.source_tables (source_id, name, identifier, description) VALUES (?, ?, ?, ?)",
-        duckdb::params![source_id, table.name, table.identifier, table.description],
+        "INSERT INTO ff_meta.source_tables (source_id, name, identifier, description, description_ai_generated) VALUES (?, ?, ?, ?, ?)",
+        duckdb::params![source_id, table.name, table.identifier, table.description, table.description_ai_generated],
     )
     .populate_context(&format!("insert source_tables ({})", table.name))?;
 
@@ -84,9 +85,9 @@ fn insert_single_source_table(
 
     for (i, col) in table.columns.iter().enumerate() {
         conn.execute(
-            "INSERT INTO ff_meta.source_columns (source_table_id, name, data_type, description, ordinal_position)
-             VALUES (?, ?, ?, ?, ?)",
-            duckdb::params![table_id, col.name, col.data_type, col.description, (i + 1) as i32],
+            "INSERT INTO ff_meta.source_columns (source_table_id, name, data_type, description, description_ai_generated, ordinal_position)
+             VALUES (?, ?, ?, ?, ?, ?)",
+            duckdb::params![table_id, col.name, col.data_type, col.description, col.description_ai_generated, (i + 1) as i32],
         )
         .populate_context("insert source_columns")?;
     }

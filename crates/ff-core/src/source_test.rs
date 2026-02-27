@@ -248,3 +248,60 @@ tables: []
         err_str
     );
 }
+
+#[test]
+fn test_source_description_ai_generated_flag() {
+    let yaml = r#"
+kind: sources
+version: 1
+name: raw_data
+description: "AI-generated source description"
+description_ai_generated: true
+schema: raw
+
+tables:
+  - name: orders
+    description: "AI-generated table description"
+    description_ai_generated: true
+    columns:
+      - name: id
+        type: INTEGER
+        description: "AI-generated column description"
+        description_ai_generated: true
+      - name: amount
+        type: DECIMAL(10,2)
+        description: "Human-written description"
+"#;
+
+    let source: SourceFile = serde_yaml::from_str(yaml).unwrap();
+    assert_eq!(source.description_ai_generated, Some(true));
+    assert_eq!(source.tables[0].description_ai_generated, Some(true));
+    assert_eq!(
+        source.tables[0].columns[0].description_ai_generated,
+        Some(true)
+    );
+    // Defaults to None when omitted
+    assert_eq!(source.tables[0].columns[1].description_ai_generated, None);
+}
+
+#[test]
+fn test_source_description_ai_generated_defaults_to_none() {
+    let yaml = r#"
+kind: sources
+version: 1
+name: raw_data
+description: "Description with unknown provenance"
+schema: raw
+
+tables:
+  - name: orders
+    description: "Table description with unknown provenance"
+    columns:
+      - name: id
+        type: INTEGER
+"#;
+
+    let source: SourceFile = serde_yaml::from_str(yaml).unwrap();
+    assert_eq!(source.description_ai_generated, None);
+    assert_eq!(source.tables[0].description_ai_generated, None);
+}
