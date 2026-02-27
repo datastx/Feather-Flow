@@ -159,7 +159,7 @@ columns:
 Each column declares:
 - **`name`**: The column name (matched case-insensitively against SQL output)
 - **`type`**: The SQL data type (e.g., `INTEGER`, `VARCHAR`, `DECIMAL(10,2)`)
-- **`description`**: Documentation for the column
+- **`description`**: Human- and machine-readable documentation for the column (see [Why Descriptions Are Mandatory](#why-descriptions-are-mandatory))
 - **`classification`**: Data governance classification (`pii`, `sensitive`, `internal`, `public`)
 - **`constraints`**: Contract enforcement (`not_null`, `primary_key`, `unique`)
 - **`tests`**: Runtime validation tests (`unique`, `not_null`, `accepted_values`, etc.)
@@ -504,6 +504,90 @@ Docker nodes will follow the exact same stub pattern as Python nodes. From the s
 
 This is the extensibility model: any new `kind` that produces tabular output follows the same pattern. Declare the schema, declare the dependencies, and the compiler validates every edge.
 
+## Why Descriptions Are Mandatory
+
+Every node must have a description. Every column must have a description. This is not optional documentation — it is a first-class requirement of the schema contract.
+
+The reason is simple: **data without descriptions is unusable by AI systems, and AI systems are now the primary consumers of data metadata.**
+
+When an AI agent — whether it's generating SQL, building dashboards, answering business questions, or debugging a pipeline — encounters a column called `tier`, it needs to know: is this a customer loyalty tier? A pricing tier? A storage tier? A support tier? Without a description, the agent guesses. When it guesses wrong, the query is wrong, the dashboard is wrong, the answer is wrong. The failure mode is silent and invisible — the SQL runs, the results look plausible, and nobody notices the data is meaningless.
+
+This is not a hypothetical problem. It is the defining problem of data platforms in the AI era. Every organization that has tried to build AI-powered analytics on top of undocumented data warehouses has hit the same wall: the AI can write SQL, but it cannot understand what the columns mean. Column names are not enough. `amt` could be dollars, cents, units, or a score. `status` could have three possible values or thirty. `date` could be creation date, modification date, ship date, or expiration date. Only the description resolves the ambiguity.
+
+Feather-Flow enforces this through multiple mechanisms:
+
+1. **Documentation validation (D001/D002)**: The `documentation:` config in `featherflow.yml` controls enforcement. When `require_model_descriptions: true` and `require_column_descriptions: true` are set, the compiler emits D001 (model missing description) and D002 (column missing description) as hard errors. These block compilation — a node without descriptions does not compile.
+
+2. **Description drift detection (A050-A052)**: The static analysis engine tracks descriptions through column-level lineage. When a column is copied or renamed from an upstream model:
+   - **A050**: A copy/rename column has no description — the compiler suggests inheriting it from the upstream source
+   - **A051**: A copy/rename column has a modified description — potential documentation drift flagged for review
+   - **A052**: A transformed column has no description — the compiler flags that new logic needs new documentation
+
+3. **Governance enforcement (G002)**: Columns classified as `pii` must have descriptions. This is unconditional — PII data without documentation is a compliance risk, and the compiler treats it as one.
+
+The design principle: **a schema without descriptions is structurally incomplete.** Types tell the compiler what a column *is*. Descriptions tell humans and AI systems what a column *means*. Both are required for correctness — type correctness for the compiler, semantic correctness for every system that consumes the metadata.
+
+This is why Feather-Flow requires descriptions at both levels:
+
+- **Node descriptions** answer: what does this transformation do? What business logic does it encode? What is its role in the pipeline? An AI agent building a query plan needs to know whether `stg_customers` is raw staging or enriched staging, whether `fct_orders` contains all orders or only completed ones.
+
+- **Column descriptions** answer: what does this value represent? What are its units? What are its valid ranges? What business concept does it encode? An AI agent selecting columns needs to know that `revenue` is in USD cents (not dollars), that `status` values are `active|churned|suspended`, that `created_at` is the account creation timestamp (not the row insertion timestamp).
+
+The cost of writing a description is one line of YAML. The cost of not writing it is every downstream consumer — human or AI — making assumptions about what the data means. In a world where AI agents are generating SQL against your schemas, those assumptions become silent errors at scale.
+
+```yaml
+# This is not enough:
+columns:
+  - name: amt
+    type: DECIMAL(10,2)
+
+# This is the minimum:
+columns:
+  - name: amt
+    type: DECIMAL(10,2)
+    description: "Order total in USD cents, excluding tax and shipping"
+```
+
+The description is not metadata about the schema. It *is* the schema. Without it, the column is a number with a name — technically valid, semantically meaningless.
+
+### Description Provenance: `description_ai_generated`
+
+AI agents are increasingly both the consumers and producers of data metadata. When an agent generates a description, downstream systems should know the provenance — human-written descriptions carry more weight than AI-generated ones. A human who wrote "Order total in USD cents, excluding tax and shipping" had domain knowledge. An agent that inferred the same description from column statistics and naming patterns may be right, but the confidence level is different.
+
+Feather-Flow tracks this provenance with the `description_ai_generated` field — a tri-state value that sits as a sibling to every `description` field in the schema system:
+
+- **`true`** — the description was generated by an AI agent
+- **`false`** — the description was written by a human
+- **omitted / `null`** — provenance is unknown (default for existing schemas)
+
+```yaml
+version: 1
+kind: sql
+description: "Staged customers from raw source"
+description_ai_generated: true   # this description was AI-generated
+
+columns:
+  - name: customer_id
+    type: INTEGER
+    description: "Unique identifier for the customer"
+    description_ai_generated: false   # explicitly human-written
+  - name: email
+    type: VARCHAR
+    description: "Customer email address, used for login and notifications"
+    # description_ai_generated omitted — provenance unknown
+```
+
+The field is available at every level where `description` exists:
+- **Model/node level** (`ModelSchema.description_ai_generated`)
+- **Column level** (`SchemaColumnDef.description_ai_generated`)
+- **Source level** (`SourceFile.description_ai_generated`)
+- **Source table level** (`SourceTable.description_ai_generated`)
+- **Source column level** (`SourceColumn.description_ai_generated`)
+
+The meta database tracks this field as a nullable boolean across `ff_meta.models`, `ff_meta.model_columns`, `ff_meta.sources`, `ff_meta.source_tables`, and `ff_meta.source_columns`.
+
+This is purely metadata — it does not affect static analysis, validation, or execution. The D001/D002 documentation checks enforce that descriptions *exist*, regardless of provenance. The description drift passes (A050-A052) track how descriptions propagate through lineage, regardless of who wrote them. The `description_ai_generated` field is informational: it lets downstream systems (dashboards, AI agents, data catalogs) make informed decisions about how much to trust a description.
+
 ## Why This Matters
 
 Feather-Flow exists to answer a single question: **is this pipeline structurally correct before I run it?**
@@ -521,6 +605,8 @@ Every design decision — mandatory YAML schemas, DataFusion-based planning, AST
 5. **Kind-appropriate validation depth**: SQL models get full static analysis — AST walking, DataFusion planning, type inference, nullability propagation, join key analysis. Seeds get type inference from CSV data. Sources define typed trust boundaries. Functions get typed interface validation. Python and Docker nodes get explicit contract stubs. The validation depth varies by kind; the requirement to declare a schema does not.
 
 6. **Deterministic DAGs**: Dependencies are extracted from rendered SQL AST (not runtime behavior), so the transformation graph is always deterministic and complete. The compiler can validate every edge without executing anything.
+
+7. **AI-ready metadata**: Every node and every column carries a description that makes the schema semantically meaningful to AI systems. An AI agent querying your pipeline doesn't just see column names and types — it sees what the data *means*. This turns the schema from a structural contract into a semantic one, enabling AI-powered analytics, automated documentation, and intelligent query generation against a pipeline whose meaning is explicit and machine-readable.
 
 ## Where Feather-Flow Sits
 

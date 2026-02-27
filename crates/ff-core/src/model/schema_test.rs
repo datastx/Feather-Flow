@@ -667,3 +667,40 @@ fn test_python_kind_display() {
     assert_eq!(ModelKind::Model.to_string(), "sql");
     assert_eq!(ModelKind::Seed.to_string(), "seed");
 }
+
+#[test]
+fn test_description_ai_generated_flag() {
+    let yaml = r#"
+version: 1
+description: "AI-generated staging model description"
+description_ai_generated: true
+columns:
+  - name: customer_id
+    type: INTEGER
+    description: "Unique identifier"
+    description_ai_generated: false
+  - name: email
+    type: VARCHAR
+    description: "AI-generated email description"
+    description_ai_generated: true
+"#;
+    let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
+    assert_eq!(schema.description_ai_generated, Some(true));
+    assert_eq!(schema.columns[0].description_ai_generated, Some(false));
+    assert_eq!(schema.columns[1].description_ai_generated, Some(true));
+}
+
+#[test]
+fn test_description_ai_generated_defaults_to_none() {
+    let yaml = r#"
+version: 1
+description: "Description with unknown provenance"
+columns:
+  - name: id
+    type: INTEGER
+    description: "Column description with unknown provenance"
+"#;
+    let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
+    assert_eq!(schema.description_ai_generated, None);
+    assert_eq!(schema.columns[0].description_ai_generated, None);
+}

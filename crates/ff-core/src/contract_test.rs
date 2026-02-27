@@ -10,6 +10,7 @@ fn make_schema(columns: Vec<(&str, &str)>, enforced: bool) -> ModelSchema {
                 name: name.to_string(),
                 data_type: dtype.to_string(),
                 description: None,
+                description_ai_generated: None,
                 primary_key: false,
                 constraints: vec![],
                 tests: vec![],
