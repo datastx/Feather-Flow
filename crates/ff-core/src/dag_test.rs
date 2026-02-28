@@ -146,6 +146,21 @@ fn test_descendants_bounded_0() {
 }
 
 #[test]
+fn test_self_dependency_causes_cycle() {
+    // A model depending on itself creates a cycle.  The compile layer must
+    // filter self-references *before* building the DAG.
+    let mut deps = HashMap::new();
+    deps.insert("a".to_string(), vec!["a".to_string()]);
+
+    let result = ModelDag::build(&deps);
+    assert!(result.is_err());
+    assert!(matches!(
+        result.unwrap_err(),
+        CoreError::CircularDependency { .. }
+    ));
+}
+
+#[test]
 fn test_bounded_nonexistent_model() {
     let dag = build_linear_dag();
     let result = dag.ancestors_bounded("nonexistent", 1);

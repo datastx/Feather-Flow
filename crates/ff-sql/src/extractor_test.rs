@@ -182,6 +182,47 @@ fn test_extract_multiple_joins() {
     assert_eq!(deps.len(), 3);
 }
 
+#[test]
+fn test_extract_self_reference_included() {
+    // The extractor itself does not filter self-references — it returns all
+    // table relations it finds.  Callers (e.g. the compile command) are
+    // responsible for removing self-references before building the DAG.
+    let deps = parse_and_extract(
+        r#"
+        SELECT o.order_id, o.customer_id
+        FROM stg_orders o
+        LEFT JOIN fct_orders_incremental existing
+            ON o.order_id = existing.order_id
+        WHERE existing.order_id IS NULL
+        "#,
+    );
+    assert!(deps.contains("stg_orders"));
+    assert!(
+        deps.contains("fct_orders_incremental"),
+        "Extractor should return the self-referencing table"
+    );
+    assert_eq!(deps.len(), 2);
+}
+
+#[test]
+fn test_categorize_self_reference_is_model_dep() {
+    let deps = HashSet::from([
+        "stg_orders".to_string(),
+        "fct_orders_incremental".to_string(),
+    ]);
+
+    let known_models = HashSet::from(["stg_orders", "fct_orders_incremental"]);
+    let external_tables = HashSet::new();
+
+    let (model_deps, _external_deps) =
+        categorize_dependencies(deps, &known_models, &external_tables);
+
+    // Both are known models — the extractor categorises the self-reference as
+    // a model dep.  The compile layer filters it out later.
+    assert!(model_deps.contains(&"stg_orders".to_string()));
+    assert!(model_deps.contains(&"fct_orders_incremental".to_string()));
+}
+
 // ---------------------------------------------------------------------------
 // Dialect-aware (resolved) extraction tests
 // ---------------------------------------------------------------------------

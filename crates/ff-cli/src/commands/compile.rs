@@ -589,6 +589,11 @@ fn compile_model_phase1(
         model_deps.sort();
         model_deps.dedup();
 
+        // Filter out self-references: a model referencing its own table (e.g.
+        // incremental models) should not create a dependency on itself as that
+        // would introduce a cycle in the DAG.
+        model_deps.retain(|dep| !dep.eq_ignore_ascii_case(name));
+
         for unknown in &remaining_unknown {
             eprintln!(
                 "Warning: Unknown dependency '{}' in model '{}'. Not defined as a model or source.",

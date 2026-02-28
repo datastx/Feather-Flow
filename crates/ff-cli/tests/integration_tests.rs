@@ -21,7 +21,7 @@ fn test_load_sample_project() {
     let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
 
     assert_eq!(project.config.name, "sample_project");
-    assert_eq!(project.models.len(), 16);
+    assert_eq!(project.models.len(), 17);
     assert!(project.models.contains_key("stg_orders"));
     assert!(project.models.contains_key("stg_customers"));
     assert!(project.models.contains_key("stg_products"));
@@ -32,6 +32,7 @@ fn test_load_sample_project() {
     assert!(project.models.contains_key("dim_customers"));
     assert!(project.models.contains_key("dim_products"));
     assert!(project.models.contains_key("fct_orders"));
+    assert!(project.models.contains_key("fct_orders_incremental"));
     assert!(project.models.contains_key("rpt_order_volume"));
     assert!(project.models.contains_key("int_all_orders"));
     assert!(project.models.contains_key("int_customer_ranking"));
@@ -87,6 +88,45 @@ fn test_dag_building() {
 
     assert!(fct_pos > stg_orders_pos);
     assert!(fct_pos > stg_customers_pos);
+}
+
+/// Test self-referencing model: the extractor sees the self-reference but the
+/// compile layer filters it out so the DAG has no cycle.
+#[test]
+fn test_self_reference_model_dependencies() {
+    let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
+    let parser = SqlParser::duckdb();
+    let macro_paths = project.config.macro_paths_absolute(&project.root);
+    let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
+
+    let model = project.get_model("fct_orders_incremental").unwrap();
+    let rendered = jinja.render(&model.raw_sql).unwrap();
+    let stmts = parser.parse(&rendered).unwrap();
+    let deps = extract_dependencies(&stmts);
+
+    // Raw extraction includes the self-reference
+    assert!(deps.contains("stg_orders"));
+    assert!(
+        deps.contains("fct_orders_incremental"),
+        "Extractor should return the self-referencing table"
+    );
+
+    // After filtering (as compile_model_phase1 does), only stg_orders remains
+    let known_models: std::collections::HashSet<&str> =
+        project.models.keys().map(|k| k.as_ref()).collect();
+    let external_tables: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let (mut model_deps, _ext, _unk) =
+        ff_sql::extractor::categorize_dependencies_with_unknown(deps, &known_models, &external_tables);
+    model_deps.retain(|dep| !dep.eq_ignore_ascii_case("fct_orders_incremental"));
+
+    assert_eq!(model_deps, vec!["stg_orders"]);
+
+    // Building the DAG with the filtered deps should succeed (no cycle)
+    let mut all_deps: HashMap<String, Vec<String>> = HashMap::new();
+    all_deps.insert("stg_orders".to_string(), vec![]);
+    all_deps.insert("fct_orders_incremental".to_string(), model_deps);
+    let dag = ModelDag::build(&all_deps);
+    assert!(dag.is_ok(), "DAG should build without cycles after self-reference filtering");
 }
 
 /// Test circular dependency detection
