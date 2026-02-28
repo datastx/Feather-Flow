@@ -396,6 +396,28 @@ The key insight: **Jinja templating completes before dependency extraction begin
 
 This is a deliberate design choice. It ensures the DAG is deterministic — the compiler can always figure out the full dependency graph from the rendered SQL without needing to execute any I/O or runtime logic.
 
+### Self-Referencing Models
+
+Incremental models commonly need to reference their own table — for example, a LEFT JOIN against the target table to identify only new rows that haven't been loaded yet:
+
+```sql
+{{ config(materialized="incremental", unique_key="order_id", incremental_strategy="merge") }}
+
+select o.order_id, o.customer_id, o.order_date, o.amount, o.status
+from stg_orders o
+left join fct_orders_incremental existing
+    on o.order_id = existing.order_id
+where existing.order_id is null
+```
+
+Here `fct_orders_incremental` references itself. The dependency extractor (step 3 above) correctly finds this table reference — it has no concept of "self" and simply reports every relation in the AST. But if this self-reference were fed into DAG construction (step 4), it would create a cycle: the model depends on itself, which makes topological sorting impossible.
+
+The compile layer handles this by **filtering out self-references after dependency categorization and before DAG construction.** When the extracted dependencies for a model include the model's own name, that entry is silently removed. The model still compiles and executes normally — the self-reference is a runtime concern (the table either exists from a prior run or doesn't yet), not a structural dependency.
+
+This is different from how dbt solves the same problem. dbt requires the `{{ this }}` Jinja keyword to reference the current model's table, making self-references syntactically distinct from cross-model references. Feather-Flow doesn't need this because it uses plain SQL with natural table names — the compiler already knows every model's name and can detect when a reference points back to the model being compiled. No special syntax required. You write `fct_orders_incremental` in the SQL for `fct_orders_incremental`, and the compiler understands it's a self-reference rather than a circular dependency.
+
+**Key invariant:** self-references are excluded from the DAG only. They are *not* removed from the extracted SQL — the rendered output still contains the original table name, and the database resolves it at execution time.
+
 ## Schema Validation by Kind
 
 Each node kind receives different schema validation techniques, tailored to what the compiler can know about that kind of resource:
