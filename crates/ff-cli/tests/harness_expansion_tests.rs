@@ -252,8 +252,10 @@ fn test_dual_path_incremental_sql_has_where_clause() {
     let inc_sql = std::fs::read_to_string(&inc_path)
         .unwrap_or_else(|e| panic!("Failed to read incremental SQL: {}", e));
     // Incremental path SHOULD have the WHERE clause from is_exists()
+    // Case-insensitive: formatter may lowercase MAX
+    let inc_sql_upper = inc_sql.to_uppercase();
     assert!(
-        inc_sql.contains("MAX(created_at)"),
+        inc_sql_upper.contains("MAX(CREATED_AT)"),
         "Incremental path should contain the WHERE clause: {}",
         inc_sql
     );
