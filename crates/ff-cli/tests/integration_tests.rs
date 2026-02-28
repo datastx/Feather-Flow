@@ -115,8 +115,11 @@ fn test_self_reference_model_dependencies() {
     let known_models: std::collections::HashSet<&str> =
         project.models.keys().map(|k| k.as_ref()).collect();
     let external_tables: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let (mut model_deps, _ext, _unk) =
-        ff_sql::extractor::categorize_dependencies_with_unknown(deps, &known_models, &external_tables);
+    let (mut model_deps, _ext, _unk) = ff_sql::extractor::categorize_dependencies_with_unknown(
+        deps,
+        &known_models,
+        &external_tables,
+    );
     model_deps.retain(|dep| !dep.eq_ignore_ascii_case("fct_orders_incremental"));
 
     assert_eq!(model_deps, vec!["stg_orders"]);
@@ -127,12 +130,18 @@ fn test_self_reference_model_dependencies() {
     all_deps.insert("stg_orders".to_string(), vec![]);
     all_deps.insert(
         "fct_orders_incremental".to_string(),
-        vec!["stg_orders".to_string(), "fct_orders_incremental".to_string()],
+        vec![
+            "stg_orders".to_string(),
+            "fct_orders_incremental".to_string(),
+        ],
     );
     let dag = ModelDag::build(&all_deps)
         .expect("DAG should build without cycles — self-references are filtered by build");
     // Only stg_orders should be a dependency, not the self-reference
-    assert_eq!(dag.dependencies("fct_orders_incremental"), vec!["stg_orders".to_string()]);
+    assert_eq!(
+        dag.dependencies("fct_orders_incremental"),
+        vec!["stg_orders".to_string()]
+    );
 }
 
 /// Test circular dependency detection
