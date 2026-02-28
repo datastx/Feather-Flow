@@ -1,1 +1,4 @@
-SELECT id, value FROM layer_01
+select
+    id
+    , value
+from layer_01

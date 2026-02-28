@@ -1,1 +1,4 @@
-SELECT id, value FROM raw_data
+select
+    id
+    , value
+from raw_data
