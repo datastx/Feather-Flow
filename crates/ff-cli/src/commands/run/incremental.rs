@@ -38,7 +38,15 @@ pub(super) async fn execute_incremental(
     let exists = db.relation_exists(table_name).await?;
 
     if !exists || full_refresh {
-        // First run or full refresh: create table from full query
+        if !exists {
+            // First run: create an empty stub table so self-referencing queries
+            // (e.g. `WHERE id NOT IN (SELECT id FROM this_table)`) can resolve.
+            // The stub is immediately replaced by the CREATE OR REPLACE below.
+            create_stub_table(db, table_name, compiled).await?;
+        }
+        // Full refresh or first run: (re)create table from full query.
+        // Uses CREATE OR REPLACE so the existing/stub table is readable
+        // during query evaluation before being replaced with the result.
         return db.create_table_as(table_name, exec_sql, true).await;
     }
 
@@ -51,6 +59,33 @@ pub(super) async fn execute_incremental(
 
     // Execute the incremental strategy
     execute_strategy(db, table_name, compiled, exec_sql).await
+}
+
+/// Create an empty stub table so self-referencing queries can resolve on first run.
+///
+/// Uses the model's YAML column schema to generate the correct DDL.  If no
+/// schema is defined, the stub is skipped and the CTAS will either succeed
+/// (no self-reference) or produce the usual "table not found" error.
+async fn create_stub_table(
+    db: &Arc<dyn Database>,
+    table_name: &str,
+    compiled: &CompiledModel,
+) -> ff_db::error::DbResult<()> {
+    let columns = match compiled.model_schema {
+        Some(ref schema) if !schema.columns.is_empty() => &schema.columns,
+        _ => return Ok(()),
+    };
+
+    let col_defs: Vec<String> = columns
+        .iter()
+        .map(|col| format!("\"{}\" {}", col.name, col.data_type))
+        .collect();
+    let sql = format!(
+        "CREATE TABLE IF NOT EXISTS {} ({})",
+        quote_qualified(table_name),
+        col_defs.join(", ")
+    );
+    db.execute(&sql).await.map(|_| ())
 }
 
 /// Check for and handle schema changes on an incremental model

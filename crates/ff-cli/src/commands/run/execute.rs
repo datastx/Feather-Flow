@@ -286,7 +286,10 @@ pub(crate) async fn run_single_model(
         };
     }
 
-    if full_refresh {
+    if full_refresh && compiled.materialization != Materialization::Incremental {
+        // Incremental models are NOT dropped here — execute_incremental handles
+        // full_refresh via CREATE OR REPLACE, which preserves the existing table
+        // for self-referencing queries until the replacement completes.
         if let Err(e) = db.drop_if_exists(&qualified_name).await {
             eprintln!(
                 "[warn] Failed to drop {} during full refresh: {}",
