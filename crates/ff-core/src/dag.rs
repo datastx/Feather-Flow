@@ -59,6 +59,12 @@ impl ModelDag {
 
         for (model, deps) in dependencies {
             for dep in deps {
+                // Skip self-references: incremental models may reference their
+                // own table (e.g. LEFT JOIN to detect new rows).  A self-edge
+                // would create a cycle, so we silently exclude it.
+                if dep.eq_ignore_ascii_case(model) {
+                    continue;
+                }
                 // Only add edge if the dependency is also a model (not external)
                 if dependencies.contains_key(dep) {
                     dag.add_dependency(model, dep)?;

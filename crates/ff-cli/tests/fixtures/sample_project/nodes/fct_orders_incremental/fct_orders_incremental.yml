@@ -29,6 +29,3 @@ columns:
   - name: status
     type: VARCHAR
     description: "Order status"
-  - name: loaded_at
-    type: TIMESTAMP
-    description: "Timestamp when the row was loaded"

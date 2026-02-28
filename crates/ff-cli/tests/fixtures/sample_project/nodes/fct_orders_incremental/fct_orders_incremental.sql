@@ -7,13 +7,10 @@
 }}
 
 select
-    o.order_id,
-    o.customer_id,
-    o.order_date,
-    o.amount,
-    o.status,
-    current_timestamp as loaded_at
-from stg_orders o
-left join fct_orders_incremental existing
-    on o.order_id = existing.order_id
-where existing.order_id is null
+    order_id,
+    customer_id,
+    order_date,
+    amount,
+    status
+from stg_orders
+where order_id not in (select order_id from fct_orders_incremental)

@@ -146,18 +146,27 @@ fn test_descendants_bounded_0() {
 }
 
 #[test]
-fn test_self_dependency_causes_cycle() {
-    // A model depending on itself creates a cycle.  The compile layer must
-    // filter self-references *before* building the DAG.
+fn test_self_dependency_filtered_by_build() {
+    // Self-references (e.g. incremental models) are silently filtered out
+    // during DAG construction so they don't create cycles.
     let mut deps = HashMap::new();
     deps.insert("a".to_string(), vec!["a".to_string()]);
 
-    let result = ModelDag::build(&deps);
-    assert!(result.is_err());
-    assert!(matches!(
-        result.unwrap_err(),
-        CoreError::CircularDependency { .. }
-    ));
+    let dag = ModelDag::build(&deps).expect("self-dep should be filtered, not cause a cycle");
+    assert!(dag.dependencies("a").is_empty());
+}
+
+#[test]
+fn test_self_dependency_with_other_deps() {
+    // A model that depends on itself AND another model: the self-ref is
+    // filtered but the real dependency is preserved.
+    let mut deps = HashMap::new();
+    deps.insert("a".to_string(), vec![]);
+    deps.insert("b".to_string(), vec!["a".to_string(), "b".to_string()]);
+
+    let dag = ModelDag::build(&deps).expect("self-dep on b should be filtered");
+    assert_eq!(dag.dependencies("b"), vec!["a".to_string()]);
+    assert!(dag.dependencies("a").is_empty());
 }
 
 #[test]

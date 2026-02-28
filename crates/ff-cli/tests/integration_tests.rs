@@ -121,12 +121,18 @@ fn test_self_reference_model_dependencies() {
 
     assert_eq!(model_deps, vec!["stg_orders"]);
 
-    // Building the DAG with the filtered deps should succeed (no cycle)
+    // Building the DAG with unfiltered deps also succeeds because
+    // ModelDag::build silently skips self-references.
     let mut all_deps: HashMap<String, Vec<String>> = HashMap::new();
     all_deps.insert("stg_orders".to_string(), vec![]);
-    all_deps.insert("fct_orders_incremental".to_string(), model_deps);
-    let dag = ModelDag::build(&all_deps);
-    assert!(dag.is_ok(), "DAG should build without cycles after self-reference filtering");
+    all_deps.insert(
+        "fct_orders_incremental".to_string(),
+        vec!["stg_orders".to_string(), "fct_orders_incremental".to_string()],
+    );
+    let dag = ModelDag::build(&all_deps)
+        .expect("DAG should build without cycles — self-references are filtered by build");
+    // Only stg_orders should be a dependency, not the self-reference
+    assert_eq!(dag.dependencies("fct_orders_incremental"), vec!["stg_orders".to_string()]);
 }
 
 /// Test circular dependency detection
@@ -2137,7 +2143,7 @@ fn test_analysis_sample_project_no_false_diagnostics() {
         "Expected no planning failures, got: {:?}",
         pipeline.propagation.failures
     );
-    assert_eq!(pipeline.propagation.model_plans.len(), 16);
+    assert_eq!(pipeline.propagation.model_plans.len(), 17);
 
     let diagnostics = run_all_passes(&pipeline);
 
