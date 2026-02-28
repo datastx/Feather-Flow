@@ -2,15 +2,13 @@
 //!
 //! Contains project-level checks that go beyond SQL parsing and DAG construction:
 //! duplicate detection, schema validation, source validation, macro validation,
-//! contracts, governance, documentation, and SQL rules.
+//! governance, documentation, and SQL rules.
 
-use anyhow::{Context, Result};
 use ff_core::model::TestDefinition;
 use ff_core::{ModelName, Project};
 use ff_jinja::JinjaEnvironment;
-use ff_meta::manifest::Manifest;
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 // ── Validation types ───────────────────────────────────────────────────
 
@@ -378,97 +376,6 @@ pub(crate) fn validate_macros(
     }
 }
 
-/// Validate schema contracts
-pub(crate) fn validate_contracts(
-    project: &Project,
-    models: &[String],
-    state_path: &Option<String>,
-    ctx: &mut ValidationContext,
-) -> Result<()> {
-    print!("Checking schema contracts... ");
-
-    let reference_manifest = if let Some(path) = state_path {
-        let manifest_path = Path::new(path);
-        if !manifest_path.exists() {
-            ctx.error(
-                "C001",
-                format!("Reference manifest not found: {}", path),
-                None,
-            );
-            println!("✗");
-            return Ok(());
-        }
-        Some(Manifest::load(manifest_path).context("Failed to load reference manifest")?)
-    } else {
-        None
-    };
-
-    let mut contract_warnings = 0;
-    let mut models_with_contracts = 0;
-    let mut enforced_count = 0;
-
-    for name in models {
-        let Some(model) = project.get_model(name) else {
-            continue;
-        };
-        let Some(schema) = &model.schema else {
-            continue;
-        };
-        let Some(contract) = &schema.contract else {
-            continue;
-        };
-
-        models_with_contracts += 1;
-        if contract.enforced {
-            enforced_count += 1;
-        }
-
-        let file_path = model.path.with_extension("yml").display().to_string();
-
-        if schema.columns.is_empty() {
-            ctx.warning(
-                "C006",
-                format!(
-                    "Model '{}' has contract defined but no columns specified",
-                    name
-                ),
-                Some(file_path.clone()),
-            );
-            contract_warnings += 1;
-        }
-
-        if let Some(ref manifest) = reference_manifest {
-            if manifest.get_model(name).is_none() {
-                ctx.warning(
-                    "C005",
-                    format!(
-                        "Model '{}' has contract but not found in reference manifest (new model?)",
-                        name
-                    ),
-                    Some(model.path.display().to_string()),
-                );
-                contract_warnings += 1;
-            }
-        }
-    }
-
-    if models_with_contracts == 0 {
-        println!("(no contracts defined)");
-    } else if contract_warnings == 0 {
-        println!(
-            "✓ ({} contracts, {} enforced)",
-            models_with_contracts, enforced_count
-        );
-    } else {
-        println!(
-            "{} warnings ({} contracts, {} enforced)",
-            contract_warnings, models_with_contracts, enforced_count
-        );
-    }
-
-    Ok(())
-}
-
 /// Validate data governance rules
 pub(crate) fn validate_governance(
     project: &Project,
@@ -597,6 +504,35 @@ pub(crate) fn validate_rules(
         println!("\u{2713} ({} rules)", rules.len());
     } else {
         println!("{} issues ({} rules)", fail_count, rules.len());
+    }
+}
+
+/// Validate run groups defined in `featherflow.yml`.
+///
+/// Checks that all run groups resolve to valid, non-empty node sets and
+/// that there are no circular run-group references.
+pub(crate) fn validate_run_groups(
+    project: &Project,
+    dag: &ff_core::dag::ModelDag,
+    ctx: &mut ValidationContext,
+) {
+    let Some(run_groups) = &project.config.run_groups else {
+        return;
+    };
+    if run_groups.is_empty() {
+        return;
+    }
+
+    print!("Checking run groups... ");
+    let errors = ff_core::selector::validate_run_groups(run_groups, &project.models, dag);
+
+    if errors.is_empty() {
+        println!("\u{2713} ({} groups)", run_groups.len());
+    } else {
+        println!("\u{2717}");
+        for err in &errors {
+            ctx.error("E014", err.to_string(), None);
+        }
     }
 }
 

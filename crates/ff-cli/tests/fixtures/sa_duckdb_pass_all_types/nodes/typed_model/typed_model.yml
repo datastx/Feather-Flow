@@ -4,24 +4,35 @@ name: typed_model
 description: "Comprehensive type coverage for DuckDB types"
 columns:
   - name: tiny
+    description: "The tiny value"
     data_type: TINYINT
   - name: small
+    description: "The small value"
     data_type: SMALLINT
   - name: med
+    description: "The med value"
     data_type: INTEGER
   - name: big
+    description: "The big value"
     data_type: BIGINT
   - name: f
+    description: "The f value"
     data_type: FLOAT
   - name: d
+    description: "The d value"
     data_type: DOUBLE
   - name: dec
+    description: "The dec value"
     data_type: DECIMAL(10,2)
   - name: s
+    description: "String value"
     data_type: VARCHAR
   - name: b
+    description: "Column b value"
     data_type: BOOLEAN
   - name: dt
+    description: "Date value"
     data_type: DATE
   - name: ts
+    description: "Timestamp value"
     data_type: TIMESTAMP

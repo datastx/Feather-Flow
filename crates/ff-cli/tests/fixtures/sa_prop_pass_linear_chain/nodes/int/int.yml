@@ -4,6 +4,8 @@ name: int
 description: "Intermediate model selecting id and name from stg"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     data_type: INTEGER
   - name: name
+    description: "Name of the entity"
     data_type: VARCHAR

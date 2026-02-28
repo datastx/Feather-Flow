@@ -1,0 +1,34 @@
+version: 1
+kind: sql
+materialized: incremental
+unique_key: order_id
+incremental_strategy: merge
+
+description: "Incremental fact table using is_exists() for dual-path compilation"
+owner: analytics-team
+tags:
+  - marts
+  - facts
+  - incremental
+
+columns:
+  - name: order_id
+    type: INTEGER
+    description: "Unique identifier for the order"
+    tests:
+      - unique
+      - not_null
+  - name: customer_id
+    type: INTEGER
+    description: "Reference to the customer"
+    tests:
+      - not_null
+  - name: order_date
+    type: DATE
+    description: "Date the order was placed"
+  - name: amount
+    type: DECIMAL(10,2)
+    description: "Order amount in dollars"
+  - name: status
+    type: VARCHAR
+    description: "Order status"

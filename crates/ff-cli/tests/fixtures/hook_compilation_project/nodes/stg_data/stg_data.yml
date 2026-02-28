@@ -1,0 +1,14 @@
+version: 1
+kind: sql
+description: "Staged metrics data with a single pre-hook"
+pre_hook: "CREATE TABLE IF NOT EXISTS audit_log (model VARCHAR, ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+columns:
+  - name: metric_id
+    type: INTEGER
+    description: "Metric identifier"
+  - name: value
+    type: DOUBLE
+    description: "Metric value"
+  - name: recorded_at
+    type: TIMESTAMP
+    description: "Recording timestamp"

@@ -4,6 +4,8 @@ name: cast_shorthand
 description: "DuckDB cast shorthand syntax"
 columns:
   - name: big_id
+    description: "The big id value"
     data_type: BIGINT
   - name: id
+    description: "Unique identifier for the record"
     data_type: INTEGER

@@ -108,6 +108,10 @@ test-sa-rust: ## Run Rust-level static analysis tests
 .PHONY: test-sa-all
 test-sa-all: test-sa test-sa-rust ## Run all static analysis tests
 
+.PHONY: bench
+bench: ## Run memory and performance benchmarks
+	cargo test -p ff-cli --release --test memory_bench -- --nocapture
+
 # =============================================================================
 # Code Quality
 # =============================================================================
@@ -122,6 +126,30 @@ fmt: ## Format code
 .PHONY: fmt-check
 fmt-check: ## Check code formatting
 	cargo fmt --all -- --check
+
+.PHONY: fmt-fixtures
+fmt-fixtures: ## Format SQL in all test fixtures
+	@echo "Formatting test fixtures..."
+	@for dir in crates/ff-cli/tests/fixtures/*/; do \
+		if [ -f "$$dir/featherflow.yml" ] && [ "$$(basename $$dir)" != "jinja_error_project" ]; then \
+			echo "  Formatting $$(basename $$dir)..."; \
+			(cd "$$dir" && $(PWD)/target/release/ff dt fmt 2>/dev/null) || true; \
+		fi \
+	done
+
+.PHONY: fmt-fixtures-check
+fmt-fixtures-check: ## Check fixture SQL formatting (CI gate)
+	@echo "Checking test fixture formatting..."
+	@failed=0; \
+	for dir in crates/ff-cli/tests/fixtures/*/; do \
+		if [ -f "$$dir/featherflow.yml" ] && [ "$$(basename $$dir)" != "jinja_error_project" ]; then \
+			if ! (cd "$$dir" && $(PWD)/target/release/ff dt fmt --check 2>/dev/null); then \
+				echo "  UNFORMATTED: $$(basename $$dir)"; \
+				failed=1; \
+			fi \
+		fi \
+	done; \
+	if [ $$failed -eq 1 ]; then echo "Some fixtures need formatting. Run 'make fmt-fixtures'"; exit 1; fi
 
 .PHONY: clippy
 clippy: ## Run clippy linter

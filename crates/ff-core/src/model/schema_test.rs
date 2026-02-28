@@ -424,94 +424,9 @@ columns:
 }
 
 #[test]
-fn test_parse_contract_definition() {
+fn test_schema_helper_methods() {
     let yaml = r#"
 version: 1
-name: fct_orders
-contract:
-  enforced: true
-columns:
-  - name: order_id
-    data_type: INTEGER
-    constraints:
-      - not_null
-      - primary_key
-  - name: customer_id
-    data_type: INTEGER
-    constraints:
-      - not_null
-  - name: total_amount
-    data_type: DECIMAL
-"#;
-    let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
-
-    // Verify contract is parsed
-    assert!(schema.contract.is_some());
-    let contract = schema.contract.unwrap();
-    assert!(contract.enforced);
-
-    // Verify column constraints are parsed
-    assert_eq!(schema.columns.len(), 3);
-
-    let order_id_col = &schema.columns[0];
-    assert_eq!(order_id_col.name, "order_id");
-    assert_eq!(order_id_col.data_type, "INTEGER");
-    assert_eq!(order_id_col.constraints.len(), 2);
-    assert!(order_id_col
-        .constraints
-        .contains(&ColumnConstraint::NotNull));
-    assert!(order_id_col
-        .constraints
-        .contains(&ColumnConstraint::PrimaryKey));
-
-    let customer_id_col = &schema.columns[1];
-    assert_eq!(customer_id_col.constraints.len(), 1);
-    assert!(customer_id_col
-        .constraints
-        .contains(&ColumnConstraint::NotNull));
-
-    let total_amount_col = &schema.columns[2];
-    assert!(total_amount_col.constraints.is_empty());
-}
-
-#[test]
-fn test_contract_not_enforced() {
-    let yaml = r#"
-version: 1
-contract:
-  enforced: false
-columns:
-  - name: id
-    type: INTEGER
-"#;
-    let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
-
-    assert!(schema.contract.is_some());
-    assert!(!schema.has_enforced_contract());
-    let contract = schema.contract.as_ref().unwrap();
-    assert!(!contract.enforced);
-}
-
-#[test]
-fn test_no_contract_section() {
-    let yaml = r#"
-version: 1
-columns:
-  - name: id
-    type: INTEGER
-"#;
-    let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
-
-    assert!(schema.contract.is_none());
-    assert!(!schema.has_enforced_contract());
-}
-
-#[test]
-fn test_contract_helper_methods() {
-    let yaml = r#"
-version: 1
-contract:
-  enforced: true
 columns:
   - name: order_id
     data_type: INTEGER
@@ -519,12 +434,6 @@ columns:
     data_type: VARCHAR
 "#;
     let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
-
-    // Test has_enforced_contract
-    assert!(schema.has_enforced_contract());
-
-    // Test get_contract
-    assert!(schema.get_contract().is_some());
 
     // Test get_column
     let order_id = schema.get_column("order_id");
@@ -544,23 +453,6 @@ columns:
     assert_eq!(names.len(), 2);
     assert!(names.contains(&"order_id"));
     assert!(names.contains(&"customer_id"));
-}
-
-#[test]
-fn test_column_constraint_unique() {
-    let yaml = r#"
-version: 1
-columns:
-  - name: email
-    type: VARCHAR
-    constraints:
-      - unique
-"#;
-    let schema: ModelSchema = serde_yaml::from_str(yaml).unwrap();
-
-    let email_col = &schema.columns[0];
-    assert_eq!(email_col.constraints.len(), 1);
-    assert!(email_col.constraints.contains(&ColumnConstraint::Unique));
 }
 
 #[test]

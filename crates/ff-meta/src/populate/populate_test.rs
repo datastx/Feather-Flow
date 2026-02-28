@@ -6,10 +6,7 @@ use ff_core::config::Materialization;
 use ff_core::function::{FunctionArg, FunctionConfig, FunctionReturn, FunctionType};
 use ff_core::model::testing::{SchemaTest, SingularTest, TestConfig, TestSeverity, TestType};
 use ff_core::model::ModelConfig;
-use ff_core::model::{
-    ColumnConstraint, ColumnReference, DataClassification, ModelSchema, SchemaColumnDef,
-    SchemaContract,
-};
+use ff_core::model::{ColumnReference, DataClassification, ModelSchema, SchemaColumnDef};
 use ff_core::model_name::ModelName;
 use ff_core::source::{SourceColumn, SourceFile, SourceKind, SourceTable};
 use ff_core::{Config, FunctionDef, Model, Seed};
@@ -47,14 +44,12 @@ fn test_model(name: &str) -> Model {
             owner: Some("data-team".to_string()),
             meta: HashMap::new(),
             tags: vec!["core".to_string()],
-            contract: None,
             columns: vec![SchemaColumnDef {
                 name: "id".to_string(),
                 data_type: "INTEGER".to_string(),
                 description: Some("Primary key".to_string()),
                 description_ai_generated: None,
                 primary_key: true,
-                constraints: vec![ColumnConstraint::NotNull, ColumnConstraint::PrimaryKey],
                 tests: vec![],
                 references: None,
                 classification: None,
@@ -416,7 +411,6 @@ fn populate_model_columns_with_constraints_and_references() {
                 description: None,
                 description_ai_generated: None,
                 primary_key: true,
-                constraints: vec![ColumnConstraint::NotNull, ColumnConstraint::PrimaryKey],
                 tests: vec![],
                 references: None,
                 classification: Some(DataClassification::Internal),
@@ -427,7 +421,6 @@ fn populate_model_columns_with_constraints_and_references() {
                 description: Some("FK to customers".to_string()),
                 description_ai_generated: None,
                 primary_key: false,
-                constraints: vec![ColumnConstraint::NotNull],
                 tests: vec![],
                 references: Some(ColumnReference {
                     model: ModelName::new("customers"),
@@ -441,13 +434,11 @@ fn populate_model_columns_with_constraints_and_references() {
                 description: None,
                 description_ai_generated: None,
                 primary_key: false,
-                constraints: vec![],
                 tests: vec![],
                 references: None,
                 classification: Some(DataClassification::Pii),
             },
         ];
-        model.schema.as_mut().unwrap().contract = Some(SchemaContract { enforced: true });
 
         let mut models = HashMap::new();
         models.insert(ModelName::new("orders"), model);
@@ -464,17 +455,6 @@ fn populate_model_columns_with_constraints_and_references() {
             .unwrap();
         assert_eq!(col_count, 3);
 
-        let constraint_count: i64 = conn
-            .query_row(
-                "SELECT count(*) FROM ff_meta.model_column_constraints mc
-                 JOIN ff_meta.model_columns c ON mc.column_id = c.column_id
-                 WHERE c.model_id = ?",
-                duckdb::params![model_id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(constraint_count, 3);
-
         let ref_count: i64 = conn
             .query_row(
                 "SELECT count(*) FROM ff_meta.model_column_references mr
@@ -485,15 +465,6 @@ fn populate_model_columns_with_constraints_and_references() {
             )
             .unwrap();
         assert_eq!(ref_count, 1);
-
-        let enforced: bool = conn
-            .query_row(
-                "SELECT contract_enforced FROM ff_meta.models WHERE model_id = ?",
-                duckdb::params![model_id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert!(enforced);
 
         Ok(())
     })

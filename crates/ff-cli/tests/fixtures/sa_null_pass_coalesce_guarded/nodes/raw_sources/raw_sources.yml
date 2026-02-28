@@ -1,21 +1,30 @@
 kind: sources
 version: 1
 name: raw_ecommerce
+description: "Raw source data definitions"
 schema: main
 tables:
   - name: raw_orders
+    description: "Raw orders data"
     columns:
       - name: id
+        description: "Unique identifier for the record"
         type: INTEGER
       - name: customer_id
+        description: "Unique identifier for the customer"
         type: INTEGER
       - name: amount
+        description: "Monetary amount in dollars"
         type: DECIMAL(10,2)
   - name: raw_customers
+    description: "Raw customers data"
     columns:
       - name: id
+        description: "Unique identifier for the record"
         type: INTEGER
       - name: name
+        description: "Name of the entity"
         type: VARCHAR
       - name: email
+        description: "Email address"
         type: VARCHAR

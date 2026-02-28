@@ -1,0 +1,13 @@
+version: 1
+kind: sql
+description: "Staged orders from raw source"
+columns:
+  - name: order_id
+    type: INTEGER
+    description: "Order identifier"
+  - name: amount
+    type: DECIMAL(10,2)
+    description: "Order amount"
+  - name: country_code
+    type: VARCHAR
+    description: "Country code"

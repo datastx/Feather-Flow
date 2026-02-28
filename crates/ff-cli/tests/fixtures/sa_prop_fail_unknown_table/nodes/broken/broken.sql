@@ -1,3 +1,1 @@
-SELECT
-    id
-FROM nonexistent_table
+select id from nonexistent_table

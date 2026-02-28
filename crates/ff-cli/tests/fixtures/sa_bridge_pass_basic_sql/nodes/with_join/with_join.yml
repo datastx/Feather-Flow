@@ -4,6 +4,8 @@ name: with_join
 description: "Self-join on raw_data"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     data_type: INTEGER
   - name: name
+    description: "Name of the entity"
     data_type: VARCHAR

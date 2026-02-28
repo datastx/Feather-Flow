@@ -1,0 +1,33 @@
+version: 1
+kind: source
+name: raw_source
+description: "Raw data source for yaml config project"
+schema: analytics
+tables:
+  - name: raw_users
+    description: "Raw user data"
+    columns:
+      - name: user_id
+        type: INTEGER
+        description: "User identifier"
+      - name: username
+        type: VARCHAR
+        description: "Username"
+      - name: created_at
+        type: TIMESTAMP
+        description: "Account creation time"
+  - name: raw_activity
+    description: "Raw activity data"
+    columns:
+      - name: activity_id
+        type: INTEGER
+        description: "Activity identifier"
+      - name: user_id
+        type: INTEGER
+        description: "Reference to user"
+      - name: action
+        type: VARCHAR
+        description: "Action performed"
+      - name: ts
+        type: TIMESTAMP
+        description: "Activity timestamp"

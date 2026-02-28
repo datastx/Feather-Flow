@@ -49,6 +49,60 @@ fn test_incremental_state_not_incremental_model() {
     assert!(!state.is_incremental_run());
 }
 
+// ===== is_exists() function tests =====
+
+#[test]
+fn test_is_exists_returns_true_when_incremental() {
+    let state = IncrementalState::new(true, true, false);
+    let is_exists_fn = make_is_exists_fn(state);
+    assert!(is_exists_fn());
+}
+
+#[test]
+fn test_is_exists_returns_false_on_first_run() {
+    let state = IncrementalState::new(true, false, false);
+    let is_exists_fn = make_is_exists_fn(state);
+    assert!(!is_exists_fn());
+}
+
+#[test]
+fn test_is_exists_returns_false_on_full_refresh() {
+    let state = IncrementalState::new(true, true, true);
+    let is_exists_fn = make_is_exists_fn(state);
+    assert!(!is_exists_fn());
+}
+
+// ===== is_incremental() deprecation tests =====
+
+#[test]
+fn test_is_incremental_deprecated_still_works() {
+    let state = IncrementalState::new(true, true, false);
+    let capture: DeprecationCapture = Arc::new(Mutex::new(Vec::new()));
+    let is_incremental_fn = make_is_incremental_fn(state, capture.clone());
+
+    // Should still return the correct value
+    assert!(is_incremental_fn());
+
+    // Should have captured a deprecation warning
+    let warnings = capture.lock().unwrap();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("deprecated"));
+    assert!(warnings[0].contains("is_exists()"));
+}
+
+#[test]
+fn test_is_incremental_deprecated_captures_each_call() {
+    let state = IncrementalState::new(true, false, false);
+    let capture: DeprecationCapture = Arc::new(Mutex::new(Vec::new()));
+    let is_incremental_fn = make_is_incremental_fn(state, capture.clone());
+
+    // Multiple calls should each produce a warning
+    assert!(!is_incremental_fn());
+    assert!(!is_incremental_fn());
+    let warnings = capture.lock().unwrap();
+    assert_eq!(warnings.len(), 2);
+}
+
 // ===== env() function tests =====
 
 #[test]

@@ -7,7 +7,6 @@
 pub mod checksum;
 pub mod classification;
 pub mod config;
-pub mod contract;
 pub mod dag;
 pub mod error;
 pub mod function;
@@ -34,17 +33,13 @@ pub mod test_name;
 
 pub use checksum::compute_checksum;
 pub use config::{Config, DbType};
-pub use contract::{validate_contract, ContractValidationResult, ContractViolation, ViolationType};
 pub use error::CoreError;
 pub use function::{
     build_function_lookup, discover_functions, FunctionArg, FunctionConfig, FunctionDef,
     FunctionReturn, FunctionReturnColumn, FunctionSignature, FunctionType,
 };
 pub use function_name::FunctionName;
-pub use model::{
-    ColumnConstraint, DataClassification, Model, ModelKind, ModelSchema, PythonConfig,
-    SchemaContract,
-};
+pub use model::{DataClassification, Model, ModelKind, ModelSchema, PythonConfig};
 pub use model_name::ModelName;
 pub use node::NodeKind;
 pub use project::{Project, ProjectParts};

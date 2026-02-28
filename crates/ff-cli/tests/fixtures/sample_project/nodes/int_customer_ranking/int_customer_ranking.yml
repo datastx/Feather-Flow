@@ -1,5 +1,7 @@
 version: 1
 kind: sql
+materialized: view
+schema: intermediate
 
 description: "Customer ranking with LEFT JOIN to test nullable metrics"
 owner: data-team

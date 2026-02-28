@@ -1,5 +1,7 @@
 version: 1
 kind: sql
+materialized: view
+schema: intermediate
 
 description: "High value customer order summary, filtered by total amount > 100"
 owner: data-team

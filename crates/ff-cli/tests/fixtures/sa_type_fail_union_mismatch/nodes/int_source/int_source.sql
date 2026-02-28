@@ -1,3 +1,1 @@
-SELECT
-    id
-FROM raw_ints
+select id from raw_ints

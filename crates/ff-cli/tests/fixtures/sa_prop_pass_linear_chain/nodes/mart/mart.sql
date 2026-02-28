@@ -1,4 +1,4 @@
-SELECT
-    id,
-    name
-FROM int
+select
+    id
+    , name
+from int

@@ -1,5 +1,7 @@
 version: 1
 kind: sql
+materialized: view
+schema: intermediate
 
 description: "Customer-level aggregated metrics from orders"
 owner: data-team

@@ -1,10 +1,13 @@
 kind: sql
+materialized: view
 version: 1
 
 description: "Model that imports from a nonexistent macro file"
 
 columns:
   - name: id
+    description: "Unique identifier for the record"
     type: INTEGER
   - name: transformed_status
+    description: "The transformed status value"
     type: VARCHAR

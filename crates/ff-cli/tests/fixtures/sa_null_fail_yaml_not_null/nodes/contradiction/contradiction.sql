@@ -1,5 +1,5 @@
-SELECT
-    o.id,
-    c.name
-FROM stg_orders o
-LEFT JOIN stg_customers c ON o.customer_id = c.id
+select
+    o.id
+    , c.name
+from stg_orders o
+left join stg_customers c on o.customer_id = c.id

@@ -1,3 +1,5 @@
-SELECT id FROM source_a
-UNION ALL
-SELECT id FROM source_b
+select id
+from source_a
+union all
+select id
+from source_b

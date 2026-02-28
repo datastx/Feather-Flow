@@ -1,0 +1,22 @@
+version: 1
+kind: sql
+materialized: table
+description: "Fact table for metrics with multiple hooks"
+pre_hook:
+  - "INSERT INTO audit_log (model) VALUES ('fct_metrics_pre_1')"
+  - "INSERT INTO audit_log (model) VALUES ('fct_metrics_pre_2')"
+post_hook:
+  - "INSERT INTO audit_log (model) VALUES ('fct_metrics_post_1')"
+columns:
+  - name: metric_id
+    type: INTEGER
+    description: "Metric identifier"
+    tests:
+      - unique
+      - not_null
+  - name: value
+    type: DOUBLE
+    description: "Metric value"
+  - name: recorded_at
+    type: TIMESTAMP
+    description: "Recording timestamp"

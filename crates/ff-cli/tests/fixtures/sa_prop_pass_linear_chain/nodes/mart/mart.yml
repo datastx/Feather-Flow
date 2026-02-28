@@ -4,6 +4,8 @@ name: mart
 description: "Mart model selecting id and name from int"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     data_type: INTEGER
   - name: name
+    description: "Name of the entity"
     data_type: VARCHAR

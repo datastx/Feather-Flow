@@ -1,5 +1,5 @@
-SELECT
-    e.id,
-    e.amount,
-    e.customer_name
-FROM int_enriched e
+select
+    e.id
+    , e.amount
+    , e.customer_name
+from int_enriched e

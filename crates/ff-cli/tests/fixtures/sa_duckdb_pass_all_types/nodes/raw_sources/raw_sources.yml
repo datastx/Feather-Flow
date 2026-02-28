@@ -1,29 +1,42 @@
 kind: sources
 version: 1
 name: raw_ecommerce
+description: "Raw source data definitions"
 schema: main
 tables:
   - name: raw_typed
+    description: "Raw typed data"
     columns:
       - name: tiny
+        description: "Tiny integer value"
         type: TINYINT
       - name: small
+        description: "Small integer value"
         type: SMALLINT
       - name: med
+        description: "Medium integer value"
         type: INTEGER
       - name: big
+        description: "Big integer value"
         type: BIGINT
       - name: f
+        description: "Float value"
         type: FLOAT
       - name: d
+        description: "Date or decimal value"
         type: DOUBLE
       - name: dec
+        description: "Decimal value"
         type: DECIMAL(10,2)
       - name: s
+        description: "String value"
         type: VARCHAR
       - name: b
+        description: "Column b value"
         type: BOOLEAN
       - name: dt
+        description: "Date value"
         type: DATE
       - name: ts
+        description: "Timestamp value"
         type: TIMESTAMP

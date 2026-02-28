@@ -1,10 +1,13 @@
 kind: sql
+materialized: view
 version: 1
 
 description: "Model that references an undefined variable without default"
 
 columns:
   - name: id
+    description: "Unique identifier for the record"
     type: INTEGER
   - name: status
+    description: "Current status of the record"
     type: VARCHAR

@@ -1,1 +1,5 @@
-SELECT id, name, bonus FROM raw_data
+select
+    id
+    , name
+    , bonus
+from raw_data

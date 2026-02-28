@@ -1,13 +1,18 @@
 kind: sources
 version: 1
 name: raw_ecommerce
+description: "Raw source data definitions"
 schema: main
 tables:
   - name: raw_a
+    description: "Raw a data"
     columns:
       - name: id
+        description: "Unique identifier for the record"
         type: INTEGER
   - name: raw_b
+    description: "Raw b data"
     columns:
       - name: id
+        description: "Unique identifier for the record"
         type: INTEGER

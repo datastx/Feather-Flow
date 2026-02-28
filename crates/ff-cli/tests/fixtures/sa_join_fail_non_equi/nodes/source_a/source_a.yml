@@ -4,6 +4,8 @@ name: source_a
 description: "Source A with val"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     data_type: INTEGER
   - name: val
+    description: "Numeric value"
     data_type: INTEGER

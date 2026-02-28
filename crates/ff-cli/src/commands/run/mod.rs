@@ -4,7 +4,7 @@
 //! - `compile` — model compilation, caching, and DAG resolution
 //! - `execute` — sequential and parallel model execution
 //! - `incremental` — incremental strategies and Write-Audit-Publish (WAP)
-//! - `hooks` — pre/post hooks, schema creation, DB connection, contract validation
+//! - `hooks` — pre/post hooks, schema creation, DB connection
 //! - `state` — run results, state tracking, smart builds, resume support
 
 mod compile;
@@ -71,20 +71,53 @@ fn resolve_mode(cli_mode: Option<CliRunMode>, config_mode: Option<&RunMode>) -> 
     config_mode.copied().unwrap_or(RunMode::Build)
 }
 
+/// Look up a run group config when the `--nodes` selector is a single
+/// `run-group:<name>` token.
+fn resolve_run_group_config<'a>(
+    nodes_arg: &Option<String>,
+    config: &'a ff_core::config::Config,
+) -> Option<&'a ff_core::config::RunGroupConfig> {
+    let raw = nodes_arg.as_deref()?.trim();
+    let name = raw.strip_prefix("run-group:")?;
+    config.run_groups.as_ref()?.get(name)
+}
+
 /// Execute the run command
 pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     let start_time = Instant::now();
     let project = load_project(global)?;
 
+    // If the selector is a single run-group, apply its defaults (CLI flags override).
+    let group_cfg = resolve_run_group_config(&args.nodes, &project.config);
+
+    let group_mode = group_cfg.and_then(|g| g.mode.as_ref());
     let mode = resolve_mode(
         args.mode,
-        project.config.run.as_ref().map(|r| &r.default_mode),
+        group_mode.or(project.config.run.as_ref().map(|r| &r.default_mode)),
     );
 
+    // Apply run-group overrides for full_refresh and fail_fast
+    let effective_args = if let Some(gcfg) = group_cfg {
+        let mut patched = args.clone();
+        if !args.full_refresh {
+            if let Some(true) = gcfg.full_refresh {
+                patched.full_refresh = true;
+            }
+        }
+        if !args.fail_fast {
+            if let Some(true) = gcfg.fail_fast {
+                patched.fail_fast = true;
+            }
+        }
+        patched
+    } else {
+        args.clone()
+    };
+
     match mode {
-        RunMode::Models => execute_models_mode(args, global, &project, start_time).await,
-        RunMode::Test => execute_test_mode(args, global, &project).await,
-        RunMode::Build => execute_build_mode(args, global, &project, start_time).await,
+        RunMode::Models => execute_models_mode(&effective_args, global, &project, start_time).await,
+        RunMode::Test => execute_test_mode(&effective_args, global, &project).await,
+        RunMode::Build => execute_build_mode(&effective_args, global, &project, start_time).await,
     }
 }
 
@@ -141,7 +174,8 @@ async fn execute_models_mode(
     let db = create_database_connection(project, global)?;
 
     let comment_ctx =
-        common::build_query_comment_context(&project.config, global.database.as_deref());
+        common::build_query_comment_context(&project.config, global.database.as_deref())
+            .map(|ctx| ctx.with_runtime_fields("models", args.full_refresh));
 
     let mut compiled_models = load_or_compile_models(project, args, global, comment_ctx.as_ref())?;
     qualify_sql_references(&mut compiled_models, project, global);

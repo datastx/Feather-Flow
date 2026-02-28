@@ -1,0 +1,14 @@
+version: 1
+kind: sql
+materialized: view
+description: "Staged users from raw source"
+columns:
+  - name: user_id
+    type: INTEGER
+    description: "User identifier"
+  - name: username
+    type: VARCHAR
+    description: "Username"
+  - name: created_at
+    type: TIMESTAMP
+    description: "Account creation time"

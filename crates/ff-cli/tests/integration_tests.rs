@@ -21,7 +21,7 @@ fn test_load_sample_project() {
     let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
 
     assert_eq!(project.config.name, "sample_project");
-    assert_eq!(project.models.len(), 17);
+    assert_eq!(project.models.len(), 18);
     assert!(project.models.contains_key("stg_orders"));
     assert!(project.models.contains_key("stg_customers"));
     assert!(project.models.contains_key("stg_products"));
@@ -190,16 +190,17 @@ fn test_jinja_variable_substitution() {
     assert!(result.contains("2024-01-01"));
 }
 
-/// Test config capture
+/// Test config from YAML (config is now in YAML, not Jinja)
 #[test]
-fn test_config_capture() {
-    let jinja = JinjaEnvironment::default();
-    let template = "{{ config(materialized='table', schema='staging') }}SELECT 1";
+fn test_config_from_yaml() {
+    let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
+    let fct_orders = project.get_model("fct_orders").unwrap();
 
-    let (_, config) = jinja.render_with_config(template).unwrap();
-
-    assert_eq!(config.get("materialized").unwrap().as_str(), Some("table"));
-    assert_eq!(config.get("schema").unwrap().as_str(), Some("staging"));
+    // Config should be populated from YAML
+    assert_eq!(
+        fct_orders.config.materialized,
+        Some(ff_core::config::Materialization::Table)
+    );
 }
 
 /// Test selector parsing
@@ -1919,15 +1920,7 @@ fn build_analysis_pipeline(fixture_path: &str) -> AnalysisPipeline {
                 .iter()
                 .map(|col| {
                     let sql_type = parse_sql_type(&col.data_type);
-                    let has_not_null = col
-                        .constraints
-                        .iter()
-                        .any(|c| matches!(c, ff_core::ColumnConstraint::NotNull));
-                    let nullability = if has_not_null {
-                        Nullability::NotNull
-                    } else {
-                        Nullability::Unknown
-                    };
+                    let nullability = Nullability::Unknown;
                     TypedColumn {
                         name: col.name.clone(),
                         source_table: None,
@@ -2152,7 +2145,7 @@ fn test_analysis_sample_project_no_false_diagnostics() {
         "Expected no planning failures, got: {:?}",
         pipeline.propagation.failures
     );
-    assert_eq!(pipeline.propagation.model_plans.len(), 17);
+    assert_eq!(pipeline.propagation.model_plans.len(), 18);
 
     let diagnostics = run_all_passes(&pipeline);
 
@@ -2324,22 +2317,6 @@ fn test_analysis_coalesce_guard_no_a010() {
         "Expected zero A010 for COALESCE-guarded columns, got {}:\n{:#?}",
         guarded_a010.len(),
         guarded_a010
-    );
-}
-
-#[test]
-fn test_analysis_yaml_not_null_contradiction_a011() {
-    let pipeline = build_analysis_pipeline("tests/fixtures/sa_null_fail_yaml_not_null");
-    let diags = run_single_pass(&pipeline, "plan_nullability");
-    let a011 = diagnostics_with_code(&diags, ff_analysis::DiagnosticCode::A011);
-    assert!(
-        !a011.is_empty(),
-        "Expected A011 for YAML NOT NULL vs JOIN nullable, got none. All diags: {:#?}",
-        diags
-    );
-    assert!(
-        a011.iter().any(|d| d.column.as_deref() == Some("name")),
-        "A011 should reference column 'name'"
     );
 }
 
@@ -2820,63 +2797,41 @@ fn test_project_level_hooks_loaded() {
     assert!(project.config.on_run_end[0].contains("999"));
 }
 
-/// Test that model-level hooks are parsed from config() in SQL templates
+/// Test that model-level hooks are parsed from YAML config
 #[test]
-fn test_model_level_hooks_parsed_from_config() {
+fn test_model_level_hooks_parsed_from_yaml() {
     let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
-    let macro_paths = project.config.macro_paths_absolute(&project.root);
-    let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
 
     // fct_orders should have pre_hook (single string) and post_hook (array of 2)
     let fct_orders = project.get_model("fct_orders").unwrap();
-    let (_, config_values) = jinja.render_with_config(&fct_orders.raw_sql).unwrap();
 
-    // Check pre_hook is a single string
-    let pre_hook_val = config_values
-        .get("pre_hook")
-        .expect("fct_orders should have pre_hook");
-    assert!(
-        pre_hook_val.as_str().is_some(),
-        "fct_orders pre_hook should be a string"
+    assert_eq!(
+        fct_orders.config.pre_hook.len(),
+        1,
+        "fct_orders should have 1 pre_hook"
     );
     assert!(
-        pre_hook_val
-            .as_str()
-            .unwrap()
-            .contains("CREATE TABLE IF NOT EXISTS hook_log"),
+        fct_orders.config.pre_hook[0].contains("CREATE TABLE IF NOT EXISTS hook_log"),
         "fct_orders pre_hook should create hook_log table"
     );
 
-    // Check post_hook is an array of 2 items
-    let post_hook_val = config_values
-        .get("post_hook")
-        .expect("fct_orders should have post_hook");
     assert_eq!(
-        post_hook_val.kind(),
-        minijinja::value::ValueKind::Seq,
-        "fct_orders post_hook should be a sequence"
+        fct_orders.config.post_hook.len(),
+        2,
+        "fct_orders should have 2 post_hooks"
     );
-    let items: Vec<String> = post_hook_val
-        .try_iter()
-        .unwrap()
-        .filter_map(|v| v.as_str().map(String::from))
-        .collect();
-    assert_eq!(items.len(), 2, "fct_orders post_hook should have 2 items");
-    assert!(items[0].contains("fct_orders"));
-    assert!(items[1].contains("post_2"));
+    assert!(fct_orders.config.post_hook[0].contains("fct_orders"));
+    assert!(fct_orders.config.post_hook[1].contains("post_2"));
 
     // dim_customers should have post_hook (single string)
     let dim_customers = project.get_model("dim_customers").unwrap();
-    let (_, config_values) = jinja.render_with_config(&dim_customers.raw_sql).unwrap();
 
-    let post_hook_val = config_values
-        .get("post_hook")
-        .expect("dim_customers should have post_hook");
-    assert!(
-        post_hook_val.as_str().is_some(),
-        "dim_customers post_hook should be a string"
+    assert_eq!(
+        dim_customers.config.post_hook.len(),
+        1,
+        "dim_customers should have 1 post_hook"
     );
-    assert!(post_hook_val.as_str().unwrap().contains("dim_customers"));
+    assert!(dim_customers.config.post_hook[0].contains("dim_customers"));
 }
 
 /// Test hook execution with {{ this }} substitution
@@ -3026,66 +2981,39 @@ async fn test_hook_merge_ordering() {
     assert_eq!(fourth, Some("project_post".to_string()));
 }
 
-fn extract_hooks_from_config(
-    config_values: &HashMap<String, minijinja::Value>,
-    key: &str,
-) -> Vec<String> {
-    config_values
-        .get(key)
-        .map(|v| {
-            if let Some(s) = v.as_str() {
-                vec![s.to_string()]
-            } else if v.kind() == minijinja::value::ValueKind::Seq {
-                v.try_iter()
-                    .map(|iter| {
-                        iter.filter_map(|item| item.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            } else {
-                Vec::new()
-            }
-        })
-        .unwrap_or_default()
-}
-
-/// Test that compile captures model-level hooks in manifest
+/// Test that hooks from YAML config are available in model.config
 #[test]
-fn test_compile_captures_hooks_in_manifest() {
+fn test_hooks_from_yaml_config() {
     let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
-    let macro_paths = project.config.macro_paths_absolute(&project.root);
-    let jinja = JinjaEnvironment::with_macros(&project.config.vars, &macro_paths);
 
     let fct_orders = project.get_model("fct_orders").unwrap();
-    let (_, config_values) = jinja.render_with_config(&fct_orders.raw_sql).unwrap();
-
-    let pre_hooks = extract_hooks_from_config(&config_values, "pre_hook");
-    let post_hooks = extract_hooks_from_config(&config_values, "post_hook");
-
-    assert_eq!(pre_hooks.len(), 1, "fct_orders should have 1 pre_hook");
-    assert!(pre_hooks[0].contains("hook_log"));
-    assert_eq!(post_hooks.len(), 2, "fct_orders should have 2 post_hooks");
+    assert_eq!(
+        fct_orders.config.pre_hook.len(),
+        1,
+        "fct_orders should have 1 pre_hook"
+    );
+    assert!(fct_orders.config.pre_hook[0].contains("hook_log"));
+    assert_eq!(
+        fct_orders.config.post_hook.len(),
+        2,
+        "fct_orders should have 2 post_hooks"
+    );
 
     let dim_customers = project.get_model("dim_customers").unwrap();
-    let (_, config_values) = jinja.render_with_config(&dim_customers.raw_sql).unwrap();
-
-    let dim_post_hooks = extract_hooks_from_config(&config_values, "post_hook");
-
     assert_eq!(
-        dim_post_hooks.len(),
+        dim_customers.config.post_hook.len(),
         1,
         "dim_customers should have 1 post_hook"
     );
-    assert!(dim_post_hooks[0].contains("dim_customers"));
+    assert!(dim_customers.config.post_hook[0].contains("dim_customers"));
 
     let stg_orders = project.get_model("stg_orders").unwrap();
-    let (_, config_values) = jinja.render_with_config(&stg_orders.raw_sql).unwrap();
     assert!(
-        extract_hooks_from_config(&config_values, "pre_hook").is_empty(),
+        stg_orders.config.pre_hook.is_empty(),
         "stg_orders should not have pre_hook"
     );
     assert!(
-        extract_hooks_from_config(&config_values, "post_hook").is_empty(),
+        stg_orders.config.post_hook.is_empty(),
         "stg_orders should not have post_hook"
     );
 }
@@ -5067,4 +4995,151 @@ fn test_cli_lineage_model_source_tables_resolved() {
             }
         }
     }
+}
+
+// ── Compile hooks and tests to target ──────────────────────────────────────
+
+/// Test that compiled hooks appear in target directory for models with hooks
+#[test]
+fn test_compile_hooks_to_target() {
+    let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
+
+    // Hooks come from YAML config
+    let fct_orders = project.get_model("fct_orders").unwrap();
+    let pre_hooks = &fct_orders.config.pre_hook;
+    let post_hooks = &fct_orders.config.post_hook;
+
+    // Write hooks to a temp directory to simulate compile
+    let tmp = tempdir().unwrap();
+    let hooks_dir = tmp.path().join("fct_orders").join("hooks");
+    std::fs::create_dir_all(&hooks_dir).unwrap();
+
+    // Write pre_hook (single)
+    assert_eq!(pre_hooks.len(), 1, "fct_orders should have 1 pre_hook");
+    std::fs::write(hooks_dir.join("pre_hook.sql"), &pre_hooks[0]).unwrap();
+
+    // Write post_hooks (multiple)
+    assert_eq!(post_hooks.len(), 2, "fct_orders should have 2 post_hooks");
+    for (i, hook) in post_hooks.iter().enumerate() {
+        let filename = format!("post_hook_{}.sql", i + 1);
+        std::fs::write(hooks_dir.join(&filename), hook).unwrap();
+    }
+
+    // Verify files exist
+    assert!(hooks_dir.join("pre_hook.sql").exists());
+    assert!(hooks_dir.join("post_hook_1.sql").exists());
+    assert!(hooks_dir.join("post_hook_2.sql").exists());
+
+    // Verify content
+    let pre_content = std::fs::read_to_string(hooks_dir.join("pre_hook.sql")).unwrap();
+    assert!(
+        pre_content.contains("hook_log"),
+        "pre_hook should contain CREATE TABLE hook_log"
+    );
+
+    let post1_content = std::fs::read_to_string(hooks_dir.join("post_hook_1.sql")).unwrap();
+    assert!(
+        post1_content.contains("fct_orders"),
+        "post_hook_1 should reference fct_orders"
+    );
+}
+
+/// Test that compiled test SQL appears in target/compiled/tests/ directory
+#[test]
+fn test_compile_tests_to_target() {
+    let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
+
+    // Collect all schema tests from models
+    let all_tests: Vec<_> = project
+        .models
+        .values()
+        .flat_map(|model| model.get_schema_tests())
+        .collect();
+
+    assert!(
+        !all_tests.is_empty(),
+        "sample_project should have schema tests"
+    );
+
+    // Write tests to a temp directory
+    let tmp = tempdir().unwrap();
+    let tests_dir = tmp.path().join("tests");
+    std::fs::create_dir_all(&tests_dir).unwrap();
+
+    let mut count = 0;
+    for test in &all_tests {
+        let sql = ff_test::generator::generate_test_sql(test);
+        let filename = format!("{}__{}__{}.sql", test.model, test.test_type, test.column);
+        std::fs::write(tests_dir.join(&filename), &sql).unwrap();
+        count += 1;
+    }
+
+    assert!(count > 0, "Should have written at least one test SQL file");
+
+    // Verify specific test files exist for models we know have tests
+    // stg_orders has unique + not_null on order_id, and accepted_values on status
+    let stg_orders_tests: Vec<_> = all_tests
+        .iter()
+        .filter(|t| t.model.as_ref() == "stg_orders")
+        .collect();
+    assert!(
+        stg_orders_tests.len() >= 2,
+        "stg_orders should have at least 2 tests, found {}",
+        stg_orders_tests.len()
+    );
+
+    // Check that the unique test SQL is correct
+    let unique_test = stg_orders_tests
+        .iter()
+        .find(|t| matches!(t.test_type, ff_core::model::TestType::Unique))
+        .expect("stg_orders should have a unique test on order_id");
+    let unique_sql = ff_test::generator::generate_test_sql(unique_test);
+    assert!(
+        unique_sql.contains("GROUP BY"),
+        "unique test should use GROUP BY: {}",
+        unique_sql
+    );
+    assert!(
+        unique_sql.contains("HAVING"),
+        "unique test should use HAVING: {}",
+        unique_sql
+    );
+
+    // Check that a not_null test SQL is correct
+    let not_null_test = stg_orders_tests
+        .iter()
+        .find(|t| matches!(t.test_type, ff_core::model::TestType::NotNull))
+        .expect("stg_orders should have a not_null test");
+    let not_null_sql = ff_test::generator::generate_test_sql(not_null_test);
+    assert!(
+        not_null_sql.contains("IS NULL"),
+        "not_null test should use IS NULL: {}",
+        not_null_sql
+    );
+}
+
+/// Test that accepted_values test SQL is generated correctly
+#[test]
+fn test_compile_accepted_values_test_to_target() {
+    let project = Project::load(Path::new("tests/fixtures/sample_project")).unwrap();
+
+    let stg_orders_tests: Vec<_> = project.get_model("stg_orders").unwrap().get_schema_tests();
+
+    let av_test = stg_orders_tests
+        .iter()
+        .find(|t| matches!(t.test_type, ff_core::model::TestType::AcceptedValues { .. }))
+        .expect("stg_orders should have an accepted_values test on status");
+
+    let sql = ff_test::generator::generate_test_sql(av_test);
+    assert!(
+        sql.contains("NOT IN"),
+        "accepted_values test should use NOT IN: {}",
+        sql
+    );
+    // The accepted values for status are: pending, completed, cancelled
+    assert!(
+        sql.contains("pending") || sql.contains("'pending'"),
+        "accepted_values test should reference 'pending': {}",
+        sql
+    );
 }

@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use ff_core::model::{parse_test_definition, SchemaTest, SingularTest, TestSeverity, TestType};
 use ff_core::source::SourceFile;
 use ff_db::{Database, DatabaseCore, DuckDbBackend};
-use ff_jinja::{CustomTestRegistry, JinjaEnvironment};
+use ff_jinja::CustomTestRegistry;
 use ff_test::{generator::GeneratedTest, TestRunner};
 use futures::stream::{self, StreamExt};
 use serde::Serialize;
@@ -119,19 +119,11 @@ fn generate_source_tests(sources: &[SourceFile]) -> Vec<SchemaTest> {
 
 /// Execute the test command
 pub(crate) async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> {
-    use ff_core::config::Config;
-
     let project = load_project(global)?;
-
-    let database = Config::resolve_database(global.database.as_deref());
 
     let db = common::create_database_connection(&project.config, global.database.as_deref())?;
 
-    let merged_vars = project.config.get_merged_vars(database.as_deref());
-
     let macro_paths = project.config.macro_paths_absolute(&project.root);
-    let jinja = JinjaEnvironment::with_macros(&merged_vars, &macro_paths);
-
     let mut custom_test_registry = CustomTestRegistry::new();
     custom_test_registry
         .discover(&macro_paths)
@@ -153,15 +145,12 @@ pub(crate) async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> 
     let mut model_qualified_names: HashMap<String, String> = HashMap::new();
 
     for (name, model) in &project.models {
-        let schema = if let Ok((_, config_values)) = jinja.render_with_config(&model.raw_sql) {
-            config_values
-                .get("schema")
-                .and_then(|v| v.as_str())
-                .map(String::from)
-                .or_else(|| project.config.get_schema(None).map(|s| s.to_string()))
-        } else {
-            project.config.get_schema(None).map(|s| s.to_string())
-        };
+        // Config is read from YAML (already on model.config)
+        let schema = model
+            .config
+            .schema
+            .clone()
+            .or_else(|| project.config.get_schema(None).map(|s| s.to_string()));
 
         let qualified_name = match schema {
             Some(s) => format!("{}.{}", s, name),

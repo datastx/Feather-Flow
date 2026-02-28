@@ -10,6 +10,8 @@ tables:
     description: "Raw events"
     columns:
       - name: id
+        description: "Unique identifier for the record"
         type: INTEGER
       - name: status
+        description: "Current status of the record"
         type: VARCHAR

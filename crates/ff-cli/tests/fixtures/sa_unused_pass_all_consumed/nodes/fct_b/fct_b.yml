@@ -4,6 +4,8 @@ name: fct_b
 description: "Fact model B consuming id and b from stg"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     data_type: INTEGER
   - name: b
+    description: "Column b value"
     data_type: VARCHAR

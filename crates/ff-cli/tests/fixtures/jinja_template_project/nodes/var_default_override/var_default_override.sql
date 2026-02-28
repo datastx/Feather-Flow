@@ -1,8 +1,6 @@
-{{ config(materialized='view') }}
-
-SELECT
-    id,
-    event_type,
-    status
-FROM raw_events
-WHERE event_type = '{{ var("event_category", "default_category") }}'
+select
+    id
+    , event_type
+    , status
+from raw_events
+where event_type = '{{ var("event_category", "default_category") }}'

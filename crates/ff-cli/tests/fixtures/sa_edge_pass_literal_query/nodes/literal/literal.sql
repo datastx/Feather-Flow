@@ -1,4 +1,6 @@
-SELECT
-    1 AS val,
-    TRUE AS flag,
-    NULL AS empty_col
+select
+    1 as val
+    ,
+    true as flag
+    ,
+    null as empty_col

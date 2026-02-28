@@ -1,0 +1,22 @@
+version: 1
+kind: sql
+materialized: incremental
+unique_key: activity_id
+incremental_strategy: append
+description: "Fact table for user activity"
+columns:
+  - name: activity_id
+    type: INTEGER
+    description: "Activity identifier"
+    tests:
+      - unique
+      - not_null
+  - name: user_id
+    type: INTEGER
+    description: "Reference to user"
+  - name: action
+    type: VARCHAR
+    description: "Action performed"
+  - name: ts
+    type: TIMESTAMP
+    description: "Activity timestamp"

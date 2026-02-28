@@ -4,10 +4,14 @@ name: dim_products
 description: "Product dimension table"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     type: INTEGER
   - name: name
+    description: "Name of the entity"
     type: VARCHAR
   - name: price
+    description: "Unit price in dollars"
     type: "DECIMAL(10,2)"
   - name: category
+    description: "Category classification"
     type: VARCHAR

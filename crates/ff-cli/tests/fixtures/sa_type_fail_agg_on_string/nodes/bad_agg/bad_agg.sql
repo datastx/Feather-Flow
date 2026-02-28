@@ -1,3 +1,1 @@
-SELECT
-    SUM(name) AS name_sum
-FROM raw_data
+select sum(name) as name_sum from raw_data

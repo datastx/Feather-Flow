@@ -4,8 +4,11 @@ name: stg_customers
 description: "Staging customers"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     data_type: INTEGER
   - name: name
+    description: "Name of the entity"
     data_type: VARCHAR
   - name: email
+    description: "Email address"
     data_type: VARCHAR

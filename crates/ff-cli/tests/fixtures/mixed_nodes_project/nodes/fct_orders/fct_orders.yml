@@ -1,0 +1,17 @@
+version: 1
+kind: sql
+materialized: table
+description: "Fact table for orders combining sources, seeds, and models"
+columns:
+  - name: order_id
+    type: INTEGER
+    description: "Order identifier"
+    tests:
+      - unique
+      - not_null
+  - name: amount
+    type: DECIMAL(10,2)
+    description: "Order amount"
+  - name: country_code
+    type: VARCHAR
+    description: "Country code"

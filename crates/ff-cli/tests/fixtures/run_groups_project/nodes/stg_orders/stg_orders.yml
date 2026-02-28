@@ -1,0 +1,10 @@
+version: 1
+kind: sql
+description: "Staging orders"
+columns:
+  - name: id
+    type: INTEGER
+    description: "Row identifier"
+  - name: name
+    type: VARCHAR
+    description: "Name value"

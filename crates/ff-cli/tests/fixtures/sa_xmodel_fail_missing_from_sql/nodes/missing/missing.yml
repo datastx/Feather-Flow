@@ -4,6 +4,8 @@ name: missing
 description: "YAML declares phantom_col that does not exist in SQL"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     data_type: INTEGER
   - name: phantom_col
+    description: "The phantom col value"
     data_type: VARCHAR

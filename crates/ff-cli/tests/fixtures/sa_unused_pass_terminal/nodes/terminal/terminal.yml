@@ -4,8 +4,11 @@ name: terminal
 description: "Terminal model with extra columns — no A020 because no downstream"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     data_type: INTEGER
   - name: name
+    description: "Name of the entity"
     data_type: VARCHAR
   - name: extra
+    description: "The extra value"
     data_type: VARCHAR

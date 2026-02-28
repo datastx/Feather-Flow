@@ -1,6 +1,6 @@
-SELECT
-    a.id,
-    a.a,
-    b.b
-FROM branch_a a
-JOIN branch_b b ON a.id = b.id
+select
+    a.id
+    , a.a
+    , b.b
+from branch_a a
+join branch_b b on a.id = b.id

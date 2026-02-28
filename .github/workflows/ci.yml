@@ -42,6 +42,23 @@ jobs:
       - name: Check code formatting
         run: make fmt-check
 
+  fmt-fixtures:
+    name: Check fixture SQL formatting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build release binary
+        run: make build-release
+      - name: Check fixture formatting
+        run: make fmt-fixtures-check
+
   clippy:
     name: Clippy lints
     runs-on: ubuntu-latest

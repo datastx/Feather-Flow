@@ -4,4 +4,5 @@ name: bad_agg
 description: "SUM on VARCHAR column — should trigger A004"
 columns:
   - name: name_sum
+    description: "The name sum value"
     data_type: VARCHAR

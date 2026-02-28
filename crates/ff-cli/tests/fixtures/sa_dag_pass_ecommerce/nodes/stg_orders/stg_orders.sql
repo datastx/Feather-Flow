@@ -1,5 +1,5 @@
-SELECT
-    id,
-    customer_id,
-    amount
-FROM raw_orders
+select
+    id
+    , customer_id
+    , amount
+from raw_orders

@@ -1,6 +1,6 @@
-SELECT
-    id,
-    name,
-    price,
-    category
-FROM stg_products
+select
+    id
+    , name
+    , price
+    , category
+from stg_products

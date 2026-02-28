@@ -1,9 +1,9 @@
 //! ff-jinja - Jinja templating layer for Featherflow
 //!
 //! This crate provides a simplified Jinja templating environment
-//! with `config()`, `var()`, `env()`, `log()`, `error()`, `warn()`,
-//! `from_json()`, `to_json()`, `is_incremental()`, and `this` functions,
-//! as well as built-in macros for common SQL operations.
+//! with `var()`, `env()`, `log()`, `error()`, `warn()`,
+//! `from_json()`, `to_json()`, `is_exists()`, `is_incremental()` (deprecated),
+//! and `this` functions, as well as built-in macros for common SQL operations.
 //!
 //! Context variables (`project_name`, `target`, `run_id`, `run_started_at`,
 //! `ff_version`, `executing`, `model`) are available when constructed with

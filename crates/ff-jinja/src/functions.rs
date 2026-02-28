@@ -1,7 +1,7 @@
-//! Jinja template functions: config(), var(), env(), log(), error(), warn(),
-//! from_json(), and to_json().
+//! Jinja template functions: var(), env(), log(), error(), warn(),
+//! from_json(), to_json(), is_exists(), and is_incremental() (deprecated).
 
-use minijinja::value::{Kwargs, Value};
+use minijinja::value::Value;
 use minijinja::Error;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -9,10 +9,13 @@ use std::sync::{Arc, Mutex};
 /// Captured warnings from warn() calls
 pub(crate) type WarningCapture = Arc<Mutex<Vec<String>>>;
 
-/// Captured config values from config() calls
-pub(crate) type ConfigCapture = Arc<Mutex<HashMap<String, Value>>>;
+/// Captured deprecation warnings from is_incremental() calls
+pub(crate) type DeprecationCapture = Arc<Mutex<Vec<String>>>;
 
-/// State for is_incremental() function
+/// State for is_exists() / is_incremental() functions.
+///
+/// `is_exists()` is the preferred function. `is_incremental()` is a deprecated
+/// alias that emits a deprecation warning on first call.
 #[derive(Debug, Clone, Default)]
 pub struct IncrementalState {
     /// Whether the model is configured as incremental
@@ -44,18 +47,39 @@ impl IncrementalState {
     }
 }
 
-/// Create the is_incremental() function
+/// Create the `is_exists()` function.
+///
+/// Returns `true` when the target table already exists in the database,
+/// the model is configured as incremental, and `--full-refresh` was not set.
 ///
 /// Usage in templates:
 /// ```jinja
-/// {% if is_incremental() %}
+/// {% if is_exists() %}
 ///   WHERE updated_at > (SELECT MAX(updated_at) FROM {{ this }})
 /// {% endif %}
 /// ```
-pub(crate) fn make_is_incremental_fn(
+pub(crate) fn make_is_exists_fn(
     state: IncrementalState,
 ) -> impl Fn() -> bool + Send + Sync + Clone + 'static {
     move || state.is_incremental_run()
+}
+
+/// Create the `is_incremental()` function (deprecated alias for `is_exists()`).
+///
+/// Behaves identically to `is_exists()` but emits a deprecation warning to
+/// stderr on every call.
+pub(crate) fn make_is_incremental_fn(
+    state: IncrementalState,
+    deprecation_capture: DeprecationCapture,
+) -> impl Fn() -> bool + Send + Sync + Clone + 'static {
+    move || {
+        let msg = "is_incremental() is deprecated, use is_exists() instead".to_string();
+        eprintln!("[jinja:deprecation] {}", msg);
+        if let Ok(mut warnings) = deprecation_capture.lock() {
+            warnings.push(msg);
+        }
+        state.is_incremental_run()
+    }
 }
 
 /// Create the this() function that returns the current model's table name
@@ -69,37 +93,6 @@ pub(crate) fn make_this_fn(
 ) -> impl Fn() -> String + Send + Sync + Clone + 'static {
     let shared: Arc<str> = qualified_name.into();
     move || shared.to_string()
-}
-
-/// Create the config() function that captures model configuration
-///
-/// Usage in templates:
-/// ```jinja
-/// {{ config(materialized='table', schema='staging') }}
-/// ```
-pub(crate) fn make_config_fn(
-    capture: ConfigCapture,
-) -> impl Fn(Kwargs) -> Result<String, Error> + Send + Sync + Clone + 'static {
-    move |kwargs: Kwargs| {
-        let mut captured = capture.lock().map_err(|e| {
-            Error::new(
-                minijinja::ErrorKind::InvalidOperation,
-                format!("config mutex poisoned: {e}"),
-            )
-        })?;
-
-        for key in kwargs.args() {
-            let value = kwargs.get::<Value>(key).map_err(|e| {
-                Error::new(
-                    minijinja::ErrorKind::InvalidOperation,
-                    format!("failed to get config kwarg '{}': {}", key, e),
-                )
-            })?;
-            captured.insert(key.to_string(), value);
-        }
-
-        Ok(String::new())
-    }
 }
 
 /// Create the var() function that retrieves variables from config

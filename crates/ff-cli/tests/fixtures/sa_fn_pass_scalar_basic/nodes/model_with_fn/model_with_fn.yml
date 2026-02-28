@@ -4,6 +4,8 @@ description: "Model using a user-defined function"
 
 columns:
   - name: id
+    description: "Unique identifier for the record"
     type: INTEGER
   - name: amount_dollars
+    description: "Amount converted to dollars"
     type: DECIMAL(10,2)

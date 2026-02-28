@@ -1,4 +1,1 @@
-SELECT
-    o.id
-FROM stg_orders o
-JOIN stg_items i ON o.code = i.order_code
+select o.id from stg_orders o join stg_items i on o.code = i.order_code

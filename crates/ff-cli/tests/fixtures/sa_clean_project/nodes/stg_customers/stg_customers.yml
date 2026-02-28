@@ -4,10 +4,13 @@ name: stg_customers
 description: "Staging customers model"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     data_type: INTEGER
     tests: [unique, not_null]
   - name: name
+    description: "Name of the entity"
     data_type: VARCHAR
     tests: [not_null]
   - name: email
+    description: "Email address"
     data_type: VARCHAR

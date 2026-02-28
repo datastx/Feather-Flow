@@ -92,6 +92,10 @@ pub struct Config {
     /// Run/build mode defaults
     #[serde(default)]
     pub run: Option<RunConfig>,
+
+    /// Named run groups — collections of nodes with preset run parameters
+    #[serde(default)]
+    pub run_groups: Option<HashMap<String, RunGroupConfig>>,
 }
 
 // ── DatabaseConfig ──────────────────────────────────────────────────────────
@@ -237,6 +241,18 @@ pub enum Materialization {
     Ephemeral,
 }
 
+impl Materialization {
+    /// Parse a materialization from a string, defaulting to View for unrecognized values.
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "table" => Materialization::Table,
+            "incremental" => Materialization::Incremental,
+            "ephemeral" => Materialization::Ephemeral,
+            _ => Materialization::View,
+        }
+    }
+}
+
 /// Incremental strategy for incremental models
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -250,6 +266,17 @@ pub enum IncrementalStrategy {
     DeleteInsert,
 }
 
+impl IncrementalStrategy {
+    /// Parse an incremental strategy from a string, defaulting to Append for unrecognized values.
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "merge" => IncrementalStrategy::Merge,
+            "delete+insert" | "delete_insert" => IncrementalStrategy::DeleteInsert,
+            _ => IncrementalStrategy::Append,
+        }
+    }
+}
+
 /// Schema change handling for incremental models
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -261,6 +288,17 @@ pub enum OnSchemaChange {
     Fail,
     /// Add new columns
     AppendNewColumns,
+}
+
+impl OnSchemaChange {
+    /// Parse an on_schema_change policy from a string, defaulting to Ignore for unrecognized values.
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "fail" => OnSchemaChange::Fail,
+            "append_new_columns" => OnSchemaChange::AppendNewColumns,
+            _ => OnSchemaChange::Ignore,
+        }
+    }
 }
 
 /// SQL dialect
@@ -305,6 +343,33 @@ pub struct RunConfig {
     /// Default run mode: "models" | "test" | "build"
     #[serde(default)]
     pub default_mode: RunMode,
+}
+
+/// Named run group configuration.
+///
+/// Run groups define named collections of node selectors with preset run
+/// parameters. They can be invoked via the `run-group:<name>` selector.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunGroupConfig {
+    /// Optional description for documentation / `ff dt ls`
+    #[serde(default)]
+    pub description: Option<String>,
+
+    /// Node selectors (same syntax as `-n` CLI flag: model names,
+    /// `tag:X`, `path:X`, `+model`, `model+`, etc.)
+    pub nodes: Vec<String>,
+
+    /// Override run mode for this group
+    #[serde(default)]
+    pub mode: Option<RunMode>,
+
+    /// Override full-refresh for this group
+    #[serde(default)]
+    pub full_refresh: Option<bool>,
+
+    /// Override fail-fast for this group
+    #[serde(default)]
+    pub fail_fast: Option<bool>,
 }
 
 /// Execution mode for `ff run`
@@ -736,6 +801,10 @@ pub struct QueryCommentConfig {
     pub include: CommentInclude,
     #[serde(default)]
     pub custom_vars: HashMap<String, String>,
+    /// Custom key-value pairs to include in query comments.
+    /// Values support environment variable interpolation (e.g., "$CI_JOB_ID", "$GIT_SHA").
+    #[serde(default)]
+    pub custom_fields: Option<HashMap<String, String>>,
 }
 
 impl Default for QueryCommentConfig {
@@ -746,6 +815,7 @@ impl Default for QueryCommentConfig {
             style: CommentStyle::default(),
             include: CommentInclude::default(),
             custom_vars: HashMap::new(),
+            custom_fields: None,
         }
     }
 }

@@ -10,14 +10,20 @@ tables:
     description: "Raw event data"
     columns:
       - name: id
+        description: "Unique identifier for the record"
         type: INTEGER
       - name: user_id
+        description: "Identifier of the associated user"
         type: INTEGER
       - name: event_type
+        description: "Type of event"
         type: VARCHAR
       - name: event_date
+        description: "Date the event occurred"
         type: DATE
       - name: amount_cents
+        description: "Monetary amount in cents"
         type: INTEGER
       - name: status
+        description: "Current status of the record"
         type: VARCHAR

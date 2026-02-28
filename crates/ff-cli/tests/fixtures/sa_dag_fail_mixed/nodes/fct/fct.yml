@@ -4,4 +4,5 @@ name: fct
 description: "Fact model selecting single column"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     type: INTEGER

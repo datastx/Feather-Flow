@@ -1,1 +1,1 @@
-SELECT id FROM raw_a
+select id from raw_a

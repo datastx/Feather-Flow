@@ -80,7 +80,6 @@ CREATE TABLE ff_meta.models (
     deprecation_message   VARCHAR,
     base_name             VARCHAR,
     version_number        INTEGER,
-    contract_enforced     BOOLEAN NOT NULL DEFAULT false,
     raw_sql               VARCHAR NOT NULL,
     compiled_sql          VARCHAR,
     sql_checksum          VARCHAR,
@@ -486,7 +485,6 @@ SELECT
     m.description,
     m.owner,
     m.deprecated,
-    m.contract_enforced,
     m.source_path,
     m.sql_checksum,
     mc.unique_key,
@@ -500,7 +498,7 @@ FROM ff_meta.models m
 LEFT JOIN ff_meta.model_config mc ON m.model_id = mc.model_id
 LEFT JOIN ff_meta.model_tags mt ON m.model_id = mt.model_id
 GROUP BY m.model_id, m.name, m.materialization, m.schema_name, m.description,
-         m.owner, m.deprecated, m.contract_enforced, m.source_path, m.sql_checksum,
+         m.owner, m.deprecated, m.source_path, m.sql_checksum,
          mc.unique_key, mc.incremental_strategy, mc.on_schema_change, mc.wap_enabled;
 
 CREATE VIEW ff_meta.v_columns AS

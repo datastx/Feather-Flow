@@ -4,10 +4,14 @@ name: stg
 description: "Staging model selecting all columns including unused ones"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     data_type: INTEGER
   - name: name
+    description: "Name of the entity"
     data_type: VARCHAR
   - name: internal_code
+    description: "The internal code value"
     data_type: VARCHAR
   - name: debug_flag
+    description: "The debug flag value"
     data_type: BOOLEAN

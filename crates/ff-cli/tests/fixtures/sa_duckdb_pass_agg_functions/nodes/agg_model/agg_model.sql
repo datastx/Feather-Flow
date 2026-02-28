@@ -1,1 +1,7 @@
-SELECT COUNT(*) AS cnt, SUM(amount) AS total, AVG(amount) AS avg_amt, MIN(amount) AS min_amt, MAX(amount) AS max_amt FROM raw_data
+select
+    count(*) as cnt
+    , sum(amount) as total
+    , avg(amount) as avg_amt
+    , min(amount) as min_amt
+    , max(amount) as max_amt
+from raw_data

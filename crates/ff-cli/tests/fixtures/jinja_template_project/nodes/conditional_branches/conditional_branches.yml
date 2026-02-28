@@ -1,14 +1,19 @@
 kind: sql
+materialized: view
 version: 1
 
 description: "Model exercising if/elif/else conditional branches"
 
 columns:
   - name: id
+    description: "Unique identifier for the record"
     type: INTEGER
   - name: event_type
+    description: "Type of event"
     type: VARCHAR
   - name: tier_label
+    description: "The tier label value"
     type: VARCHAR
   - name: status
+    description: "Current status of the record"
     type: VARCHAR

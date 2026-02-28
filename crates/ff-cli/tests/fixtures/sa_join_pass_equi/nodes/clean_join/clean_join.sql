@@ -1,4 +1,1 @@
-SELECT
-    a.id
-FROM source_a a
-JOIN source_b b ON a.id = b.id AND a.code = b.code
+select a.id from source_a a join source_b b on a.id = b.id and a.code = b.code

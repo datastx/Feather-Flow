@@ -1,12 +1,11 @@
-{{ config(materialized="table", schema="analytics") }}
-
 select distinct
-    product_id,
-    product_name,
-    category,
-    price,
-    cast(product_id * 10 as bigint) as id_scaled,
-    case
+    product_id
+    , product_name
+    , category
+    , price
+    ,
+    cast(product_id * 10 as bigint) as id_scaled
+    , case
         when category = 'electronics'
         then
             case

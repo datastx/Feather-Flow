@@ -1,1 +1,7 @@
-SELECT regexp_matches(name, '^A') AS matches, md5(name) AS hash FROM raw_data
+select
+    regexp_matches(
+        name
+        , '^A'
+    ) as matches
+    , md5(name) as hash
+from raw_data

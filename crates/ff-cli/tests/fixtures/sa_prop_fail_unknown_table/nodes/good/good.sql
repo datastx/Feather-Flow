@@ -1,2 +1,1 @@
-SELECT
-    1 AS val
+select 1 as val

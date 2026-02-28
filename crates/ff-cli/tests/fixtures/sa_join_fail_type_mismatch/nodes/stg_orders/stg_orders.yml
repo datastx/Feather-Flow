@@ -4,6 +4,8 @@ name: stg_orders
 description: "Staging orders with VARCHAR code"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     data_type: INTEGER
   - name: code
+    description: "The code value"
     data_type: VARCHAR

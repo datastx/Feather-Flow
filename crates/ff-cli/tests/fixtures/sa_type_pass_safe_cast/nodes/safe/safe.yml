@@ -4,8 +4,11 @@ name: safe
 description: "Widening casts — no A005"
 columns:
   - name: id_big
+    description: "The id big value"
     data_type: BIGINT
   - name: id_float
+    description: "The id float value"
     data_type: FLOAT
   - name: d_ts
+    description: "The d ts value"
     data_type: TIMESTAMP

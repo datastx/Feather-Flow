@@ -5,8 +5,8 @@ pub mod testing;
 
 // Re-export all public types to preserve existing `ff_core::model::*` paths
 pub use schema::{
-    ColumnConstraint, ColumnReference, DataClassification, ModelKind, ModelSchema, PythonConfig,
-    SchemaColumnDef, SchemaContract,
+    ColumnReference, DataClassification, ModelKind, ModelSchema, PythonConfig, SchemaColumnDef,
+    StringOrVec,
 };
 pub use testing::{
     parse_test_definition, SchemaTest, SingularTest, TestConfig, TestDefinition, TestParams,
@@ -116,6 +116,7 @@ impl Model {
     ///
     /// This also looks for a matching 1:1 schema file (same name with .yml or .yaml extension).
     /// Every model must have a corresponding YAML schema file — returns an error if missing.
+    /// Config fields (materialized, schema, hooks, etc.) are read from the YAML file.
     pub fn from_file(path: PathBuf) -> Result<Self, crate::error::CoreError> {
         let name = path
             .file_stem()
@@ -148,6 +149,7 @@ impl Model {
             }
         };
 
+        let config = Self::config_from_schema(schema.as_ref());
         let (base_name, version) = Self::parse_version(&name);
 
         Ok(Self {
@@ -155,7 +157,7 @@ impl Model {
             path,
             raw_sql,
             compiled_sql: None,
-            config: ModelConfig::default(),
+            config,
             depends_on: HashSet::new(),
             external_deps: HashSet::new(),
             schema,
@@ -255,6 +257,7 @@ impl Model {
         }
 
         let schema = Some(ModelSchema::load_from_str(schema_content, schema_path)?);
+        let config = Self::config_from_schema(schema.as_ref());
 
         let (base_name, version) = Self::parse_version(&name);
 
@@ -263,7 +266,7 @@ impl Model {
             path,
             raw_sql,
             compiled_sql: None,
-            config: ModelConfig::default(),
+            config,
             depends_on: HashSet::new(),
             external_deps: HashSet::new(),
             schema,
@@ -271,6 +274,42 @@ impl Model {
             version,
             kind: ModelKind::Model,
         })
+    }
+
+    /// Build a `ModelConfig` from the YAML schema fields.
+    ///
+    /// Config is read exclusively from YAML — the SQL `{{ config() }}` function
+    /// is no longer supported.
+    fn config_from_schema(schema: Option<&ModelSchema>) -> ModelConfig {
+        let Some(schema) = schema else {
+            return ModelConfig::default();
+        };
+        ModelConfig {
+            materialized: schema.materialized.as_deref().map(Materialization::parse),
+            schema: schema.schema.clone(),
+            tags: schema.tags.clone(),
+            unique_key: schema.unique_key.as_ref().map(|u| u.to_comma_string()),
+            incremental_strategy: schema
+                .incremental_strategy
+                .as_deref()
+                .map(IncrementalStrategy::parse),
+            on_schema_change: schema
+                .on_schema_change
+                .as_deref()
+                .map(OnSchemaChange::parse),
+            pre_hook: schema
+                .pre_hook
+                .as_ref()
+                .map(|h| h.to_vec_raw())
+                .unwrap_or_default(),
+            post_hook: schema
+                .post_hook
+                .as_ref()
+                .map(|h| h.to_vec_raw())
+                .unwrap_or_default(),
+            wap: schema.wap,
+            meta: HashMap::new(),
+        }
     }
 
     /// Parse version suffix from model name

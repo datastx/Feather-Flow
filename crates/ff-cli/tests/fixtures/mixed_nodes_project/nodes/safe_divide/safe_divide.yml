@@ -1,0 +1,14 @@
+version: 1
+kind: function
+name: safe_divide
+description: "Safe division that returns 0 when dividing by zero"
+function_type: scalar
+args:
+  - name: a
+    data_type: DOUBLE
+    description: "Numerator"
+  - name: b
+    data_type: DOUBLE
+    description: "Denominator"
+returns:
+  data_type: DOUBLE

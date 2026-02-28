@@ -1,12 +1,16 @@
 kind: sql
+materialized: view
 version: 1
 
 description: "Model where var() has a default but config also defines the var"
 
 columns:
   - name: id
+    description: "Unique identifier for the record"
     type: INTEGER
   - name: event_type
+    description: "Type of event"
     type: VARCHAR
   - name: status
+    description: "Current status of the record"
     type: VARCHAR

@@ -1,4 +1,4 @@
-SELECT
-    id,
-    name
-FROM raw_customers
+select
+    id
+    , name
+from raw_customers

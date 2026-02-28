@@ -4,8 +4,11 @@ name: int
 description: "Intermediate model with self left join"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     type: INTEGER
   - name: name
+    description: "Name of the entity"
     type: VARCHAR
   - name: amount
+    description: "Monetary amount in dollars"
     type: "DECIMAL(10,2)"

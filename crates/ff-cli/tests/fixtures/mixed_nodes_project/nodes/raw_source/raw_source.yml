@@ -1,0 +1,18 @@
+version: 1
+kind: source
+name: raw_source
+description: "Raw data source for mixed nodes project"
+schema: analytics
+tables:
+  - name: raw_orders
+    description: "Raw orders table"
+    columns:
+      - name: order_id
+        type: INTEGER
+        description: "Order identifier"
+      - name: amount
+        type: DECIMAL(10,2)
+        description: "Order amount"
+      - name: country_code
+        type: VARCHAR
+        description: "Country code"

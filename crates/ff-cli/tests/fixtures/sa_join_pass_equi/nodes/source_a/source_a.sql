@@ -1,1 +1,4 @@
-SELECT id, code FROM raw_a
+select
+    id
+    , code
+from raw_a

@@ -1,0 +1,10 @@
+version: 1
+kind: sql
+description: "Layer 02 model"
+columns:
+  - name: id
+    type: INTEGER
+    description: "Row identifier"
+  - name: value
+    type: VARCHAR
+    description: "Data value"

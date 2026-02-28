@@ -4,6 +4,8 @@ name: self_join
 description: "Self-join on source table for parent lookup"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     type: INTEGER
   - name: parent_name
+    description: "The parent name value"
     type: VARCHAR

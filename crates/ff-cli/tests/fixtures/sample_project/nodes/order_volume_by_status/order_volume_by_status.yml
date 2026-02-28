@@ -10,6 +10,8 @@ args:
 returns:
   columns:
     - name: status
+      description: "Current status of the record"
       data_type: VARCHAR
     - name: order_count
+      description: "Number of orders"
       data_type: INTEGER

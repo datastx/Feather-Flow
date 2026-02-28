@@ -11,6 +11,7 @@
 //! - `state:new` - models not in reference manifest (requires --state)
 //! - `state:modified+` - modified models and their descendants
 
+use crate::config::RunGroupConfig;
 use crate::dag::ModelDag;
 use crate::error::{CoreError, CoreResult};
 use crate::reference_manifest::{ReferenceManifest, ReferenceModelRef};
@@ -18,6 +19,9 @@ use crate::Model;
 use crate::ModelName;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+
+/// Maximum recursion depth for run-group expansion (prevents circular references).
+const MAX_RUN_GROUP_DEPTH: usize = 10;
 
 /// Traversal depth for ancestor/descendant graph walks
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +63,8 @@ pub(crate) enum SelectorType {
         state_type: StateType,
         include_descendants: bool,
     },
+    /// Run group selection (expands into the group's node selectors)
+    RunGroup { name: String },
 }
 
 /// A selector that can filter models
@@ -108,6 +114,19 @@ impl Selector {
             }
             return Ok(Self {
                 selector_type: SelectorType::Owner { owner },
+            });
+        }
+
+        if let Some(group_name) = selector.strip_prefix("run-group:") {
+            let group_name = group_name.to_string();
+            if group_name.is_empty() {
+                return Err(CoreError::InvalidSelector {
+                    selector: selector.to_string(),
+                    reason: "run-group: selector requires a group name".to_string(),
+                });
+            }
+            return Ok(Self {
+                selector_type: SelectorType::RunGroup { name: group_name },
             });
         }
 
@@ -228,6 +247,15 @@ impl Selector {
                     dag,
                     manifest,
                 )
+            }
+            SelectorType::RunGroup { .. } => {
+                // Run group expansion is handled in apply_selectors, not here.
+                // If we reach this point, it means apply_selectors was bypassed.
+                Err(CoreError::InvalidSelector {
+                    selector: "run-group:*".to_string(),
+                    reason: "run-group selectors must be expanded through apply_selectors"
+                        .to_string(),
+                })
             }
         }
     }
@@ -568,24 +596,170 @@ pub fn apply_selectors(
     models: &HashMap<ModelName, Model>,
     dag: &ModelDag,
 ) -> CoreResult<Vec<String>> {
+    apply_selectors_with_run_groups(selectors_str, models, dag, None)
+}
+
+/// Parse comma-separated selectors with run-group support and return the union
+/// of matched models in topological order.
+///
+/// If `selectors_str` is `None`, returns all models in topological order.
+/// When `run_groups` is provided, `run-group:<name>` tokens are expanded into
+/// the group's `nodes` selectors recursively (with depth limiting).
+pub fn apply_selectors_with_run_groups(
+    selectors_str: &Option<String>,
+    models: &HashMap<ModelName, Model>,
+    dag: &ModelDag,
+    run_groups: Option<&HashMap<String, RunGroupConfig>>,
+) -> CoreResult<Vec<String>> {
     let Some(raw) = selectors_str else {
         return dag.topological_order();
     };
 
     let mut combined: HashSet<String> = HashSet::new();
+    let mut visited_groups: HashSet<String> = HashSet::new();
+
+    expand_selectors(
+        raw,
+        models,
+        dag,
+        run_groups,
+        &mut combined,
+        &mut visited_groups,
+        0,
+    )?;
+
+    // Single topo-sort at the end
+    let order = dag.topological_order()?;
+    Ok(order.into_iter().filter(|m| combined.contains(m)).collect())
+}
+
+/// Recursively expand selector tokens, resolving run-group references.
+fn expand_selectors(
+    raw: &str,
+    models: &HashMap<ModelName, Model>,
+    dag: &ModelDag,
+    run_groups: Option<&HashMap<String, RunGroupConfig>>,
+    combined: &mut HashSet<String>,
+    visited_groups: &mut HashSet<String>,
+    depth: usize,
+) -> CoreResult<()> {
+    if depth > MAX_RUN_GROUP_DEPTH {
+        return Err(CoreError::InvalidSelector {
+            selector: raw.to_string(),
+            reason: format!(
+                "run-group recursion depth exceeded (max {}). Check for circular references.",
+                MAX_RUN_GROUP_DEPTH
+            ),
+        });
+    }
+
     for token in raw.split(',') {
         let token = token.trim();
         if token.is_empty() {
             continue;
         }
         let sel = Selector::parse(token)?;
-        let matched = sel.apply_unordered(models, dag, None)?;
-        combined.extend(matched);
+        match &sel.selector_type {
+            SelectorType::RunGroup { name } => {
+                let groups = run_groups.ok_or_else(|| CoreError::InvalidSelector {
+                    selector: token.to_string(),
+                    reason: "no run_groups defined in featherflow.yml".to_string(),
+                })?;
+                let group = groups.get(name).ok_or_else(|| CoreError::InvalidSelector {
+                    selector: token.to_string(),
+                    reason: format!(
+                        "run group '{}' not found. Available groups: {}",
+                        name,
+                        groups.keys().cloned().collect::<Vec<_>>().join(", ")
+                    ),
+                })?;
+
+                if !visited_groups.insert(name.clone()) {
+                    return Err(CoreError::InvalidSelector {
+                        selector: token.to_string(),
+                        reason: format!("circular run-group reference detected: '{}'", name),
+                    });
+                }
+
+                // Expand the group's nodes as a comma-separated selector string
+                let group_selectors = group.nodes.join(",");
+                expand_selectors(
+                    &group_selectors,
+                    models,
+                    dag,
+                    run_groups,
+                    combined,
+                    visited_groups,
+                    depth + 1,
+                )?;
+            }
+            _ => {
+                let matched = sel.apply_unordered(models, dag, None)?;
+                combined.extend(matched);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Validate that all run groups defined in the config are well-formed.
+///
+/// Checks:
+/// - All run groups resolve to at least one node
+/// - No circular run-group references
+/// - All node references are valid
+pub fn validate_run_groups(
+    run_groups: &HashMap<String, RunGroupConfig>,
+    models: &HashMap<ModelName, Model>,
+    dag: &ModelDag,
+) -> Vec<RunGroupValidationError> {
+    let mut errors = Vec::new();
+
+    for (name, group) in run_groups {
+        if group.nodes.is_empty() {
+            errors.push(RunGroupValidationError {
+                group: name.clone(),
+                message: "run group has no nodes defined".to_string(),
+            });
+            continue;
+        }
+
+        // Check for circular references and valid selectors by expanding
+        let selectors_str = Some(group.nodes.join(","));
+        match apply_selectors_with_run_groups(&selectors_str, models, dag, Some(run_groups)) {
+            Ok(resolved) => {
+                if resolved.is_empty() {
+                    errors.push(RunGroupValidationError {
+                        group: name.clone(),
+                        message: "run group resolves to zero nodes".to_string(),
+                    });
+                }
+            }
+            Err(e) => {
+                errors.push(RunGroupValidationError {
+                    group: name.clone(),
+                    message: e.to_string(),
+                });
+            }
+        }
     }
 
-    // Single topo-sort at the end
-    let order = dag.topological_order()?;
-    Ok(order.into_iter().filter(|m| combined.contains(m)).collect())
+    errors
+}
+
+/// A validation error for a run group.
+#[derive(Debug)]
+pub struct RunGroupValidationError {
+    /// Name of the run group that failed validation
+    pub group: String,
+    /// Description of the error
+    pub message: String,
+}
+
+impl std::fmt::Display for RunGroupValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "run group '{}': {}", self.group, self.message)
+    }
 }
 
 #[cfg(test)]

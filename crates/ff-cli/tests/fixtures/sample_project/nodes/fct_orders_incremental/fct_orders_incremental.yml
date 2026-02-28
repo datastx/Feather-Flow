@@ -1,5 +1,8 @@
 version: 1
 kind: sql
+materialized: incremental
+unique_key: order_id
+incremental_strategy: merge
 
 description: "Incremental fact table for orders, self-referencing to load only new rows"
 owner: analytics-team
