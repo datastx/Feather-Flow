@@ -120,6 +120,51 @@ pub(crate) fn validate_duplicates(project: &Project, ctx: &mut ValidationContext
         }
     }
 
+    // Cross-kind uniqueness: check seeds, source tables, and functions against
+    // the model names already in `seen`, and against each other.
+    let mut seen_kinds: HashMap<String, (&str, String)> = seen
+        .iter()
+        .map(|(lower, name)| (lower.clone(), ("model", name.to_string())))
+        .collect();
+
+    for seed in &project.seeds {
+        let lower = seed.name.as_str().to_lowercase();
+        if let Some((existing_kind, existing_name)) = seen_kinds.get(&lower) {
+            ctx.error(
+                "E012",
+                format!(
+                    "Name collision (case-insensitive): seed '{}' conflicts with {} '{}'",
+                    seed.name, existing_kind, existing_name
+                ),
+                None,
+            );
+            found_dup = true;
+        } else {
+            seen_kinds.insert(lower, ("seed", seed.name.to_string()));
+        }
+    }
+
+    // Note: source tables are excluded from cross-kind checks — they are
+    // external references (declarations), not output nodes.  A seed backing
+    // a source declaration is a common, valid pattern.
+
+    for func in &project.functions {
+        let lower = func.name.as_str().to_lowercase();
+        if let Some((existing_kind, existing_name)) = seen_kinds.get(&lower) {
+            ctx.error(
+                "E012",
+                format!(
+                    "Name collision (case-insensitive): function '{}' conflicts with {} '{}'",
+                    func.name, existing_kind, existing_name
+                ),
+                None,
+            );
+            found_dup = true;
+        } else {
+            seen_kinds.insert(lower, ("function", func.name.to_string()));
+        }
+    }
+
     if found_dup {
         println!("✗");
     } else {
@@ -206,6 +251,59 @@ pub(crate) fn validate_schemas(
         println!("✓");
     } else {
         println!("{} warnings", schema_issues);
+    }
+}
+
+/// Validate that no two non-ephemeral nodes resolve to the same qualified output name.
+///
+/// Builds a `schema.table` key for each entry (lowercased) and checks for
+/// duplicates. The `database` part is included when present (cross-db sources)
+/// to distinguish them from default-database entries.
+pub(crate) fn validate_qualified_uniqueness(
+    qualification_map: &HashMap<String, ff_sql::qualify::QualifiedRef>,
+    ephemeral_models: &HashSet<String>,
+    ctx: &mut ValidationContext,
+) {
+    print!("Checking qualified output uniqueness... ");
+    let mut seen: HashMap<String, String> = HashMap::new();
+    let mut found_dup = false;
+
+    for (bare_name, qref) in qualification_map {
+        if ephemeral_models.contains(bare_name) {
+            continue;
+        }
+        let fqn = match &qref.database {
+            Some(db) => format!(
+                "{}.{}.{}",
+                db.to_lowercase(),
+                qref.schema.to_lowercase(),
+                qref.table.to_lowercase(),
+            ),
+            None => format!(
+                "{}.{}",
+                qref.schema.to_lowercase(),
+                qref.table.to_lowercase(),
+            ),
+        };
+        if let Some(existing) = seen.get(&fqn) {
+            ctx.error(
+                "E013",
+                format!(
+                    "Qualified name collision: '{}' and '{}' both resolve to '{}'",
+                    existing, bare_name, fqn
+                ),
+                None,
+            );
+            found_dup = true;
+        } else {
+            seen.insert(fqn, bare_name.clone());
+        }
+    }
+
+    if found_dup {
+        println!("✗");
+    } else {
+        println!("✓");
     }
 }
 

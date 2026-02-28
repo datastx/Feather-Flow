@@ -852,52 +852,63 @@ fn extract_function_deps(
     }
 }
 
-/// Build a map from bare table names to qualified references.
+/// Build a map from bare table names to fully-qualified 3-part references.
 ///
-/// Models in the default database produce 2-part names (`schema.table`).
-/// Source tables with an explicit database different from the project default
-/// produce 3-part names (`database.schema.table`).
+/// All entries (models, seeds, sources) produce 3-part names
+/// (`database.schema.table`). The database part is derived from the DuckDB
+/// file path (e.g., `dev.duckdb` → `"dev"`), matching the catalog name
+/// DuckDB assigns at runtime.
 pub(crate) fn build_qualification_map(
     project: &Project,
     compiled_schemas: &HashMap<String, Option<String>>,
 ) -> HashMap<String, ff_sql::qualify::QualifiedRef> {
     use ff_sql::qualify::QualifiedRef;
 
-    let db_name = project
+    let db_path = project
         .config
         .get_database_config(None)
-        .map(|c| c.name.as_str())
-        .unwrap_or("main");
+        .map(|c| c.path.as_str())
+        .unwrap_or(":memory:");
+    let db_name = ff_db::DuckDbBackend::catalog_name_for_path(db_path);
+    let db_name = db_name.as_str();
     let default_schema = project.config.get_schema(None).unwrap_or("main");
     let mut map = HashMap::new();
 
-    // Models: bare_name → schema.name (default database, 2-part)
+    // Models: bare_name → database.schema.table (always 3-part)
     for (name, schema) in compiled_schemas {
         let schema = schema.as_deref().unwrap_or(default_schema);
         map.insert(
             name.to_lowercase(),
             QualifiedRef {
-                database: None,
+                database: Some(db_name.to_string()),
                 schema: schema.to_string(),
                 table: name.clone(),
             },
         );
     }
 
-    // Source tables: use 3-part only when the source targets a different database
+    // Seeds: bare_name → database.schema.table (always 3-part)
+    for seed in &project.seeds {
+        let seed_schema = seed.target_schema().unwrap_or(default_schema);
+        map.insert(
+            seed.name.as_str().to_lowercase(),
+            QualifiedRef {
+                database: Some(db_name.to_string()),
+                schema: seed_schema.to_string(),
+                table: seed.name.to_string(),
+            },
+        );
+    }
+
+    // Source tables: always 3-part (use source database or project default)
     for source in &project.sources {
         let source_db = source.database.as_deref().unwrap_or(db_name);
-        let database = if source_db != db_name {
-            Some(source_db.to_string())
-        } else {
-            None
-        };
         for table in &source.tables {
             let actual_name = table.identifier.as_ref().unwrap_or(&table.name);
             map.insert(
                 table.name.to_lowercase(),
                 QualifiedRef {
-                    database: database.clone(),
+                    database: Some(source_db.to_string()),
                     schema: source.schema.clone(),
                     table: actual_name.clone(),
                 },
@@ -908,7 +919,7 @@ pub(crate) fn build_qualification_map(
                     map.insert(
                         ident.to_lowercase(),
                         QualifiedRef {
-                            database: database.clone(),
+                            database: Some(source_db.to_string()),
                             schema: source.schema.clone(),
                             table: ident.clone(),
                         },
