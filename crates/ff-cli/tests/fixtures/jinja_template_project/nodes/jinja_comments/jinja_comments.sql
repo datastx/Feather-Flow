@@ -1,11 +1,8 @@
-{{ config(materialized='view') }}
-
 {# This entire comment block should be stripped from compiled output #}
-
-SELECT
-    id,
+select
+    id
     {# inline comment: selecting event_type next #}
-    event_type,
-    status
-FROM raw_events
-{# trailing comment #}
+    , event_type
+    , status
+from raw_events
+    {# trailing comment #}

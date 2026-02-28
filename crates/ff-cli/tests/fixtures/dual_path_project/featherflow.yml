@@ -1,0 +1,10 @@
+name: dual_path_project
+version: 1.0.0
+materialization: view
+dialect: duckdb
+database:
+  default:
+    type: duckdb
+    path: ':memory:'
+    name: main
+    schema: analytics

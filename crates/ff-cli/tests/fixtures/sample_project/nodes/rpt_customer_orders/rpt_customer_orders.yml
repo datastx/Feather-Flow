@@ -1,5 +1,7 @@
 version: 1
 kind: sql
+materialized: table
+schema: reports
 
 description: "Customer order report combining customers with enriched orders"
 owner: analytics-team

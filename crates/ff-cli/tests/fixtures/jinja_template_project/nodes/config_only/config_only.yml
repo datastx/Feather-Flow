@@ -1,12 +1,17 @@
 kind: sql
+materialized: table
+schema: staging
 version: 1
 
 description: "Model with only config() Jinja, rest is plain SQL"
 
 columns:
   - name: id
+    description: "Unique identifier for the record"
     type: INTEGER
   - name: event_type
+    description: "Type of event"
     type: VARCHAR
   - name: status
+    description: "Current status of the record"
     type: VARCHAR

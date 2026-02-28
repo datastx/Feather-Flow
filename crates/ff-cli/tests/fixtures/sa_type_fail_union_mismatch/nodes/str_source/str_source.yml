@@ -4,4 +4,5 @@ name: str_source
 description: "Source of string names"
 columns:
   - name: name
+    description: "Name of the entity"
     data_type: VARCHAR

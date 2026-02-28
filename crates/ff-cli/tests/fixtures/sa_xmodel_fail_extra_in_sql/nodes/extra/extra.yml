@@ -4,6 +4,8 @@ name: extra
 description: "YAML only declares id and name — bonus is extra in SQL"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     data_type: INTEGER
   - name: name
+    description: "Name of the entity"
     data_type: VARCHAR

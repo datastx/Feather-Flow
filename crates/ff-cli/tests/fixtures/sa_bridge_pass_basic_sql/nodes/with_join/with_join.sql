@@ -1,1 +1,5 @@
-SELECT a.id, b.name FROM raw_data a JOIN raw_data b ON a.id = b.id
+select
+    a.id
+    , b.name
+from raw_data a
+join raw_data b on a.id = b.id

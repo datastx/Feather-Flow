@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use ff_core::config::{Config, IncrementalStrategy, Materialization, OnSchemaChange};
+use ff_core::config::Config;
 use ff_core::source::build_source_lookup;
 use ff_core::Project;
 use ff_db::{Database, DuckDbBackend};
@@ -71,45 +71,27 @@ impl fmt::Display for TestStatus {
     }
 }
 
-/// Parse hook SQL strings from captured Jinja config values.
-///
-/// Handles both single-string and array-of-strings representations.
-pub(crate) fn parse_hooks_from_config(
-    config_values: &HashMap<String, minijinja::Value>,
-    key: &str,
-) -> Vec<String> {
-    config_values
-        .get(key)
-        .map(|v| {
-            if let Some(s) = v.as_str() {
-                vec![s.to_string()]
-            } else if v.kind() == minijinja::value::ValueKind::Seq {
-                v.try_iter()
-                    .map(|iter| {
-                        iter.filter_map(|item| item.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            } else {
-                Vec::new()
-            }
-        })
-        .unwrap_or_default()
-}
-
 /// Resolve nodes from the project using selector-aware filtering with DAG support.
 ///
 /// Parses each comma-separated token through `Selector::parse()`, applies them
 /// against the DAG, and returns the union in topological order.
 /// If `nodes_arg` is `None`, returns all models in topological order.
+/// Run-group selectors (`run-group:<name>`) are expanded using the project's
+/// configured `run_groups`.
 pub(crate) fn resolve_nodes(
     project: &Project,
     dag: &ff_core::dag::ModelDag,
     nodes_arg: &Option<String>,
 ) -> Result<Vec<String>> {
-    use ff_core::selector::apply_selectors;
+    use ff_core::selector::apply_selectors_with_run_groups;
 
-    Ok(apply_selectors(nodes_arg, &project.models, dag)?)
+    let run_groups = project.config.run_groups.as_ref();
+    Ok(apply_selectors_with_run_groups(
+        nodes_arg,
+        &project.models,
+        dag,
+        run_groups,
+    )?)
 }
 
 /// Build a lookup set of all external tables including sources.
@@ -121,34 +103,6 @@ pub(crate) fn build_external_tables_lookup(project: &Project) -> HashSet<String>
         .cloned()
         .chain(build_source_lookup(&project.sources))
         .collect()
-}
-
-/// Parse a materialization string from Jinja config values.
-pub(crate) fn parse_materialization(s: &str) -> Materialization {
-    match s {
-        "table" => Materialization::Table,
-        "incremental" => Materialization::Incremental,
-        "ephemeral" => Materialization::Ephemeral,
-        _ => Materialization::View,
-    }
-}
-
-/// Parse an incremental strategy string from Jinja config values.
-pub(crate) fn parse_incremental_strategy(s: &str) -> IncrementalStrategy {
-    match s {
-        "merge" => IncrementalStrategy::Merge,
-        "delete+insert" | "delete_insert" => IncrementalStrategy::DeleteInsert,
-        _ => IncrementalStrategy::Append,
-    }
-}
-
-/// Parse an on_schema_change string from Jinja config values.
-pub(crate) fn parse_on_schema_change(s: &str) -> OnSchemaChange {
-    match s {
-        "fail" => OnSchemaChange::Fail,
-        "append_new_columns" => OnSchemaChange::AppendNewColumns,
-        _ => OnSchemaChange::Ignore,
-    }
 }
 
 /// Build a schema catalog from project model YAML definitions and external tables.
@@ -181,10 +135,9 @@ pub(crate) fn build_schema_catalog(
             .iter()
             .map(|col| {
                 let sql_type = parse_sql_type(&col.data_type);
-                let has_not_null = col
-                    .constraints
-                    .iter()
-                    .any(|c| matches!(c, ff_core::ColumnConstraint::NotNull));
+                let has_not_null = col.tests.iter().any(
+                    |t| matches!(t, ff_core::model::TestDefinition::Simple(s) if s == "not_null"),
+                );
                 let nullability = if has_not_null {
                     Nullability::NotNull
                 } else {

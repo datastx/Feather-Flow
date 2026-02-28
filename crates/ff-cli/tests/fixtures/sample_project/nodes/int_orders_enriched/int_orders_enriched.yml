@@ -1,5 +1,7 @@
 version: 1
 kind: sql
+materialized: view
+schema: intermediate
 
 description: "Orders enriched with aggregated payment information"
 owner: data-team

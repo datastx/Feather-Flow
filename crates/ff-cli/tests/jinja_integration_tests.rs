@@ -370,9 +370,10 @@ fn test_jinja_var_integer_in_having() {
     let tmp = compile_to_tempdir(JINJA_FIXTURE);
     let sql = read_compiled_model(&tmp, "rpt_events_summary");
 
-    // var("min_event_count") → 10
+    // var("min_event_count") → 10 (case-insensitive: formatter may lowercase COUNT)
+    let sql_upper = sql.to_uppercase();
     assert!(
-        sql.contains("HAVING COUNT(*) >= 10"),
+        sql_upper.contains("HAVING COUNT(*) >= 10"),
         "compiled SQL should contain HAVING with substituted integer, got:\n{}",
         sql
     );
@@ -645,8 +646,10 @@ fn test_jinja_cli_vars_override_integer() {
 
     let sql = read_compiled_model(&tmp, "rpt_events_summary");
 
+    // Case-insensitive: formatter may lowercase COUNT
+    let sql_upper = sql.to_uppercase();
     assert!(
-        sql.contains("HAVING COUNT(*) >= 25"),
+        sql_upper.contains("HAVING COUNT(*) >= 25"),
         "CLI --vars should override integer var, got:\n{}",
         sql
     );

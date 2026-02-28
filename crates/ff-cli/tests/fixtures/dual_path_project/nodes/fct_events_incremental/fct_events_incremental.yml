@@ -1,0 +1,22 @@
+version: 1
+kind: sql
+materialized: incremental
+unique_key: event_id
+incremental_strategy: merge
+description: "Incremental fact table for events using dual-path compilation"
+columns:
+  - name: event_id
+    type: INTEGER
+    description: "Unique event identifier"
+    tests:
+      - unique
+      - not_null
+  - name: event_type
+    type: VARCHAR
+    description: "Type of event"
+  - name: created_at
+    type: TIMESTAMP
+    description: "Event creation timestamp"
+  - name: amount
+    type: DECIMAL(10,2)
+    description: "Event amount"

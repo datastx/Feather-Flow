@@ -9,9 +9,9 @@ use crate::builtins::{
 use crate::context::{ModelContext, TemplateContext};
 use crate::error::{JinjaError, JinjaResult};
 use crate::functions::{
-    make_config_fn, make_env_fn, make_error_fn, make_from_json_fn, make_is_incremental_fn,
+    make_env_fn, make_error_fn, make_from_json_fn, make_is_exists_fn, make_is_incremental_fn,
     make_log_fn, make_this_fn, make_to_json_fn, make_var_fn, make_warn_fn, yaml_to_json,
-    ConfigCapture, IncrementalState, WarningCapture,
+    DeprecationCapture, IncrementalState, WarningCapture,
 };
 use minijinja::{Environment, Value};
 use regex::Regex;
@@ -33,7 +33,6 @@ struct RenderContext {
 /// Jinja templating environment for Featherflow
 pub struct JinjaEnvironment<'a> {
     env: Environment<'a>,
-    config_capture: ConfigCapture,
     warning_capture: WarningCapture,
     /// Auto-generated `{% from "file.sql" import macro1, macro2 %}` lines
     /// prepended to every template so user macros are globally available.
@@ -63,9 +62,8 @@ impl<'a> JinjaEnvironment<'a> {
         vars: &HashMap<String, serde_yaml::Value>,
         macro_paths: &[PathBuf],
         template_context: Option<&TemplateContext>,
-    ) -> (Environment<'a>, ConfigCapture, WarningCapture, String) {
+    ) -> (Environment<'a>, WarningCapture, String) {
         let mut env = Environment::new();
-        let config_capture: ConfigCapture = Arc::new(Mutex::new(HashMap::new()));
         let warning_capture: WarningCapture = Arc::new(Mutex::new(Vec::new()));
 
         let json_vars: HashMap<String, serde_json::Value> = vars
@@ -73,7 +71,6 @@ impl<'a> JinjaEnvironment<'a> {
             .map(|(k, v): (&String, &serde_yaml::Value)| (k.clone(), yaml_to_json(v)))
             .collect();
 
-        env.add_function("config", make_config_fn(config_capture.clone()));
         env.add_function("var", make_var_fn(json_vars));
 
         env.add_function("env", make_env_fn());
@@ -86,6 +83,17 @@ impl<'a> JinjaEnvironment<'a> {
         env.add_filter("to_json", to_json_fn);
 
         register_builtins(&mut env);
+
+        // Default is_exists() and is_incremental() to false. These will be
+        // overridden by with_is_exists() or with_incremental_context() when
+        // compiling/running incremental models.
+        env.add_function("is_exists", || false);
+        env.add_function("is_incremental", || -> bool {
+            eprintln!(
+                "[jinja:deprecation] is_incremental() is deprecated, use is_exists() instead"
+            );
+            false
+        });
 
         if let Some(ctx) = template_context {
             env.add_global("project_name", Value::from(ctx.project_name.as_str()));
@@ -107,7 +115,7 @@ impl<'a> JinjaEnvironment<'a> {
             env.set_loader(move |name: &str| load_macro_from_paths(name, &valid_paths));
         }
 
-        (env, config_capture, warning_capture, macro_preamble)
+        (env, warning_capture, macro_preamble)
     }
 
     /// Create a new Jinja environment with variables and macro paths
@@ -115,11 +123,9 @@ impl<'a> JinjaEnvironment<'a> {
     /// This enables loading macros using `{% from "file.sql" import macro_name %}` syntax.
     /// Macro files are loaded from the specified directories.
     pub fn with_macros(vars: &HashMap<String, serde_yaml::Value>, macro_paths: &[PathBuf]) -> Self {
-        let (env, config_capture, warning_capture, macro_preamble) =
-            Self::init_common(vars, macro_paths, None);
+        let (env, warning_capture, macro_preamble) = Self::init_common(vars, macro_paths, None);
         Self {
             env,
-            config_capture,
             warning_capture,
             macro_preamble,
         }
@@ -134,11 +140,10 @@ impl<'a> JinjaEnvironment<'a> {
         macro_paths: &[PathBuf],
         context: &TemplateContext,
     ) -> Self {
-        let (env, config_capture, warning_capture, macro_preamble) =
+        let (env, warning_capture, macro_preamble) =
             Self::init_common(vars, macro_paths, Some(context));
         Self {
             env,
-            config_capture,
             warning_capture,
             macro_preamble,
         }
@@ -157,42 +162,12 @@ impl<'a> JinjaEnvironment<'a> {
         self.render_with_model_context(template, Some(model))
     }
 
-    /// Render a template and return both the result and captured config,
-    /// optionally with per-model context.
-    pub fn render_with_config_and_model(
-        &self,
-        template: &str,
-        model: Option<&ModelContext>,
-    ) -> JinjaResult<(String, HashMap<String, Value>)> {
-        let rendered = self.render_with_model_context(template, model)?;
-        let config = self
-            .config_capture
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone();
-        Ok((rendered, config))
-    }
-
-    /// Render a template and return both the result and captured config
-    pub fn render_with_config(
-        &self,
-        template: &str,
-    ) -> JinjaResult<(String, HashMap<String, Value>)> {
-        self.render_with_config_and_model(template, None)
-    }
-
     /// Internal render method that handles both with and without model context.
     fn render_with_model_context(
         &self,
         template: &str,
         model: Option<&ModelContext>,
     ) -> JinjaResult<String> {
-        // Clear previous captures (recover from poisoning — these are process-local
-        // and the next lines clear stale data anyway)
-        self.config_capture
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clear();
         self.read_warnings().clear();
 
         let ctx = RenderContext {
@@ -213,45 +188,6 @@ impl<'a> JinjaEnvironment<'a> {
         Ok(result)
     }
 
-    /// Acquire the config capture lock, recovering from poison.
-    fn read_config(&self) -> std::sync::MutexGuard<'_, HashMap<String, Value>> {
-        self.config_capture
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-    }
-
-    /// Get the captured config values from the last render
-    pub fn get_captured_config(&self) -> HashMap<String, Value> {
-        self.read_config().clone()
-    }
-
-    /// Extract materialization from captured config
-    pub fn get_materialization(&self) -> Option<String> {
-        self.read_config()
-            .get("materialized")
-            .and_then(|v| v.as_str().map(String::from))
-    }
-
-    /// Extract schema from captured config
-    pub fn get_schema(&self) -> Option<String> {
-        self.read_config()
-            .get("schema")
-            .and_then(|v| v.as_str().map(String::from))
-    }
-
-    /// Extract tags from captured config
-    pub fn get_tags(&self) -> Vec<String> {
-        self.read_config()
-            .get("tags")
-            .and_then(|v| {
-                v.try_iter().ok().map(|iter| {
-                    iter.filter_map(|item| item.as_str().map(String::from))
-                        .collect()
-                })
-            })
-            .unwrap_or_default()
-    }
-
     /// Acquire the warning capture lock, recovering from poison.
     fn read_warnings(&self) -> std::sync::MutexGuard<'_, Vec<String>> {
         self.warning_capture
@@ -266,19 +202,23 @@ impl<'a> JinjaEnvironment<'a> {
 }
 
 impl JinjaEnvironment<'_> {
-    /// Create a new Jinja environment with incremental model context
+    /// Create a new Jinja environment with incremental model context.
     ///
-    /// This adds the `is_incremental()` and `this` functions for incremental models.
+    /// Registers both `is_exists()` (preferred) and `is_incremental()` (deprecated
+    /// alias that emits a warning), plus the `this` function.
     pub fn with_incremental_context(
         vars: &HashMap<String, serde_yaml::Value>,
         macro_paths: &[PathBuf],
         incremental_state: IncrementalState,
         qualified_name: &str,
     ) -> Self {
-        let (mut env, config_capture, warning_capture, macro_preamble) =
-            Self::init_common(vars, macro_paths, None);
+        let (mut env, warning_capture, macro_preamble) = Self::init_common(vars, macro_paths, None);
 
-        let is_incremental_fn = make_is_incremental_fn(incremental_state);
+        let is_exists_fn = make_is_exists_fn(incremental_state.clone());
+        env.add_function("is_exists", is_exists_fn);
+
+        let deprecation_capture: DeprecationCapture = Arc::new(Mutex::new(Vec::new()));
+        let is_incremental_fn = make_is_incremental_fn(incremental_state, deprecation_capture);
         env.add_function("is_incremental", is_incremental_fn);
 
         let this_fn = make_this_fn(qualified_name.to_string());
@@ -286,7 +226,44 @@ impl JinjaEnvironment<'_> {
 
         Self {
             env,
-            config_capture,
+            warning_capture,
+            macro_preamble,
+        }
+    }
+
+    /// Create a Jinja environment for compile-time dual-path rendering.
+    ///
+    /// Sets `is_exists()` to the provided boolean value. Also registers
+    /// `is_incremental()` as a deprecated alias. Used to compile incremental
+    /// models twice: once with `is_exists=false` (full path) and once with
+    /// `is_exists=true` (incremental path).
+    pub fn with_is_exists(
+        vars: &HashMap<String, serde_yaml::Value>,
+        macro_paths: &[PathBuf],
+        template_context: Option<&TemplateContext>,
+        is_exists_value: bool,
+    ) -> Self {
+        let (mut env, warning_capture, macro_preamble) =
+            Self::init_common(vars, macro_paths, template_context);
+
+        // is_exists() returns the fixed compile-time value
+        let val = is_exists_value;
+        env.add_function("is_exists", move || val);
+
+        // is_incremental() — deprecated alias with warning
+        let deprecation_capture: DeprecationCapture = Arc::new(Mutex::new(Vec::new()));
+        let dep_cap = deprecation_capture;
+        env.add_function("is_incremental", move || -> bool {
+            let msg = "is_incremental() is deprecated, use is_exists() instead".to_string();
+            eprintln!("[jinja:deprecation] {}", msg);
+            if let Ok(mut warnings) = dep_cap.lock() {
+                warnings.push(msg);
+            }
+            val
+        });
+
+        Self {
+            env,
             warning_capture,
             macro_preamble,
         }

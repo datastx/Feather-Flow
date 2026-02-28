@@ -1,4 +1,5 @@
-SELECT
-    CAST(price AS INTEGER) AS price_int,
-    CAST(amount AS INTEGER) AS amount_int
-FROM raw_data
+select
+    cast(price as integer) as price_int
+    ,
+    cast(amount as integer) as amount_int
+from raw_data

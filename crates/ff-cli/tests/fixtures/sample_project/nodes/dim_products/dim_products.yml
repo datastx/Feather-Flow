@@ -1,5 +1,7 @@
 version: 1
 kind: sql
+materialized: table
+schema: analytics
 
 description: "Product dimension table with category and price tier classifications"
 owner: analytics-team

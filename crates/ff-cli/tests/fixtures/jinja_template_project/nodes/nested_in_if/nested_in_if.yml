@@ -1,12 +1,16 @@
 kind: sql
+materialized: view
 version: 1
 
 description: "Model with macro call nested inside if block"
 
 columns:
   - name: id
+    description: "Unique identifier for the record"
     type: INTEGER
   - name: amount_dollars
+    description: "Amount converted to dollars"
     type: DOUBLE
   - name: status
+    description: "Current status of the record"
     type: VARCHAR

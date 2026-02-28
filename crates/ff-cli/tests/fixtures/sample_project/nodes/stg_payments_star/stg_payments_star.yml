@@ -1,5 +1,7 @@
 version: 1
 kind: sql
+materialized: view
+schema: staging
 
 description: "Staged payments using SELECT * -- mirrors raw_payments columns"
 owner: data-team

@@ -4,6 +4,8 @@ name: simple_select
 description: "Basic select from raw_data"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     data_type: INTEGER
   - name: name
+    description: "Name of the entity"
     data_type: VARCHAR

@@ -66,12 +66,6 @@ fn insert_model(
     let owner = model.get_owner();
     let deprecated = model.schema.as_ref().map(|s| s.deprecated).unwrap_or(false);
     let deprecation_message = model.get_deprecation_message().map(|s| s.to_string());
-    let contract_enforced = model
-        .schema
-        .as_ref()
-        .and_then(|s| s.contract.as_ref())
-        .map(|c| c.enforced)
-        .unwrap_or(false);
     let checksum = model.sql_checksum();
 
     let description_ai_generated = model
@@ -80,8 +74,8 @@ fn insert_model(
         .and_then(|s| s.description_ai_generated);
 
     conn.execute(
-        "INSERT INTO ff_meta.models (project_id, name, source_path, materialization, schema_name, description, description_ai_generated, owner, deprecated, deprecation_message, base_name, version_number, contract_enforced, raw_sql, sql_checksum)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO ff_meta.models (project_id, name, source_path, materialization, schema_name, description, description_ai_generated, owner, deprecated, deprecation_message, base_name, version_number, raw_sql, sql_checksum)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         duckdb::params![
             project_id,
             model.name.as_ref(),
@@ -95,7 +89,6 @@ fn insert_model(
             deprecation_message,
             model.base_name,
             model.version.map(|v| v as i32),
-            contract_enforced,
             model.raw_sql,
             checksum,
         ],
@@ -213,11 +206,7 @@ fn insert_single_column(
     col: &ff_core::model::SchemaColumnDef,
     ordinal: usize,
 ) -> MetaResult<()> {
-    let nullability = col
-        .constraints
-        .iter()
-        .any(|c| matches!(c, ff_core::ColumnConstraint::NotNull))
-        .then_some("not_null");
+    let nullability: Option<&str> = None;
 
     let classification = col.classification.as_ref().map(|c| match c {
         ff_core::DataClassification::Pii => "pii",
@@ -250,19 +239,6 @@ fn insert_single_column(
             |row| row.get(0),
         )
         .populate_context("select column_id")?;
-
-    for constraint in &col.constraints {
-        let ct = match constraint {
-            ff_core::ColumnConstraint::NotNull => "not_null",
-            ff_core::ColumnConstraint::PrimaryKey => "primary_key",
-            ff_core::ColumnConstraint::Unique => "unique",
-        };
-        conn.execute(
-            "INSERT INTO ff_meta.model_column_constraints (column_id, constraint_type) VALUES (?, ?)",
-            duckdb::params![column_id, ct],
-        )
-        .populate_context("insert column_constraints")?;
-    }
 
     if let Some(ref_info) = &col.references {
         conn.execute(

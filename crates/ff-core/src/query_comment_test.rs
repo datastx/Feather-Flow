@@ -180,9 +180,123 @@ fn test_config_default_enabled() {
     assert_eq!(config.placement, CommentPlacement::Append);
     assert_eq!(config.style, CommentStyle::Compact);
     assert!(config.custom_vars.is_empty());
+    assert!(config.custom_fields.is_none());
     assert!(config.include.model);
     assert!(config.include.node_path);
     assert!(config.include.schema);
+}
+
+#[test]
+fn test_interpolate_env_vars_known_var() {
+    std::env::set_var("FF_TEST_VAR_123", "hello_world");
+    let result = interpolate_env_vars("prefix-$FF_TEST_VAR_123-suffix");
+    assert_eq!(result, "prefix-hello_world-suffix");
+    std::env::remove_var("FF_TEST_VAR_123");
+}
+
+#[test]
+fn test_interpolate_env_vars_unknown_var() {
+    std::env::remove_var("FF_NONEXISTENT_VAR_XYZ");
+    let result = interpolate_env_vars("before-$FF_NONEXISTENT_VAR_XYZ-after");
+    assert_eq!(result, "before--after");
+}
+
+#[test]
+fn test_interpolate_env_vars_no_vars() {
+    let result = interpolate_env_vars("plain text no vars");
+    assert_eq!(result, "plain text no vars");
+}
+
+#[test]
+fn test_interpolate_env_vars_dollar_at_end() {
+    let result = interpolate_env_vars("trailing$");
+    assert_eq!(result, "trailing$");
+}
+
+#[test]
+fn test_interpolate_env_vars_multiple_vars() {
+    std::env::set_var("FF_TEST_A", "aaa");
+    std::env::set_var("FF_TEST_B", "bbb");
+    let result = interpolate_env_vars("$FF_TEST_A and $FF_TEST_B");
+    assert_eq!(result, "aaa and bbb");
+    std::env::remove_var("FF_TEST_A");
+    std::env::remove_var("FF_TEST_B");
+}
+
+#[test]
+fn test_custom_fields_appear_in_comment() {
+    let mut fields = HashMap::new();
+    fields.insert("ci_job".to_string(), "static-value".to_string());
+    let config = QueryCommentConfig {
+        custom_fields: Some(fields),
+        ..default_config()
+    };
+    let ctx = QueryCommentContext::new("proj", None, config);
+    let input = make_input("m", "view", None, None);
+    let comment = ctx.build_comment(&input);
+    assert!(comment.contains("\"ci_job\":\"static-value\""));
+}
+
+#[test]
+fn test_custom_fields_env_interpolation() {
+    std::env::set_var("FF_TEST_CI_JOB", "job-42");
+    let mut fields = HashMap::new();
+    fields.insert("ci_job".to_string(), "$FF_TEST_CI_JOB".to_string());
+    let config = QueryCommentConfig {
+        custom_fields: Some(fields),
+        ..default_config()
+    };
+    let ctx = QueryCommentContext::new("proj", None, config);
+    let input = make_input("m", "view", None, None);
+    let metadata = ctx.build_metadata(&input);
+    assert_eq!(
+        metadata.custom_fields.as_ref().unwrap().get("ci_job"),
+        Some(&"job-42".to_string())
+    );
+    std::env::remove_var("FF_TEST_CI_JOB");
+}
+
+#[test]
+fn test_runtime_fields_none_by_default() {
+    let ctx = QueryCommentContext::new("proj", None, default_config());
+    let input = make_input("m", "view", None, None);
+    let metadata = ctx.build_metadata(&input);
+    assert!(metadata.execution_id.is_none());
+    assert!(metadata.run_mode.is_none());
+    assert!(metadata.is_full_refresh.is_none());
+}
+
+#[test]
+fn test_runtime_fields_populated_via_with_runtime_fields() {
+    let ctx = QueryCommentContext::new("proj", None, default_config())
+        .with_runtime_fields("models", true);
+    let input = make_input("m", "table", None, None);
+    let metadata = ctx.build_metadata(&input);
+    assert!(metadata.execution_id.is_some());
+    assert!(!metadata.execution_id.as_ref().unwrap().is_empty());
+    assert_eq!(metadata.run_mode.as_deref(), Some("models"));
+    assert_eq!(metadata.is_full_refresh, Some(true));
+}
+
+#[test]
+fn test_runtime_fields_in_comment_output() {
+    let ctx = QueryCommentContext::new("proj", None, default_config())
+        .with_runtime_fields("build", false);
+    let input = make_input("m", "view", None, None);
+    let comment = ctx.build_comment(&input);
+    assert!(comment.contains("\"run_mode\":\"build\""));
+    assert!(comment.contains("\"is_full_refresh\":false"));
+    assert!(comment.contains("\"execution_id\":\""));
+}
+
+#[test]
+fn test_runtime_fields_not_in_compile_only_comment() {
+    let ctx = QueryCommentContext::new("proj", None, default_config());
+    let input = make_input("m", "view", None, None);
+    let comment = ctx.build_comment(&input);
+    assert!(!comment.contains("execution_id"));
+    assert!(!comment.contains("run_mode"));
+    assert!(!comment.contains("is_full_refresh"));
 }
 
 #[test]

@@ -4,8 +4,11 @@ name: guarded
 description: "LEFT JOIN with COALESCE guards — no A010"
 columns:
   - name: amount
+    description: "Monetary amount in dollars"
     data_type: DECIMAL(10,2)
   - name: name
+    description: "Name of the entity"
     data_type: VARCHAR
   - name: email
+    description: "Email address"
     data_type: VARCHAR

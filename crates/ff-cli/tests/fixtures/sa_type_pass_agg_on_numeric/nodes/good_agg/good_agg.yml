@@ -4,10 +4,14 @@ name: good_agg
 description: "SUM on numeric, COUNT/MIN/MAX on string — no A004"
 columns:
   - name: total_amount
+    description: "Total monetary amount in dollars"
     data_type: DECIMAL(10,2)
   - name: name_count
+    description: "The name count value"
     data_type: BIGINT
   - name: first_name
+    description: "The first name value"
     data_type: VARCHAR
   - name: last_name
+    description: "The last name value"
     data_type: VARCHAR

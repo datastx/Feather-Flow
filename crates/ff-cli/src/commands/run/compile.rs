@@ -12,12 +12,18 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::cli::{GlobalArgs, RunArgs};
-use crate::commands::common::{self, parse_hooks_from_config};
+use crate::commands::common;
 
 /// Compiled model data needed for execution
 #[derive(Clone)]
 pub(crate) struct CompiledModel {
+    /// Primary SQL (for non-incremental models this is the only SQL;
+    /// for incremental models this is the full-refresh path, i.e. is_exists=false).
     pub(crate) sql: String,
+    /// For incremental models: SQL compiled with is_exists()=true.
+    /// At runtime, execution picks `incremental_sql` when the target table exists,
+    /// and `sql` (full path) when it does not.
+    pub(crate) incremental_sql: Option<String>,
     pub(crate) materialization: Materialization,
     pub(crate) schema: Option<String>,
     pub(crate) dependencies: Vec<String>,
@@ -31,7 +37,7 @@ pub(crate) struct CompiledModel {
     pub(crate) pre_hook: Vec<String>,
     /// SQL statements to execute after the model runs
     pub(crate) post_hook: Vec<String>,
-    /// Model schema for contract validation (from .yml file)
+    /// Model schema (from .yml file)
     pub(crate) model_schema: Option<ModelSchema>,
     /// Query comment to attach when executing SQL
     pub(crate) query_comment: Option<String>,
@@ -138,6 +144,7 @@ fn compile_python_model(
 
     CompiledModel {
         sql: String::new(),
+        incremental_sql: None,
         materialization: Materialization::Table,
         schema,
         dependencies: model_deps,
@@ -161,9 +168,9 @@ fn compile_sql_model(
     model: &ff_core::model::Model,
     env: &CompileEnv<'_>,
 ) -> Result<CompiledModel> {
-    let (rendered, config_values) = env
+    let rendered = env
         .jinja
-        .render_with_config(&model.raw_sql)
+        .render(&model.raw_sql)
         .with_context(|| format!("Failed to render template for model: {}", name))?;
 
     let statements = env
@@ -199,32 +206,38 @@ fn compile_sql_model(
         );
     }
 
-    let mat = config_values
-        .get("materialized")
-        .and_then(|v| v.as_str())
-        .map(common::parse_materialization)
+    // Config is read from YAML (already on model.config)
+    let mat = model
+        .config
+        .materialized
         .unwrap_or(env.project.config.materialization);
 
-    let schema = config_values
-        .get("schema")
-        .and_then(|v| v.as_str())
-        .map(String::from)
+    let schema = model
+        .config
+        .schema
+        .clone()
         .or_else(|| env.project.config.get_schema(None).map(|s| s.to_string()));
 
-    let (unique_key, incremental_strategy, on_schema_change) =
-        parse_incremental_config(&config_values, mat);
+    let unique_key = if mat == Materialization::Incremental {
+        model.unique_key()
+    } else {
+        None
+    };
+    let incremental_strategy = if mat == Materialization::Incremental {
+        model.config.incremental_strategy
+    } else {
+        None
+    };
+    let on_schema_change = if mat == Materialization::Incremental {
+        model.config.on_schema_change
+    } else {
+        None
+    };
 
-    let pre_hook = parse_hooks_from_config(&config_values, "pre_hook");
-    let post_hook = parse_hooks_from_config(&config_values, "post_hook");
+    let pre_hook = model.config.pre_hook.clone();
+    let post_hook = model.config.post_hook.clone();
 
-    let wap = config_values
-        .get("wap")
-        .map(|v| {
-            v.as_str()
-                .map(|s| s == "true")
-                .unwrap_or_else(|| v.is_true())
-        })
-        .unwrap_or_else(|| model.wap_enabled());
+    let wap = model.wap_enabled();
 
     let comment_placement = env
         .comment_ctx
@@ -245,8 +258,44 @@ fn compile_sql_model(
         ctx.build_comment(&input)
     });
 
+    // Dual-path compilation for incremental models
+    let (final_sql, incremental_sql) = if mat == Materialization::Incremental {
+        let macro_paths = env.project.config.macro_paths_absolute(&env.project.root);
+        let template_ctx = common::build_template_context(env.project, None, true);
+
+        // Full path: is_exists() = false
+        let jinja_full = ff_jinja::JinjaEnvironment::with_is_exists(
+            &env.project.config.vars,
+            &macro_paths,
+            Some(&template_ctx),
+            false,
+        );
+        let full_rendered = jinja_full
+            .render(&model.raw_sql)
+            .with_context(|| format!("Failed to render full path template for model: {}", name))?;
+
+        // Incremental path: is_exists() = true
+        let jinja_inc = ff_jinja::JinjaEnvironment::with_is_exists(
+            &env.project.config.vars,
+            &macro_paths,
+            Some(&template_ctx),
+            true,
+        );
+        let inc_rendered = jinja_inc.render(&model.raw_sql).with_context(|| {
+            format!(
+                "Failed to render incremental path template for model: {}",
+                name
+            )
+        })?;
+
+        (full_rendered, Some(inc_rendered))
+    } else {
+        (rendered, None)
+    };
+
     Ok(CompiledModel {
-        sql: rendered,
+        sql: final_sql,
+        incremental_sql,
         materialization: mat,
         schema,
         dependencies: model_deps,
@@ -262,42 +311,6 @@ fn compile_sql_model(
         is_python: false,
         script_path: None,
     })
-}
-
-/// Parse incremental-specific config values (unique_key, strategy, on_schema_change).
-fn parse_incremental_config(
-    config_values: &HashMap<String, minijinja::Value>,
-    mat: Materialization,
-) -> (
-    Option<Vec<String>>,
-    Option<IncrementalStrategy>,
-    Option<OnSchemaChange>,
-) {
-    if mat != Materialization::Incremental {
-        return (None, None, None);
-    }
-
-    let unique_key = config_values
-        .get("unique_key")
-        .and_then(|v| v.as_str())
-        .map(|s| {
-            s.split(',')
-                .map(|k| k.trim().to_string())
-                .filter(|k| !k.is_empty())
-                .collect::<Vec<_>>()
-        });
-
-    let strategy = config_values
-        .get("incremental_strategy")
-        .and_then(|v| v.as_str())
-        .map(common::parse_incremental_strategy);
-
-    let on_change = config_values
-        .get("on_schema_change")
-        .and_then(|v| v.as_str())
-        .map(common::parse_on_schema_change);
-
-    (unique_key, strategy, on_change)
 }
 
 /// Load the deferred manifest from --defer path.

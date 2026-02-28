@@ -1,11 +1,7 @@
-//! Pre/post-hook execution, schema creation, database connection, and contract validation.
+//! Pre/post-hook execution, schema creation, and database connection.
 
 use anyhow::{Context, Result};
 use ff_core::config::Config;
-use ff_core::contract::{
-    validate_contract, ContractValidationResult, ContractViolation, ViolationType,
-};
-use ff_core::model::ModelSchema;
 use ff_core::Project;
 use ff_db::Database;
 use std::collections::{HashMap, HashSet};
@@ -140,92 +136,4 @@ fn is_comment_only(sql: &str) -> bool {
     sql.lines()
         .map(str::trim)
         .all(|line| line.is_empty() || line.starts_with("--"))
-}
-
-/// Validate schema contract for a model after execution.
-///
-/// Returns Ok(Some(result)) if contract validation was performed,
-/// Ok(None) if no contract was defined,
-/// Err if contract was enforced and violations were found.
-pub(super) async fn validate_model_contract(
-    db: &Arc<dyn Database>,
-    model_name: &str,
-    qualified_name: &str,
-    model_schema: Option<&ModelSchema>,
-    verbose: bool,
-) -> Result<Option<ContractValidationResult>> {
-    let schema = match model_schema {
-        Some(s) if s.contract.is_some() => s,
-        _ => return Ok(None), // No contract to validate
-    };
-
-    if verbose {
-        eprintln!("[verbose] Validating contract for model: {}", model_name);
-    }
-
-    let actual_columns = db
-        .get_table_schema(qualified_name)
-        .await
-        .context("Failed to get schema for contract validation")?;
-
-    let result = validate_contract(model_name, schema, &actual_columns);
-
-    let severity = if result.enforced { "ERROR" } else { "WARN" };
-    for violation in &result.violations {
-        log_contract_violation(violation, severity, verbose);
-    }
-
-    if result.enforced && !result.passed {
-        let violation_count = result
-            .violations
-            .iter()
-            .filter(|v| !matches!(v.violation_type, ViolationType::ExtraColumn { .. }))
-            .count();
-        anyhow::bail!(
-            "Contract enforcement failed: {} violation(s)",
-            violation_count
-        );
-    }
-
-    Ok(Some(result))
-}
-
-/// Format a contract violation into a human-readable message.
-///
-/// Returns `None` for violations that should be silenced (e.g. extra columns
-/// when verbose is off).
-fn format_contract_violation(
-    violation: &ContractViolation,
-    severity: &str,
-    verbose: bool,
-) -> Option<String> {
-    match &violation.violation_type {
-        ViolationType::MissingColumn { column } => Some(format!(
-            "    [{}] Contract violation: missing column '{}'",
-            severity, column
-        )),
-        ViolationType::TypeMismatch {
-            column,
-            expected,
-            actual,
-        } => Some(format!(
-            "    [{}] Contract violation: column '{}' type mismatch (expected {}, got {})",
-            severity, column, expected, actual
-        )),
-        ViolationType::ExtraColumn { column } if verbose => Some(format!(
-            "    [INFO] Extra column '{}' not in contract",
-            column
-        )),
-        ViolationType::ExtraColumn { .. } => None,
-        ViolationType::ConstraintNotMet { column, constraint } => Some(format!(
-            "    [{}] Contract violation: column '{}' constraint {:?} not met",
-            severity, column, constraint
-        )),
-    }
-}
-
-fn log_contract_violation(violation: &ContractViolation, severity: &str, verbose: bool) {
-    if let Some(msg) = format_contract_violation(violation, severity, verbose) {
-        eprintln!("{}", msg);
-    }
 }

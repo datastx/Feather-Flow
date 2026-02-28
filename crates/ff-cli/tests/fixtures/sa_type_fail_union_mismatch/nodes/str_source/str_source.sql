@@ -1,3 +1,1 @@
-SELECT
-    name
-FROM raw_strings
+select name from raw_strings

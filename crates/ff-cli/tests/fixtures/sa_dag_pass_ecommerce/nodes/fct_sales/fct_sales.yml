@@ -4,8 +4,11 @@ name: fct_sales
 description: "Fact table for sales transactions"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     type: INTEGER
   - name: amount
+    description: "Monetary amount in dollars"
     type: "DECIMAL(10,2)"
   - name: customer_name
+    description: "Full name of the customer"
     type: VARCHAR

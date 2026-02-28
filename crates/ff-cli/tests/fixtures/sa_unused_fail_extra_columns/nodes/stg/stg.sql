@@ -1,6 +1,6 @@
-SELECT
-    id,
-    name,
-    internal_code,
-    debug_flag
-FROM raw_data
+select
+    id
+    , name
+    , internal_code
+    , debug_flag
+from raw_data

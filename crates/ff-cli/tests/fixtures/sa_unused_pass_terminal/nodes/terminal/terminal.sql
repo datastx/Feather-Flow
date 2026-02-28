@@ -1,5 +1,5 @@
-SELECT
-    id,
-    name,
-    extra
-FROM raw_data
+select
+    id
+    , name
+    , extra
+from raw_data

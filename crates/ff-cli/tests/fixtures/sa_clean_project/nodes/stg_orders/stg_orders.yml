@@ -4,15 +4,20 @@ name: stg_orders
 description: "Staging orders model"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     data_type: INTEGER
     tests: [unique, not_null]
   - name: customer_id
+    description: "Unique identifier for the customer"
     data_type: INTEGER
     tests: [not_null]
   - name: amount
+    description: "Monetary amount in dollars"
     data_type: DECIMAL(10,2)
   - name: status
+    description: "Current status of the record"
     data_type: VARCHAR
   - name: created_at
+    description: "Timestamp when the record was created"
     data_type: TIMESTAMP
     tests: [not_null]

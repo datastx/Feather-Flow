@@ -4,6 +4,8 @@ name: source_a
 description: "Source A with matching types"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     data_type: INTEGER
   - name: code
+    description: "The code value"
     data_type: INTEGER

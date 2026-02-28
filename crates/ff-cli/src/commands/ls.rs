@@ -28,8 +28,8 @@ pub(crate) async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
             .get_model(name)
             .ok_or_else(|| anyhow::anyhow!("Model '{}' not found in project", name))?;
 
-        let (rendered, config_values) = jinja
-            .render_with_config(&model.raw_sql)
+        let rendered = jinja
+            .render(&model.raw_sql)
             .with_context(|| format!("Failed to render template for model: {}", name))?;
 
         let statements = parser
@@ -40,16 +40,16 @@ pub(crate) async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
         let (model_deps, ext_deps) =
             ff_sql::extractor::categorize_dependencies(deps, &known_models, &external_tables);
 
-        let mat = config_values
-            .get("materialized")
-            .and_then(|v| v.as_str())
-            .map(common::parse_materialization)
+        // Config is read from YAML (already on model.config)
+        let mat = model
+            .config
+            .materialized
             .unwrap_or(project.config.materialization);
 
-        let schema = config_values
-            .get("schema")
-            .and_then(|v| v.as_str())
-            .map(String::from)
+        let schema = model
+            .config
+            .schema
+            .clone()
             .or_else(|| project.config.get_schema(None).map(|s| s.to_string()));
 
         dependencies.insert(name.to_string(), model_deps.clone());
@@ -132,12 +132,18 @@ pub(crate) async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
         .collect();
 
     if let Some(resource_type) = &args.resource_type {
+        if matches!(resource_type, ResourceType::RunGroup) {
+            // Special handling: list run groups instead of models
+            print_run_groups(&project.config, args)?;
+            return Ok(());
+        }
         results.retain(|m| match resource_type {
             ResourceType::Model => m.resource_type == InfoResourceType::Model,
             ResourceType::Source => m.resource_type == InfoResourceType::Source,
             ResourceType::Seed => m.resource_type == InfoResourceType::Seed,
             ResourceType::Test => false, // tests are not listed as ModelInfo
             ResourceType::Function => m.resource_type.is_function(),
+            ResourceType::RunGroup => false, // handled above
         });
     }
 
@@ -343,4 +349,59 @@ fn print_paths(models: &[&ModelInfo]) {
             println!("{}", path);
         }
     }
+}
+
+/// Print run groups defined in featherflow.yml
+fn print_run_groups(config: &ff_core::config::Config, args: &LsArgs) -> Result<()> {
+    let groups = match &config.run_groups {
+        Some(g) if !g.is_empty() => g,
+        _ => {
+            println!("No run groups defined in featherflow.yml");
+            return Ok(());
+        }
+    };
+
+    match args.output {
+        LsOutput::Json => {
+            let json = serde_json::to_string_pretty(groups)
+                .context("Failed to serialize run groups to JSON")?;
+            println!("{}", json);
+        }
+        _ => {
+            let headers = [
+                "NAME",
+                "DESCRIPTION",
+                "NODES",
+                "MODE",
+                "FULL_REFRESH",
+                "FAIL_FAST",
+            ];
+            let mut rows: Vec<Vec<String>> = Vec::new();
+            let mut names: Vec<&String> = groups.keys().collect();
+            names.sort();
+            for name in &names {
+                let group = &groups[*name];
+                rows.push(vec![
+                    (*name).clone(),
+                    group.description.as_deref().unwrap_or("-").to_string(),
+                    format!("{}", group.nodes.len()),
+                    group
+                        .mode
+                        .map(|m| m.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                    group
+                        .full_refresh
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                    group
+                        .fail_fast
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                ]);
+            }
+            common::print_table(&headers, &rows);
+            println!("\n{} run groups", names.len());
+        }
+    }
+    Ok(())
 }

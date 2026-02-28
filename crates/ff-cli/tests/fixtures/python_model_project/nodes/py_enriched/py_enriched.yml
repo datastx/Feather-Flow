@@ -7,10 +7,14 @@ depends_on:
 
 columns:
   - name: id
+    description: "Unique identifier for the record"
     type: INTEGER
   - name: name
+    description: "Name of the entity"
     type: VARCHAR
   - name: amount
+    description: "Monetary amount in dollars"
     type: DOUBLE
   - name: score
+    description: "Numeric score value"
     type: DOUBLE

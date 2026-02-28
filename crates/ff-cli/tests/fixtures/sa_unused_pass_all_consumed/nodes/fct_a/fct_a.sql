@@ -1,4 +1,4 @@
-SELECT
-    id,
-    a
-FROM stg
+select
+    id
+    , a
+from stg

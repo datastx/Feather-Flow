@@ -1,0 +1,21 @@
+version: 1
+kind: source
+name: raw_events
+description: "Raw events data source"
+schema: analytics
+tables:
+  - name: raw_events
+    description: "Raw event stream"
+    columns:
+      - name: event_id
+        type: INTEGER
+        description: "Unique event identifier"
+      - name: event_type
+        type: VARCHAR
+        description: "Type of event"
+      - name: created_at
+        type: TIMESTAMP
+        description: "Event creation timestamp"
+      - name: amount
+        type: DECIMAL(10,2)
+        description: "Event amount"

@@ -3,8 +3,11 @@ version: 1
 description: "Source table for testing"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     type: INTEGER
   - name: name
+    description: "Name of the entity"
     type: VARCHAR
   - name: amount
+    description: "Monetary amount in dollars"
     type: DOUBLE

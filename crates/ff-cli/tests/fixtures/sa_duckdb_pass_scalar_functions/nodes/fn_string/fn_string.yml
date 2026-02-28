@@ -4,6 +4,8 @@ name: fn_string
 description: "String function stubs: regexp_matches and md5"
 columns:
   - name: matches
+    description: "The matches value"
     data_type: BOOLEAN
   - name: hash
+    description: "The hash value"
     data_type: VARCHAR

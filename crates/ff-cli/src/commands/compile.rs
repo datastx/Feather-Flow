@@ -1,10 +1,17 @@
 //! Compile command implementation
+//!
+//! The compile pipeline is organized into 5 discrete stages:
+//!
+//! 1. **Render** — Render Jinja templates, parse SQL, extract dependencies
+//! 2. **DAG Build** — Build dependency graph, topological sort, apply selectors
+//! 3. **Analyze** — Static analysis + table name qualification
+//! 4. **Resolve** — Ephemeral inlining, final SQL generation, disk writes
+//! 5. **Validate** — Post-compile validation checks, meta DB population
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use ff_core::config::Materialization;
 use ff_core::dag::ModelDag;
-use ff_core::model::ModelConfig;
 use ff_core::Project;
 use ff_jinja::JinjaEnvironment;
 use ff_sql::{
@@ -43,8 +50,6 @@ struct CompileResults {
     results: Vec<ModelCompileResult>,
 }
 
-use crate::commands::common::parse_hooks_from_config;
-
 /// Intermediate compilation result before ephemeral inlining
 struct CompileOutput {
     name: String,
@@ -56,6 +61,11 @@ struct CompileOutput {
     output_path: std::path::PathBuf,
     /// Query comment to append when writing to disk
     query_comment: Option<String>,
+    /// For incremental models: SQL compiled with `is_exists()=true`.
+    /// The primary `sql` field is compiled with `is_exists()=false` (full path).
+    incremental_sql: Option<String>,
+    /// Parsed AST for the incremental path (for qualification).
+    incremental_statements: Option<Vec<Statement>>,
 }
 
 /// Context for model compilation (phase 1), grouping shared compilation state.
@@ -68,6 +78,12 @@ struct CompileContext<'a> {
     output_dir: &'a Path,
     default_materialization: Materialization,
     comment_ctx: Option<&'a ff_core::query_comment::QueryCommentContext>,
+    /// Template context for building dual-path Jinja environments
+    template_ctx: &'a ff_jinja::TemplateContext,
+    /// Merged vars for dual-path rendering
+    vars: &'a HashMap<String, serde_yaml::Value>,
+    /// Macro paths for dual-path rendering
+    macro_paths: &'a [std::path::PathBuf],
 }
 
 impl std::fmt::Debug for CompileContext<'_> {
@@ -80,7 +96,61 @@ impl std::fmt::Debug for CompileContext<'_> {
     }
 }
 
-/// Execute the compile command
+// ── Stage 1 output ──────────────────────────────────────────────────────
+
+/// Output of Stage 1 (Render): compiled models with extracted dependencies.
+struct RenderOutput {
+    /// Successfully compiled models
+    compiled: Vec<CompileOutput>,
+    /// Early failure results (models that failed rendering/parsing)
+    failures: Vec<ModelCompileResult>,
+    /// Dependencies extracted per model (name → deps list)
+    dependencies: HashMap<String, Vec<String>>,
+    /// Materialization per model
+    materializations: HashMap<String, Materialization>,
+}
+
+// ── Stage 2 output ──────────────────────────────────────────────────────
+
+/// Output of Stage 2 (DAG Build): dependency graph and execution order.
+struct DagOutput {
+    dag: ModelDag,
+    topo_order: Vec<String>,
+    /// Filtered model names (after selector application)
+    selected_models: Vec<String>,
+}
+
+// ── Stage 3 output ──────────────────────────────────────────────────────
+
+/// Output of Stage 3 (Analyze): qualified SQL and static analysis.
+struct AnalyzeOutput {
+    /// Compiled models with table references qualified to 3-part names
+    qualified_models: Vec<CompileOutput>,
+    /// Qualification map (bare name → database.schema.table)
+    qualification_map: HashMap<String, ff_sql::qualify::QualifiedRef>,
+    /// Set of ephemeral model names
+    ephemeral_models: HashSet<String>,
+}
+
+// ── Stage 4 output ──────────────────────────────────────────────────────
+
+/// Output of Stage 4 (Resolve): final SQL with ephemerals inlined, results written.
+struct ResolveOutput {
+    results: Vec<ModelCompileResult>,
+    success_count: usize,
+    ephemeral_count: usize,
+}
+
+// ── Stage 5 output ──────────────────────────────────────────────────────
+
+/// Output of Stage 5 (Validate): post-compile validation.
+struct ValidateOutput {
+    failed: bool,
+}
+
+/// Execute the compile command.
+///
+/// Orchestrates the 5-stage pipeline: Render → DAG → Analyze → Resolve → Validate.
 pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<()> {
     use ff_core::config::Config;
 
@@ -110,7 +180,6 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
     let template_ctx = common::build_template_context(&project, global.database.as_deref(), false);
     let jinja = JinjaEnvironment::with_context(&vars, &macro_paths, &template_ctx);
 
-    // Filtering happens after DAG build, so compile all models first
     let all_model_names: Vec<String> = project
         .model_names()
         .into_iter()
@@ -148,17 +217,7 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
     }
 
     let project_root = project.root.clone();
-    let model_count = all_model_names.len();
-    let mut dependencies: HashMap<String, Vec<String>> = HashMap::with_capacity(model_count);
-    let mut compile_results: Vec<ModelCompileResult> = Vec::with_capacity(model_count);
-    let mut success_count = 0;
-    let mut failure_count = 0;
-
     let default_materialization = project.config.materialization;
-
-    let mut compiled_models: Vec<CompileOutput> = Vec::with_capacity(model_count);
-    let mut materializations: HashMap<String, Materialization> =
-        HashMap::with_capacity(model_count);
 
     let compile_ctx = CompileContext {
         jinja: &jinja,
@@ -169,18 +228,148 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
         output_dir: &output_dir,
         default_materialization,
         comment_ctx: comment_ctx.as_ref(),
+        template_ctx: &template_ctx,
+        vars: &vars,
+        macro_paths: &macro_paths,
     };
 
-    for name in &all_model_names {
-        match compile_model_phase1(&mut project, name, &compile_ctx) {
-            Ok(compiled) => {
-                dependencies.insert(name.clone(), compiled.dependencies.clone());
-                materializations.insert(name.clone(), compiled.materialization);
-                compiled_models.push(compiled);
+    // ── Stage 1: Render ─────────────────────────────────────────────────
+    let render_out = stage_render(&mut project, &all_model_names, &compile_ctx, json_mode);
+
+    // ── Stage 2: DAG Build ──────────────────────────────────────────────
+    let dag_out = stage_dag_build(
+        &project,
+        &render_out.dependencies,
+        &args.nodes,
+        &all_model_names,
+        args,
+        global,
+        json_mode,
+    )?;
+
+    // Filter compiled models to only selected ones
+    let selected_set: HashSet<String> = dag_out.selected_models.iter().cloned().collect();
+    let compiled_models: Vec<CompileOutput> = render_out
+        .compiled
+        .into_iter()
+        .filter(|m| selected_set.contains(&m.name))
+        .collect();
+
+    // ── Stage 3: Analyze ────────────────────────────────────────────────
+    let analyze_out = stage_analyze(
+        &project,
+        compiled_models,
+        &dag_out.topo_order,
+        &external_tables,
+        args,
+        global,
+        json_mode,
+    )?;
+
+    // ── Stage 4: Resolve ────────────────────────────────────────────────
+    let resolve_out = stage_resolve(
+        analyze_out.qualified_models,
+        &render_out.dependencies,
+        &render_out.materializations,
+        &comment_ctx,
+        &mut project,
+        &output_dir,
+        args,
+        global,
+        json_mode,
+        render_out.failures,
+    )?;
+
+    // ── Stage 5: Validate & Persist ─────────────────────────────────────
+    let failure_count = resolve_out
+        .results
+        .iter()
+        .filter(|r| matches!(r.status, RunStatus::Error))
+        .count();
+    let validate_out = stage_validate(
+        &project,
+        &resolve_out.results,
+        &render_out.dependencies,
+        &dag_out.dag,
+        &dag_out.selected_models,
+        &known_models,
+        &analyze_out.qualification_map,
+        &analyze_out.ephemeral_models,
+        failure_count,
+        args,
+        global,
+        json_mode,
+    );
+
+    // ── Output ──────────────────────────────────────────────────────────
+    if json_mode {
+        let results = CompileResults {
+            timestamp: Utc::now(),
+            elapsed_secs: start_time.elapsed().as_secs_f64(),
+            total_models: dag_out.selected_models.len(),
+            success_count: resolve_out.success_count,
+            failure_count,
+            manifest_path: None,
+            results: resolve_out.results,
+        };
+        println!("{}", serde_json::to_string_pretty(&results)?);
+    } else if args.parse_only {
+        println!(
+            "\nValidated {} models successfully (no files written)",
+            dag_out.selected_models.len()
+        );
+    } else {
+        let non_ephemeral_count = dag_out.selected_models.len() - resolve_out.ephemeral_count;
+        if resolve_out.ephemeral_count > 0 {
+            println!(
+                "\nCompiled {} models ({} ephemeral inlined) to {}",
+                non_ephemeral_count,
+                resolve_out.ephemeral_count,
+                output_dir.display()
+            );
+        } else {
+            println!(
+                "\nCompiled {} models to {}",
+                dag_out.selected_models.len(),
+                output_dir.display()
+            );
+        }
+    }
+
+    if failure_count > 0 || validate_out.failed {
+        return Err(crate::commands::common::ExitCode(1).into());
+    }
+
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Stage 1: Render
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Stage 1: Render all Jinja templates, parse SQL, and extract dependencies.
+fn stage_render(
+    project: &mut Project,
+    model_names: &[String],
+    ctx: &CompileContext<'_>,
+    json_mode: bool,
+) -> RenderOutput {
+    let model_count = model_names.len();
+    let mut compiled: Vec<CompileOutput> = Vec::with_capacity(model_count);
+    let mut failures: Vec<ModelCompileResult> = Vec::new();
+    let mut dependencies: HashMap<String, Vec<String>> = HashMap::with_capacity(model_count);
+    let mut materializations: HashMap<String, Materialization> =
+        HashMap::with_capacity(model_count);
+
+    for name in model_names {
+        match compile_model_phase1(project, name, ctx) {
+            Ok(output) => {
+                dependencies.insert(name.clone(), output.dependencies.clone());
+                materializations.insert(name.clone(), output.materialization);
+                compiled.push(output);
             }
             Err(e) => {
-                failure_count += 1;
-                compile_results.push(ModelCompileResult {
+                failures.push(ModelCompileResult {
                     model: name.clone(),
                     status: RunStatus::Error,
                     materialization: "unknown".to_string(),
@@ -195,38 +384,82 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
         }
     }
 
-    let dag = ModelDag::build(&dependencies).context("Failed to build dependency graph")?;
+    RenderOutput {
+        compiled,
+        failures,
+        dependencies,
+        materializations,
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Stage 2: DAG Build
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Stage 2: Build the dependency DAG, compute topological order, apply selectors.
+fn stage_dag_build(
+    project: &Project,
+    dependencies: &HashMap<String, Vec<String>>,
+    nodes_arg: &Option<String>,
+    all_model_names: &[String],
+    args: &CompileArgs,
+    global: &GlobalArgs,
+    json_mode: bool,
+) -> Result<DagOutput> {
+    let dag = ModelDag::build(dependencies).context("Failed to build dependency graph")?;
     let topo_order = dag
         .topological_order()
         .context("Circular dependency detected")?;
 
-    let model_names: Vec<String> = common::resolve_nodes(&project, &dag, &args.nodes)?;
-    let model_names_set: HashSet<String> = model_names.iter().cloned().collect();
+    let selected_models: Vec<String> = common::resolve_nodes(project, &dag, nodes_arg)?;
 
-    compiled_models.retain(|m| model_names_set.contains(&m.name));
-
-    if !json_mode && args.nodes.is_some() {
+    if !json_mode && nodes_arg.is_some() {
         if args.parse_only {
-            println!("Validating {} models (parse-only)...\n", model_names.len());
+            println!(
+                "Validating {} models (parse-only)...\n",
+                selected_models.len()
+            );
         } else {
-            println!("Compiling {} models...\n", model_names.len());
+            println!("Compiling {} models...\n", selected_models.len());
         }
     }
 
-    if global.verbose && args.nodes.is_some() {
+    if global.verbose && nodes_arg.is_some() {
         eprintln!(
             "[verbose] Compiling {} models (of {} total)",
-            model_names.len(),
+            selected_models.len(),
             all_model_names.len()
         );
     }
 
+    Ok(DagOutput {
+        dag,
+        topo_order,
+        selected_models,
+    })
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Stage 3: Analyze
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Stage 3: Run static analysis and qualify table references.
+fn stage_analyze(
+    project: &Project,
+    mut compiled_models: Vec<CompileOutput>,
+    topo_order: &[String],
+    external_tables: &HashSet<String>,
+    args: &CompileArgs,
+    global: &GlobalArgs,
+    json_mode: bool,
+) -> Result<AnalyzeOutput> {
+    // Static analysis (non-fatal)
     if !args.skip_static_analysis {
         let analysis_result = run_static_analysis(
-            &project,
+            project,
             &compiled_models,
-            &topo_order,
-            &external_tables,
+            topo_order,
+            external_tables,
             args,
             global,
             json_mode,
@@ -235,10 +468,10 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
             if !json_mode {
                 eprintln!("Static analysis error: {}", e);
             }
-            // Non-fatal: continue with compilation
         }
     }
 
+    // Build qualification map and qualify table references
     let compiled_schemas: HashMap<String, Option<String>> = compiled_models
         .iter()
         .map(|m| {
@@ -249,7 +482,7 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
             (m.name.clone(), schema)
         })
         .collect();
-    let qualification_map = common::build_qualification_map(&project, &compiled_schemas);
+    let qualification_map = common::build_qualification_map(project, &compiled_schemas);
 
     for compiled in &mut compiled_models {
         qualify_statements(&mut compiled.statements, &qualification_map);
@@ -259,14 +492,55 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
             .map(|s| s.to_string())
             .collect::<Vec<_>>()
             .join(";\n");
+
+        if let Some(ref mut inc_stmts) = compiled.incremental_statements {
+            qualify_statements(inc_stmts, &qualification_map);
+            compiled.incremental_sql = Some(
+                inc_stmts
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+                    .join(";\n"),
+            );
+        }
     }
 
+    let ephemeral_models: HashSet<String> = compiled_models
+        .iter()
+        .filter(|m| m.materialization == Materialization::Ephemeral)
+        .map(|m| m.name.clone())
+        .collect();
+
+    Ok(AnalyzeOutput {
+        qualified_models: compiled_models,
+        qualification_map,
+        ephemeral_models,
+    })
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Stage 4: Resolve
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Stage 4: Inline ephemerals, generate final SQL, write to disk.
+#[allow(clippy::too_many_arguments)]
+fn stage_resolve(
+    compiled_models: Vec<CompileOutput>,
+    dependencies: &HashMap<String, Vec<String>>,
+    materializations: &HashMap<String, Materialization>,
+    comment_ctx: &Option<ff_core::query_comment::QueryCommentContext>,
+    project: &mut Project,
+    output_dir: &Path,
+    args: &CompileArgs,
+    global: &GlobalArgs,
+    json_mode: bool,
+    initial_failures: Vec<ModelCompileResult>,
+) -> Result<ResolveOutput> {
     let ephemeral_sql: HashMap<String, String> = compiled_models
         .iter()
         .filter(|m| m.materialization == Materialization::Ephemeral)
         .map(|m| (m.name.clone(), m.sql.clone()))
         .collect();
-    let ephemeral_models: HashSet<String> = ephemeral_sql.keys().cloned().collect();
 
     let ephemeral_count = ephemeral_sql.len();
     if global.verbose && ephemeral_count > 0 {
@@ -276,13 +550,16 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
         );
     }
 
+    let mut results: Vec<ModelCompileResult> = initial_failures;
+    let mut success_count = 0;
+
     for compiled in compiled_models {
         if compiled.materialization == Materialization::Ephemeral {
             if !json_mode {
                 println!("  \u{2713} {} (ephemeral) [inlined]", compiled.name);
             }
             success_count += 1;
-            compile_results.push(ModelCompileResult {
+            results.push(ModelCompileResult {
                 model: compiled.name,
                 status: RunStatus::Success,
                 materialization: "ephemeral".to_string(),
@@ -296,8 +573,8 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
         let final_sql = resolve_final_sql(
             &compiled,
             &ephemeral_sql,
-            &dependencies,
-            &materializations,
+            dependencies,
+            materializations,
             global,
         )?;
 
@@ -312,7 +589,7 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
                 eprintln!("[verbose] Validated {} (parse-only mode)", compiled.name);
             }
             success_count += 1;
-            compile_results.push(ModelCompileResult {
+            results.push(ModelCompileResult {
                 model: compiled.name,
                 status: RunStatus::Success,
                 materialization: compiled.materialization.to_string(),
@@ -324,13 +601,13 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
             write_compiled_output(
                 &compiled,
                 &final_sql,
-                &comment_ctx,
-                &mut project,
+                comment_ctx,
+                project,
                 global,
                 json_mode,
             )?;
             success_count += 1;
-            compile_results.push(ModelCompileResult {
+            results.push(ModelCompileResult {
                 model: compiled.name,
                 status: RunStatus::Success,
                 materialization: compiled.materialization.to_string(),
@@ -341,11 +618,51 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
         }
     }
 
-    if !args.parse_only && failure_count == 0 {
-        populate_meta_compile(&project, &compile_results, &dependencies, global);
+    // Compile hooks and tests to target
+    if !args.parse_only {
+        let hooks_count = compile_hooks_to_target(project, output_dir, global);
+        let tests_count = compile_tests_to_target(project, output_dir, global);
+        if !json_mode && (hooks_count > 0 || tests_count > 0) {
+            println!(
+                "  Compiled {} hook(s) and {} test(s) to target",
+                hooks_count, tests_count
+            );
+        }
     }
 
-    // ── Post-compile validation checks (absorbed from `validate` command) ──
+    Ok(ResolveOutput {
+        results,
+        success_count,
+        ephemeral_count,
+    })
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Stage 5: Validate & Persist
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Stage 5: Populate meta DB and run post-compile validation checks.
+#[allow(clippy::too_many_arguments)]
+fn stage_validate(
+    project: &Project,
+    compile_results: &[ModelCompileResult],
+    dependencies: &HashMap<String, Vec<String>>,
+    dag: &ModelDag,
+    selected_models: &[String],
+    known_models: &HashSet<String>,
+    qualification_map: &HashMap<String, ff_sql::qualify::QualifiedRef>,
+    ephemeral_models: &HashSet<String>,
+    failure_count: usize,
+    args: &CompileArgs,
+    global: &GlobalArgs,
+    json_mode: bool,
+) -> ValidateOutput {
+    // Persist to meta DB
+    if !args.parse_only && failure_count == 0 {
+        populate_meta_compile(project, compile_results, dependencies, global);
+    }
+
+    // Post-compile validation
     let mut validation_failed = false;
     if failure_count == 0 && !json_mode {
         let mut vctx = ValidationContext::new();
@@ -353,31 +670,28 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
         let macro_paths = project.config.macro_paths_absolute(&project.root);
 
         println!();
-        validation::validate_duplicates(&project, &mut vctx);
-        validation::validate_qualified_uniqueness(&qualification_map, &ephemeral_models, &mut vctx);
-        validation::validate_schemas(&project, &model_names, &known_models_ref, &mut vctx);
-        validation::validate_sources(&project);
+        validation::validate_duplicates(project, &mut vctx);
+        validation::validate_qualified_uniqueness(qualification_map, ephemeral_models, &mut vctx);
+        validation::validate_schemas(project, selected_models, &known_models_ref, &mut vctx);
+        validation::validate_sources(project);
         validation::validate_macros(&project.config.vars, &macro_paths, &mut vctx);
 
-        if args.contracts {
-            validation::validate_contracts(&project, &model_names, &args.state, &mut vctx)?;
-        }
-
         if args.governance {
-            validation::validate_governance(&project, &model_names, &mut vctx);
+            validation::validate_governance(project, selected_models, &mut vctx);
         }
 
-        validation::validate_documentation(&project, &model_names, &mut vctx);
+        validation::validate_documentation(project, selected_models, &mut vctx);
+        validation::validate_run_groups(project, dag, &mut vctx);
 
         // Run SQL rules from meta DB if configured
-        if let Some(meta_db) = common::open_meta_db(&project) {
+        if let Some(meta_db) = common::open_meta_db(project) {
             if let Some((_project_id, run_id, _model_id_map)) = common::populate_meta_phase1(
                 &meta_db,
-                &project,
+                project,
                 "compile-validate",
                 args.nodes.as_deref(),
             ) {
-                validation::validate_rules(&project, &meta_db, &mut vctx);
+                validation::validate_rules(project, &meta_db, &mut vctx);
                 let status = if vctx.error_count() > 0 {
                     "error"
                 } else {
@@ -409,45 +723,9 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
         }
     }
 
-    if json_mode {
-        let results = CompileResults {
-            timestamp: Utc::now(),
-            elapsed_secs: start_time.elapsed().as_secs_f64(),
-            total_models: model_names.len(),
-            success_count,
-            failure_count,
-            manifest_path: None,
-            results: compile_results,
-        };
-        println!("{}", serde_json::to_string_pretty(&results)?);
-    } else if args.parse_only {
-        println!(
-            "\nValidated {} models successfully (no files written)",
-            model_names.len()
-        );
-    } else {
-        let non_ephemeral_count = model_names.len() - ephemeral_count;
-        if ephemeral_count > 0 {
-            println!(
-                "\nCompiled {} models ({} ephemeral inlined) to {}",
-                non_ephemeral_count,
-                ephemeral_count,
-                output_dir.display()
-            );
-        } else {
-            println!(
-                "\nCompiled {} models to {}",
-                model_names.len(),
-                output_dir.display()
-            );
-        }
+    ValidateOutput {
+        failed: validation_failed,
     }
-
-    if failure_count > 0 || validation_failed {
-        return Err(crate::commands::common::ExitCode(1).into());
-    }
-
-    Ok(())
 }
 
 /// Resolve the final SQL for a non-ephemeral model, inlining any ephemeral dependencies.
@@ -487,6 +765,11 @@ fn resolve_final_sql(
 }
 
 /// Write compiled SQL to disk, attaching query comments and updating the in-memory model.
+///
+/// For incremental models with dual-path compilation, writes:
+/// - `<name>.full.sql` — full refresh path (is_exists=false)
+/// - `<name>.incremental.sql` — incremental path (is_exists=true)
+/// - `<name>.sql` — default path (same as full)
 fn write_compiled_output(
     compiled: &CompileOutput,
     final_sql: &str,
@@ -513,15 +796,56 @@ fn write_compiled_output(
     std::fs::write(&compiled.output_path, &sql_to_write)
         .with_context(|| format!("Failed to write compiled SQL for model: {}", compiled.name))?;
 
+    // Dual-path output for incremental models
+    if let Some(ref inc_sql) = compiled.incremental_sql {
+        let inc_to_write = match &compiled.query_comment {
+            Some(comment) => {
+                ff_core::query_comment::attach_query_comment(inc_sql, comment, placement)
+            }
+            None => inc_sql.clone(),
+        };
+
+        // Write <name>.full.sql
+        let full_path = dual_path(&compiled.output_path, "full");
+        std::fs::write(&full_path, &sql_to_write).with_context(|| {
+            format!("Failed to write full path SQL for model: {}", compiled.name)
+        })?;
+
+        // Write <name>.incremental.sql
+        let inc_path = dual_path(&compiled.output_path, "incremental");
+        std::fs::write(&inc_path, &inc_to_write).with_context(|| {
+            format!(
+                "Failed to write incremental path SQL for model: {}",
+                compiled.name
+            )
+        })?;
+
+        if global.verbose {
+            eprintln!(
+                "[verbose] Dual-path compiled {} -> {}, {}",
+                compiled.name,
+                full_path.display(),
+                inc_path.display()
+            );
+        }
+    }
+
     if let Some(model) = project.get_model_mut(&compiled.name) {
         model.compiled_sql = Some(final_sql.to_string());
     }
 
     if !json_mode {
-        println!(
-            "  \u{2713} {} ({})",
-            compiled.name, compiled.materialization
-        );
+        if compiled.incremental_sql.is_some() {
+            println!(
+                "  \u{2713} {} ({}) [full + incremental]",
+                compiled.name, compiled.materialization
+            );
+        } else {
+            println!(
+                "  \u{2713} {} ({})",
+                compiled.name, compiled.materialization
+            );
+        }
     }
 
     if global.verbose {
@@ -533,6 +857,14 @@ fn write_compiled_output(
     }
 
     Ok(())
+}
+
+/// Compute a dual-path output filename: `foo.sql` -> `foo.<suffix>.sql`
+fn dual_path(base: &Path, suffix: &str) -> std::path::PathBuf {
+    let stem = base.file_stem().and_then(|s| s.to_str()).unwrap_or("model");
+    let ext = base.extension().and_then(|e| e.to_str()).unwrap_or("sql");
+    let new_name = format!("{}.{}.{}", stem, suffix, ext);
+    base.with_file_name(new_name)
 }
 
 /// Merge extra vars from --vars argument into project vars
@@ -551,20 +883,24 @@ fn merge_vars(
 
 /// Compile a single model (phase 1): render template, parse SQL, extract dependencies.
 /// Does not write files - returns compiled model info for phase 2.
+///
+/// For incremental models, performs dual-path compilation:
+/// - `sql` / `statements` — full path (is_exists=false)
+/// - `incremental_sql` / `incremental_statements` — incremental path (is_exists=true)
 fn compile_model_phase1(
     project: &mut Project,
     name: &str,
     ctx: &CompileContext<'_>,
 ) -> Result<CompileOutput> {
     // Immutable borrow block: render + parse + extract deps + resolve functions
-    let (rendered, config_values, model_deps, ext_deps, statements) = {
+    let (rendered, model_deps, ext_deps, statements, raw_sql) = {
         let model = project
             .get_model(name)
             .with_context(|| format!("Model not found: {}", name))?;
         let model_ctx = common::build_model_context(model, project);
-        let (rendered, config_values) = ctx
+        let rendered = ctx
             .jinja
-            .render_with_config_and_model(&model.raw_sql, Some(&model_ctx))
+            .render_with_model(&model.raw_sql, &model_ctx)
             .with_context(|| format!("Failed to render template for model: {}", name))?;
 
         let statements = ctx
@@ -609,7 +945,8 @@ fn compile_model_phase1(
             );
         }
 
-        (rendered, config_values, model_deps, ext_deps, statements)
+        let raw_sql = model.raw_sql.clone();
+        (rendered, model_deps, ext_deps, statements, raw_sql)
     };
 
     // Mutable borrow: apply results to model
@@ -626,7 +963,7 @@ fn compile_model_phase1(
         .iter()
         .filter_map(|s| ff_core::TableName::try_new(s.clone()))
         .collect();
-    model.config = extract_model_config(&config_values);
+    // Config is already populated from YAML during model loading
 
     let mat = model
         .config
@@ -650,71 +987,80 @@ fn compile_model_phase1(
         comment_ctx.build_comment(&input)
     });
 
+    // Dual-path compilation for incremental models
+    let (final_sql, final_stmts, incremental_sql, incremental_stmts) = if mat
+        == Materialization::Incremental
+    {
+        let model_ref = project
+            .get_model(name)
+            .with_context(|| format!("Model not found: {}", name))?;
+        let model_ctx_dp = common::build_model_context(model_ref, project);
+
+        // Full path: is_exists() = false
+        let jinja_full = JinjaEnvironment::with_is_exists(
+            ctx.vars,
+            ctx.macro_paths,
+            Some(ctx.template_ctx),
+            false,
+        );
+        let full_rendered = jinja_full
+            .render_with_model(&raw_sql, &model_ctx_dp)
+            .with_context(|| format!("Failed to render full path template for model: {}", name))?;
+        let full_stmts = ctx
+            .parser
+            .parse(&full_rendered)
+            .with_context(|| format!("Failed to parse full path SQL for model: {}", name))?;
+
+        // Incremental path: is_exists() = true
+        let jinja_inc = JinjaEnvironment::with_is_exists(
+            ctx.vars,
+            ctx.macro_paths,
+            Some(ctx.template_ctx),
+            true,
+        );
+        let inc_rendered = jinja_inc
+            .render_with_model(&raw_sql, &model_ctx_dp)
+            .with_context(|| {
+                format!(
+                    "Failed to render incremental path template for model: {}",
+                    name
+                )
+            })?;
+        let inc_stmts = ctx
+            .parser
+            .parse(&inc_rendered)
+            .with_context(|| format!("Failed to parse incremental path SQL for model: {}", name))?;
+
+        // Update model's compiled_sql to the full path
+        if let Some(m) = project.get_model_mut(name) {
+            m.compiled_sql = Some(full_rendered.clone());
+        }
+
+        (
+            full_rendered,
+            full_stmts,
+            Some(inc_rendered),
+            Some(inc_stmts),
+        )
+    } else {
+        (rendered, statements, None, None)
+    };
+
     Ok(CompileOutput {
         name: name.to_string(),
-        sql: rendered,
-        statements,
+        sql: final_sql,
+        statements: final_stmts,
         materialization: mat,
         dependencies: model_deps,
         output_path,
         query_comment,
+        incremental_sql,
+        incremental_statements: incremental_stmts,
     })
 }
 
-/// Extract a `ModelConfig` from Jinja config values returned by `render_with_config`.
-fn extract_model_config(config_values: &HashMap<String, minijinja::Value>) -> ModelConfig {
-    ModelConfig {
-        materialized: config_values
-            .get("materialized")
-            .and_then(|v| v.as_str())
-            .map(common::parse_materialization),
-        schema: config_values
-            .get("schema")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        tags: config_values
-            .get("tags")
-            .and_then(|v| {
-                v.try_iter().ok().map(|iter| {
-                    iter.filter_map(|item| item.as_str().map(String::from))
-                        .collect()
-                })
-            })
-            .unwrap_or_default(),
-        unique_key: config_values
-            .get("unique_key")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        incremental_strategy: config_values
-            .get("incremental_strategy")
-            .and_then(|v| v.as_str())
-            .map(common::parse_incremental_strategy),
-        on_schema_change: config_values
-            .get("on_schema_change")
-            .and_then(|v| v.as_str())
-            .map(common::parse_on_schema_change),
-        pre_hook: parse_hooks_from_config(config_values, "pre_hook"),
-        post_hook: parse_hooks_from_config(config_values, "post_hook"),
-        wap: config_values.get("wap").map(|v| {
-            v.as_str()
-                .map(|s| s == "true")
-                .unwrap_or_else(|| v.is_true())
-        }),
-        meta: config_values
-            .get("meta")
-            .and_then(|v| {
-                v.try_iter().ok().map(|iter| {
-                    iter.filter_map(|key| {
-                        let key_str = key.as_str()?.to_string();
-                        let val = v.get_attr(&key_str).ok()?;
-                        Some((key_str, val.to_string()))
-                    })
-                    .collect()
-                })
-            })
-            .unwrap_or_default(),
-    }
-}
+// Config is now read exclusively from YAML during model loading.
+// The extract_model_config() function has been removed.
 
 /// Compute the output path for a compiled model, preserving directory structure
 fn compute_compiled_path(
@@ -833,7 +1179,10 @@ fn populate_meta_compile(
     }
 }
 
-/// Run DataFusion-based static analysis on compiled models
+/// Run DataFusion-based static analysis on compiled models.
+///
+/// For incremental models with dual-path compilation, static analysis is run on
+/// both the full path and incremental path SQL, with diagnostics annotated by path.
 fn run_static_analysis(
     project: &Project,
     compiled_models: &[CompileOutput],
@@ -847,6 +1196,7 @@ fn run_static_analysis(
         eprintln!("[verbose] Running DataFusion static analysis...");
     }
 
+    // Primary analysis on full path SQL
     let sql_sources: HashMap<String, String> = compiled_models
         .iter()
         .map(|m| (m.name.clone(), m.sql.clone()))
@@ -878,19 +1228,88 @@ fn run_static_analysis(
         |model_name, mismatch, is_error| {
             if !json_mode {
                 let label = if is_error { "error" } else { "warn" };
-                eprintln!("  [{label}] {model_name}: {mismatch}");
+                eprintln!("  [{label}] {model_name} [full]: {mismatch}");
             }
         },
         |model, err| {
             if global.verbose {
-                eprintln!("[verbose] Static analysis failed for '{}': {}", model, err);
+                eprintln!(
+                    "[verbose] Static analysis failed for '{}' [full]: {}",
+                    model, err
+                );
             }
         },
     );
-    if !json_mode && (plan_count > 0 || failure_count > 0) {
+
+    // Run analysis on incremental path SQL (for models that have dual-path output)
+    let inc_sources: HashMap<String, String> = compiled_models
+        .iter()
+        .filter_map(|m| {
+            m.incremental_sql
+                .as_ref()
+                .map(|sql| (m.name.clone(), sql.clone()))
+        })
+        .collect();
+
+    let (inc_plan_count, inc_failure_count) = if !inc_sources.is_empty() {
+        if global.verbose {
+            eprintln!(
+                "[verbose] Running static analysis on {} incremental path(s)...",
+                inc_sources.len()
+            );
+        }
+        // Build SQL sources for incremental analysis: non-incremental models keep
+        // their full SQL, incremental models use their incremental SQL.
+        let mut inc_all_sources = sql_sources.clone();
+        for (name, sql) in &inc_sources {
+            inc_all_sources.insert(name.clone(), sql.clone());
+        }
+
+        match super::common::run_static_analysis_pipeline(
+            project,
+            &inc_all_sources,
+            topo_order,
+            external_tables,
+        ) {
+            Ok(inc_output) => {
+                let (_, pc, fc) = common::report_static_analysis_results(
+                    &inc_output.result,
+                    &inc_output.overrides,
+                    |model_name, mismatch, is_error| {
+                        // Only report diagnostics for models that have incremental paths
+                        if inc_sources.contains_key(model_name) && !json_mode {
+                            let label = if is_error { "error" } else { "warn" };
+                            eprintln!("  [{label}] {model_name} [incremental]: {mismatch}");
+                        }
+                    },
+                    |model, err| {
+                        if inc_sources.contains_key(model) && global.verbose {
+                            eprintln!(
+                                "[verbose] Static analysis failed for '{}' [incremental]: {}",
+                                model, err
+                            );
+                        }
+                    },
+                );
+                (pc, fc)
+            }
+            Err(e) => {
+                if global.verbose {
+                    eprintln!("[verbose] Incremental path static analysis error: {}", e);
+                }
+                (0, 0)
+            }
+        }
+    } else {
+        (0, 0)
+    };
+
+    let total_plans = plan_count + inc_plan_count;
+    let total_failures = failure_count + inc_failure_count;
+    if !json_mode && (total_plans > 0 || total_failures > 0) {
         eprintln!(
             "Static analysis: {} models planned, {} failures",
-            plan_count, failure_count
+            total_plans, total_failures
         );
     }
 
@@ -899,4 +1318,116 @@ fn run_static_analysis(
     }
 
     Ok(())
+}
+
+/// Compile pre/post hooks to `target/compiled/<model>/hooks/` directory.
+///
+/// For each model with `pre_hook` or `post_hook` in its config, renders the
+/// hook SQL and writes it to the target directory. Multiple hooks are written
+/// as `pre_hook_1.sql`, `pre_hook_2.sql`, etc.
+///
+/// Returns the number of hook files written.
+fn compile_hooks_to_target(project: &Project, output_dir: &Path, global: &GlobalArgs) -> usize {
+    let mut count = 0;
+
+    for model in project.models.values() {
+        let model_name = model.name.as_ref();
+        let hooks_dir = output_dir
+            .parent()
+            .unwrap_or(output_dir)
+            .join(model_name)
+            .join("hooks");
+
+        let has_hooks = !model.config.pre_hook.is_empty() || !model.config.post_hook.is_empty();
+        if !has_hooks {
+            continue;
+        }
+
+        if let Err(e) = std::fs::create_dir_all(&hooks_dir) {
+            eprintln!(
+                "[warn] Failed to create hooks directory for {}: {}",
+                model_name, e
+            );
+            continue;
+        }
+
+        for (i, hook) in model.config.pre_hook.iter().enumerate() {
+            let filename = if model.config.pre_hook.len() == 1 {
+                "pre_hook.sql".to_string()
+            } else {
+                format!("pre_hook_{}.sql", i + 1)
+            };
+            let path = hooks_dir.join(&filename);
+            if let Err(e) = std::fs::write(&path, hook) {
+                eprintln!("[warn] Failed to write pre_hook for {}: {}", model_name, e);
+            } else {
+                count += 1;
+                if global.verbose {
+                    eprintln!("[verbose] Wrote hook {}", path.display());
+                }
+            }
+        }
+
+        for (i, hook) in model.config.post_hook.iter().enumerate() {
+            let filename = if model.config.post_hook.len() == 1 {
+                "post_hook.sql".to_string()
+            } else {
+                format!("post_hook_{}.sql", i + 1)
+            };
+            let path = hooks_dir.join(&filename);
+            if let Err(e) = std::fs::write(&path, hook) {
+                eprintln!("[warn] Failed to write post_hook for {}: {}", model_name, e);
+            } else {
+                count += 1;
+                if global.verbose {
+                    eprintln!("[verbose] Wrote hook {}", path.display());
+                }
+            }
+        }
+    }
+
+    count
+}
+
+/// Compile schema tests to `target/compiled/tests/` directory.
+///
+/// For each model's schema tests (not_null, unique, accepted_values, etc.),
+/// generates the test SQL and writes it to
+/// `target/compiled/tests/<model>__<test_type>__<column>.sql`.
+///
+/// Returns the number of test files written.
+fn compile_tests_to_target(project: &Project, output_dir: &Path, global: &GlobalArgs) -> usize {
+    let tests_dir = output_dir.parent().unwrap_or(output_dir).join("tests");
+
+    let all_tests: Vec<_> = project
+        .models
+        .values()
+        .flat_map(|model| model.get_schema_tests())
+        .collect();
+
+    if all_tests.is_empty() {
+        return 0;
+    }
+
+    if let Err(e) = std::fs::create_dir_all(&tests_dir) {
+        eprintln!("[warn] Failed to create tests directory: {}", e);
+        return 0;
+    }
+
+    let mut count = 0;
+    for test in &all_tests {
+        let sql = ff_test::generator::generate_test_sql(test);
+        let filename = format!("{}__{}__{}.sql", test.model, test.test_type, test.column);
+        let path = tests_dir.join(&filename);
+        if let Err(e) = std::fs::write(&path, &sql) {
+            eprintln!("[warn] Failed to write test SQL for {}: {}", filename, e);
+        } else {
+            count += 1;
+            if global.verbose {
+                eprintln!("[verbose] Wrote test {}", path.display());
+            }
+        }
+    }
+
+    count
 }

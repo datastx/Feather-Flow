@@ -1,6 +1,7 @@
-SELECT
-    id AS order_id,
-    user_id AS customer_id,
-    amount,
-    status
-FROM raw_orders
+select
+    id as order_id
+    ,
+    user_id as customer_id
+    , amount
+    , status
+from raw_orders

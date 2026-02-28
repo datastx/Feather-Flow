@@ -1,0 +1,17 @@
+version: 1
+kind: sql
+materialized: table
+description: "Dimension table for users"
+columns:
+  - name: user_id
+    type: INTEGER
+    description: "User identifier"
+    tests:
+      - unique
+      - not_null
+  - name: username
+    type: VARCHAR
+    description: "Username"
+  - name: created_at
+    type: TIMESTAMP
+    description: "Account creation time"

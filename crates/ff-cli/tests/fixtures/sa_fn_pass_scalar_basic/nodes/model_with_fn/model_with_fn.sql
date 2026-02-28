@@ -1,4 +1,5 @@
-SELECT
-    id,
-    cents_to_dollars(amount_cents) AS amount_dollars
-FROM raw_orders
+select
+    id
+    ,
+    cents_to_dollars(amount_cents) as amount_dollars
+from raw_orders

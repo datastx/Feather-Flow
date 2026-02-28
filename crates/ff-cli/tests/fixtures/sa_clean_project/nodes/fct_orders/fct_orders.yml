@@ -4,16 +4,22 @@ name: fct_orders
 description: "Fact orders model"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     data_type: INTEGER
     tests: [unique, not_null]
   - name: amount
+    description: "Monetary amount in dollars"
     data_type: DECIMAL(10,2)
   - name: status
+    description: "Current status of the record"
     data_type: VARCHAR
   - name: customer_name
+    description: "Full name of the customer"
     data_type: VARCHAR
   - name: created_at
+    description: "Timestamp when the record was created"
     data_type: TIMESTAMP
     tests: [not_null]
   - name: email
+    description: "Email address"
     data_type: VARCHAR

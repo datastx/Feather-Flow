@@ -1,6 +1,7 @@
-SELECT
-    o.id,
-    o.amount,
-    c.name AS customer_name
-FROM stg_orders o
-JOIN stg_customers c ON o.customer_id = c.id
+select
+    o.id
+    , o.amount
+    ,
+    c.name as customer_name
+from stg_orders o
+join stg_customers c on o.customer_id = c.id

@@ -1,3 +1,1 @@
-SELECT
-    id
-FROM int
+select id from int

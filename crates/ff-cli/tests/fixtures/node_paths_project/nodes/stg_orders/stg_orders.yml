@@ -14,11 +14,13 @@ columns:
       - not_null
 
   - name: customer_id
+    description: "Unique identifier for the customer"
     type: INTEGER
     tests:
       - not_null
 
   - name: amount
+    description: "Monetary amount in dollars"
     type: DECIMAL(10,2)
     tests:
       - not_null

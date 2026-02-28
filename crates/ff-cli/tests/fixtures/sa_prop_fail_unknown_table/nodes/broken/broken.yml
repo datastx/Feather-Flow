@@ -4,4 +4,5 @@ name: broken
 description: "Broken model referencing a nonexistent table"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     data_type: INTEGER

@@ -10,22 +10,27 @@ tables:
     description: "Raw order data loaded from CSV"
     columns:
       - name: id
+        description: "Unique identifier for the record"
         type: INTEGER
         tests:
           - unique
           - not_null
       - name: user_id
+        description: "Identifier of the associated user"
         type: INTEGER
       - name: amount
+        description: "Monetary amount in dollars"
         type: DECIMAL(10,2)
 
   - name: raw_customers
     description: "Raw customer data loaded from CSV"
     columns:
       - name: id
+        description: "Unique identifier for the record"
         type: INTEGER
         tests:
           - unique
           - not_null
       - name: name
+        description: "Name of the entity"
         type: VARCHAR

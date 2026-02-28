@@ -4,8 +4,11 @@ name: stg_orders
 description: "Staged orders from raw source"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     type: INTEGER
   - name: customer_id
+    description: "Unique identifier for the customer"
     type: INTEGER
   - name: amount
+    description: "Monetary amount in dollars"
     type: "DECIMAL(10,2)"

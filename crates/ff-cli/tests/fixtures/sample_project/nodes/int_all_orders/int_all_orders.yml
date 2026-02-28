@@ -1,5 +1,7 @@
 version: 1
 kind: sql
+materialized: view
+schema: intermediate
 
 description: "All orders combining enriched completed and staging pending via UNION ALL"
 owner: data-team

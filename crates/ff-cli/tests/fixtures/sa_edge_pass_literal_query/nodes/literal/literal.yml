@@ -4,8 +4,11 @@ name: literal
 description: "Model with literal values and no FROM clause"
 columns:
   - name: val
+    description: "Numeric value"
     type: INTEGER
   - name: flag
+    description: "Boolean flag indicator"
     type: BOOLEAN
   - name: empty_col
+    description: "The empty col value"
     type: VARCHAR

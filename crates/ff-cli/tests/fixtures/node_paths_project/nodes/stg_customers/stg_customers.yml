@@ -7,10 +7,12 @@ tags:
 
 columns:
   - name: customer_id
+    description: "Unique identifier for the customer"
     type: INTEGER
     tests:
       - unique
       - not_null
 
   - name: name
+    description: "Name of the entity"
     type: VARCHAR

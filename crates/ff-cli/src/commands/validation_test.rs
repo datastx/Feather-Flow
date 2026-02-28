@@ -142,7 +142,7 @@ fn test_column_missing_description_produces_error() {
         description: None,
         description_ai_generated: None,
         primary_key: false,
-        constraints: vec![],
+
         tests: vec![],
         references: None,
         classification: None,
@@ -164,7 +164,7 @@ fn test_column_empty_description_produces_error() {
         description: Some("".to_string()),
         description_ai_generated: None,
         primary_key: false,
-        constraints: vec![],
+
         tests: vec![],
         references: None,
         classification: None,
@@ -184,7 +184,7 @@ fn test_column_with_description_passes() {
         description: Some("Unique identifier for the user".to_string()),
         description_ai_generated: None,
         primary_key: false,
-        constraints: vec![],
+
         tests: vec![],
         references: None,
         classification: None,

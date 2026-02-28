@@ -4,8 +4,11 @@ name: stg
 description: "Staging model with id, a, b — all consumed across diamond"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     data_type: INTEGER
   - name: a
+    description: "Column a value"
     data_type: VARCHAR
   - name: b
+    description: "Column b value"
     data_type: VARCHAR

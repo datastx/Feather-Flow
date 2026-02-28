@@ -4,10 +4,14 @@ name: type_mismatch
 description: "Model with deliberate type mismatch in YAML"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     data_type: INTEGER
   - name: amount
+    description: "Monetary amount in dollars"
     data_type: VARCHAR
   - name: status
+    description: "Current status of the record"
     data_type: VARCHAR
   - name: extra_col
+    description: "The extra col value"
     data_type: INTEGER

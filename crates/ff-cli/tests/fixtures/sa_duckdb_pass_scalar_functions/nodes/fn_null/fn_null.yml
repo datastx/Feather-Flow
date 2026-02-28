@@ -4,4 +4,5 @@ name: fn_null
 description: "Null-handling function stub: coalesce"
 columns:
   - name: safe_name
+    description: "The safe name value"
     data_type: VARCHAR

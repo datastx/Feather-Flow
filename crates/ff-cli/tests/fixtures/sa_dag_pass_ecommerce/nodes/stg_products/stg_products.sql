@@ -1,6 +1,6 @@
-SELECT
-    id,
-    name,
-    price,
-    category
-FROM raw_products
+select
+    id
+    , name
+    , price
+    , category
+from raw_products

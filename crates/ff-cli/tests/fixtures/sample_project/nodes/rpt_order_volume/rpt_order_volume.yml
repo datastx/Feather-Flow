@@ -1,5 +1,7 @@
 version: 1
 kind: sql
+materialized: table
+schema: reports
 
 description: "Report showing order volume by status using a table function"
 owner: analytics-team

@@ -1,1 +1,4 @@
-SELECT id::BIGINT AS big_id, id FROM raw_data
+select
+    id::bigint as big_id
+    , id
+from raw_data

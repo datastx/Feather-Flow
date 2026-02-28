@@ -1,15 +1,21 @@
 kind: sources
 version: 1
 name: raw_ecommerce
+description: "Raw source data definitions"
 schema: main
 tables:
   - name: raw_data
+    description: "Raw data data"
     columns:
       - name: id
+        description: "Unique identifier for the record"
         type: INTEGER
       - name: name
+        description: "Name of the entity"
         type: VARCHAR
       - name: internal_code
+        description: "Internal code for debugging"
         type: VARCHAR
       - name: debug_flag
+        description: "Debug flag indicator"
         type: BOOLEAN

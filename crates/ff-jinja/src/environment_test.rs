@@ -36,26 +36,6 @@ fn test_render_with_var_default() {
 }
 
 #[test]
-fn test_render_with_config() {
-    let env = JinjaEnvironment::default();
-    let (result, config) = env
-        .render_with_config("{{ config(materialized='table', schema='staging') }}SELECT 1")
-        .unwrap();
-
-    assert_eq!(result, "SELECT 1");
-    assert_eq!(config.get("materialized").unwrap().as_str(), Some("table"));
-    assert_eq!(config.get("schema").unwrap().as_str(), Some("staging"));
-}
-
-#[test]
-fn test_get_materialization() {
-    let env = JinjaEnvironment::default();
-    env.render("{{ config(materialized='table') }}").unwrap();
-
-    assert_eq!(env.get_materialization(), Some("table".to_string()));
-}
-
-#[test]
 fn test_var_missing_no_default() {
     let env = JinjaEnvironment::default();
     let result = env.render("{{ var(\"missing\") }}");
@@ -75,8 +55,7 @@ fn test_complex_template() {
     );
 
     let env = JinjaEnvironment::new(&vars);
-    let template = r#"{{ config(materialized='view', schema='staging') }}
-SELECT
+    let template = r#"SELECT
     id AS order_id,
     user_id AS customer_id,
     created_at AS order_date,
@@ -85,11 +64,9 @@ FROM raw.orders
 WHERE created_at >= '{{ var("start_date") }}'
 "#;
 
-    let (result, config) = env.render_with_config(template).unwrap();
+    let result = env.render(template).unwrap();
 
     assert!(result.contains("WHERE created_at >= '2024-01-01'"));
-    assert_eq!(config.get("materialized").unwrap().as_str(), Some("view"));
-    assert_eq!(config.get("schema").unwrap().as_str(), Some("staging"));
 }
 
 #[test]
@@ -552,7 +529,7 @@ fn test_to_json_as_filter() {
 }
 
 #[test]
-fn test_render_with_config_and_model() {
+fn test_render_with_model() {
     use crate::context::ModelContext;
 
     let env = JinjaEnvironment::default();
@@ -562,14 +539,8 @@ fn test_render_with_config_and_model() {
         ..Default::default()
     };
 
-    let (rendered, config) = env
-        .render_with_config_and_model(
-            "{{ config(materialized='table') }}{{ model.name }}",
-            Some(&model),
-        )
-        .unwrap();
+    let rendered = env.render_with_model("{{ model.name }}", &model).unwrap();
     assert_eq!(rendered, "test_model");
-    assert_eq!(config.get("materialized").unwrap().as_str(), Some("table"));
 }
 
 // ===== Auto-registration tests =====
@@ -651,4 +622,75 @@ fn test_macro_explicit_import_still_works() {
     let template = r#"{% from "utils.sql" import greet %}{{ greet("Alice") }}"#;
     let result = env.render(template).unwrap();
     assert_eq!(result, "Hi, Alice");
+}
+
+// ===== is_exists() / is_incremental() integration tests =====
+
+#[test]
+fn test_is_exists_true_via_render() {
+    let env = JinjaEnvironment::with_is_exists(&HashMap::new(), &[], None, true);
+    let result = env
+        .render("{% if is_exists() %}WHERE updated_at > '2024-01-01'{% endif %}")
+        .unwrap();
+    assert_eq!(result, "WHERE updated_at > '2024-01-01'");
+}
+
+#[test]
+fn test_is_exists_false_via_render() {
+    let env = JinjaEnvironment::with_is_exists(&HashMap::new(), &[], None, false);
+    let result = env
+        .render("{% if is_exists() %}WHERE updated_at > '2024-01-01'{% endif %}")
+        .unwrap();
+    assert_eq!(result, "");
+}
+
+#[test]
+fn test_is_incremental_deprecated_via_render() {
+    let env = JinjaEnvironment::with_is_exists(&HashMap::new(), &[], None, true);
+    // is_incremental() should still work as a deprecated alias
+    let result = env
+        .render("{% if is_incremental() %}WHERE updated_at > '2024-01-01'{% endif %}")
+        .unwrap();
+    assert_eq!(result, "WHERE updated_at > '2024-01-01'");
+}
+
+#[test]
+fn test_dual_path_full_and_incremental() {
+    let template = r#"SELECT id, name FROM source
+{% if is_exists() %}WHERE updated_at > (SELECT MAX(updated_at) FROM target){% endif %}"#;
+
+    // Full path
+    let env_full = JinjaEnvironment::with_is_exists(&HashMap::new(), &[], None, false);
+    let full_result = env_full.render(template).unwrap();
+    assert_eq!(full_result.trim(), "SELECT id, name FROM source");
+
+    // Incremental path
+    let env_inc = JinjaEnvironment::with_is_exists(&HashMap::new(), &[], None, true);
+    let inc_result = env_inc.render(template).unwrap();
+    assert!(inc_result.contains("WHERE updated_at > (SELECT MAX(updated_at) FROM target)"));
+}
+
+#[test]
+fn test_with_incremental_context_registers_both_functions() {
+    use crate::functions::IncrementalState;
+
+    let state = IncrementalState::new(true, true, false);
+    let env = JinjaEnvironment::with_incremental_context(
+        &HashMap::new(),
+        &[],
+        state,
+        "main.public.my_model",
+    );
+
+    // is_exists() should return true
+    let result = env.render("{{ is_exists() }}").unwrap();
+    assert_eq!(result, "true");
+
+    // is_incremental() (deprecated) should also return true
+    let result = env.render("{{ is_incremental() }}").unwrap();
+    assert_eq!(result, "true");
+
+    // this() should return the qualified name
+    let result = env.render("{{ this() }}").unwrap();
+    assert_eq!(result, "main.public.my_model");
 }

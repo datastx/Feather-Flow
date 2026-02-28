@@ -1,5 +1,7 @@
 version: 1
 kind: sql
+materialized: view
+schema: staging
 
 description: "Staged products from raw source with renamed columns"
 owner: data-team

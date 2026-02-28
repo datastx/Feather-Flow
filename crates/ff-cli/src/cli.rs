@@ -92,21 +92,13 @@ pub(crate) struct CompileArgs {
     #[arg(long)]
     pub strict: bool,
 
-    /// Validate schema contracts against a reference manifest
-    #[arg(long)]
-    pub contracts: bool,
-
-    /// Path to reference manifest for contract validation (used with --contracts)
-    #[arg(long, value_name = "FILE")]
-    pub state: Option<String>,
-
     /// Enable governance checks (data classification completeness)
     #[arg(long)]
     pub governance: bool,
 }
 
 /// Arguments for the run command
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Clone)]
 pub(crate) struct RunArgs {
     /// Run mode: models, test, or build (default from config or "build")
     #[arg(long, value_enum)]
@@ -179,6 +171,10 @@ pub(crate) struct RunArgs {
     /// Treat test failures as warnings, exit 0 (test/build modes)
     #[arg(long)]
     pub warn_only: bool,
+
+    /// Emit structured JSON telemetry to stderr after each model execution
+    #[arg(long)]
+    pub telemetry: bool,
 }
 
 /// CLI-side run mode enum (maps to ff_core::config::RunMode)
@@ -229,6 +225,8 @@ pub(crate) enum ResourceType {
     Test,
     /// Functions only
     Function,
+    /// Run groups defined in featherflow.yml
+    RunGroup,
 }
 
 /// List output formats

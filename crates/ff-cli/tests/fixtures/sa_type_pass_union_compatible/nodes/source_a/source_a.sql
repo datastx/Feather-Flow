@@ -1,3 +1,1 @@
-SELECT
-    id
-FROM raw_data
+select id from raw_data

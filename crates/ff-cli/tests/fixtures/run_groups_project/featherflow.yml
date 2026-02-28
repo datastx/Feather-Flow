@@ -1,0 +1,26 @@
+name: run_groups_project
+version: 1.0.0
+materialization: view
+dialect: duckdb
+database:
+  default:
+    type: duckdb
+    path: ':memory:'
+    name: main
+    schema: analytics
+
+run_groups:
+  staging:
+    description: "Just staging models"
+    nodes:
+      - stg_orders
+    mode: models
+  full_rebuild:
+    description: "Full project rebuild"
+    nodes:
+      - raw_data
+      - stg_orders
+      - fct_revenue
+    mode: build
+    full_refresh: true
+    fail_fast: true

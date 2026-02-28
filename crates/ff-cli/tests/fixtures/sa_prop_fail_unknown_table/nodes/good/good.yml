@@ -4,4 +4,5 @@ name: good
 description: "Good model with a simple literal select"
 columns:
   - name: val
+    description: "Numeric value"
     data_type: INTEGER

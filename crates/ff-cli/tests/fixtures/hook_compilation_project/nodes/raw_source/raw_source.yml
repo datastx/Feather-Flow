@@ -1,0 +1,18 @@
+version: 1
+kind: source
+name: raw_source
+description: "Raw data source for hook project"
+schema: analytics
+tables:
+  - name: raw_metrics
+    description: "Raw metrics data"
+    columns:
+      - name: metric_id
+        type: INTEGER
+        description: "Metric identifier"
+      - name: value
+        type: DOUBLE
+        description: "Metric value"
+      - name: recorded_at
+        type: TIMESTAMP
+        description: "Recording timestamp"

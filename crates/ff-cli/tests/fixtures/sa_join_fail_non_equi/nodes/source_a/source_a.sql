@@ -1,1 +1,4 @@
-SELECT id, val FROM raw_a
+select
+    id
+    , val
+from raw_a

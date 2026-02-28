@@ -502,3 +502,81 @@ database:
     let config: Config = serde_yaml::from_str(yaml).unwrap();
     assert_eq!(config.get_wap_schema(None), Some("wap_staging"));
 }
+
+// ── Run groups tests ────────────────────────────────────────────────
+
+#[test]
+fn test_run_groups_default_none() {
+    let config: Config = serde_yaml::from_str("name: test").unwrap();
+    assert!(config.run_groups.is_none());
+}
+
+#[test]
+fn test_run_groups_minimal() {
+    let yaml = r#"
+name: test_project
+run_groups:
+  staging:
+    nodes:
+      - stg_orders
+      - stg_customers
+"#;
+    let config: Config = serde_yaml::from_str(yaml).unwrap();
+    let groups = config.run_groups.as_ref().unwrap();
+    assert_eq!(groups.len(), 1);
+    let staging = &groups["staging"];
+    assert_eq!(staging.nodes, vec!["stg_orders", "stg_customers"]);
+    assert!(staging.description.is_none());
+    assert!(staging.mode.is_none());
+    assert!(staging.full_refresh.is_none());
+    assert!(staging.fail_fast.is_none());
+}
+
+#[test]
+fn test_run_groups_full_config() {
+    let yaml = r#"
+name: test_project
+run_groups:
+  nightly:
+    description: "Nightly full rebuild of all models"
+    nodes:
+      - tag:nightly
+      - "+fct_orders"
+    mode: build
+    full_refresh: true
+    fail_fast: true
+  staging_only:
+    description: "Just staging models"
+    nodes:
+      - tag:staging
+    mode: models
+"#;
+    let config: Config = serde_yaml::from_str(yaml).unwrap();
+    let groups = config.run_groups.as_ref().unwrap();
+    assert_eq!(groups.len(), 2);
+
+    let nightly = &groups["nightly"];
+    assert_eq!(
+        nightly.description.as_deref(),
+        Some("Nightly full rebuild of all models")
+    );
+    assert_eq!(nightly.nodes.len(), 2);
+    assert_eq!(nightly.mode, Some(RunMode::Build));
+    assert_eq!(nightly.full_refresh, Some(true));
+    assert_eq!(nightly.fail_fast, Some(true));
+
+    let staging = &groups["staging_only"];
+    assert_eq!(staging.mode, Some(RunMode::Models));
+    assert!(staging.full_refresh.is_none());
+}
+
+#[test]
+fn test_run_groups_empty_map() {
+    let yaml = r#"
+name: test_project
+run_groups: {}
+"#;
+    let config: Config = serde_yaml::from_str(yaml).unwrap();
+    let groups = config.run_groups.as_ref().unwrap();
+    assert!(groups.is_empty());
+}

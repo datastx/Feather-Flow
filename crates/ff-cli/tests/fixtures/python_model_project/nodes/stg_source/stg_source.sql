@@ -1,5 +1,14 @@
-SELECT 1 AS id, 'Alice' AS name, 100.0 AS amount
-UNION ALL
-SELECT 2, 'Bob', 200.0
-UNION ALL
-SELECT 3, 'Charlie', 150.0
+select
+    1 as id
+    , 'Alice' as name
+    , 100.0 as amount
+union all
+select
+    2
+    , 'Bob'
+    , 200.0
+union all
+select
+    3
+    , 'Charlie'
+    , 150.0

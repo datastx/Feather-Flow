@@ -4,6 +4,8 @@ name: lossy
 description: "FLOAT/DECIMAL to INTEGER casts — should trigger A005"
 columns:
   - name: price_int
+    description: "The price int value"
     data_type: INTEGER
   - name: amount_int
+    description: "The amount int value"
     data_type: INTEGER

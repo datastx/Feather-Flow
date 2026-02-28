@@ -1,5 +1,7 @@
-SELECT
-    CAST(id AS BIGINT) AS id_big,
-    CAST(id AS FLOAT) AS id_float,
-    CAST(d AS TIMESTAMP) AS d_ts
-FROM raw_data
+select
+    cast(id as bigint) as id_big
+    ,
+    cast(id as float) as id_float
+    ,
+    cast(d as timestamp) as d_ts
+from raw_data

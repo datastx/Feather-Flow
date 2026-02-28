@@ -1,0 +1,15 @@
+version: 1
+kind: source
+name: raw_source
+description: "Raw data source for large DAG"
+schema: analytics
+tables:
+  - name: raw_data
+    description: "Raw data table"
+    columns:
+      - name: id
+        type: INTEGER
+        description: "Row identifier"
+      - name: value
+        type: VARCHAR
+        description: "Data value"

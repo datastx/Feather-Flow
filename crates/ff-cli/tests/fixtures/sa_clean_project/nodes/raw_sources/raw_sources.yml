@@ -1,30 +1,41 @@
 kind: sources
 version: 1
 name: raw_ecommerce
+description: "Raw source data definitions"
 schema: main
 tables:
   - name: raw_orders
+    description: "Raw orders data"
     columns:
       - name: id
+        description: "Unique identifier for the record"
         type: INTEGER
         tests: [unique, not_null]
       - name: customer_id
+        description: "Unique identifier for the customer"
         type: INTEGER
         tests: [not_null]
       - name: amount
+        description: "Monetary amount in dollars"
         type: DECIMAL(10,2)
       - name: status
+        description: "Current status of the record"
         type: VARCHAR
       - name: created_at
+        description: "Timestamp when the record was created"
         type: TIMESTAMP
         tests: [not_null]
   - name: raw_customers
+    description: "Raw customers data"
     columns:
       - name: id
+        description: "Unique identifier for the record"
         type: INTEGER
         tests: [unique, not_null]
       - name: name
+        description: "Name of the entity"
         type: VARCHAR
         tests: [not_null]
       - name: email
+        description: "Email address"
         type: VARCHAR

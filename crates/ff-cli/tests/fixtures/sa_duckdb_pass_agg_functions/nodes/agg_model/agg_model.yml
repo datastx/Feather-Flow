@@ -4,12 +4,17 @@ name: agg_model
 description: "Aggregate function stubs: COUNT, SUM, AVG, MIN, MAX"
 columns:
   - name: cnt
+    description: "Count of occurrences"
     data_type: BIGINT
   - name: total
+    description: "Total amount or count"
     data_type: DECIMAL(10,2)
   - name: avg_amt
+    description: "The avg amt value"
     data_type: DECIMAL(10,2)
   - name: min_amt
+    description: "The min amt value"
     data_type: DECIMAL(10,2)
   - name: max_amt
+    description: "The max amt value"
     data_type: DECIMAL(10,2)

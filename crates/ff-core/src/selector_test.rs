@@ -441,3 +441,284 @@ fn test_apply_selectors_trailing_comma() {
     assert_eq!(result.len(), 1);
     assert_eq!(result[0], "stg");
 }
+
+// -----------------------------------------------------------------------
+// run-group selector tests
+// -----------------------------------------------------------------------
+
+use crate::config::{RunGroupConfig, RunMode};
+use crate::selector::apply_selectors_with_run_groups;
+
+#[test]
+fn test_parse_run_group_selector() {
+    let s = Selector::parse("run-group:nightly").unwrap();
+    match s.selector_type {
+        SelectorType::RunGroup { name } => {
+            assert_eq!(name, "nightly");
+        }
+        _ => panic!("Expected RunGroup selector"),
+    }
+}
+
+#[test]
+fn test_parse_run_group_empty_name() {
+    let result = Selector::parse("run-group:");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_run_group_expansion() {
+    let (models, dag) = build_test_dag_and_models();
+    let mut groups = HashMap::new();
+    groups.insert(
+        "my_group".to_string(),
+        RunGroupConfig {
+            description: Some("Test group".to_string()),
+            nodes: vec!["raw".to_string(), "fct".to_string()],
+            mode: None,
+            full_refresh: None,
+            fail_fast: None,
+        },
+    );
+
+    let result = apply_selectors_with_run_groups(
+        &Some("run-group:my_group".to_string()),
+        &models,
+        &dag,
+        Some(&groups),
+    )
+    .unwrap();
+    assert_eq!(result.len(), 2);
+    assert!(result.contains(&"raw".to_string()));
+    assert!(result.contains(&"fct".to_string()));
+    // Must be in topo order
+    assert_eq!(result[0], "raw");
+    assert_eq!(result[1], "fct");
+}
+
+#[test]
+fn test_run_group_with_tag_selectors() {
+    let (mut models, _) = build_test_dag_and_models();
+    // Add a tag to "stg"
+    if let Some(model) = models.get_mut(&ModelName::new("stg")) {
+        model.config.tags = vec!["daily".to_string()];
+    }
+    // Rebuild DAG
+    let mut deps = HashMap::new();
+    deps.insert("raw".to_string(), vec![]);
+    deps.insert("stg".to_string(), vec!["raw".to_string()]);
+    deps.insert("fct".to_string(), vec!["stg".to_string()]);
+    let dag = crate::dag::ModelDag::build(&deps).unwrap();
+
+    let mut groups = HashMap::new();
+    groups.insert(
+        "tagged".to_string(),
+        RunGroupConfig {
+            description: None,
+            nodes: vec!["tag:daily".to_string()],
+            mode: None,
+            full_refresh: None,
+            fail_fast: None,
+        },
+    );
+
+    let result = apply_selectors_with_run_groups(
+        &Some("run-group:tagged".to_string()),
+        &models,
+        &dag,
+        Some(&groups),
+    )
+    .unwrap();
+    assert_eq!(result, vec!["stg"]);
+}
+
+#[test]
+fn test_run_group_mixed_with_regular_selectors() {
+    let (models, dag) = build_test_dag_and_models();
+    let mut groups = HashMap::new();
+    groups.insert(
+        "staging".to_string(),
+        RunGroupConfig {
+            description: None,
+            nodes: vec!["stg".to_string()],
+            mode: None,
+            full_refresh: None,
+            fail_fast: None,
+        },
+    );
+
+    // Mix run-group with regular selector
+    let result = apply_selectors_with_run_groups(
+        &Some("run-group:staging,fct".to_string()),
+        &models,
+        &dag,
+        Some(&groups),
+    )
+    .unwrap();
+    assert_eq!(result.len(), 2);
+    assert!(result.contains(&"stg".to_string()));
+    assert!(result.contains(&"fct".to_string()));
+}
+
+#[test]
+fn test_run_group_not_found() {
+    let (models, dag) = build_test_dag_and_models();
+    let groups: HashMap<String, RunGroupConfig> = HashMap::new();
+
+    let result = apply_selectors_with_run_groups(
+        &Some("run-group:nonexistent".to_string()),
+        &models,
+        &dag,
+        Some(&groups),
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("nonexistent"));
+    assert!(err.contains("not found"));
+}
+
+#[test]
+fn test_run_group_no_groups_defined() {
+    let (models, dag) = build_test_dag_and_models();
+
+    let result = apply_selectors_with_run_groups(
+        &Some("run-group:anything".to_string()),
+        &models,
+        &dag,
+        None,
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("no run_groups defined"));
+}
+
+#[test]
+fn test_run_group_circular_reference() {
+    let (models, dag) = build_test_dag_and_models();
+    let mut groups = HashMap::new();
+    groups.insert(
+        "group_a".to_string(),
+        RunGroupConfig {
+            description: None,
+            nodes: vec!["run-group:group_b".to_string()],
+            mode: None,
+            full_refresh: None,
+            fail_fast: None,
+        },
+    );
+    groups.insert(
+        "group_b".to_string(),
+        RunGroupConfig {
+            description: None,
+            nodes: vec!["run-group:group_a".to_string()],
+            mode: None,
+            full_refresh: None,
+            fail_fast: None,
+        },
+    );
+
+    let result = apply_selectors_with_run_groups(
+        &Some("run-group:group_a".to_string()),
+        &models,
+        &dag,
+        Some(&groups),
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("circular"));
+}
+
+#[test]
+fn test_run_group_nested() {
+    let (models, dag) = build_test_dag_and_models();
+    let mut groups = HashMap::new();
+    groups.insert(
+        "inner".to_string(),
+        RunGroupConfig {
+            description: None,
+            nodes: vec!["raw".to_string()],
+            mode: None,
+            full_refresh: None,
+            fail_fast: None,
+        },
+    );
+    groups.insert(
+        "outer".to_string(),
+        RunGroupConfig {
+            description: None,
+            nodes: vec!["run-group:inner".to_string(), "fct".to_string()],
+            mode: None,
+            full_refresh: None,
+            fail_fast: None,
+        },
+    );
+
+    let result = apply_selectors_with_run_groups(
+        &Some("run-group:outer".to_string()),
+        &models,
+        &dag,
+        Some(&groups),
+    )
+    .unwrap();
+    assert_eq!(result.len(), 2);
+    assert_eq!(result[0], "raw");
+    assert_eq!(result[1], "fct");
+}
+
+#[test]
+fn test_validate_run_groups_valid() {
+    let (models, dag) = build_test_dag_and_models();
+    let mut groups = HashMap::new();
+    groups.insert(
+        "staging".to_string(),
+        RunGroupConfig {
+            description: Some("Staging models".to_string()),
+            nodes: vec!["stg".to_string()],
+            mode: Some(RunMode::Models),
+            full_refresh: None,
+            fail_fast: None,
+        },
+    );
+
+    let errors = crate::selector::validate_run_groups(&groups, &models, &dag);
+    assert!(errors.is_empty());
+}
+
+#[test]
+fn test_validate_run_groups_empty_nodes() {
+    let (models, dag) = build_test_dag_and_models();
+    let mut groups = HashMap::new();
+    groups.insert(
+        "empty".to_string(),
+        RunGroupConfig {
+            description: None,
+            nodes: vec![],
+            mode: None,
+            full_refresh: None,
+            fail_fast: None,
+        },
+    );
+
+    let errors = crate::selector::validate_run_groups(&groups, &models, &dag);
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0].message.contains("no nodes"));
+}
+
+#[test]
+fn test_validate_run_groups_invalid_node() {
+    let (models, dag) = build_test_dag_and_models();
+    let mut groups = HashMap::new();
+    groups.insert(
+        "bad".to_string(),
+        RunGroupConfig {
+            description: None,
+            nodes: vec!["nonexistent_model".to_string()],
+            mode: None,
+            full_refresh: None,
+            fail_fast: None,
+        },
+    );
+
+    let errors = crate::selector::validate_run_groups(&groups, &models, &dag);
+    assert_eq!(errors.len(), 1);
+}

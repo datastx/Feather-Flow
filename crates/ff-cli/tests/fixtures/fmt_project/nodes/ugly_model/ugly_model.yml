@@ -4,8 +4,11 @@ description: "Intentionally ugly model for format testing"
 
 columns:
   - name: id
+    description: "Unique identifier for the record"
     type: INTEGER
   - name: name
+    description: "Name of the entity"
     type: VARCHAR
   - name: created_at
+    description: "Timestamp when the record was created"
     type: TIMESTAMP

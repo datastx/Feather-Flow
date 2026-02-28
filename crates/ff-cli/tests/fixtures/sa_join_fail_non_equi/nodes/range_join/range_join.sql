@@ -1,4 +1,1 @@
-SELECT
-    a.id
-FROM source_a a
-JOIN source_b b ON a.id = b.id AND a.val > b.val
+select a.id from source_a a join source_b b on a.id = b.id and a.val > b.val

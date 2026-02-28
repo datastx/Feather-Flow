@@ -4,8 +4,11 @@ name: stg
 description: "Staging model selecting all columns from raw_data"
 columns:
   - name: id
+    description: "Unique identifier for the record"
     data_type: INTEGER
   - name: name
+    description: "Name of the entity"
     data_type: VARCHAR
   - name: amount
+    description: "Monetary amount in dollars"
     data_type: DECIMAL(10,2)

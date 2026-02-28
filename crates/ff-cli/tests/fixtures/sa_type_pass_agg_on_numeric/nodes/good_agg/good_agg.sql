@@ -1,6 +1,9 @@
-SELECT
-    SUM(amount) AS total_amount,
-    COUNT(name) AS name_count,
-    MIN(name) AS first_name,
-    MAX(name) AS last_name
-FROM raw_data
+select
+    sum(amount) as total_amount
+    ,
+    count(name) as name_count
+    ,
+    min(name) as first_name
+    ,
+    max(name) as last_name
+from raw_data

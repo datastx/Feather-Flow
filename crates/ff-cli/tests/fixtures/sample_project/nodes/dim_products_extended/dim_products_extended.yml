@@ -1,5 +1,7 @@
 version: 1
 kind: sql
+materialized: table
+schema: analytics
 
 description: "Extended product dimension with nested category classification and price in cents"
 owner: analytics-team

@@ -1,5 +1,5 @@
-SELECT
-    id,
-    amount,
-    status
-FROM raw_orders
+select
+    id
+    , amount
+    , status
+from raw_orders

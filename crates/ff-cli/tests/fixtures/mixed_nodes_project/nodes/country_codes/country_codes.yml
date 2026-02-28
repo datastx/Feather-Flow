@@ -1,0 +1,3 @@
+version: 1
+kind: seed
+description: "Seed table of country codes"

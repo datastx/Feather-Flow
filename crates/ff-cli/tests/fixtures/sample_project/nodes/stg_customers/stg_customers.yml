@@ -1,5 +1,7 @@
 version: 1
 kind: sql
+materialized: view
+schema: staging
 
 description: "Staged customers from raw source"
 owner: data-team

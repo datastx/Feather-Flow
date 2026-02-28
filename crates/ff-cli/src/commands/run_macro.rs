@@ -46,8 +46,8 @@ pub(crate) async fn execute(args: &RunMacroArgs, global: &GlobalArgs) -> Result<
         eprintln!("[verbose] Rendering macro template: {}", template);
     }
 
-    let (sql, _) = jinja
-        .render_with_config(&template)
+    let sql = jinja
+        .render(&template)
         .with_context(|| format!("Failed to render macro: {}", args.macro_name))?;
 
     let sql = sql.trim();

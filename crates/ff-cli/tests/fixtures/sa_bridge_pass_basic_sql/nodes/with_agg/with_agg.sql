@@ -1,1 +1,1 @@
-SELECT COUNT(*) AS cnt FROM raw_data
+select count(*) as cnt from raw_data

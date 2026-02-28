@@ -71,9 +71,8 @@ pub struct PythonConfig {
 /// This follows the 1:1 naming convention where each model's schema file
 /// has the same name as its SQL file (e.g., stg_orders.sql + stg_orders.yml)
 ///
-/// Uses `deny_unknown_fields` so that any YAML containing a `config:` key
-/// (which is no longer supported) will fail with a clear deserialization error.
-/// Config should only be specified via the SQL `{{ config() }}` function.
+/// Model configuration (materialization, schema, hooks, etc.) is specified
+/// exclusively in this YAML file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelSchema {
@@ -109,10 +108,6 @@ pub struct ModelSchema {
     #[serde(default)]
     pub tags: Vec<String>,
 
-    /// Data contract definition for schema enforcement
-    #[serde(default)]
-    pub contract: Option<SchemaContract>,
-
     /// Column definitions
     #[serde(default)]
     pub columns: Vec<SchemaColumnDef>,
@@ -124,6 +119,11 @@ pub struct ModelSchema {
     /// Deprecation message to show users (e.g., "Use fct_orders_v2 instead")
     #[serde(default)]
     pub deprecation_message: Option<String>,
+
+    // ── Model config fields (materialization, hooks, etc.) ───────────
+    /// Materialization type (view, table, incremental, ephemeral)
+    #[serde(default)]
+    pub materialized: Option<String>,
 
     // ── Python-specific fields (only relevant when kind: python) ──────
     /// Explicit dependency list for Python models (kind: python only).
@@ -137,9 +137,33 @@ pub struct ModelSchema {
     pub python: Option<PythonConfig>,
 
     // ── Seed-specific fields (only relevant when kind: seed) ─────────
-    /// Override target schema for seed loading (kind: seed only)
+    /// Override target schema for seed/model loading
     #[serde(default)]
     pub schema: Option<String>,
+
+    /// Unique key column(s) for incremental merge (comma-separated string or list)
+    #[serde(default)]
+    pub unique_key: Option<StringOrVec>,
+
+    /// Incremental strategy (append, merge, delete+insert)
+    #[serde(default)]
+    pub incremental_strategy: Option<String>,
+
+    /// Schema change handling for incremental models (ignore, fail, append_new_columns)
+    #[serde(default)]
+    pub on_schema_change: Option<String>,
+
+    /// SQL statements to execute before the model runs
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pre_hook: Option<StringOrVec>,
+
+    /// SQL statements to execute after the model runs
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_hook: Option<StringOrVec>,
+
+    /// Whether this model uses Write-Audit-Publish pattern
+    #[serde(default)]
+    pub wap: Option<bool>,
 
     /// Force column quoting for seed CSV (kind: seed only)
     #[serde(default)]
@@ -167,6 +191,58 @@ fn default_enabled() -> bool {
     true
 }
 
+/// A value that can be either a single string or a list of strings.
+///
+/// In YAML, users can write either:
+/// ```yaml
+/// unique_key: id
+/// ```
+/// or:
+/// ```yaml
+/// unique_key:
+///   - id
+///   - date
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum StringOrVec {
+    Single(String),
+    Multiple(Vec<String>),
+}
+
+impl StringOrVec {
+    /// Convert to a Vec<String>, splitting single strings on commas.
+    /// Use this for column lists (e.g. unique_key).
+    pub fn to_vec(&self) -> Vec<String> {
+        match self {
+            StringOrVec::Single(s) => s
+                .split(',')
+                .map(|part| part.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
+            StringOrVec::Multiple(v) => v.clone(),
+        }
+    }
+
+    /// Convert to a Vec<String> without splitting on commas.
+    /// Use this for hooks and other values where a single string
+    /// should remain as one element.
+    pub fn to_vec_raw(&self) -> Vec<String> {
+        match self {
+            StringOrVec::Single(s) => vec![s.clone()],
+            StringOrVec::Multiple(v) => v.clone(),
+        }
+    }
+
+    /// Convert to a single comma-separated string.
+    pub fn to_comma_string(&self) -> String {
+        match self {
+            StringOrVec::Single(s) => s.clone(),
+            StringOrVec::Multiple(v) => v.join(","),
+        }
+    }
+}
+
 impl Default for ModelSchema {
     fn default() -> Self {
         Self {
@@ -178,39 +254,25 @@ impl Default for ModelSchema {
             owner: None,
             meta: std::collections::HashMap::new(),
             tags: Vec::new(),
-            contract: None,
             columns: Vec::new(),
             deprecated: false,
             deprecation_message: None,
+            materialized: None,
             depends_on: Vec::new(),
             python: None,
             schema: None,
+            unique_key: None,
+            incremental_strategy: None,
+            on_schema_change: None,
+            pre_hook: None,
+            post_hook: None,
+            wap: None,
             quote_columns: false,
             column_types: std::collections::HashMap::new(),
             delimiter: default_delimiter(),
             enabled: default_enabled(),
         }
     }
-}
-
-/// Data contract definition for enforcing schema stability
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SchemaContract {
-    /// Whether the contract is enforced (error on violation) or advisory (warning)
-    #[serde(default)]
-    pub enforced: bool,
-}
-
-/// Column constraint types for contracts
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ColumnConstraint {
-    /// Column must not contain NULL values
-    NotNull,
-    /// Column is the primary key
-    PrimaryKey,
-    /// Column values must be unique
-    Unique,
 }
 
 impl ModelSchema {
@@ -239,16 +301,6 @@ impl ModelSchema {
             });
         }
         Ok(schema)
-    }
-
-    /// Check if this model has an enforced contract
-    pub fn has_enforced_contract(&self) -> bool {
-        self.contract.as_ref().map(|c| c.enforced).unwrap_or(false)
-    }
-
-    /// Get the contract if defined
-    pub fn get_contract(&self) -> Option<&SchemaContract> {
-        self.contract.as_ref()
     }
 
     /// Get column definition by name
@@ -324,10 +376,6 @@ pub struct SchemaColumnDef {
     /// Whether this column is a primary key
     #[serde(default)]
     pub primary_key: bool,
-
-    /// Column constraints for schema contracts (not_null, primary_key, unique)
-    #[serde(default)]
-    pub constraints: Vec<ColumnConstraint>,
 
     /// Tests to run on this column
     #[serde(default)]

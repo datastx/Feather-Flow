@@ -1,5 +1,5 @@
-SELECT
-    id,
-    name,
-    email
-FROM raw_customers
+select
+    id
+    , name
+    , email
+from raw_customers

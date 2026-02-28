@@ -1,1 +1,6 @@
-SELECT coalesce(name, 'unknown') AS safe_name FROM raw_data
+select
+    coalesce(
+        name
+        , 'unknown'
+    ) as safe_name
+from raw_data
