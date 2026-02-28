@@ -1,1 +1,3 @@
-SELECT 1 AS id, 'test' AS name
+select
+    1 as id
+    , 'test' as name

@@ -1,5 +1,5 @@
-SELECT
-    user_id,
-    username,
-    created_at
-FROM raw_users
+select
+    user_id
+    , username
+    , created_at
+from raw_users

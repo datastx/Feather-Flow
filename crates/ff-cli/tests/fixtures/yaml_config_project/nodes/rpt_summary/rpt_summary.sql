@@ -1,5 +1,5 @@
-SELECT
-    user_id,
-    username,
-    created_at
-FROM dim_users
+select
+    user_id
+    , username
+    , created_at
+from dim_users

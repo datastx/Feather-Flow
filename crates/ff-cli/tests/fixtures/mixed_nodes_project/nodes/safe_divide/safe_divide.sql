@@ -1,1 +1,1 @@
-CASE WHEN b = 0 THEN 0 ELSE a / b END
+case when b = 0 then 0 else a / b end

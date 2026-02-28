@@ -1,5 +1,5 @@
-SELECT
-    order_id,
-    amount,
-    country_code
-FROM raw_orders
+select
+    order_id
+    , amount
+    , country_code
+from raw_orders

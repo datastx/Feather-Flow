@@ -1,1 +1,4 @@
-SELECT id, name FROM stg_orders
+select
+    id
+    , name
+from stg_orders
