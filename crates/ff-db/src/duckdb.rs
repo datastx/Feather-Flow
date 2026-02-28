@@ -306,6 +306,23 @@ impl DuckDbBackend {
         }
     }
 
+    /// Derive the DuckDB catalog name from a database path.
+    ///
+    /// DuckDB names its default catalog after the file stem: `dev.duckdb` →
+    /// `"dev"`, `:memory:` → `"memory"`. This helper mirrors that logic so
+    /// the qualification map (compile time) and the live connection (runtime)
+    /// agree on the catalog name.
+    pub fn catalog_name_for_path(path: &str) -> String {
+        if path == ":memory:" {
+            "memory".to_string()
+        } else {
+            Path::new(path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "main".to_string())
+        }
+    }
+
     /// Acquire the database connection lock, returning a descriptive error on poison.
     fn lock_conn(&self) -> DbResult<std::sync::MutexGuard<'_, Connection>> {
         self.conn

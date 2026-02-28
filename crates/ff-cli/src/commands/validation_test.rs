@@ -194,3 +194,109 @@ fn test_column_with_description_passes() {
     assert_eq!(issues, 0);
     assert_eq!(ctx.error_count(), 0);
 }
+
+// ── E013: Qualified output uniqueness tests ─────────────────────────
+
+#[test]
+fn test_qualified_uniqueness_no_collision() {
+    let mut map = HashMap::new();
+    map.insert(
+        "model_a".to_string(),
+        ff_sql::qualify::QualifiedRef {
+            database: Some("main".to_string()),
+            schema: "analytics".to_string(),
+            table: "model_a".to_string(),
+        },
+    );
+    map.insert(
+        "model_b".to_string(),
+        ff_sql::qualify::QualifiedRef {
+            database: Some("main".to_string()),
+            schema: "analytics".to_string(),
+            table: "model_b".to_string(),
+        },
+    );
+    let ephemeral = HashSet::new();
+    let mut ctx = ValidationContext::new();
+    validate_qualified_uniqueness(&map, &ephemeral, &mut ctx);
+    assert_eq!(ctx.error_count(), 0);
+}
+
+#[test]
+fn test_qualified_uniqueness_collision_detected() {
+    let mut map = HashMap::new();
+    map.insert(
+        "model_a".to_string(),
+        ff_sql::qualify::QualifiedRef {
+            database: Some("main".to_string()),
+            schema: "analytics".to_string(),
+            table: "fct_orders".to_string(),
+        },
+    );
+    map.insert(
+        "model_b".to_string(),
+        ff_sql::qualify::QualifiedRef {
+            database: Some("main".to_string()),
+            schema: "analytics".to_string(),
+            table: "fct_orders".to_string(),
+        },
+    );
+    let ephemeral = HashSet::new();
+    let mut ctx = ValidationContext::new();
+    validate_qualified_uniqueness(&map, &ephemeral, &mut ctx);
+    assert_eq!(ctx.error_count(), 1);
+    assert_eq!(ctx.issues[0].code, "E013");
+    assert!(ctx.issues[0].message.contains("fct_orders"));
+}
+
+#[test]
+fn test_qualified_uniqueness_ephemeral_skipped() {
+    let mut map = HashMap::new();
+    map.insert(
+        "model_a".to_string(),
+        ff_sql::qualify::QualifiedRef {
+            database: Some("main".to_string()),
+            schema: "analytics".to_string(),
+            table: "fct_orders".to_string(),
+        },
+    );
+    map.insert(
+        "model_b".to_string(),
+        ff_sql::qualify::QualifiedRef {
+            database: Some("main".to_string()),
+            schema: "analytics".to_string(),
+            table: "fct_orders".to_string(),
+        },
+    );
+    let mut ephemeral = HashSet::new();
+    ephemeral.insert("model_b".to_string());
+    let mut ctx = ValidationContext::new();
+    validate_qualified_uniqueness(&map, &ephemeral, &mut ctx);
+    assert_eq!(ctx.error_count(), 0);
+}
+
+#[test]
+fn test_qualified_uniqueness_cross_db_no_collision() {
+    let mut map = HashMap::new();
+    map.insert(
+        "model_a".to_string(),
+        ff_sql::qualify::QualifiedRef {
+            database: Some("main".to_string()),
+            schema: "analytics".to_string(),
+            table: "orders".to_string(),
+        },
+    );
+    map.insert(
+        "ext_orders".to_string(),
+        ff_sql::qualify::QualifiedRef {
+            database: Some("ext_db".to_string()),
+            schema: "analytics".to_string(),
+            table: "orders".to_string(),
+        },
+    );
+    let ephemeral = HashSet::new();
+    let mut ctx = ValidationContext::new();
+    validate_qualified_uniqueness(&map, &ephemeral, &mut ctx);
+    // Different databases → no collision
+    assert_eq!(ctx.error_count(), 0);
+}

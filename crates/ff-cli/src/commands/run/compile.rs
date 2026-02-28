@@ -94,7 +94,13 @@ fn compile_all_models(
         jinja: common::build_jinja_env_with_context(project, database, true),
         parser: SqlParser::from_dialect_name(&project.config.dialect.to_string())
             .context("Invalid SQL dialect")?,
-        known_models: project.models.keys().map(|k| k.as_str()).collect(),
+        known_models: {
+            let mut km: HashSet<&str> = project.models.keys().map(|k| k.as_str()).collect();
+            for seed in &project.seeds {
+                km.insert(seed.name.as_str());
+            }
+            km
+        },
         external_tables: common::build_external_tables_lookup(project),
         comment_ctx,
     };
@@ -172,7 +178,7 @@ fn compile_sql_model(
         &env.external_tables,
     );
 
-    let (func_model_deps, _) = common::resolve_function_dependencies(
+    let (func_model_deps, remaining_unknown) = common::resolve_function_dependencies(
         &unknown_deps,
         env.project,
         &env.parser,
@@ -182,6 +188,16 @@ fn compile_sql_model(
     model_deps.extend(func_model_deps);
     model_deps.sort();
     model_deps.dedup();
+
+    if !remaining_unknown.is_empty() {
+        let unknown_list = remaining_unknown.join(", ");
+        anyhow::bail!(
+            "Unknown dependencies in model '{}': [{}]. \
+             Each table must be defined as a model, seed, source, or function.",
+            name,
+            unknown_list
+        );
+    }
 
     let mat = config_values
         .get("materialized")

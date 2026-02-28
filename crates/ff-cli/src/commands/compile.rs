@@ -117,7 +117,10 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
         .map(String::from)
         .collect();
     let external_tables = common::build_external_tables_lookup(&project);
-    let known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
+    let mut known_models: HashSet<String> = project.models.keys().map(|k| k.to_string()).collect();
+    for seed in &project.seeds {
+        known_models.insert(seed.name.to_string());
+    }
 
     if !json_mode && args.nodes.is_none() {
         if args.parse_only {
@@ -263,6 +266,7 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
         .filter(|m| m.materialization == Materialization::Ephemeral)
         .map(|m| (m.name.clone(), m.sql.clone()))
         .collect();
+    let ephemeral_models: HashSet<String> = ephemeral_sql.keys().cloned().collect();
 
     let ephemeral_count = ephemeral_sql.len();
     if global.verbose && ephemeral_count > 0 {
@@ -350,6 +354,7 @@ pub(crate) async fn execute(args: &CompileArgs, global: &GlobalArgs) -> Result<(
 
         println!();
         validation::validate_duplicates(&project, &mut vctx);
+        validation::validate_qualified_uniqueness(&qualification_map, &ephemeral_models, &mut vctx);
         validation::validate_schemas(&project, &model_names, &known_models_ref, &mut vctx);
         validation::validate_sources(&project);
         validation::validate_macros(&project.config.vars, &macro_paths, &mut vctx);
@@ -594,10 +599,13 @@ fn compile_model_phase1(
         // would introduce a cycle in the DAG.
         model_deps.retain(|dep| !dep.eq_ignore_ascii_case(name));
 
-        for unknown in &remaining_unknown {
-            eprintln!(
-                "Warning: Unknown dependency '{}' in model '{}'. Not defined as a model or source.",
-                unknown, name
+        if !remaining_unknown.is_empty() {
+            let unknown_list = remaining_unknown.join(", ");
+            anyhow::bail!(
+                "Unknown dependencies in model '{}': [{}]. \
+                 Each table must be defined as a model, seed, source, or function.",
+                name,
+                unknown_list
             );
         }
 

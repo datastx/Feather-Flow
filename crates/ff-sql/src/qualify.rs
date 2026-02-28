@@ -1,10 +1,10 @@
 //! Table reference qualification for compiled SQL
 //!
-//! Rewrites bare table references in SQL to qualified names using AST
-//! manipulation via `visit_relations_mut`. Produces 2-part (`schema.table`)
-//! names for the default database and 3-part (`database.schema.table`) names
-//! only for cross-database (attached) references. Only single-part (bare)
-//! names are qualified; already-qualified references are left unchanged.
+//! Rewrites bare table references in SQL to fully-qualified 3-part names
+//! (`database.schema.table`) using AST manipulation via `visit_relations_mut`.
+//! All entries — models, seeds, and sources — produce 3-part names. Only
+//! single-part (bare) names are qualified; already-qualified references are
+//! left unchanged.
 
 use sqlparser::ast::{visit_relations_mut, Ident, ObjectName, ObjectNamePart, Statement};
 use sqlparser::dialect::DuckDbDialect;
@@ -13,12 +13,11 @@ use std::collections::HashMap;
 
 use crate::error::{SqlError, SqlResult};
 
-/// A qualified table reference.
+/// A fully-qualified table reference (`database.schema.table`).
 ///
-/// When `database` is `None`, the reference targets the current/default
-/// database and is emitted as a 2-part name (`schema.table`). When
-/// `database` is `Some`, it targets an attached database and is emitted
-/// as a 3-part name (`database.schema.table`).
+/// The `database` field is always `Some` for entries produced by the
+/// qualification map builder, yielding 3-part names for all models,
+/// seeds, and sources.
 #[derive(Debug, Clone)]
 pub struct QualifiedRef {
     /// Database/catalog name — `None` for the default database
@@ -29,11 +28,10 @@ pub struct QualifiedRef {
     pub table: String,
 }
 
-/// Rewrite bare table references in SQL to qualified names.
+/// Rewrite bare table references in SQL to fully-qualified 3-part names.
 ///
 /// Takes rendered SQL and a map of `lowercase_bare_name → QualifiedRef`.
-/// Produces 2-part names (`schema.table`) for the default database and
-/// 3-part names (`database.schema.table`) for cross-database references.
+/// Produces 3-part names (`database.schema.table`) for all entries.
 ///
 /// Only single-part names (`name.0.len() == 1`) are qualified. If a reference
 /// is already multi-part (e.g., `schema.table`), it is left unchanged.
