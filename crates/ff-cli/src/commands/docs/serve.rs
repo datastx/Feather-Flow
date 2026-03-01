@@ -122,7 +122,6 @@ pub(super) async fn execute(args: &DocsServeArgs, global: &GlobalArgs) -> Result
 
     let state = build_app_state(&project)?;
 
-    // Static export mode
     if let Some(export_path) = &args.static_export {
         return export_static_site(&state, export_path);
     }
@@ -188,18 +187,15 @@ fn build_app_state(project: &Project) -> Result<AppState> {
     let mut total_tests = 0;
     let mut total_columns = 0;
 
-    // Pre-compute known model names and source tables for dependency categorization
     let known_models: HashSet<&str> = project.model_names().into_iter().collect();
     let external_tables = project.source_table_names();
     let parser = SqlParser::duckdb();
     let jinja = common::build_jinja_env(project);
 
-    // Process models — render Jinja, then parse SQL to extract dependencies
     for name in project.model_names() {
         if let Some(model) = project.get_model(name) {
             let mut doc = build_model_doc(model);
 
-            // Render Jinja template first, then parse SQL to extract dependencies
             let rendered = jinja.render(&model.raw_sql).ok();
             let sql = rendered.as_deref().unwrap_or(&model.raw_sql);
             if let Ok(stmts) = parser.parse(sql) {
@@ -225,7 +221,6 @@ fn build_app_state(project: &Project) -> Result<AppState> {
                 test_count,
             });
 
-            // Search entry
             search_entries.push(SearchEntry {
                 name: doc.name.clone(),
                 resource_type: "model".to_string(),
@@ -236,7 +231,6 @@ fn build_app_state(project: &Project) -> Result<AppState> {
 
             collect_lineage_entries(&doc, &mut lineage_entries);
 
-            // Edges from parsed dependencies
             for dep in &doc.depends_on {
                 edges.push(Edge {
                     from: dep.clone(),
@@ -250,14 +244,12 @@ fn build_app_state(project: &Project) -> Result<AppState> {
                 });
             }
 
-            // Serialize full model doc
             let json = serde_json::to_string(&doc)
                 .with_context(|| format!("Failed to serialize docs for '{}'", doc.name))?;
             model_docs_map.insert(doc.name.clone(), json);
         }
     }
 
-    // Process sources
     for source in &project.sources {
         let doc = build_source_doc(source);
 
@@ -269,7 +261,6 @@ fn build_app_state(project: &Project) -> Result<AppState> {
             resource_type: "source".to_string(),
         });
 
-        // Search entries for source tables
         for table in &doc.tables {
             search_entries.push(SearchEntry {
                 name: format!("{}.{}", doc.name, table.name),

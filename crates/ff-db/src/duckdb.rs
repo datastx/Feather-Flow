@@ -24,7 +24,6 @@ fn contains_unquoted_semicolon(sql: &str) -> bool {
     while let Some(c) = chars.next() {
         match c {
             '\'' if in_single => {
-                // Two consecutive single quotes inside a literal = escaped quote
                 if chars.peek() == Some(&'\'') {
                     chars.next();
                 } else {
@@ -33,7 +32,6 @@ fn contains_unquoted_semicolon(sql: &str) -> bool {
             }
             '\'' if !in_double => in_single = true,
             '"' if in_double => {
-                // Two consecutive double quotes inside an identifier = escaped quote
                 if chars.peek() == Some(&'"') {
                     chars.next();
                 } else {
@@ -235,7 +233,6 @@ fn validate_sql_type(type_str: &str) -> DbResult<()> {
     if s.is_empty() {
         return Err(DbError::ExecutionError("empty SQL type string".to_string()));
     }
-    // Reject obvious injection markers
     if s.contains(';') || s.contains("--") || s.contains("/*") {
         return Err(DbError::ExecutionError(format!(
             "invalid SQL type '{}': contains disallowed characters",

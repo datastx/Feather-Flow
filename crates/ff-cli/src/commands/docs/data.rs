@@ -183,7 +183,6 @@ pub(crate) fn build_model_doc(model: &Model) -> ModelDoc {
     let mut description = None;
     let mut tags = Vec::new();
 
-    // Extract from schema if available
     if let Some(schema) = &model.schema {
         description = schema.description.clone();
         tags = schema.tags.clone();
@@ -227,10 +226,7 @@ pub(crate) fn build_model_doc(model: &Model) -> ModelDoc {
 
     let test_suggestions = generate_test_suggestions(model);
 
-    // Get owner - uses get_owner() which checks direct owner field and meta.owner
     let owner = model.get_owner();
-
-    // Get team and contact from meta
     let team = model.get_meta_string("team");
     let contact = model.get_meta_string("contact");
 
@@ -256,16 +252,13 @@ pub(crate) fn build_model_doc(model: &Model) -> ModelDoc {
 pub(crate) fn extract_column_lineage_from_model(model: &Model) -> Vec<ColumnLineageDoc> {
     let parser = SqlParser::duckdb();
 
-    // Use compiled SQL if available, otherwise raw SQL
     let sql = model.compiled_sql.as_ref().unwrap_or(&model.raw_sql);
 
-    // Try to parse the SQL
     let stmts = match parser.parse(sql) {
         Ok(stmts) => stmts,
         Err(_) => return Vec::new(),
     };
 
-    // Extract lineage from the first statement
     let lineage = match stmts
         .first()
         .and_then(|stmt| extract_column_lineage(stmt, &model.name))
@@ -274,7 +267,6 @@ pub(crate) fn extract_column_lineage_from_model(model: &Model) -> Vec<ColumnLine
         None => return Vec::new(),
     };
 
-    // Convert to documentation format
     lineage
         .columns
         .into_iter()
@@ -295,22 +287,18 @@ pub(crate) fn extract_column_lineage_from_model(model: &Model) -> Vec<ColumnLine
 pub(crate) fn generate_test_suggestions(model: &Model) -> Vec<TestSuggestionDoc> {
     let parser = SqlParser::duckdb();
 
-    // Use compiled SQL if available, otherwise raw SQL
     let sql = model.compiled_sql.as_ref().unwrap_or(&model.raw_sql);
 
-    // Try to parse the SQL
     let stmts = match parser.parse(sql) {
         Ok(stmts) => stmts,
         Err(_) => return Vec::new(),
     };
 
-    // Get suggestions from the first statement
     let suggestions = match stmts.first() {
         Some(stmt) => suggest_tests(stmt, &model.name),
         None => return Vec::new(),
     };
 
-    // Convert to documentation format
     let mut docs: Vec<TestSuggestionDoc> = suggestions
         .columns
         .into_iter()
@@ -326,7 +314,6 @@ pub(crate) fn generate_test_suggestions(model: &Model) -> Vec<TestSuggestionDoc>
         })
         .collect();
 
-    // Sort by column name
     docs.sort_by(|a, b| a.column.cmp(&b.column));
     docs
 }
@@ -343,7 +330,6 @@ pub(crate) fn build_source_doc(source: &SourceFile) -> SourceDoc {
                 .columns
                 .iter()
                 .map(|col| {
-                    // Convert TestDefinition to test name strings
                     let tests: Vec<String> = col
                         .tests
                         .iter()

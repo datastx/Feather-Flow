@@ -66,12 +66,16 @@ fn collect_expr_edges(
             continue;
         }
         let kind = kind_override.unwrap_or_else(|| classify_expr(expr));
-        edges.extend(sources.into_iter().map(|(table, column)| ColumnLineageEdge {
-            output_column: output_name.clone(),
-            source_table: table,
-            source_column: column,
-            kind,
-        }));
+        edges.extend(
+            sources
+                .into_iter()
+                .map(|(table, column)| ColumnLineageEdge {
+                    output_column: output_name.clone(),
+                    source_table: table,
+                    source_column: column,
+                    kind,
+                }),
+        );
     }
 }
 
@@ -79,12 +83,16 @@ fn collect_expr_edges(
 fn collect_filter_inspect_edges(predicate: &Expr, edges: &mut Vec<ColumnLineageEdge>) {
     let mut sources = Vec::new();
     collect_column_refs(predicate, &mut sources);
-    edges.extend(sources.into_iter().map(|(table, column)| ColumnLineageEdge {
-        output_column: String::new(),
-        source_table: table,
-        source_column: column,
-        kind: LineageKind::Inspect,
-    }));
+    edges.extend(
+        sources
+            .into_iter()
+            .map(|(table, column)| ColumnLineageEdge {
+                output_column: String::new(),
+                source_table: table,
+                source_column: column,
+                kind: LineageKind::Inspect,
+            }),
+    );
 }
 
 /// Collect Inspect-kind edges from join key pairs
@@ -93,12 +101,16 @@ fn collect_join_inspect_edges(on: &[(Expr, Expr)], edges: &mut Vec<ColumnLineage
         let mut sources = Vec::new();
         collect_column_refs(left_key, &mut sources);
         collect_column_refs(right_key, &mut sources);
-        edges.extend(sources.into_iter().map(|(table, column)| ColumnLineageEdge {
-            output_column: String::new(),
-            source_table: table,
-            source_column: column,
-            kind: LineageKind::Inspect,
-        }));
+        edges.extend(
+            sources
+                .into_iter()
+                .map(|(table, column)| ColumnLineageEdge {
+                    output_column: String::new(),
+                    source_table: table,
+                    source_column: column,
+                    kind: LineageKind::Inspect,
+                }),
+        );
     }
 }
 

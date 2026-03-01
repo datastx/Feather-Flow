@@ -164,14 +164,12 @@ async fn show(args: &FunctionShowArgs, global: &GlobalArgs) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Function '{}' not found", args.name))?;
 
     if args.sql {
-        // Show generated CREATE MACRO SQL
         let jinja = common::build_jinja_env(&project);
         let rendered_body = jinja
             .render(&func.sql_body)
             .with_context(|| format!("Failed to render SQL for function '{}'", func.name))?;
         println!("{}", func.to_create_sql(&rendered_body));
     } else {
-        // Show YAML definition details
         println!("Name:        {}", func.name);
         println!("Type:        {}", func.function_type);
         if let Some(desc) = &func.description {
@@ -231,7 +229,6 @@ async fn validate(_args: &FunctionValidateArgs, global: &GlobalArgs) -> Result<(
     let mut issue_count = 0;
 
     for func in &project.functions {
-        // Check that SQL body is non-empty
         if func.sql_body.trim().is_empty() {
             eprintln!(
                 "  [FN001] Function '{}': SQL body is empty ({})",
@@ -241,7 +238,6 @@ async fn validate(_args: &FunctionValidateArgs, global: &GlobalArgs) -> Result<(
             issue_count += 1;
         }
 
-        // Check arg type strings are parseable
         for arg in &func.args {
             let parsed = ff_analysis::parse_sql_type(&arg.data_type);
             if matches!(parsed, ff_analysis::SqlType::Unknown(_)) {
@@ -253,7 +249,6 @@ async fn validate(_args: &FunctionValidateArgs, global: &GlobalArgs) -> Result<(
             }
         }
 
-        // Check return type is parseable
         match &func.returns {
             ff_core::function::FunctionReturn::Scalar { data_type } => {
                 let parsed = ff_analysis::parse_sql_type(data_type);

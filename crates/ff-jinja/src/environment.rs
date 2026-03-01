@@ -104,7 +104,6 @@ impl<'a> JinjaEnvironment<'a> {
             env.add_global("executing", Value::from(ctx.executing));
         }
 
-        // Set up a multi-path loader that searches all configured macro paths.
         let valid_paths: Vec<PathBuf> = macro_paths
             .iter()
             .filter(|p| p.exists() && p.is_dir())
@@ -174,7 +173,6 @@ impl<'a> JinjaEnvironment<'a> {
             model: model.cloned(),
         };
 
-        // Prepend auto-generated import lines so user macros are globally available.
         let full_template;
         let source = if self.macro_preamble.is_empty() {
             template
@@ -246,11 +244,9 @@ impl JinjaEnvironment<'_> {
         let (mut env, warning_capture, macro_preamble) =
             Self::init_common(vars, macro_paths, template_context);
 
-        // is_exists() returns the fixed compile-time value
         let val = is_exists_value;
         env.add_function("is_exists", move || val);
 
-        // is_incremental() — deprecated alias with warning
         let deprecation_capture: DeprecationCapture = Arc::new(Mutex::new(Vec::new()));
         let dep_cap = deprecation_capture;
         env.add_function("is_incremental", move || -> bool {

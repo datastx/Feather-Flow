@@ -132,7 +132,6 @@ pub(crate) async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
 
     if let Some(resource_type) = &args.resource_type {
         if matches!(resource_type, ResourceType::RunGroup) {
-            // Special handling: list run groups instead of models
             print_run_groups(&project.config, args)?;
             return Ok(());
         }
@@ -327,7 +326,6 @@ fn print_tree_node(
 
     println!("{}{}{}", prefix, connector, name);
 
-    // Find dependents (models that depend on this one)
     let dependents: Vec<_> = models
         .iter()
         .filter(|m| m.model_deps.iter().any(|d| d == name))

@@ -156,9 +156,6 @@ impl Selector {
             });
         }
 
-        // Parse model selector with optional +prefix/suffix and bounded depth
-        // Supported forms: model, +model, model+, +model+,
-        //   N+model, model+N, N+model+N, N+model+, +model+N
         let (ancestor_depth, descendant_depth, name) = parse_model_selector(selector)?;
 
         if name.is_empty() {
@@ -203,7 +200,6 @@ impl Selector {
         reference_manifest: Option<&dyn ReferenceManifest>,
     ) -> CoreResult<Vec<String>> {
         let matched = self.apply_unordered(models, dag, reference_manifest)?;
-        // Return in topological order
         let order = dag.topological_order()?;
         Ok(order.into_iter().filter(|m| matched.contains(m)).collect())
     }
@@ -509,14 +505,12 @@ fn parse_depth(part: &str, selector: &str, context: &str) -> CoreResult<Traversa
 fn parse_model_selector(s: &str) -> CoreResult<(TraversalDepth, TraversalDepth, String)> {
     let parts: Vec<&str> = s.split('+').collect();
     match parts.len() {
-        // No '+' at all → plain model name
         1 => Ok((
             TraversalDepth::None,
             TraversalDepth::None,
             parts[0].to_string(),
         )),
         2 => parse_two_part_selector(parts[0], parts[1], s),
-        // Two '+' → three parts
         3 => {
             let (left, middle, right) = (parts[0], parts[1], parts[2]);
             if middle.is_empty() {
@@ -543,13 +537,11 @@ fn parse_two_part_selector(
     s: &str,
 ) -> CoreResult<(TraversalDepth, TraversalDepth, String)> {
     match (left.is_empty(), right.is_empty()) {
-        // +model
         (true, false) => Ok((
             TraversalDepth::Unlimited,
             TraversalDepth::None,
             right.to_string(),
         )),
-        // model+ or N+ (error if purely numeric)
         (false, true) => {
             if left.chars().all(|c| c.is_ascii_digit()) {
                 Err(CoreError::InvalidSelector {
@@ -564,7 +556,6 @@ fn parse_two_part_selector(
                 ))
             }
         }
-        // N+model or model+N
         (false, false) => {
             if left.chars().all(|c| c.is_ascii_digit()) {
                 let depth = parse_depth(left, s, "before")?;
@@ -579,7 +570,6 @@ fn parse_two_part_selector(
                 })
             }
         }
-        // both empty → just "+"
         (true, true) => Err(CoreError::InvalidSelector {
             selector: s.to_string(),
             reason: "model name cannot be empty".to_string(),
@@ -628,7 +618,6 @@ pub fn apply_selectors_with_run_groups(
         0,
     )?;
 
-    // Single topo-sort at the end
     let order = dag.topological_order()?;
     Ok(order.into_iter().filter(|m| combined.contains(m)).collect())
 }
@@ -681,7 +670,6 @@ fn expand_selectors(
                     });
                 }
 
-                // Expand the group's nodes as a comma-separated selector string
                 let group_selectors = group.nodes.join(",");
                 expand_selectors(
                     &group_selectors,
@@ -724,7 +712,6 @@ pub fn validate_run_groups(
             continue;
         }
 
-        // Check for circular references and valid selectors by expanding
         let selectors_str = Some(group.nodes.join(","));
         match apply_selectors_with_run_groups(&selectors_str, models, dag, Some(run_groups)) {
             Ok(resolved) => {

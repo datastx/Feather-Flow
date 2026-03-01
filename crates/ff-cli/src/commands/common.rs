@@ -157,8 +157,6 @@ pub(crate) fn build_schema_catalog(
         yaml_schemas.insert(name.clone(), rel_schema);
     }
 
-    // Add source tables to catalog — use column definitions if available,
-    // fall back to empty schema for sources without column metadata
     for source_file in &project.sources {
         for table in &source_file.tables {
             if schema_catalog.contains_key(&table.name) {
@@ -169,7 +167,6 @@ pub(crate) fn build_schema_catalog(
         }
     }
 
-    // Add remaining external tables with empty schemas
     for ext in external_tables {
         if !schema_catalog.contains_key(ext) {
             schema_catalog.insert(ext.clone(), Arc::new(RelSchema::empty()));
@@ -262,7 +259,6 @@ pub(crate) fn build_project_dag(
                 &external_tables,
             );
 
-        // Resolve table function transitive dependencies
         let (func_model_deps, _) = resolve_function_dependencies(
             &unknown_deps,
             project,
@@ -518,10 +514,6 @@ pub(crate) fn write_json_results<T: Serialize + ?Sized>(path: &Path, data: &T) -
     std::fs::write(path, json).with_context(|| format!("Failed to write {}", path.display()))?;
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Table-printing utilities
-// ---------------------------------------------------------------------------
 
 /// Calculate column widths for a table given headers and row data.
 ///
@@ -786,7 +778,6 @@ fn extract_function_deps(
 
     additional_deps.extend(model_deps);
 
-    // Recurse into any nested table function references
     for unknown in &nested_unknown {
         let unknown_lower = unknown.to_lowercase();
         if let Some(nested_func) = project.get_function(&unknown_lower) {
@@ -827,7 +818,6 @@ pub(crate) fn build_qualification_map(
     let default_schema = project.config.get_schema(None).unwrap_or("main");
     let mut map = HashMap::new();
 
-    // Models: bare_name → database.schema.table (always 3-part)
     for (name, schema) in compiled_schemas {
         let schema = schema.as_deref().unwrap_or(default_schema);
         map.insert(
@@ -840,7 +830,6 @@ pub(crate) fn build_qualification_map(
         );
     }
 
-    // Seeds: bare_name → database.schema.table (always 3-part)
     for seed in &project.seeds {
         let seed_schema = seed.target_schema().unwrap_or(default_schema);
         map.insert(
@@ -853,7 +842,6 @@ pub(crate) fn build_qualification_map(
         );
     }
 
-    // Source tables: always 3-part (use source database or project default)
     for source in &project.sources {
         let source_db = source.database.as_deref().unwrap_or(db_name);
         for table in &source.tables {
@@ -866,7 +854,6 @@ pub(crate) fn build_qualification_map(
                     table: actual_name.clone(),
                 },
             );
-            // Also register by identifier if different from logical name
             if let Some(ref ident) = table.identifier {
                 if ident != &table.name {
                     map.insert(

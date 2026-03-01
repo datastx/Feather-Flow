@@ -97,7 +97,6 @@ fn generate_source_tests(sources: &[SourceFile]) -> Vec<SchemaTest> {
         for table in &source.tables {
             for column in &table.columns {
                 for test_def in &column.tests {
-                    // Use the same parsing logic as model tests
                     if let Some(test_type) = parse_test_definition(test_def) {
                         tests.push(SchemaTest {
                             model: ff_core::model_name::ModelName::new(format!(
@@ -145,7 +144,6 @@ pub(crate) async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> 
     let mut model_qualified_names: HashMap<String, String> = HashMap::new();
 
     for (name, model) in &project.models {
-        // Config is read from YAML (already on model.config)
         let schema = model
             .config
             .schema
@@ -247,7 +245,6 @@ pub(crate) async fn execute(args: &TestArgs, global: &GlobalArgs) -> Result<()> 
         }
     }
 
-    // Create target/test_failures directory if --store-failures is set
     let failures_dir = if args.store_failures {
         let dir = project.target_dir().join("test_failures");
         if let Err(e) = std::fs::create_dir_all(&dir) {
@@ -407,8 +404,7 @@ async fn run_tests_parallel(
     output_lock: &Arc<Mutex<()>>,
     thread_count: usize,
 ) {
-    // Pre-generate all test SQL (including custom tests) before parallel execution
-    // This is done synchronously since Jinja rendering isn't async
+    // Jinja rendering isn't async, so test SQL is generated synchronously before parallel execution
     let generated_tests: Vec<(SchemaTest, String, GeneratedTest)> = schema_tests
         .iter()
         .map(|schema_test| {
