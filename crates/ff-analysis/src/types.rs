@@ -124,7 +124,6 @@ impl SqlType {
         if self.is_unknown() || other.is_unknown() {
             return true;
         }
-        // Numeric family: all numeric types are mutually compatible
         if self.is_numeric() && other.is_numeric() {
             return true;
         }
@@ -428,7 +427,6 @@ fn parse_struct_fields(s: &str) -> Option<SqlType> {
     let mut fields = Vec::new();
     for part in parts {
         let part = part.trim();
-        // Split on first whitespace to get "name TYPE"
         let space_pos = part.find(|c: char| c.is_ascii_whitespace())?;
         let name = part[..space_pos].trim().to_string();
         let type_str = part[space_pos..].trim();

@@ -206,7 +206,6 @@ fn compile_sql_model(
         );
     }
 
-    // Config is read from YAML (already on model.config)
     let mat = model
         .config
         .materialized
@@ -258,12 +257,10 @@ fn compile_sql_model(
         ctx.build_comment(&input)
     });
 
-    // Dual-path compilation for incremental models
     let (final_sql, incremental_sql) = if mat == Materialization::Incremental {
         let macro_paths = env.project.config.macro_paths_absolute(&env.project.root);
         let template_ctx = common::build_template_context(env.project, None, true);
 
-        // Full path: is_exists() = false
         let jinja_full = ff_jinja::JinjaEnvironment::with_is_exists(
             &env.project.config.vars,
             &macro_paths,
@@ -274,7 +271,6 @@ fn compile_sql_model(
             .render(&model.raw_sql)
             .with_context(|| format!("Failed to render full path template for model: {}", name))?;
 
-        // Incremental path: is_exists() = true
         let jinja_inc = ff_jinja::JinjaEnvironment::with_is_exists(
             &env.project.config.vars,
             &macro_paths,
@@ -368,7 +364,6 @@ fn resolve_deferred_dependencies(
         }
     }
 
-    // Also check for transitive dependencies of deferred models
     let mut to_check: Vec<String> = deferred_models.iter().cloned().collect();
     while let Some(model_name) = to_check.pop() {
         let Some(manifest_model) = deferred_manifest.get_model(&model_name) else {
@@ -410,7 +405,6 @@ pub(crate) fn determine_execution_order(
 
     let dag = ModelDag::build(&dependencies).context("Failed to build dependency graph")?;
 
-    // Load reference manifest if --state is provided
     let reference_manifest: Option<Manifest> = if let Some(state_path) = &args.state {
         let path = Path::new(state_path);
         if !path.exists() {
@@ -424,7 +418,6 @@ pub(crate) fn determine_execution_order(
         None
     };
 
-    // Validate --defer usage
     if args.defer.is_some() && args.state.is_none() && args.nodes.is_none() {
         anyhow::bail!(
             "The --defer flag requires either --state or --nodes to specify which models to run"
@@ -436,7 +429,6 @@ pub(crate) fn determine_execution_order(
         .context("Failed to get execution order")?;
 
     let models_to_run: Vec<String> = if let Some(nodes_str) = &args.nodes {
-        // Check if any token is a state: selector
         let mut combined = Vec::new();
         for token in nodes_str.split(',') {
             let token = token.trim();
@@ -456,7 +448,6 @@ pub(crate) fn determine_execution_order(
                 .context("Failed to apply selector")?;
             combined.extend(matched);
         }
-        // Deduplicate and return in topological order
         let combined_set: std::collections::HashSet<String> = combined.into_iter().collect();
         topo_order
             .iter()
@@ -467,7 +458,6 @@ pub(crate) fn determine_execution_order(
         topo_order.clone()
     };
 
-    // Apply exclusion filter if provided
     let models_after_exclusion: Vec<String> = if let Some(exclude) = &args.exclude {
         let excluded: HashSet<String> = exclude
             .split(',')
@@ -482,11 +472,9 @@ pub(crate) fn determine_execution_order(
         models_to_run
     };
 
-    // Handle --defer: load deferred manifest and validate dependencies
     let deferred_models: HashSet<String> = if let Some(defer_path) = &args.defer {
         let deferred_manifest = load_deferred_manifest(defer_path, global)?;
 
-        // Resolve which models can be deferred
         let deferred = resolve_deferred_dependencies(
             &models_after_exclusion,
             compiled_models,
@@ -494,7 +482,6 @@ pub(crate) fn determine_execution_order(
             global,
         )?;
 
-        // Log deferred models summary
         if !deferred.is_empty() {
             println!(
                 "Deferring {} model(s) to manifest at: {}",

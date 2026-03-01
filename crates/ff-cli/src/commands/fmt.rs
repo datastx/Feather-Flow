@@ -56,30 +56,25 @@ fn collect_from_glob(pattern: &str) -> Result<Vec<PathBuf>> {
 pub(crate) async fn execute(args: &FmtArgs, global: &GlobalArgs) -> Result<()> {
     let project = load_project(global)?;
 
-    // Collect SQL files based on input mode:
-    // 1. Explicit paths (positional args)
-    // 2. Glob pattern (--glob)
-    // 3. Project-wide with optional node filter (default)
     let mut sql_files: Vec<PathBuf> = if !args.paths.is_empty() {
         collect_from_paths(&args.paths)?
     } else if let Some(ref pattern) = args.glob {
         collect_from_glob(pattern)?
     } else {
-        let mut files = Vec::new();
-        // Model SQL files
-        for model in project.models.values() {
-            if model.path.exists() {
-                files.push(model.path.clone());
-            }
-        }
-        // Function SQL files
-        for func in &project.functions {
-            if func.sql_path.exists() {
-                files.push(func.sql_path.clone());
-            }
-        }
+        let mut files: Vec<PathBuf> = project
+            .models
+            .values()
+            .filter(|model| model.path.exists())
+            .map(|model| model.path.clone())
+            .chain(
+                project
+                    .functions
+                    .iter()
+                    .filter(|func| func.sql_path.exists())
+                    .map(|func| func.sql_path.clone()),
+            )
+            .collect();
 
-        // Filter by node selector if provided
         if let Some(ref nodes_arg) = args.nodes {
             let (_, dag) = crate::commands::common::build_project_dag(&project)?;
             let selected =
@@ -103,7 +98,6 @@ pub(crate) async fn execute(args: &FmtArgs, global: &GlobalArgs) -> Result<()> {
         files
     };
 
-    // Deduplicate
     sql_files.sort();
     sql_files.dedup();
 
@@ -112,7 +106,6 @@ pub(crate) async fn execute(args: &FmtArgs, global: &GlobalArgs) -> Result<()> {
         return Ok(());
     }
 
-    // Build mode from config + CLI overrides
     let mut format_config = project.config.format.clone();
     if let Some(ll) = args.line_length {
         format_config.line_length = ll;

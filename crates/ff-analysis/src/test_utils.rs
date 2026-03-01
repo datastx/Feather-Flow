@@ -14,8 +14,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-// ─── Type constructors ──────────────────────────────────────────────────────
-
 /// Create a typed column for testing
 pub fn make_col(name: &str, ty: SqlType, null: Nullability) -> TypedColumn {
     TypedColumn {
@@ -118,8 +116,6 @@ pub fn unknown(reason: &str) -> SqlType {
     SqlType::Unknown(reason.to_string())
 }
 
-// ─── Catalog builders ───────────────────────────────────────────────────────
-
 /// Standard e-commerce test catalog with raw_orders, customers, products, payments
 pub fn ecommerce_catalog() -> HashMap<String, RelSchema> {
     let mut catalog = HashMap::new();
@@ -163,8 +159,6 @@ pub fn ecommerce_catalog() -> HashMap<String, RelSchema> {
     catalog
 }
 
-// ─── Context builders ───────────────────────────────────────────────────────
-
 /// Create a minimal in-memory `AnalysisContext` for testing.
 ///
 /// Uses a synthetic `Project` to avoid filesystem dependencies.
@@ -205,8 +199,6 @@ pub fn make_ctx_with_dag(dep_map: &HashMap<String, Vec<String>>) -> AnalysisCont
     let dag = ModelDag::build(dep_map).unwrap();
     AnalysisContext::new(project, dag, HashMap::new(), ProjectLineage::new())
 }
-
-// ─── Diagnostic assertions ──────────────────────────────────────────────────
 
 /// Assert that at least one diagnostic with the given code exists
 pub fn assert_has_diagnostic(diags: &[Diagnostic], code: DiagnosticCode) {

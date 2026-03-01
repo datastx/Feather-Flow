@@ -105,7 +105,6 @@ impl Project {
             log::warn!("'external_tables' is deprecated. Use source files (kind: source) instead.");
         }
 
-        // Always use unified node_paths discovery (nodes/ directory)
         let nodes = Self::discover_all_nodes(&root, &config)?;
         let (models, seeds, sources, functions) =
             (nodes.models, nodes.seeds, nodes.sources, nodes.functions);
@@ -125,8 +124,6 @@ impl Project {
             functions,
         }))
     }
-
-    // ── Unified node discovery ───────────────────────────────────────
 
     /// Discover all nodes from `node_paths` directories.
     ///
@@ -188,7 +185,6 @@ impl Project {
             })?;
             let path = entry.path();
 
-            // Skip hidden entries (e.g. .DS_Store, .git)
             if entry
                 .file_name()
                 .to_str()
@@ -378,8 +374,6 @@ impl Project {
         functions.push(func);
         Ok(())
     }
-
-    // ── Tests ────────────────────────────────────────────────────────
 
     /// Discover singular tests from test_paths
     fn discover_singular_tests(root: &Path, config: &Config) -> CoreResult<Vec<SingularTest>> {

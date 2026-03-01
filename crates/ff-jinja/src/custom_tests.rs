@@ -118,13 +118,11 @@ pub fn generate_custom_test_sql(
     column: &str,
     kwargs: &HashMap<String, serde_json::Value>,
 ) -> JinjaResult<String> {
-    // Build the template that imports and calls the macro
     let relative_file = Path::new(macro_source_file)
         .file_name()
         .map(|f| f.to_string_lossy().to_string())
         .unwrap_or_else(|| macro_source_file.to_string());
 
-    // Convert kwargs to Jinja syntax
     let kwargs_str = if kwargs.is_empty() {
         String::new()
     } else {
@@ -165,14 +163,12 @@ pub fn generate_custom_test_sql(
         )));
     }
 
-    // Create template that imports and calls the macro
     let template = format!(
         r#"{{% from "{}" import {} %}}
 {{{{ {}("{}", "{}"{}) }}}}"#,
         safe_file, macro_name, macro_name, safe_model, safe_column, kwargs_str
     );
 
-    // Render the template
     let result = env.render_str(&template, ()).map_err(JinjaError::from)?;
 
     Ok(result.trim().to_string())

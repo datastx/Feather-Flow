@@ -59,28 +59,22 @@ pub(super) fn handle_resume_mode(
         .context("Failed to load run state")?
         .ok_or_else(|| anyhow::anyhow!("No run state found. Run 'ff run' first."))?;
 
-    // Warn if config has changed
     if previous_state.config_hash != config_hash {
         eprintln!("Warning: Project configuration has changed since last run");
     }
 
-    // Determine which models to run
     let models_to_run = if args.retry_failed {
-        // Only retry failed models
         previous_state.failed_model_names()
     } else {
-        // Retry failed + run pending
         previous_state.models_to_run()
     };
 
-    // Filter to only models that exist in compiled_models
     let execution_order: Vec<String> = models_to_run
         .into_iter()
         .filter(|m| compiled_models.contains_key(m.as_str()))
         .map(|m| m.to_string())
         .collect();
 
-    // Log what we're skipping
     for completed in &previous_state.completed_models {
         if global.verbose {
             eprintln!(

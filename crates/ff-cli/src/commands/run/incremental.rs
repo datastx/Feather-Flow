@@ -34,7 +34,6 @@ pub(super) async fn execute_incremental(
     full_refresh: bool,
     exec_sql: &str,
 ) -> ff_db::error::DbResult<()> {
-    // Check if table exists — propagate DB errors to avoid silent full refresh
     let exists = db.relation_exists(table_name).await?;
 
     if !exists || full_refresh {
@@ -50,14 +49,12 @@ pub(super) async fn execute_incremental(
         return db.create_table_as(table_name, exec_sql, true).await;
     }
 
-    // Check for schema changes
     let on_schema_change = compiled.on_schema_change.unwrap_or(OnSchemaChange::Ignore);
 
     if on_schema_change != OnSchemaChange::Ignore {
         handle_schema_changes(db, table_name, compiled, on_schema_change).await?;
     }
 
-    // Execute the incremental strategy
     execute_strategy(db, table_name, compiled, exec_sql).await
 }
 
@@ -255,10 +252,8 @@ pub(super) async fn execute_wap(params: &WapParams<'_>) -> Result<(), ff_db::err
     let quoted_wap = quote_qualified(&wap_qualified);
     let quoted_name = quote_qualified(qualified_name);
 
-    // 1. Create WAP schema
     db.create_schema_if_not_exists(wap_schema).await?;
 
-    // 2. Materialize into WAP schema
     match compiled.materialization {
         Materialization::Table => {
             db.create_table_as(&wap_qualified, exec_sql, true).await?;
@@ -280,7 +275,6 @@ pub(super) async fn execute_wap(params: &WapParams<'_>) -> Result<(), ff_db::err
         }
     }
 
-    // 3. Run schema tests against WAP copy
     let test_failures =
         run_wap_tests(db, name, &wap_qualified, compiled.model_schema.as_ref()).await;
 
@@ -293,13 +287,11 @@ pub(super) async fn execute_wap(params: &WapParams<'_>) -> Result<(), ff_db::err
         )));
     }
 
-    // 4. Tests passed -- publish: DROP prod + CTAS from WAP
     db.drop_if_exists(qualified_name).await?;
 
     let publish_sql = format!("CREATE TABLE {} AS FROM {}", quoted_name, quoted_wap);
     db.execute(&publish_sql).await?;
 
-    // Clean up WAP table after successful publish
     let _ = db.drop_if_exists(&wap_qualified).await;
 
     Ok(())

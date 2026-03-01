@@ -105,7 +105,6 @@ pub(crate) async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()>
         println!("Starting build...\n");
     }
 
-    // ── Phase 1: Seed ───────────────────────────────────────────────────
     if !quiet {
         println!("=== Phase 1: Seed ===\n");
     }
@@ -121,7 +120,6 @@ pub(crate) async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()>
         return Err(ExitCode(code).into());
     }
 
-    // ── Phase 2: Compile + per-model run/test ───────────────────────────
     if !quiet {
         println!("\n=== Phase 2: Run + Test (per model) ===\n");
     }
@@ -129,7 +127,6 @@ pub(crate) async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()>
     let project = load_project(global)?;
     let db = create_database_connection(&project, global)?;
 
-    // Build a RunArgs for compile & execution-order helpers
     let run_args = RunArgs {
         mode: None,
         nodes: args.nodes.clone(),
@@ -175,7 +172,6 @@ pub(crate) async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()>
         return Ok(());
     }
 
-    // Resolve WAP schema from config
     let database = ff_core::config::Config::resolve_database(global.database.as_deref());
     let wap_schema = project.config.get_wap_schema(database.as_deref());
 
@@ -198,7 +194,6 @@ pub(crate) async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()>
     )
     .await?;
 
-    // Set up test infrastructure
     let macro_paths = project.config.macro_paths_absolute(&project.root);
     let mut custom_test_registry = CustomTestRegistry::new();
     custom_test_registry
@@ -206,11 +201,9 @@ pub(crate) async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()>
         .context("Failed to discover custom test macros")?;
     let custom_test_env = test::build_custom_test_env(&macro_paths);
 
-    // Build model → qualified-name map (same logic as test command)
     let mut model_qualified_names: HashMap<String, String> =
         HashMap::with_capacity(project.models.len());
     for (name, model) in &project.models {
-        // Config is read from YAML (already on model.config)
         let schema = model
             .config
             .schema
@@ -243,7 +236,6 @@ pub(crate) async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()>
     let mut total_tests_passed = 0usize;
     let mut total_tests_failed = 0usize;
 
-    // ── Per-model loop ──────────────────────────────────────────────────
     for name in &execution_order {
         let Some(compiled) = compiled_models.get(name) else {
             eprintln!(
@@ -253,13 +245,11 @@ pub(crate) async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()>
             continue;
         };
 
-        // Skip ephemeral models (inlined during compilation)
         if compiled.materialization == Materialization::Ephemeral {
             models_succeeded += 1;
             continue;
         }
 
-        // (a) Materialize the model
         let model_result =
             run_single_model(&db, name, compiled, args.full_refresh, wap_schema).await;
 
@@ -270,7 +260,6 @@ pub(crate) async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()>
             return Err(ExitCode(4).into());
         }
 
-        // (b) Collect and run tests for this model
         let model_tests: Vec<_> = project.tests.iter().filter(|t| t.model == *name).collect();
 
         let test_count = model_tests.len();
@@ -322,7 +311,6 @@ pub(crate) async fn execute(args: &BuildArgs, global: &GlobalArgs) -> Result<()>
         eprintln!("Warning: {}", e);
     }
 
-    // ── Summary ─────────────────────────────────────────────────────────
     if !quiet {
         println!();
         println!(

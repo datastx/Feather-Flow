@@ -552,7 +552,6 @@ fn generate_html(doc: &ModelDoc) -> String {
             ));
         }
         if let Some(contact) = &doc.contact {
-            // Format contact as mailto link if it looks like an email
             if contact.contains('@') {
                 html.push_str(&format!(
                     "<p><strong>Contact:</strong> <a href=\"mailto:{}\">{}</a></p>\n",
@@ -903,7 +902,6 @@ fn generate_lineage_dot(project: &Project) -> String {
     dot.push_str("    rankdir=LR;\n");
     dot.push_str("    node [shape=box, style=filled];\n\n");
 
-    dot.push_str("    // External/source nodes (grey)\n");
     for source in &project.sources {
         for table in &source.tables {
             let node_name = format!("{}_{}", source.name, table.name);
@@ -916,7 +914,6 @@ fn generate_lineage_dot(project: &Project) -> String {
 
     dot.push('\n');
 
-    // Collect model info from manifest (preferred) or project (fallback)
     struct ModelDotInfo<'a> {
         name: &'a str,
         materialization: ff_core::config::Materialization,

@@ -12,8 +12,6 @@ use regex::Regex;
 use serde::Serialize;
 use std::sync::OnceLock;
 
-// ===== Macro Metadata =====
-
 /// Parameter definition for a macro
 #[derive(Debug, Clone, Serialize)]
 pub struct MacroParam {
@@ -101,7 +99,6 @@ impl MacroMetadata {
 /// organized by category and including usage examples.
 pub fn get_builtin_macros() -> Vec<MacroMetadata> {
     vec![
-        // Date/Time Macros
         MacroMetadata::new(
             "date_spine",
             "date",
@@ -148,7 +145,6 @@ pub fn get_builtin_macros() -> Vec<MacroMetadata> {
             "{{ date_diff('day', 'start_date', 'end_date') }}",
             "DATE_DIFF('day', start_date, end_date)",
         ),
-        // String Macros
         MacroMetadata::new(
             "slugify",
             "string",
@@ -181,7 +177,6 @@ pub fn get_builtin_macros() -> Vec<MacroMetadata> {
             "{{ split_part('email', '@', 2) }}",
             "SPLIT_PART(email, '@', 2)",
         ),
-        // Math Macros
         MacroMetadata::new(
             "safe_divide",
             "math",
@@ -214,7 +209,6 @@ pub fn get_builtin_macros() -> Vec<MacroMetadata> {
             "{{ percent_of('sales', 'total_sales') }}",
             "CASE WHEN total_sales = 0 OR total_sales IS NULL THEN 0.0 ELSE ROUND(100.0 * sales / total_sales, 2) END",
         ),
-        // Cross-DB Macros
         MacroMetadata::new(
             "limit_zero",
             "cross_db",
@@ -253,7 +247,6 @@ pub fn get_builtin_macros() -> Vec<MacroMetadata> {
             "{{ hash_columns(['col1', 'col2', 'col3']) }}",
             "MD5(COALESCE(CAST(col1 AS VARCHAR), '') || '|' || COALESCE(CAST(col2 AS VARCHAR), '') || '|' || COALESCE(CAST(col3 AS VARCHAR), ''))",
         ),
-        // Utility Macros
         MacroMetadata::new(
             "surrogate_key",
             "utility",
@@ -318,8 +311,6 @@ pub fn get_macro_categories() -> Vec<&'static str> {
         .collect()
 }
 
-// ===== Date/Time Macros =====
-
 /// Regex pattern for validating YYYY-MM-DD date format
 static DATE_FORMAT_RE: OnceLock<Regex> = OnceLock::new();
 
@@ -355,7 +346,6 @@ pub(crate) fn date_spine(start_date: &str, end_date: &str) -> Result<String, Err
         ));
     }
 
-    // DuckDB-specific syntax for generating date series
     let escaped_start = escape_sql_string(start_date);
     let escaped_end = escape_sql_string(end_date);
     Ok(format!(
@@ -399,8 +389,6 @@ pub(crate) fn date_diff(unit: &str, start_col: &str, end_col: &str) -> String {
     )
 }
 
-// ===== String Macros =====
-
 /// Convert a string to a URL-friendly slug
 ///
 /// Usage: `{{ slugify('column_name') }}`
@@ -433,8 +421,6 @@ pub(crate) fn split_part(column: &str, delimiter: &str, part: i64) -> String {
     )
 }
 
-// ===== Math Macros =====
-
 /// Safely divide two numbers, returning NULL if denominator is 0
 ///
 /// Usage: `{{ safe_divide('numerator', 'denominator') }}`
@@ -463,8 +449,6 @@ pub(crate) fn percent_of(value: &str, total: &str) -> String {
         "CASE WHEN {tot} = 0 OR {tot} IS NULL THEN 0.0 ELSE ROUND(100.0 * {val} / {tot}, 2) END"
     )
 }
-
-// ===== Cross-DB Macros =====
 
 /// Generate a LIMIT 0 clause for schema validation
 ///
@@ -499,8 +483,6 @@ pub(crate) fn hash_columns(columns: &[String]) -> String {
     format!("MD5({})", concat_expr)
 }
 
-// ===== Utility Macros =====
-
 /// Generate a surrogate key from multiple columns
 ///
 /// Usage: `{{ surrogate_key(['col1', 'col2']) }}`
@@ -522,8 +504,6 @@ pub(crate) fn coalesce_columns(columns: &[String]) -> String {
 pub(crate) fn not_null(column: &str) -> String {
     format!("{} IS NOT NULL", quote_ident(column))
 }
-
-// ===== Minijinja Function Wrappers =====
 
 /// Wrapper for date_spine as a minijinja function
 pub(crate) fn make_date_spine_fn(

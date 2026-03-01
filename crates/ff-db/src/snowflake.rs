@@ -11,9 +11,7 @@ use async_trait::async_trait;
 /// Snowflake database backend (stub implementation)
 ///
 /// This is a placeholder for future Snowflake support.
-pub struct SnowflakeBackend {
-    // Connection details would go here
-}
+pub struct SnowflakeBackend {}
 
 /// Helper to create a `NotImplemented` error for Snowflake features
 fn not_impl(feature: &str) -> DbError {

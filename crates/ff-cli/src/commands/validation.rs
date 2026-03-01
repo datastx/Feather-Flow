@@ -10,8 +10,6 @@ use ff_jinja::JinjaEnvironment;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-// ── Validation types ───────────────────────────────────────────────────
-
 /// Validation result severity
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Severity {
@@ -92,8 +90,6 @@ impl ValidationContext {
     }
 }
 
-// ── Validation checks (used by compile) ────────────────────────────────
-
 /// Validate no duplicate model names (case-insensitive for DuckDB compatibility)
 pub(crate) fn validate_duplicates(project: &Project, ctx: &mut ValidationContext) {
     print!("Checking for duplicates... ");
@@ -118,8 +114,6 @@ pub(crate) fn validate_duplicates(project: &Project, ctx: &mut ValidationContext
         }
     }
 
-    // Cross-kind uniqueness: check seeds, source tables, and functions against
-    // the model names already in `seen`, and against each other.
     let mut seen_kinds: HashMap<String, (&str, String)> = seen
         .iter()
         .map(|(lower, name)| (lower.clone(), ("model", name.to_string())))
@@ -535,8 +529,6 @@ pub(crate) fn validate_run_groups(
         }
     }
 }
-
-// ── Helper functions ───────────────────────────────────────────────────
 
 /// Check a single column for reference validity (W004) and test-type compatibility (W005).
 fn check_column_schema(

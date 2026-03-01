@@ -58,7 +58,6 @@ fn build_env_vars(
     env.insert("FF_DATABASE_PATH".to_string(), db_path.to_string());
     env.insert("FF_MODEL_NAME".to_string(), name.to_string());
 
-    // Build input tables list from dependencies
     let input_tables: Vec<String> = compiled
         .dependencies
         .iter()
@@ -72,11 +71,9 @@ fn build_env_vars(
         serde_json::to_string(&input_tables).unwrap_or_else(|_| "[]".to_string()),
     );
 
-    // Build output table name
     let output_table = build_qualified_name(compiled.schema.as_deref(), name);
     env.insert("FF_OUTPUT_TABLE".to_string(), output_table);
 
-    // Build expected output schema from model_schema columns
     if let Some(ref model_schema) = compiled.model_schema {
         let columns: Vec<serde_json::Value> = model_schema
             .columns
@@ -120,7 +117,6 @@ pub(crate) async fn run_python_model(
         }
     };
 
-    // Check uv is available
     if let Err(e) = check_uv_available() {
         return ModelRunResult {
             model: name.to_string(),
@@ -133,7 +129,6 @@ pub(crate) async fn run_python_model(
 
     let env_vars = build_env_vars(name, compiled, compiled_models, db_path);
 
-    // Run the Python script via uv
     match execute_uv_run(&script_path, &env_vars).await {
         Ok(output) => {
             if !output.success {
@@ -149,7 +144,6 @@ pub(crate) async fn run_python_model(
                 };
             }
 
-            // Validate output table exists and schema matches
             let qualified_name = build_qualified_name(compiled.schema.as_deref(), name);
             if let Err(e) = validate_python_output(db, name, &qualified_name, compiled).await {
                 return ModelRunResult {
@@ -213,7 +207,6 @@ async fn validate_python_output(
     qualified_name: &str,
     compiled: &CompiledModel,
 ) -> Result<(), ff_core::error::CoreError> {
-    // Check the table exists
     let quoted = quote_qualified(qualified_name);
     let exists = db.relation_exists(qualified_name).await.map_err(|e| {
         ff_core::error::CoreError::PythonSchemaViolation {
@@ -232,7 +225,6 @@ async fn validate_python_output(
         });
     }
 
-    // If schema has columns defined, validate they exist in the output
     if let Some(ref model_schema) = compiled.model_schema {
         if !model_schema.columns.is_empty() {
             let actual_schema = db.get_table_schema(&quoted).await.map_err(|e| {
@@ -242,19 +234,17 @@ async fn validate_python_output(
                 }
             })?;
 
-            // Build a case-insensitive map of actual column names
             let actual_columns: std::collections::HashSet<String> = actual_schema
                 .iter()
                 .map(|(col_name, _)| col_name.to_lowercase())
                 .collect();
 
-            // Check each declared column exists in the output
-            let mut missing: Vec<String> = Vec::new();
-            for expected_col in &model_schema.columns {
-                if !actual_columns.contains(&expected_col.name.to_lowercase()) {
-                    missing.push(expected_col.name.clone());
-                }
-            }
+            let missing: Vec<String> = model_schema
+                .columns
+                .iter()
+                .filter(|col| !actual_columns.contains(&col.name.to_lowercase()))
+                .map(|col| col.name.clone())
+                .collect();
 
             if !missing.is_empty() {
                 return Err(ff_core::error::CoreError::PythonSchemaViolation {

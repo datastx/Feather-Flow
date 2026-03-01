@@ -168,7 +168,6 @@ pub fn propagate_classifications_topo(
     edges: &[ClassificationEdge],
     declared: &HashMap<String, HashMap<String, String>>,
 ) -> HashMap<String, HashMap<String, String>> {
-    // Build an index: (target_model, target_column) → list of edges
     let mut target_index: HashMap<(&str, &str), Vec<&ClassificationEdge>> = HashMap::new();
     for edge in edges {
         target_index
@@ -177,7 +176,6 @@ pub fn propagate_classifications_topo(
             .push(edge);
     }
 
-    // Collect all target columns per model so we know what to process
     let mut model_columns: HashMap<&str, Vec<&str>> = HashMap::new();
     for edge in edges {
         let cols = model_columns.entry(edge.target_model.as_str()).or_default();
@@ -186,8 +184,6 @@ pub fn propagate_classifications_topo(
         }
     }
 
-    // effective_cls tracks the running effective classification per model/column.
-    // Initialize with declared classifications.
     let mut effective_cls: HashMap<String, HashMap<String, String>> = declared.clone();
 
     for model in topo_order {

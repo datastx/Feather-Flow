@@ -3,7 +3,6 @@
 pub mod schema;
 pub mod testing;
 
-// Re-export all public types to preserve existing `ff_core::model::*` paths
 pub use schema::{
     ColumnReference, DataClassification, ModelKind, ModelSchema, PythonConfig, SchemaColumnDef,
     StringOrVec,
@@ -321,7 +320,6 @@ impl Model {
     /// - "fct_orders" -> (None, None)
     /// - "v2_model" -> (None, None) // v must be suffix, not prefix
     pub fn parse_version(name: &str) -> (Option<String>, Option<u32>) {
-        // Look for _v{N} pattern at the end of the name
         if let Some(idx) = name.rfind("_v") {
             let suffix = &name[idx + 2..];
             if let Ok(version) = suffix.parse::<u32>() {

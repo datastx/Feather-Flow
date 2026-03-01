@@ -82,7 +82,6 @@ pub(crate) fn generate_accepted_values_test(
     quote: bool,
 ) -> String {
     if values.is_empty() {
-        // Empty values list means every row fails — return all rows
         return format!("SELECT * FROM {}", quote_qualified(table));
     }
     let formatted_values: Vec<String> = if quote {
@@ -96,7 +95,6 @@ pub(crate) fn generate_accepted_values_test(
         values
             .iter()
             .map(|v| {
-                // If the value parses as a number, emit it unquoted; otherwise quote it.
                 if v.parse::<f64>().is_ok() || v.parse::<i64>().is_ok() {
                     v.clone()
                 } else {

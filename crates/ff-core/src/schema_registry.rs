@@ -37,7 +37,6 @@ impl SchemaRegistry {
     pub fn from_project(project: &Project) -> Self {
         let mut registry = Self::default();
 
-        // Models
         for (name, model) in &project.models {
             if let Some(schema) = &model.schema {
                 let mut cols = HashMap::new();
@@ -58,7 +57,6 @@ impl SchemaRegistry {
             }
         }
 
-        // Sources
         for source_file in &project.sources {
             for table in &source_file.tables {
                 let mut cols = HashMap::new();

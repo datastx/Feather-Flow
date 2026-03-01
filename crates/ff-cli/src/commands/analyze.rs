@@ -45,7 +45,6 @@ async fn run_analysis(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
     let external_tables = build_external_tables_lookup(&project);
     let (schema_catalog, yaml_schemas) = build_schema_catalog(&project, &external_tables);
 
-    // Render SQL, extract dependencies and lineage in a single pass
     let mut dep_map: HashMap<String, Vec<String>> = HashMap::with_capacity(project.models.len());
     let mut project_lineage = ProjectLineage::new();
     for (name, model) in &project.models {
@@ -65,10 +64,11 @@ async fn run_analysis(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
             .collect();
         dep_map.insert(name.to_string(), model_deps);
 
-        if let Some(stmt) = stmts.first() {
-            if let Some(lineage) = extract_column_lineage(stmt, name) {
-                project_lineage.add_model_lineage(lineage);
-            }
+        let Some(stmt) = stmts.first() else {
+            continue;
+        };
+        if let Some(lineage) = extract_column_lineage(stmt, name) {
+            project_lineage.add_model_lineage(lineage);
         }
     }
     project_lineage.resolve_edges(&known_models);
@@ -161,7 +161,6 @@ async fn run_analysis(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
         pass_filter.as_deref(),
     );
 
-    // Apply user-configured severity overrides before min-severity filtering
     let diagnostics = apply_severity_overrides(diagnostics, &severity_overrides);
 
     let min_severity = match args.severity {
@@ -180,7 +179,6 @@ async fn run_analysis(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
         AnalyzeOutput::Table => print_table(&filtered),
     }
 
-    // Populate meta database (non-fatal)
     if let Some(meta_db) = common::open_meta_db(ctx.project()) {
         if let Some((_project_id, run_id, model_id_map)) =
             common::populate_meta_phase1(&meta_db, ctx.project(), "analyze", args.nodes.as_deref())
@@ -198,7 +196,6 @@ async fn run_analysis(args: &AnalyzeArgs, global: &GlobalArgs) -> Result<()> {
 
     let has_errors = filtered.iter().any(|d| d.severity == Severity::Error);
 
-    // Run SQL rules if requested
     let mut rules_failed = false;
     if args.rules {
         rules_failed = execute_rules(ctx.project(), args.rules_list, global)?;

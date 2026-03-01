@@ -324,7 +324,6 @@ fn validate_function_schema(schema: &FunctionSchema, yaml_path: &Path) -> CoreRe
 
     validate_function_args(&schema.name, &schema.args)?;
 
-    // Validate table function has columns (FN006)
     if schema.function_type == FunctionType::Table {
         if let FunctionReturn::Table { ref columns } = schema.returns {
             if columns.is_empty() {
@@ -418,7 +417,6 @@ pub fn discover_functions(function_paths: &[PathBuf]) -> CoreResult<Vec<Function
         discover_functions_recursive(path, &mut functions)?;
     }
 
-    // Validate no duplicate names (FN003)
     let mut seen_names: HashMap<String, &Path> = HashMap::new();
     for func in &functions {
         let name = func.name.to_string();

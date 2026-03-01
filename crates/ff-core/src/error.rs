@@ -41,7 +41,6 @@ pub enum CoreError {
     #[error("[E009] Invalid selector '{selector}': {reason}")]
     InvalidSelector { selector: String, reason: String },
 
-    // Source error types (SRC001-SRC007)
     /// SRC001: Source file missing required 'kind' field
     #[error("[SRC001] Source file missing required 'kind' field: {path}. Add `kind: sources`")]
     SourceMissingKind { path: String },
@@ -108,7 +107,6 @@ pub enum CoreError {
     #[error("[T001] Test '{name}': {message}")]
     TestValidationError { name: String, message: String },
 
-    // Function error types (FN001-FN012)
     /// FN001: Function YAML without matching SQL file
     #[error("[FN001] Function '{name}': missing .sql file ({yaml_path})")]
     FunctionMissingSqlFile { name: String, yaml_path: String },
@@ -125,7 +123,6 @@ pub enum CoreError {
         path2: String,
     },
 
-    // FN004: Reserved for FunctionShadowsBuiltin
     /// FN005: Non-default argument after default argument
     #[error("[FN005] Function '{name}': non-default argument '{arg}' follows a default argument")]
     FunctionArgOrderError { name: String, arg: String },
@@ -146,8 +143,6 @@ pub enum CoreError {
     #[error("[FN009] Function parse error in {path}: {details}")]
     FunctionParseError { path: String, details: String },
 
-    // FN010: Reserved for FunctionUnknownTable
-    // FN011: Reserved for FunctionUnknownFunction
     /// FN012: Function deployment error
     #[error("[FN012] Function '{name}': deployment failed: {details}")]
     FunctionDeployError { name: String, details: String },
@@ -160,7 +155,6 @@ pub enum CoreError {
     #[error("[E019] Empty name: {context}")]
     EmptyName { context: String },
 
-    // Python model error types (PY001-PY003)
     /// PY001: Python model execution failed
     #[error("[PY001] Python model '{name}' failed: {message}")]
     PythonExecutionError { name: String, message: String },
@@ -173,7 +167,6 @@ pub enum CoreError {
     #[error("[PY003] Python model '{model}' schema violation: {message}")]
     PythonSchemaViolation { model: String, message: String },
 
-    // ── Node-level errors (N001-N005) ────────────────────────────────
     /// N001: Node directory is missing a YAML configuration file
     #[error("[N001] Node directory '{directory}' is missing a required .yml configuration file")]
     NodeMissingYaml { directory: String },

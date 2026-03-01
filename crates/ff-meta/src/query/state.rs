@@ -23,7 +23,6 @@ pub fn is_model_modified(
     current_schema_checksum: Option<&str>,
     current_input_checksums: &HashMap<String, String>,
 ) -> MetaResult<bool> {
-    // Find the model's latest successful run state by joining through models table
     let state = conn.query_row(
         "SELECT mls.sql_checksum, mls.schema_checksum, mls.run_id, mls.model_id
              FROM ff_meta.model_latest_state mls
@@ -65,7 +64,6 @@ pub fn is_model_modified(
 
     let prev_inputs = load_input_checksums(conn, model_id, run_id)?;
 
-    // Check for changed or new upstream checksums
     for (input_name, current_checksum) in current_input_checksums {
         match prev_inputs.get(input_name) {
             Some(old_checksum) if old_checksum != current_checksum => return Ok(true),

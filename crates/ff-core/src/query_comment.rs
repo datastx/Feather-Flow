@@ -210,19 +210,16 @@ fn filter_metadata(metadata: &QueryCommentMetadata, include: &CommentInclude) ->
         }
     }
 
-    // Always include custom vars
     for (k, v) in &metadata.custom_vars {
         map.insert(k.clone(), Value::String(v.clone()));
     }
 
-    // Include custom fields (with env var interpolation already applied)
     if let Some(ref fields) = metadata.custom_fields {
         for (k, v) in fields {
             map.insert(k.clone(), Value::String(v.clone()));
         }
     }
 
-    // Include runtime fields when present
     if let Some(ref eid) = metadata.execution_id {
         map.insert("execution_id".into(), Value::String(eid.clone()));
     }
@@ -276,22 +273,18 @@ pub(crate) fn append_query_comment(sql: &str, comment: &str) -> String {
 ///
 /// Handles both append (trailing) and prepend (leading) comments.
 pub fn strip_query_comment(sql: &str) -> &str {
-    // Try trailing comment (append placement)
     if let Some(idx) = sql.rfind("\n/* ff_metadata:") {
         return &sql[..idx];
     }
-    // Also try multi-line trailing (pretty style)
     if let Some(idx) = sql.rfind("\n/*\nff_metadata:") {
         return &sql[..idx];
     }
-    // Try leading comment (prepend placement) — single-line
     if sql.starts_with("/* ff_metadata:") {
         if let Some(end) = sql.find("*/") {
             let rest = &sql[end + 2..];
             return rest.strip_prefix('\n').unwrap_or(rest);
         }
     }
-    // Try leading comment (prepend placement) — multi-line
     if sql.starts_with("/*\nff_metadata:") {
         if let Some(end) = sql.find("*/") {
             let rest = &sql[end + 2..];

@@ -49,7 +49,6 @@ pub(crate) async fn execute(args: &CleanArgs, global: &GlobalArgs) -> Result<()>
         }
     }
 
-    // Clean meta database file
     let meta_path = project.target_dir().join("meta.duckdb");
     if meta_path.exists() {
         if args.dry_run {
@@ -59,7 +58,6 @@ pub(crate) async fn execute(args: &CleanArgs, global: &GlobalArgs) -> Result<()>
                 Ok(_) => println!("  Removed: {}", meta_path.display()),
                 Err(e) => eprintln!("  Failed to remove {}: {}", meta_path.display(), e),
             }
-            // Also clean WAL file if it exists
             let wal_path = meta_path.with_extension("duckdb.wal");
             if wal_path.exists() {
                 let _ = fs::remove_file(&wal_path);

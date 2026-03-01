@@ -87,7 +87,6 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
     let start_time = Instant::now();
     let project = load_project(global)?;
 
-    // If the selector is a single run-group, apply its defaults (CLI flags override).
     let group_cfg = resolve_run_group_config(&args.nodes, &project.config);
 
     let group_mode = group_cfg.and_then(|g| g.mode.as_ref());
@@ -96,7 +95,6 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         group_mode.or(project.config.run.as_ref().map(|r| &r.default_mode)),
     );
 
-    // Apply run-group overrides for full_refresh and fail_fast
     let effective_args = if let Some(gcfg) = group_cfg {
         let mut patched = args.clone();
         if !args.full_refresh {
@@ -127,7 +125,6 @@ async fn execute_test_mode(
     global: &GlobalArgs,
     _project: &ff_core::Project,
 ) -> Result<()> {
-    // Delegate to the test module with equivalent args
     let test_args = crate::cli::TestArgs {
         nodes: args.nodes.clone(),
         fail_fast: args.fail_fast,
@@ -147,7 +144,6 @@ async fn execute_build_mode(
     _project: &ff_core::Project,
     _start_time: Instant,
 ) -> Result<()> {
-    // Delegate to the build module with equivalent args
     let build_args = crate::cli::BuildArgs {
         nodes: args.nodes.clone(),
         exclude: args.exclude.clone(),
@@ -190,7 +186,6 @@ async fn execute_models_mode(
         json_mode,
     )?;
 
-    // Open meta database early (needed for smart build and execution state)
     let meta_db = common::open_meta_db(project);
 
     let smart_skipped: HashSet<String> = if args.smart {

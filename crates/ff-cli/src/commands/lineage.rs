@@ -33,7 +33,6 @@ pub(crate) async fn execute(args: &LineageArgs, global: &GlobalArgs) -> Result<(
         }
     }
 
-    // Phase 1: Render SQL, extract dependencies, build DAG
     let mut dep_map: HashMap<String, Vec<String>> = HashMap::with_capacity(project.models.len());
     let mut rendered_sql: HashMap<String, String> = HashMap::with_capacity(project.models.len());
 
@@ -75,12 +74,10 @@ pub(crate) async fn execute(args: &LineageArgs, global: &GlobalArgs) -> Result<(
         rendered_sql.insert(name.to_string(), rendered);
     }
 
-    // Phase 2: Try DataFusion static analysis pipeline for richer lineage
     let external_tables = build_external_tables_lookup(&project);
     let topo_order: Vec<String> = if let Ok(dag) = ModelDag::build(&dep_map) {
         dag.topological_order().unwrap_or_default()
     } else {
-        // Fallback to model key order if DAG can't be built
         project.models.keys().map(|k| k.to_string()).collect()
     };
 
@@ -91,7 +88,6 @@ pub(crate) async fn execute(args: &LineageArgs, global: &GlobalArgs) -> Result<(
         &external_tables,
     );
 
-    // Phase 3: Build project lineage — DataFusion primary, AST fallback
     let mut project_lineage = ProjectLineage::new();
 
     match sa_output {
@@ -99,7 +95,6 @@ pub(crate) async fn execute(args: &LineageArgs, global: &GlobalArgs) -> Result<(
             let propagation = &output.result;
             let mut datafusion_models: HashSet<String> = HashSet::new();
 
-            // DataFusion path: convert DataFusion lineage to ff-sql types
             for (model_name, plan_result) in &propagation.model_plans {
                 let df_lineage =
                     ff_analysis::extract_plan_column_lineage(model_name.clone(), &plan_result.plan);
@@ -116,7 +111,6 @@ pub(crate) async fn execute(args: &LineageArgs, global: &GlobalArgs) -> Result<(
                 }
             }
 
-            // AST fallback for models that failed DataFusion planning
             for name in project.models.keys() {
                 if datafusion_models.contains(name.as_str()) {
                     continue;
@@ -133,7 +127,6 @@ pub(crate) async fn execute(args: &LineageArgs, global: &GlobalArgs) -> Result<(
             }
         }
         Err(e) => {
-            // Full AST fallback if the pipeline fails entirely
             if global.verbose {
                 eprintln!(
                     "[verbose] Static analysis pipeline failed: {}, using AST fallback",
@@ -159,12 +152,10 @@ pub(crate) async fn execute(args: &LineageArgs, global: &GlobalArgs) -> Result<(
     let classification_lookup = ff_core::classification::build_classification_lookup(&project);
     project_lineage.propagate_classifications(&classification_lookup);
 
-    // Compute description status from schema registry
     let registry = SchemaRegistry::from_project(&project);
     let desc_lookup = build_description_lookup(&registry, &project);
     project_lineage.compute_description_status(&desc_lookup);
 
-    // Apply classification filter if specified
     if let Some(ref cls) = args.classification {
         project_lineage
             .edges
@@ -201,7 +192,6 @@ fn bridge_datafusion_lineage(
         source_tables: HashSet::new(),
     };
 
-    // Helper: resolve a source table name through the alias map
     let resolve_table = |name: &str| -> String {
         alias_map
             .get(name)
@@ -209,7 +199,6 @@ fn bridge_datafusion_lineage(
             .unwrap_or_else(|| name.to_string())
     };
 
-    // Group edges by output_column
     let mut column_groups: HashMap<&str, Vec<&ff_analysis::ColumnLineageEdge>> = HashMap::new();
     for edge in &df.edges {
         column_groups
@@ -220,7 +209,6 @@ fn bridge_datafusion_lineage(
 
     for (output_col, edges) in &column_groups {
         if output_col.is_empty() {
-            // Empty output_column = Inspect edges
             for edge in edges {
                 if edge.kind == ff_analysis::LineageKind::Inspect {
                     let resolved = if edge.source_table.is_empty() {
@@ -291,7 +279,6 @@ fn bridge_datafusion_lineage(
 /// Print lineage as JSON
 fn print_json(lineage: &ProjectLineage, args: &LineageArgs) -> Result<()> {
     if let (Some(model), Some(column)) = (&args.node, &args.column) {
-        // Filter to specific column (recursive traversal)
         let edges: Vec<_> = match args.direction {
             LineageDirection::Upstream => lineage.trace_column_recursive(model, column),
             LineageDirection::Downstream => lineage.column_consumers_recursive(model, column),
@@ -303,7 +290,6 @@ fn print_json(lineage: &ProjectLineage, args: &LineageArgs) -> Result<()> {
         };
         println!("{}", serde_json::to_string_pretty(&edges)?);
     } else if let Some(model) = &args.node {
-        // Filter to specific model
         let edges: Vec<_> = lineage
             .edges
             .iter()
@@ -361,7 +347,6 @@ fn print_table(lineage: &ProjectLineage, args: &LineageArgs) {
         return;
     }
 
-    // Print header
     println!(
         "{:<25} {:<20} {:<25} {:<20} {:<10} {:<12} {:<12} TYPE",
         "SOURCE MODEL",
@@ -399,7 +384,6 @@ fn build_description_lookup(
 ) -> HashMap<String, HashMap<String, String>> {
     let mut lookup: HashMap<String, HashMap<String, String>> = HashMap::new();
 
-    // Models
     for name in project.models.keys() {
         if let Some(columns) = registry.get_columns(name.as_str()) {
             let mut col_descs = HashMap::new();
@@ -414,7 +398,6 @@ fn build_description_lookup(
         }
     }
 
-    // Sources
     for source_file in &project.sources {
         for table in &source_file.tables {
             if let Some(columns) = registry.get_columns(&table.name) {
