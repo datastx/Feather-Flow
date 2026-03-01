@@ -242,19 +242,17 @@ async fn validate_python_output(
                 }
             })?;
 
-            // Build a case-insensitive map of actual column names
             let actual_columns: std::collections::HashSet<String> = actual_schema
                 .iter()
                 .map(|(col_name, _)| col_name.to_lowercase())
                 .collect();
 
-            // Check each declared column exists in the output
-            let mut missing: Vec<String> = Vec::new();
-            for expected_col in &model_schema.columns {
-                if !actual_columns.contains(&expected_col.name.to_lowercase()) {
-                    missing.push(expected_col.name.clone());
-                }
-            }
+            let missing: Vec<String> = model_schema
+                .columns
+                .iter()
+                .filter(|col| !actual_columns.contains(&col.name.to_lowercase()))
+                .map(|col| col.name.clone())
+                .collect();
 
             if !missing.is_empty() {
                 return Err(ff_core::error::CoreError::PythonSchemaViolation {

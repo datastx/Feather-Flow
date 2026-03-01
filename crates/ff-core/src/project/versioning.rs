@@ -32,7 +32,6 @@ impl Project {
             return (None, warnings);
         }
 
-        // Unversioned reference - find all versions and return latest
         let Some((name, model)) = self.get_latest_version(reference) else {
             return (None, warnings);
         };
@@ -63,11 +62,10 @@ impl Project {
             return None;
         }
 
-        // Sort by version (None treated as 0, so unversioned comes before v1)
         candidates.sort_by(|a, b| {
             let va = a.2.unwrap_or(0);
             let vb = b.2.unwrap_or(0);
-            vb.cmp(&va) // Descending order, highest version first
+            vb.cmp(&va)
         });
 
         candidates.first().map(|(name, model, _)| (*name, *model))

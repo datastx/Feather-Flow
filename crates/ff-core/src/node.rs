@@ -26,7 +26,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NodeKind {
-    // ── Modern names ─────────────────────────────────────────────────
     /// SQL transformation model
     Sql,
     /// CSV seed data
@@ -38,7 +37,6 @@ pub enum NodeKind {
     /// Python transformation (reserved for future use)
     Python,
 
-    // ── Legacy aliases (accepted on read, normalised away) ───────────
     /// Legacy alias for [`NodeKind::Sql`]
     Model,
     /// Legacy alias for [`NodeKind::Source`] (plural form from v1 YAML)
@@ -76,7 +74,6 @@ impl NodeKind {
             NodeKind::Function => Some("sql"),
             NodeKind::Python => Some("py"),
             NodeKind::Source => None,
-            // Legacy variants are handled by normalize(); unreachable after normalize
             _ => None,
         }
     }

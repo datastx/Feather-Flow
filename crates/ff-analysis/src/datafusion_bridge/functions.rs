@@ -20,7 +20,6 @@ pub(crate) fn duckdb_scalar_udfs() -> Vec<Arc<ScalarUDF>> {
     let date = DataType::Date32;
 
     vec![
-        // Date/time functions (accept both Timestamp and Date)
         make_overloaded_scalar(
             "date_trunc",
             &[
@@ -74,7 +73,6 @@ pub(crate) fn duckdb_scalar_udfs() -> Vec<Arc<ScalarUDF>> {
             ],
             DataType::Timestamp(arrow::datatypes::TimeUnit::Microsecond, None),
         ),
-        // String formatting
         make_scalar(
             "strftime",
             vec![
@@ -88,7 +86,6 @@ pub(crate) fn duckdb_scalar_udfs() -> Vec<Arc<ScalarUDF>> {
             vec![DataType::Utf8, DataType::Utf8],
             DataType::Timestamp(arrow::datatypes::TimeUnit::Microsecond, None),
         ),
-        // Epoch conversions
         make_scalar(
             "epoch",
             vec![DataType::Timestamp(
@@ -102,7 +99,6 @@ pub(crate) fn duckdb_scalar_udfs() -> Vec<Arc<ScalarUDF>> {
             vec![DataType::Int64],
             DataType::Timestamp(arrow::datatypes::TimeUnit::Microsecond, None),
         ),
-        // Regex
         make_scalar(
             "regexp_matches",
             vec![DataType::Utf8, DataType::Utf8],
@@ -118,18 +114,15 @@ pub(crate) fn duckdb_scalar_udfs() -> Vec<Arc<ScalarUDF>> {
             vec![DataType::Utf8, DataType::Utf8],
             DataType::Utf8,
         ),
-        // Type conversion (type-preserving: returns first non-Null arg type)
         make_type_preserving_variadic_scalar("coalesce"),
         make_type_preserving_variadic_scalar("ifnull"),
         make_type_preserving_variadic_scalar("nullif"),
-        // Struct functions
         make_variadic_scalar("struct_pack", DataType::Utf8),
         make_scalar(
             "struct_extract",
             vec![DataType::Utf8, DataType::Utf8],
             DataType::Utf8,
         ),
-        // List functions
         make_variadic_scalar("list_value", DataType::Utf8),
         make_scalar(
             "list_extract",
@@ -137,7 +130,6 @@ pub(crate) fn duckdb_scalar_udfs() -> Vec<Arc<ScalarUDF>> {
             DataType::Utf8,
         ),
         make_scalar("unnest", vec![DataType::Utf8], DataType::Utf8),
-        // Utility
         make_scalar(
             "generate_series",
             vec![DataType::Int64, DataType::Int64],
@@ -145,7 +137,6 @@ pub(crate) fn duckdb_scalar_udfs() -> Vec<Arc<ScalarUDF>> {
         ),
         make_scalar("hash", vec![DataType::Utf8], DataType::Int64),
         make_scalar("md5", vec![DataType::Utf8], DataType::Utf8),
-        // String functions
         make_scalar(
             "format",
             vec![DataType::Utf8, DataType::Utf8],
@@ -161,7 +152,6 @@ pub(crate) fn duckdb_scalar_udfs() -> Vec<Arc<ScalarUDF>> {
             vec![DataType::Utf8, DataType::Utf8],
             DataType::Utf8,
         ),
-        // Standard SQL string functions
         make_scalar("lower", vec![DataType::Utf8], DataType::Utf8),
         make_scalar("upper", vec![DataType::Utf8], DataType::Utf8),
         make_scalar("trim", vec![DataType::Utf8], DataType::Utf8),
@@ -239,13 +229,11 @@ pub(crate) fn duckdb_scalar_udfs() -> Vec<Arc<ScalarUDF>> {
 /// planning-only context does not provide by default, plus DuckDB-specific ones.
 pub(crate) fn duckdb_aggregate_udfs() -> Vec<Arc<AggregateUDF>> {
     vec![
-        // Standard SQL aggregates (type-preserving: return type matches input type)
         make_type_preserving_aggregate("sum"),
         make_type_preserving_aggregate("avg"),
         make_type_preserving_aggregate("min"),
         make_type_preserving_aggregate("max"),
         make_aggregate("count", DataType::Utf8, DataType::Int64),
-        // DuckDB-specific aggregates
         make_aggregate("string_agg", DataType::Utf8, DataType::Utf8),
         make_aggregate("group_concat", DataType::Utf8, DataType::Utf8),
         make_aggregate("list_agg", DataType::Utf8, DataType::Utf8),
@@ -278,7 +266,6 @@ fn make_overloaded_scalar(name: &str, overloads: &[(Vec<DataType>, DataType)]) -
         .iter()
         .map(|(args, _)| TypeSignature::Exact(args.clone()))
         .collect();
-    // Use the return type of the first overload as the default
     let ret = overloads
         .first()
         .map(|(_, r)| r.clone())
@@ -345,8 +332,6 @@ pub(crate) fn make_user_scalar_udf(
 
     make_scalar(name, arrow_args, arrow_ret)
 }
-
-// --- Stub implementations ---
 
 /// A no-op scalar UDF stub that provides type information for DataFusion planning.
 ///
@@ -425,8 +410,6 @@ impl datafusion_expr::AggregateUDFImpl for StubAggregateUDF {
     }
 }
 
-// --- Type-preserving stubs ---
-
 /// A scalar UDF that returns the type of its first non-Null argument.
 ///
 /// Used for COALESCE, IFNULL, NULLIF where the output type should match the input.
@@ -450,7 +433,6 @@ impl ScalarUDFImpl for TypePreservingScalarUDF {
     }
 
     fn return_type(&self, args: &[DataType]) -> DFResult<DataType> {
-        // Return the first non-Null argument type, falling back to Utf8
         Ok(args
             .iter()
             .find(|t| !matches!(t, DataType::Null))
@@ -492,7 +474,6 @@ impl datafusion_expr::AggregateUDFImpl for TypePreservingAggregateUDF {
     }
 
     fn return_type(&self, args: &[DataType]) -> DFResult<DataType> {
-        // Return the first argument's type, falling back to Utf8
         Ok(args.first().cloned().unwrap_or(DataType::Utf8))
     }
 

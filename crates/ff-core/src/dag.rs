@@ -65,7 +65,6 @@ impl ModelDag {
                 if dep.eq_ignore_ascii_case(model) {
                     continue;
                 }
-                // Only add edge if the dependency is also a model (not external)
                 if dependencies.contains_key(dep) {
                     dag.add_dependency(model, dep)?;
                 }

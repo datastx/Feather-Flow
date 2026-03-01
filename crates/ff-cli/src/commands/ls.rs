@@ -40,7 +40,6 @@ pub(crate) async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
         let (model_deps, ext_deps) =
             ff_sql::extractor::categorize_dependencies(deps, &known_models, &external_tables);
 
-        // Config is read from YAML (already on model.config)
         let mat = model
             .config
             .materialized
@@ -86,7 +85,7 @@ pub(crate) async fn execute(args: &LsArgs, global: &GlobalArgs) -> Result<()> {
             model_info.push(ModelInfo {
                 name: source_name,
                 resource_type: InfoResourceType::Source,
-                path: None, // Sources don't have a file path
+                path: None,
                 materialized: None,
                 schema: Some(source.schema.clone()),
                 model_deps: Vec::new(),

@@ -199,7 +199,7 @@ impl<'a> FeatherFlowProvider<'a> {
             .collect();
         let lowercase_schemas: HashMap<String, SchemaRef> = arrow_schemas
             .iter()
-            .map(|(k, v)| (k.to_lowercase(), v.clone()))
+            .map(|(k, v)| (k.to_lowercase(), Arc::clone(v)))
             .collect();
         Self {
             arrow_schemas,
@@ -213,7 +213,7 @@ impl<'a> FeatherFlowProvider<'a> {
     pub fn insert_schema(&mut self, name: String, schema: &RelSchema) {
         let arrow = Self::rel_schema_to_arrow(schema);
         self.lowercase_schemas
-            .insert(name.to_lowercase(), arrow.clone());
+            .insert(name.to_lowercase(), Arc::clone(&arrow));
         self.arrow_schemas.insert(name, arrow);
     }
 
@@ -243,7 +243,7 @@ impl TableSource for LogicalTableSource {
     }
 
     fn schema(&self) -> SchemaRef {
-        self.schema.clone()
+        Arc::clone(&self.schema)
     }
 }
 
@@ -252,13 +252,13 @@ impl ContextProvider for FeatherFlowProvider<'_> {
         let table_name = name.table();
         if let Some(arrow_schema) = self.arrow_schemas.get(table_name) {
             return Ok(Arc::new(LogicalTableSource {
-                schema: arrow_schema.clone(),
+                schema: Arc::clone(arrow_schema),
             }));
         }
 
         if let Some(arrow_schema) = self.lowercase_schemas.get(&table_name.to_lowercase()) {
             return Ok(Arc::new(LogicalTableSource {
-                schema: arrow_schema.clone(),
+                schema: Arc::clone(arrow_schema),
             }));
         }
 
@@ -271,7 +271,7 @@ impl ContextProvider for FeatherFlowProvider<'_> {
         _args: Vec<Expr>,
     ) -> DFResult<Arc<dyn TableSource>> {
         if let Some(source) = self.registry.table_functions.get(&name.to_uppercase()) {
-            return Ok(source.clone());
+            return Ok(Arc::clone(source));
         }
         plan_err!("Table function not found: {name}")
     }

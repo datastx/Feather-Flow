@@ -46,7 +46,7 @@ impl SqlParser {
     /// Parse SQL and return the first statement
     pub fn parse_single(&self, sql: &str) -> SqlResult<Statement> {
         let stmts = self.parse(sql)?;
-        stmts.into_iter().next().ok_or(SqlError::EmptySql)
+        stmts.into_iter().next().ok_or_else(|| SqlError::EmptySql)
     }
 
     /// Get the dialect name

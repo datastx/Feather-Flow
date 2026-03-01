@@ -120,12 +120,10 @@ pub struct ModelSchema {
     #[serde(default)]
     pub deprecation_message: Option<String>,
 
-    // ── Model config fields (materialization, hooks, etc.) ───────────
     /// Materialization type (view, table, incremental, ephemeral)
     #[serde(default)]
     pub materialized: Option<String>,
 
-    // ── Python-specific fields (only relevant when kind: python) ──────
     /// Explicit dependency list for Python models (kind: python only).
     /// Since Python scripts cannot be parsed for SQL table references,
     /// dependencies must be declared here.
@@ -136,7 +134,6 @@ pub struct ModelSchema {
     #[serde(default)]
     pub python: Option<PythonConfig>,
 
-    // ── Seed-specific fields (only relevant when kind: seed) ─────────
     /// Override target schema for seed/model loading
     #[serde(default)]
     pub schema: Option<String>,

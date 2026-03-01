@@ -124,7 +124,6 @@ impl RunState {
     /// Uses write-to-temp-then-rename pattern to prevent corruption.
     /// Temp file includes PID to avoid races from concurrent processes.
     pub fn save(&self, path: &Path) -> CoreResult<()> {
-        // Create parent directories if needed
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| crate::error::CoreError::IoWithPath {
                 path: parent.display().to_string(),

@@ -52,7 +52,6 @@ fn walk_plan(model: &str, plan: &LogicalPlan, diags: &mut Vec<Diagnostic>) {
         }
 
         LogicalPlan::Aggregate(agg) => {
-            // A004: SUM/AVG on string column
             for expr in &agg.aggr_expr {
                 check_aggregate_type(model, expr, &agg.input, diags);
             }

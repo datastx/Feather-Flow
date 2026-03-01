@@ -70,9 +70,7 @@ where
             walk_expr_columns(&in_sub.expr, collector);
             // Don't cross into the subquery plan boundary
         }
-        Expr::Exists(_) => {
-            // No column refs at this expression level
-        }
+        Expr::Exists(_) => {}
         Expr::IsTrue(inner)
         | Expr::IsFalse(inner)
         | Expr::IsNotTrue(inner)
@@ -81,7 +79,6 @@ where
         | Expr::IsNotUnknown(inner) => {
             walk_expr_columns(inner, collector);
         }
-        // Leaf variants (Literal, Placeholder, Wildcard, etc.)
         _ => {}
     }
 }

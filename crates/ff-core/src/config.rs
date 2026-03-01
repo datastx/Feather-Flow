@@ -7,8 +7,6 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-// ── Hardcoded directory conventions ─────────────────────────────────────────
-
 /// Hardcoded node directory name.
 const NODE_DIR: &str = "nodes";
 
@@ -23,8 +21,6 @@ const DEFAULT_TARGET_DIR: &str = "target";
 
 /// Hardcoded clean targets.
 const DEFAULT_CLEAN_DIRS: &[&str] = &[DEFAULT_TARGET_DIR];
-
-// ── Main config struct ──────────────────────────────────────────────────────
 
 /// Main project configuration from featherflow.yml
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,8 +94,6 @@ pub struct Config {
     pub run_groups: Option<HashMap<String, RunGroupConfig>>,
 }
 
-// ── DatabaseConfig ──────────────────────────────────────────────────────────
-
 /// Database connection configuration.
 ///
 /// In the new config format, each named connection under `database:` is a
@@ -144,8 +138,6 @@ impl Default for DatabaseConfig {
         }
     }
 }
-
-// ── DatabaseMap (custom deserializer for backward compat) ───────────────────
 
 /// Named database connections with a required `default` key.
 ///
@@ -203,8 +195,6 @@ impl DatabaseMap {
         self.0.keys().map(|s| s.as_str()).collect()
     }
 }
-
-// ── Enums ───────────────────────────────────────────────────────────────────
 
 /// Database type selector
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -395,8 +385,6 @@ impl std::fmt::Display for RunMode {
     }
 }
 
-// ── Default functions ───────────────────────────────────────────────────────
-
 fn default_version() -> String {
     "1.0.0".to_string()
 }
@@ -414,8 +402,6 @@ fn default_db_path() -> String {
 fn default_db_name() -> String {
     "main".to_string()
 }
-
-// ── Config implementation ───────────────────────────────────────────────────
 
 impl Config {
     /// Load configuration from a file path
@@ -462,14 +448,12 @@ impl Config {
             });
         }
 
-        // Require a "default" database connection
         if !self.database.0.contains_key("default") {
             return Err(CoreError::ConfigInvalid {
                 message: "database map must contain a 'default' connection".to_string(),
             });
         }
 
-        // Validate diagnostic code keys in severity_overrides
         for code in self.analysis.severity_overrides.keys() {
             if !VALID_DIAGNOSTIC_CODES.contains(&code.as_str()) {
                 return Err(CoreError::ConfigInvalid {
@@ -485,8 +469,6 @@ impl Config {
         Ok(())
     }
 
-    // ── Variable accessors ──────────────────────────────────────────────
-
     /// Get a variable value by name
     pub fn get_var(&self, name: &str) -> Option<&serde_yaml::Value> {
         self.vars.get(name)
@@ -501,8 +483,6 @@ impl Config {
     pub fn external_tables_as_set(&self) -> std::collections::HashSet<&str> {
         self.external_tables.iter().map(|s| s.as_str()).collect()
     }
-
-    // ── Path accessors (hardcoded) ──────────────────────────────────────
 
     /// Get absolute node paths (always `<root>/nodes/`)
     pub fn node_paths_absolute(&self, root: &Path) -> Vec<PathBuf> {
@@ -528,8 +508,6 @@ impl Config {
     pub fn clean_targets(&self) -> Vec<&str> {
         DEFAULT_CLEAN_DIRS.to_vec()
     }
-
-    // ── Database connection accessors ───────────────────────────────────
 
     /// Get a database connection by name. `None` returns the "default" connection.
     pub fn get_database_config(&self, db: Option<&str>) -> CoreResult<&DatabaseConfig> {
@@ -593,8 +571,6 @@ impl Config {
             .or_else(|| std::env::var("FF_DATABASE").ok())
     }
 }
-
-// ── Display implementations ─────────────────────────────────────────────────
 
 impl std::fmt::Display for Materialization {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -664,8 +640,6 @@ impl std::fmt::Display for Dialect {
         }
     }
 }
-
-// ── Analysis / governance / query comment config types ──────────────────────
 
 /// Severity level for analysis diagnostic overrides
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

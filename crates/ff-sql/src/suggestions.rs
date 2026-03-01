@@ -198,7 +198,6 @@ fn analyze_expression_for_suggestions(
     ) {
         return;
     }
-    // Division or subtraction might indicate amounts
     let has_amount = extract_columns_from_expr(left)
         .iter()
         .chain(extract_columns_from_expr(right).iter())
@@ -212,9 +211,7 @@ fn analyze_expression_for_suggestions(
 fn analyze_column_name(col: &str, suggestions: &mut ModelSuggestions) {
     let lower = col.to_lowercase();
 
-    // ID columns should be unique
     if lower.ends_with("_id") && !lower.contains("fk_") {
-        // Foreign keys typically reference other tables
         let potential_ref = lower.trim_end_matches("_id");
         if !potential_ref.is_empty() {
             suggestions.add_suggestion(
@@ -227,7 +224,6 @@ fn analyze_column_name(col: &str, suggestions: &mut ModelSuggestions) {
         }
     }
 
-    // Primary key patterns
     if lower == "id"
         || lower == "pk"
         || lower.ends_with("_pk")
@@ -238,7 +234,6 @@ fn analyze_column_name(col: &str, suggestions: &mut ModelSuggestions) {
         suggestions.add_suggestion(col, TestSuggestion::NotNull);
     }
 
-    // Date/timestamp columns
     if lower.ends_with("_at")
         || lower.ends_with("_date")
         || lower.ends_with("_time")
@@ -250,7 +245,6 @@ fn analyze_column_name(col: &str, suggestions: &mut ModelSuggestions) {
         suggestions.add_suggestion(col, TestSuggestion::DateColumn);
     }
 
-    // Amount/currency columns (should be non-negative)
     if is_amount_column_name(&lower) {
         suggestions.add_suggestion(col, TestSuggestion::NonNegative);
     }

@@ -306,7 +306,6 @@ impl ProjectLineage {
 
     /// Resolve cross-model edges by matching source tables to known models
     pub fn resolve_edges(&mut self, known_models: &HashSet<&str>) {
-        // SELECT output edges (Copy/Rename/Transform)
         let new_edges: Vec<_> = self
             .models
             .iter()
@@ -321,7 +320,6 @@ impl ProjectLineage {
 
         self.edges.extend(new_edges);
 
-        // Inspect edges from WHERE/JOIN ON/GROUP BY/HAVING
         let inspect_edges: Vec<_> = self
             .models
             .iter()
@@ -494,8 +492,6 @@ fn resolve_single_edge(
     source_ref: &ColumnRef,
     known_models: &HashSet<&str>,
 ) -> Option<LineageEdge> {
-    // When source_ref.table is None (unqualified column like `id` instead of `t.id`),
-    // infer from source_tables if there is exactly one source table.
     let inferred_table: Option<&str> = match source_ref.table.as_deref() {
         Some(t) => Some(t),
         None if lineage.source_tables.len() == 1 => {
@@ -677,23 +673,19 @@ fn extract_lineage_from_select(select: &Select, lineage: &mut ModelLineage) {
         }
     }
 
-    // Collect columns already in SELECT output for dedup
     let select_columns: HashSet<ColumnRef> = lineage
         .columns
         .iter()
         .flat_map(|c| c.source_columns.iter().cloned())
         .collect();
 
-    // Extract Inspect columns from WHERE, JOIN ON, GROUP BY, HAVING
     let mut inspect_refs: HashSet<ColumnRef> = HashSet::new();
 
-    // WHERE clause
     if let Some(ref selection) = select.selection {
         let wh = extract_lineage_from_expr(selection, lineage);
         inspect_refs.extend(wh.source_columns);
     }
 
-    // JOIN ON clauses
     for table in &select.from {
         for join in &table.joins {
             if let Some(expr) = extract_join_on_expr(&join.join_operator) {
@@ -703,7 +695,6 @@ fn extract_lineage_from_select(select: &Select, lineage: &mut ModelLineage) {
         }
     }
 
-    // GROUP BY
     if let sqlparser::ast::GroupByExpr::Expressions(ref exprs, _) = select.group_by {
         for expr in exprs {
             let gb = extract_lineage_from_expr(expr, lineage);
@@ -711,13 +702,11 @@ fn extract_lineage_from_select(select: &Select, lineage: &mut ModelLineage) {
         }
     }
 
-    // HAVING
     if let Some(ref having) = select.having {
         let hv = extract_lineage_from_expr(having, lineage);
         inspect_refs.extend(hv.source_columns);
     }
 
-    // Only keep refs that are NOT already in SELECT output
     for col_ref in inspect_refs {
         if col_ref.column != "*" && !select_columns.contains(&col_ref) {
             lineage.inspect_columns.push(col_ref);

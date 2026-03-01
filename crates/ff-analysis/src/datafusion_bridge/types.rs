@@ -41,8 +41,8 @@ pub fn sql_type_to_arrow(sql_type: &SqlType) -> ArrowDataType {
         }
         SqlType::Interval => ArrowDataType::Interval(arrow::datatypes::IntervalUnit::DayTime),
         SqlType::Binary => ArrowDataType::Binary,
-        SqlType::Json => ArrowDataType::Utf8, // JSON stored as string in Arrow
-        SqlType::Uuid => ArrowDataType::Utf8, // UUID stored as string in Arrow
+        SqlType::Json => ArrowDataType::Utf8,
+        SqlType::Uuid => ArrowDataType::Utf8,
         SqlType::Array(inner) => {
             let arrow_inner = sql_type_to_arrow(inner);
             ArrowDataType::List(Field::new("item", arrow_inner, true).into())
@@ -98,7 +98,6 @@ pub fn arrow_to_sql_type(arrow_type: &ArrowDataType) -> SqlType {
         ArrowDataType::Int64 => SqlType::Integer {
             bits: IntBitWidth::I64,
         },
-        // Unsigned → next-wider signed: UInt8 max 255 doesn't fit in I8 (max 127)
         ArrowDataType::UInt8 => SqlType::Integer {
             bits: IntBitWidth::I16,
         },
