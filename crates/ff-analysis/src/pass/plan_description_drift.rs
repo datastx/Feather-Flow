@@ -36,21 +36,20 @@ impl DagPlanPass for PlanDescriptionDrift {
         let lineage = ctx.lineage();
         let project = ctx.project();
 
-        // Build description lookup from project schemas
         let desc_lookup = build_project_descriptions(project);
 
         for edge in &lineage.edges {
+            let targets_a_model = project.models.contains_key(edge.target_model.as_str());
+            if !targets_a_model {
+                continue;
+            }
+
             let src_desc = desc_lookup
                 .get(&edge.source_model)
                 .and_then(|cols| cols.get(&edge.source_column.to_lowercase()));
             let tgt_desc = desc_lookup
                 .get(&edge.target_model)
                 .and_then(|cols| cols.get(&edge.target_column.to_lowercase()));
-
-            // Only check edges targeting models (skip edges targeting seeds/sources)
-            if !project.models.contains_key(edge.target_model.as_str()) {
-                continue;
-            }
 
             match (edge.is_direct, src_desc, tgt_desc) {
                 // Copy/Rename with missing target description
@@ -121,12 +120,15 @@ fn build_project_descriptions(
 
     for (name, model) in &project.models {
         if let Some(schema) = &model.schema {
-            let mut col_descs = HashMap::new();
-            for col in &schema.columns {
-                if let Some(ref desc) = col.description {
-                    col_descs.insert(col.name.to_lowercase(), desc.clone());
-                }
-            }
+            let col_descs: HashMap<String, String> = schema
+                .columns
+                .iter()
+                .filter_map(|col| {
+                    col.description
+                        .as_ref()
+                        .map(|desc| (col.name.to_lowercase(), desc.clone()))
+                })
+                .collect();
             if !col_descs.is_empty() {
                 lookup.insert(name.to_string(), col_descs);
             }
@@ -135,12 +137,15 @@ fn build_project_descriptions(
 
     for source_file in &project.sources {
         for table in &source_file.tables {
-            let mut col_descs = HashMap::new();
-            for col in &table.columns {
-                if let Some(ref desc) = col.description {
-                    col_descs.insert(col.name.to_lowercase(), desc.clone());
-                }
-            }
+            let col_descs: HashMap<String, String> = table
+                .columns
+                .iter()
+                .filter_map(|col| {
+                    col.description
+                        .as_ref()
+                        .map(|desc| (col.name.to_lowercase(), desc.clone()))
+                })
+                .collect();
             if !col_descs.is_empty() {
                 lookup.insert(table.name.clone(), col_descs);
             }

@@ -103,21 +103,19 @@ impl DagPlanPass for CrossModelConsistency {
         models: &HashMap<ModelName, ModelPlanResult>,
         _ctx: &AnalysisContext,
     ) -> Vec<Diagnostic> {
-        let mut diagnostics = Vec::new();
-
         let mut model_names: Vec<_> = models.keys().collect();
         model_names.sort();
 
-        for model_name in model_names {
-            let Some(result) = models.get(model_name) else {
-                continue;
-            };
-            for mismatch in &result.mismatches {
-                diagnostics.push(mismatch_to_diagnostic(model_name, mismatch, self.name()));
-            }
-        }
-
-        diagnostics
+        model_names
+            .iter()
+            .filter_map(|name| models.get(*name).map(|result| (*name, result)))
+            .flat_map(|(name, result)| {
+                result
+                    .mismatches
+                    .iter()
+                    .map(move |m| mismatch_to_diagnostic(name, m, self.name()))
+            })
+            .collect()
     }
 }
 
