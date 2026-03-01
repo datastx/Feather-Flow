@@ -180,13 +180,13 @@ fn display_seed_schema(name: &str, schema: &[(String, String)], seed: &Seed) {
         }
     }
 
-    let mut config_notes = Vec::new();
-    if let Some(s) = &seed.schema {
-        config_notes.push(format!("schema: {}", s));
-    }
-    if seed.delimiter != ',' {
-        config_notes.push(format!("delimiter: {:?}", seed.delimiter));
-    }
+    let config_notes: Vec<String> = [
+        seed.schema.as_ref().map(|s| format!("schema: {}", s)),
+        (seed.delimiter != ',').then(|| format!("delimiter: {:?}", seed.delimiter)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
     if !config_notes.is_empty() {
         println!("  [{}]", config_notes.join(", "));
     }

@@ -330,30 +330,32 @@ pub fn build_user_function_stubs(
 ) -> (Vec<UserFunctionStub>, Vec<UserTableFunctionStub>) {
     use ff_core::function::FunctionReturn;
 
-    let mut scalar_stubs = Vec::new();
-    let mut table_stubs = Vec::new();
-
-    for f in &project.functions {
-        match &f.returns {
+    let scalar_stubs = project
+        .functions
+        .iter()
+        .filter_map(|f| match &f.returns {
             FunctionReturn::Scalar { data_type } => {
                 let sig = f.signature();
-                if let Some(stub) =
-                    UserFunctionStub::new(sig.name.to_string(), sig.arg_types, data_type.clone())
-                {
-                    scalar_stubs.push(stub);
-                }
+                UserFunctionStub::new(sig.name.to_string(), sig.arg_types, data_type.clone())
             }
+            _ => None,
+        })
+        .collect();
+
+    let table_stubs = project
+        .functions
+        .iter()
+        .filter_map(|f| match &f.returns {
             FunctionReturn::Table { columns } => {
                 let cols: Vec<(String, String)> = columns
                     .iter()
                     .map(|c| (c.name.clone(), c.data_type.clone()))
                     .collect();
-                if let Some(stub) = UserTableFunctionStub::new(f.name.to_string(), cols) {
-                    table_stubs.push(stub);
-                }
+                UserTableFunctionStub::new(f.name.to_string(), cols)
             }
-        }
-    }
+            _ => None,
+        })
+        .collect();
 
     (scalar_stubs, table_stubs)
 }
