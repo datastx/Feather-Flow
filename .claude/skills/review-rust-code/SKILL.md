@@ -16,7 +16,7 @@ Apply these standards when working with Rust code in this project. These pattern
 3. **Parse, don't validate**: Enforce invariants at construction time
 4. **No `unwrap()` outside tests**: Every `unwrap()` is an implicit assertion that something can never fail — use `?` or `.expect("reason")`
 5. **No `clone()` to appease the borrow checker**: Restructure ownership, use `Cow<T>`, `Arc`, or references instead
-6. **Minimal visibility**: `pub` is a code smell unless you're building a library API — default to private, then `pub(crate)`, then `pub(super)`, then `pub`
+6. **Private by default**: Every item starts private. Widen visibility only when a caller outside the current scope *actually needs it* — escalate through `pub(super)` → `pub(crate)` → `pub`, and justify each step. Treat every `pub` on a struct field, helper function, or internal type as a review finding until proven otherwise
 7. **AST over regex**: Use proper parsers and abstract syntax trees instead of string manipulation
 8. **No inline comments**: Code should be self-explanatory — if it needs a comment, the code needs rewriting
 9. **Prefer iterators over manual loops**: `.iter().filter().map().collect()` over `for` loops with mutable accumulators
@@ -853,24 +853,6 @@ let cache = Arc::new(RwLock::new(HashMap::new()));
 
 ## Module Organization
 
-### Visibility hierarchy
-
-Default to private, expose deliberately:
-
-```rust
-mod internal {
-    pub(crate) struct Helper;
-
-    impl Helper {
-        pub(super) fn assist(&self) { /* ... */ }
-        fn private_method(&self) { /* ... */ }
-    }
-}
-
-// lib.rs: Curated public API
-pub use crate::internal::Helper;
-```
-
 ### Prelude pattern
 
 ```rust
@@ -880,6 +862,143 @@ pub mod prelude {
     pub use crate::types::{UserId, Email};
 }
 ```
+
+---
+
+## Private by Default — Visibility Discipline
+
+Rust lets you slap `pub` on anything. Resist it. Every `pub` widens your API surface, increases coupling, and makes future refactors harder. The rule is simple: **start private, widen only when forced**.
+
+### The Visibility Escalation Ladder
+
+Only climb the ladder when a *real, current* caller demands it — never "just in case":
+
+```
+private          → default for everything, no keyword needed
+pub(super)       → parent module needs access
+pub(crate)       → other modules within the crate need access
+pub              → external consumers need access (library boundary)
+```
+
+**If no code outside the current module calls it, it stays private. Period.**
+
+### Rules
+
+1. **Functions**: Every function starts private. Promote to `pub(crate)` only when another module calls it. Promote to `pub` only when it is part of the crate's external API surface.
+
+2. **Struct fields**: Fields are private unless the struct is explicitly a data-transfer type or a public API contract. Expose behaviour through methods, not raw field access.
+
+3. **Struct constructors**: Prefer `Type::new()` or builder patterns over making fields `pub`. This preserves invariants and lets you change internals without breaking callers.
+
+4. **Enum variants**: Variants on a `pub` enum are automatically public — this is fine for domain types. But if an enum is only used within the crate, the enum itself should be `pub(crate)`, not `pub`.
+
+5. **Trait methods**: Methods on a `pub` trait are automatically public. Keep traits `pub(crate)` unless they are genuinely part of the external API.
+
+6. **Modules**: `mod foo;` is private by default — keep it that way. Use `pub use` re-exports in `lib.rs` to curate the public surface instead of making entire module trees public.
+
+7. **Type aliases and constants**: Same rule as everything else — private first, widen when needed.
+
+8. **Impl blocks**: Methods in `impl MyStruct` default to private. Only add `pub` to the methods that external callers actually invoke.
+
+### Patterns
+
+**Curated re-exports instead of public modules:**
+
+```rust
+// GOOD: internal module stays private, public API is curated
+mod internal {
+    pub(crate) struct Helper;
+
+    impl Helper {
+        pub(crate) fn assist(&self) { /* ... */ }
+        fn private_detail(&self) { /* ... */ }
+    }
+}
+
+// lib.rs — only expose what consumers actually need
+pub use crate::internal::Helper;
+```
+
+```rust
+// BAD: leaks internal structure and every pub item inside
+pub mod internal {
+    pub struct Helper;
+
+    impl Helper {
+        pub fn assist(&self) { /* ... */ }
+        pub fn private_detail(&self) { /* ... */ } // now exposed!
+    }
+}
+```
+
+**Private fields with accessor methods:**
+
+```rust
+// GOOD: invariants protected, internal representation can change freely
+pub struct Config {
+    max_retries: u32,
+    timeout_ms: u64,
+}
+
+impl Config {
+    pub fn new(max_retries: u32, timeout_ms: u64) -> Result<Self, ConfigError> {
+        if max_retries == 0 { return Err(ConfigError::InvalidRetries); }
+        Ok(Self { max_retries, timeout_ms })
+    }
+
+    pub fn max_retries(&self) -> u32 { self.max_retries }
+    pub fn timeout_ms(&self) -> u64 { self.timeout_ms }
+}
+```
+
+```rust
+// BAD: anyone can set max_retries to 0 and violate invariants
+pub struct Config {
+    pub max_retries: u32,
+    pub timeout_ms: u64,
+}
+```
+
+**Crate-internal enums:**
+
+```rust
+// GOOD: only visible within the crate
+pub(crate) enum ResolveStep {
+    Parse,
+    Validate,
+    Execute,
+}
+```
+
+```rust
+// BAD: exposed to external consumers for no reason
+pub enum ResolveStep {
+    Parse,
+    Validate,
+    Execute,
+}
+```
+
+### Review Heuristics
+
+When reviewing code, flag the following as findings:
+
+- Any `pub` function that is only called within its own module → **make it private**
+- Any `pub` function only called within the crate → **downgrade to `pub(crate)`**
+- Any `pub` struct field → **why isn't this behind a method?**
+- Any `pub mod` declaration → **should this be a private module with `pub use` re-exports?**
+- Any `pub` trait only implemented/used within the crate → **downgrade to `pub(crate)`**
+- Any `pub` on a test helper or test-only type → **remove it entirely or scope to `pub(crate)` with `#[cfg(test)]`**
+
+### Exceptions
+
+These are the *only* cases where broad visibility is acceptable:
+
+- **`lib.rs` re-exports**: `pub use` in `lib.rs` to curate the crate's external API
+- **Trait implementations**: Methods required by a `pub` trait must be `pub`
+- **Derive-required visibility**: Some derives (e.g., `Serialize`) need field access — prefer `#[serde(getter = "...")]` or accept `pub` with a comment explaining why
+- **FFI boundaries**: `extern "C"` functions must be `pub`
+- **Prelude modules**: `pub mod prelude` is a deliberate public convenience surface
 
 ---
 
@@ -1066,7 +1185,7 @@ When reviewing Rust code, check:
 - **Error handling**: `thiserror` for libs, `anyhow` for apps? `Display` implemented? Context provided?
 - **Early returns**: Functions use `?`, `let-else`, and guard clauses instead of nesting
 - **Iterator chains**: Prefer `.iter().filter().map().collect()` over manual loops
-- **Visibility**: Everything private by default, `pub(crate)` where needed, `pub` only for true API
+- **Visibility**: Every item starts private — flag any `pub` that isn't called from outside the crate, any `pub` struct field without justification, and any `pub mod` that should be a private module with `pub use` re-exports. Escalation ladder: private → `pub(super)` → `pub(crate)` → `pub`
 - **AST parsing**: SQL/template manipulation uses AST parsers, not regex
 - **No inline comments**: Code is self-explanatory; only "why" comments survive review
 - **Test separation**: Tests in `_test.rs` files, not inline modules
@@ -1089,7 +1208,7 @@ These patterns make clean code the path of least resistance in Rust:
 6. **Tests in separate `_test.rs` files** — keep production code clean
 7. **Iterators over manual loops** — more idiomatic, composable, same performance
 8. **Clippy is law** — no exceptions
-9. **Visibility is minimal** — private by default, `pub` only when genuinely public API
+9. **Private by default** — every item starts private; `pub` is a review finding until justified. Climb the ladder (private → `pub(super)` → `pub(crate)` → `pub`) only when a real caller demands it
 10. **AST parsing over regex** for structural transformations
 
 For detailed examples and supporting documentation, see [examples.md](examples.md).
