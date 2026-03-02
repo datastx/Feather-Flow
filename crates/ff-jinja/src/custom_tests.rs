@@ -37,32 +37,46 @@ pub fn discover_custom_test_macros(
             continue;
         }
 
-        // Scan top-level .sql files in the directory (non-recursive by design)
-        let entries = fs::read_dir(path).map_err(|e| {
-            JinjaError::Internal(format!(
-                "failed to read macro directory {}: {}",
-                path.display(),
-                e
-            ))
-        })?;
-
-        for entry_result in entries {
-            let entry = entry_result.map_err(|e| {
-                JinjaError::Internal(format!(
-                    "failed to read directory entry in {}: {}",
-                    path.display(),
-                    e
-                ))
-            })?;
-            let file_path = entry.path();
-            if file_path.extension().is_some_and(|e| e == "sql") {
-                let file_macros = process_macro_file(&file_path)?;
-                discovered.extend(file_macros);
-            }
+        let sql_files = scan_sql_files_in_dir(path)?;
+        for file_path in sql_files {
+            let file_macros = process_macro_file(&file_path)?;
+            discovered.extend(file_macros);
         }
     }
 
     Ok(discovered)
+}
+
+/// Scan a directory for top-level `.sql` files (non-recursive).
+fn scan_sql_files_in_dir(dir: &Path) -> JinjaResult<Vec<std::path::PathBuf>> {
+    fs::read_dir(dir)
+        .map_err(|e| {
+            JinjaError::Internal(format!(
+                "failed to read macro directory {}: {}",
+                dir.display(),
+                e
+            ))
+        })?
+        .filter_map(|entry_result| {
+            entry_result
+                .map_err(|e| {
+                    JinjaError::Internal(format!(
+                        "failed to read directory entry in {}: {}",
+                        dir.display(),
+                        e
+                    ))
+                })
+                .map(|entry| {
+                    let p = entry.path();
+                    if p.extension().is_some_and(|ext| ext == "sql") {
+                        Some(p)
+                    } else {
+                        None
+                    }
+                })
+                .transpose()
+        })
+        .collect()
 }
 
 /// Read a single macro file and extract any test macros from it.

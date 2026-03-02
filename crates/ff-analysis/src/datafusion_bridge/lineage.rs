@@ -218,7 +218,7 @@ fn collect_aliases(plan: &LogicalPlan, aliases: &mut HashMap<String, String>) {
 }
 
 /// Deduplicate lineage edges, keeping the first occurrence per (output, source) pair
-pub fn deduplicate_edges(edges: &[ColumnLineageEdge]) -> Vec<ColumnLineageEdge> {
+pub fn deduplicate_edges(edges: &[ColumnLineageEdge]) -> Vec<&ColumnLineageEdge> {
     let mut seen: HashSet<(&str, &str, &str)> = HashSet::with_capacity(edges.len());
     let mut result = Vec::with_capacity(edges.len());
 
@@ -229,7 +229,7 @@ pub fn deduplicate_edges(edges: &[ColumnLineageEdge]) -> Vec<ColumnLineageEdge> 
             edge.source_column.as_str(),
         );
         if seen.insert(key) {
-            result.push(edge.clone());
+            result.push(edge);
         }
     }
 

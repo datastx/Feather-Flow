@@ -77,6 +77,33 @@ pub struct RuleFile {
     pub path: PathBuf,
 }
 
+/// Read all `.sql` files in a directory, returning their paths and contents.
+fn read_sql_files_in_dir(dir: &Path) -> Result<Vec<(PathBuf, String)>, crate::error::CoreError> {
+    std::fs::read_dir(dir)
+        .map_err(|e| crate::error::CoreError::IoWithPath {
+            path: dir.display().to_string(),
+            source: e,
+        })?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            if path.extension().is_none_or(|e| e != "sql") {
+                return None;
+            }
+            Some(path)
+        })
+        .map(|path| {
+            let content = std::fs::read_to_string(&path).map_err(|e| {
+                crate::error::CoreError::IoWithPath {
+                    path: path.display().to_string(),
+                    source: e,
+                }
+            })?;
+            Ok((path, content))
+        })
+        .collect()
+}
+
 /// Discover and parse rule files from the given directories.
 ///
 /// Each `.sql` file in the rule directories is parsed for header comments
@@ -86,36 +113,15 @@ pub fn discover_rules(
     rule_dirs: &[PathBuf],
     default_severity: RuleSeverity,
 ) -> Result<Vec<RuleFile>, crate::error::CoreError> {
-    let mut rules = Vec::new();
-
-    for dir in rule_dirs {
-        if !dir.exists() || !dir.is_dir() {
-            continue;
-        }
-        let entries = std::fs::read_dir(dir).map_err(|e| crate::error::CoreError::IoWithPath {
-            path: dir.display().to_string(),
-            source: e,
-        })?;
-
-        for entry in entries {
-            let entry = entry.map_err(|e| crate::error::CoreError::IoWithPath {
-                path: dir.display().to_string(),
-                source: e,
-            })?;
-            let path: PathBuf = entry.path();
-            if path.extension().is_none_or(|e| e != "sql") {
-                continue;
-            }
-            let content = std::fs::read_to_string(&path).map_err(|e| {
-                crate::error::CoreError::IoWithPath {
-                    path: path.display().to_string(),
-                    source: e,
-                }
-            })?;
-            let rule = parse_rule_file(&path, &content, default_severity);
-            rules.push(rule);
-        }
-    }
+    let mut rules: Vec<RuleFile> = rule_dirs
+        .iter()
+        .filter(|dir| dir.exists() && dir.is_dir())
+        .map(|dir| read_sql_files_in_dir(dir))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .map(|(path, content)| parse_rule_file(&path, &content, default_severity))
+        .collect();
 
     rules.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(rules)

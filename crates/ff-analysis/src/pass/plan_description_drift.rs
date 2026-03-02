@@ -52,7 +52,6 @@ impl DagPlanPass for PlanDescriptionDrift {
                 .and_then(|cols| cols.get(&edge.target_column.to_lowercase()));
 
             match (edge.is_direct, src_desc, tgt_desc) {
-                // Copy/Rename with missing target description
                 (true, Some(_src), None) => {
                     diagnostics.push(Diagnostic {
                         code: DiagnosticCode::A050,
@@ -70,7 +69,6 @@ impl DagPlanPass for PlanDescriptionDrift {
                         pass_name: "description_drift".into(),
                     });
                 }
-                // Copy/Rename with modified description
                 (true, Some(src), Some(tgt)) if src != tgt => {
                     diagnostics.push(Diagnostic {
                         code: DiagnosticCode::A051,
@@ -85,7 +83,6 @@ impl DagPlanPass for PlanDescriptionDrift {
                         pass_name: "description_drift".into(),
                     });
                 }
-                // Transform with missing target description
                 (false, _, None) => {
                     diagnostics.push(Diagnostic {
                         code: DiagnosticCode::A052,
@@ -111,46 +108,50 @@ impl DagPlanPass for PlanDescriptionDrift {
     }
 }
 
+/// Build a `column_name_lowercase -> description` map from an iterator of
+/// `(name, optional_description)` pairs.
+fn cols_to_desc_map<'a>(
+    cols: impl Iterator<Item = (&'a str, Option<&'a String>)>,
+) -> HashMap<String, String> {
+    cols.filter_map(|(name, desc)| desc.map(|d| (name.to_lowercase(), d.clone())))
+        .collect()
+}
+
 /// Build a lookup of model_name -> { column_name_lowercase -> description }
 /// from model YAML schemas and source definitions.
 fn build_project_descriptions(
     project: &ff_core::Project,
 ) -> HashMap<String, HashMap<String, String>> {
-    let mut lookup: HashMap<String, HashMap<String, String>> = HashMap::new();
-
-    for (name, model) in &project.models {
-        if let Some(schema) = &model.schema {
-            let col_descs: HashMap<String, String> = schema
+    let models_iter = project.models.iter().filter_map(|(name, model)| {
+        let schema = model.schema.as_ref()?;
+        let col_descs = cols_to_desc_map(
+            schema
                 .columns
                 .iter()
-                .filter_map(|col| {
-                    col.description
-                        .as_ref()
-                        .map(|desc| (col.name.to_lowercase(), desc.clone()))
-                })
-                .collect();
-            if !col_descs.is_empty() {
-                lookup.insert(name.to_string(), col_descs);
-            }
+                .map(|c| (c.name.as_str(), c.description.as_ref())),
+        );
+        if col_descs.is_empty() {
+            None
+        } else {
+            Some((name.to_string(), col_descs))
         }
-    }
+    });
 
-    for source_file in &project.sources {
-        for table in &source_file.tables {
-            let col_descs: HashMap<String, String> = table
-                .columns
-                .iter()
-                .filter_map(|col| {
-                    col.description
-                        .as_ref()
-                        .map(|desc| (col.name.to_lowercase(), desc.clone()))
-                })
-                .collect();
-            if !col_descs.is_empty() {
-                lookup.insert(table.name.clone(), col_descs);
+    let sources_iter = project.sources.iter().flat_map(|sf| {
+        sf.tables.iter().filter_map(|table| {
+            let col_descs = cols_to_desc_map(
+                table
+                    .columns
+                    .iter()
+                    .map(|c| (c.name.as_str(), c.description.as_ref())),
+            );
+            if col_descs.is_empty() {
+                None
+            } else {
+                Some((table.name.clone(), col_descs))
             }
-        }
-    }
+        })
+    });
 
-    lookup
+    models_iter.chain(sources_iter).collect()
 }

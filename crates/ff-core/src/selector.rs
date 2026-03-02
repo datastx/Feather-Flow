@@ -701,37 +701,29 @@ pub fn validate_run_groups(
     models: &HashMap<ModelName, Model>,
     dag: &ModelDag,
 ) -> Vec<RunGroupValidationError> {
-    let mut errors = Vec::new();
-
-    for (name, group) in run_groups {
-        if group.nodes.is_empty() {
-            errors.push(RunGroupValidationError {
-                group: name.clone(),
-                message: "run group has no nodes defined".to_string(),
-            });
-            continue;
-        }
-
-        let selectors_str = Some(group.nodes.join(","));
-        match apply_selectors_with_run_groups(&selectors_str, models, dag, Some(run_groups)) {
-            Ok(resolved) => {
-                if resolved.is_empty() {
-                    errors.push(RunGroupValidationError {
-                        group: name.clone(),
-                        message: "run group resolves to zero nodes".to_string(),
-                    });
-                }
+    run_groups
+        .iter()
+        .flat_map(|(name, group)| {
+            if group.nodes.is_empty() {
+                return vec![RunGroupValidationError {
+                    group: name.clone(),
+                    message: "run group has no nodes defined".to_string(),
+                }];
             }
-            Err(e) => {
-                errors.push(RunGroupValidationError {
+            let selectors_str = Some(group.nodes.join(","));
+            match apply_selectors_with_run_groups(&selectors_str, models, dag, Some(run_groups)) {
+                Ok(resolved) if resolved.is_empty() => vec![RunGroupValidationError {
+                    group: name.clone(),
+                    message: "run group resolves to zero nodes".to_string(),
+                }],
+                Err(e) => vec![RunGroupValidationError {
                     group: name.clone(),
                     message: e.to_string(),
-                });
+                }],
+                _ => vec![],
             }
-        }
-    }
-
-    errors
+        })
+        .collect()
 }
 
 /// A validation error for a run group.

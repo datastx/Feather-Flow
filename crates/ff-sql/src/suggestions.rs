@@ -94,8 +94,10 @@ impl ModelSuggestions {
             .suggestions
             .push(suggestion);
     }
+}
 
-    #[cfg(test)]
+#[cfg(test)]
+impl ModelSuggestions {
     /// Get suggestions for a column
     pub(crate) fn get_suggestions(&self, column: &str) -> Option<&ColumnSuggestions> {
         self.columns.get(column)
@@ -122,7 +124,7 @@ fn analyze_query(query: &Query, suggestions: &mut ModelSuggestions) {
 
 /// Analyze a SELECT statement for suggestions
 fn analyze_select(select: &Select, suggestions: &mut ModelSuggestions) {
-    let mut output_columns: HashSet<String> = HashSet::new();
+    let mut output_columns: HashSet<&str> = HashSet::new();
     for item in &select.projection {
         match item {
             SelectItem::UnnamedExpr(expr) => {
@@ -131,7 +133,7 @@ fn analyze_select(select: &Select, suggestions: &mut ModelSuggestions) {
                 }
             }
             SelectItem::ExprWithAlias { alias, expr } => {
-                output_columns.insert(alias.value.clone());
+                output_columns.insert(&alias.value);
                 analyze_expression_for_suggestions(expr, &alias.value, suggestions);
             }
             _ => {}
@@ -149,13 +151,16 @@ fn analyze_select(select: &Select, suggestions: &mut ModelSuggestions) {
 
 /// Analyze table joins for not_null suggestions
 fn analyze_table_joins(table: &TableWithJoins, suggestions: &mut ModelSuggestions) {
-    for join in &table.joins {
-        if let Some(expr) = extract_join_on_expr(&join.join_operator) {
-            for col in extract_columns_from_expr(expr) {
-                suggestions.add_suggestion(&col, TestSuggestion::NotNull);
-            }
-        }
+    for col in table
+        .joins
+        .iter()
+        .filter_map(|join| extract_join_on_expr(&join.join_operator))
+        .flat_map(|expr| extract_columns_from_expr(expr))
+    {
+        suggestions.add_suggestion(col, TestSuggestion::NotNull);
+    }
 
+    for join in &table.joins {
         if let TableFactor::NestedJoin {
             table_with_joins, ..
         } = &join.relation
@@ -199,9 +204,9 @@ fn analyze_expression_for_suggestions(
         return;
     }
     let has_amount = extract_columns_from_expr(left)
-        .iter()
-        .chain(extract_columns_from_expr(right).iter())
-        .any(|col| is_amount_column_name(col));
+        .into_iter()
+        .chain(extract_columns_from_expr(right))
+        .any(is_amount_column_name);
     if has_amount {
         suggestions.add_suggestion(output_col, TestSuggestion::NonNegative);
     }
@@ -264,25 +269,25 @@ fn is_amount_column_name(name: &str) -> bool {
 }
 
 /// Extract column name from an expression
-fn get_column_name(expr: &Expr) -> Option<String> {
+fn get_column_name(expr: &Expr) -> Option<&str> {
     match expr {
-        Expr::Identifier(ident) => Some(ident.value.clone()),
-        Expr::CompoundIdentifier(idents) => idents.last().map(|i| i.value.clone()),
+        Expr::Identifier(ident) => Some(ident.value.as_str()),
+        Expr::CompoundIdentifier(idents) => idents.last().map(|i| i.value.as_str()),
         _ => None,
     }
 }
 
 /// Extract all column references from an expression
-fn extract_columns_from_expr(expr: &Expr) -> Vec<String> {
+fn extract_columns_from_expr(expr: &Expr) -> Vec<&str> {
     let mut columns = Vec::new();
 
     match expr {
         Expr::Identifier(ident) => {
-            columns.push(ident.value.clone());
+            columns.push(ident.value.as_str());
         }
         Expr::CompoundIdentifier(idents) => {
             if let Some(last) = idents.last() {
-                columns.push(last.value.clone());
+                columns.push(last.value.as_str());
             }
         }
         Expr::BinaryOp { left, right, .. } => {
@@ -305,9 +310,9 @@ fn extract_columns_from_expr(expr: &Expr) -> Vec<String> {
 }
 
 /// Extract column references from function arguments
-fn extract_columns_from_function_args(
-    args: &sqlparser::ast::FunctionArguments,
-    columns: &mut Vec<String>,
+fn extract_columns_from_function_args<'a>(
+    args: &'a sqlparser::ast::FunctionArguments,
+    columns: &mut Vec<&'a str>,
 ) {
     let sqlparser::ast::FunctionArguments::List(arg_list) = args else {
         return;

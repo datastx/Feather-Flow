@@ -252,8 +252,10 @@ impl ModelLineage {
     pub(crate) fn add_column(&mut self, lineage: ColumnLineage) {
         self.columns.push(lineage);
     }
+}
 
-    #[cfg(test)]
+#[cfg(test)]
+impl ModelLineage {
     /// Get column lineage by name
     pub(crate) fn get_column(&self, name: &str) -> Option<&ColumnLineage> {
         self.columns.iter().find(|c| c.output_column == name)
@@ -381,8 +383,8 @@ impl ProjectLineage {
                 }
                 result.push(edge);
                 let key = (next_model.clone(), next_col.clone());
-                if visited.insert(key) {
-                    queue.push_back((next_model.clone(), next_col.clone()));
+                if visited.insert(key.clone()) {
+                    queue.push_back(key);
                 }
             }
         }
@@ -686,13 +688,14 @@ fn extract_lineage_from_select(select: &Select, lineage: &mut ModelLineage) {
         inspect_refs.extend(wh.source_columns);
     }
 
-    for table in &select.from {
-        for join in &table.joins {
-            if let Some(expr) = extract_join_on_expr(&join.join_operator) {
-                let on = extract_lineage_from_expr(expr, lineage);
-                inspect_refs.extend(on.source_columns);
-            }
-        }
+    for expr in select
+        .from
+        .iter()
+        .flat_map(|t| t.joins.iter())
+        .filter_map(|join| extract_join_on_expr(&join.join_operator))
+    {
+        let on = extract_lineage_from_expr(expr, lineage);
+        inspect_refs.extend(on.source_columns);
     }
 
     if let sqlparser::ast::GroupByExpr::Expressions(ref exprs, _) = select.group_by {

@@ -1200,9 +1200,7 @@ fn run_static_analysis(
         // Build SQL sources for incremental analysis: non-incremental models keep
         // their full SQL, incremental models use their incremental SQL.
         let mut inc_all_sources = sql_sources.clone();
-        for (name, sql) in &inc_sources {
-            inc_all_sources.insert(name.clone(), sql.clone());
-        }
+        inc_all_sources.extend(inc_sources.iter().map(|(k, v)| (k.clone(), v.clone())));
 
         match super::common::run_static_analysis_pipeline(
             project,
@@ -1258,6 +1256,33 @@ fn run_static_analysis(
     Ok(())
 }
 
+/// Write a single hook file to disk and return whether it succeeded.
+fn write_hook_file(
+    hooks_dir: &Path,
+    kind: &str,
+    index: usize,
+    total: usize,
+    content: &str,
+    model_name: &str,
+    verbose: bool,
+) -> bool {
+    let filename = if total == 1 {
+        format!("{}.sql", kind)
+    } else {
+        format!("{}_{}.sql", kind, index + 1)
+    };
+    let path = hooks_dir.join(&filename);
+    if let Err(e) = std::fs::write(&path, content) {
+        eprintln!("[warn] Failed to write {} for {}: {}", kind, model_name, e);
+        false
+    } else {
+        if verbose {
+            eprintln!("[verbose] Wrote hook {}", path.display());
+        }
+        true
+    }
+}
+
 /// Compile pre/post hooks to `target/compiled/<model>/hooks/` directory.
 ///
 /// For each model with `pre_hook` or `post_hook` in its config, renders the
@@ -1266,65 +1291,65 @@ fn run_static_analysis(
 ///
 /// Returns the number of hook files written.
 fn compile_hooks_to_target(project: &Project, output_dir: &Path, global: &GlobalArgs) -> usize {
-    let mut count = 0;
+    project
+        .models
+        .values()
+        .filter(|model| !model.config.pre_hook.is_empty() || !model.config.post_hook.is_empty())
+        .map(|model| {
+            let model_name = model.name.as_ref();
+            let hooks_dir = output_dir
+                .parent()
+                .unwrap_or(output_dir)
+                .join(model_name)
+                .join("hooks");
 
-    for model in project.models.values() {
-        let model_name = model.name.as_ref();
-        let hooks_dir = output_dir
-            .parent()
-            .unwrap_or(output_dir)
-            .join(model_name)
-            .join("hooks");
-
-        let has_hooks = !model.config.pre_hook.is_empty() || !model.config.post_hook.is_empty();
-        if !has_hooks {
-            continue;
-        }
-
-        if let Err(e) = std::fs::create_dir_all(&hooks_dir) {
-            eprintln!(
-                "[warn] Failed to create hooks directory for {}: {}",
-                model_name, e
-            );
-            continue;
-        }
-
-        for (i, hook) in model.config.pre_hook.iter().enumerate() {
-            let filename = if model.config.pre_hook.len() == 1 {
-                "pre_hook.sql".to_string()
-            } else {
-                format!("pre_hook_{}.sql", i + 1)
-            };
-            let path = hooks_dir.join(&filename);
-            if let Err(e) = std::fs::write(&path, hook) {
-                eprintln!("[warn] Failed to write pre_hook for {}: {}", model_name, e);
-            } else {
-                count += 1;
-                if global.verbose {
-                    eprintln!("[verbose] Wrote hook {}", path.display());
-                }
+            if let Err(e) = std::fs::create_dir_all(&hooks_dir) {
+                eprintln!(
+                    "[warn] Failed to create hooks directory for {}: {}",
+                    model_name, e
+                );
+                return 0;
             }
-        }
 
-        for (i, hook) in model.config.post_hook.iter().enumerate() {
-            let filename = if model.config.post_hook.len() == 1 {
-                "post_hook.sql".to_string()
-            } else {
-                format!("post_hook_{}.sql", i + 1)
-            };
-            let path = hooks_dir.join(&filename);
-            if let Err(e) = std::fs::write(&path, hook) {
-                eprintln!("[warn] Failed to write post_hook for {}: {}", model_name, e);
-            } else {
-                count += 1;
-                if global.verbose {
-                    eprintln!("[verbose] Wrote hook {}", path.display());
-                }
-            }
-        }
-    }
+            let pre_count: usize = model
+                .config
+                .pre_hook
+                .iter()
+                .enumerate()
+                .filter(|(i, hook)| {
+                    write_hook_file(
+                        &hooks_dir,
+                        "pre_hook",
+                        *i,
+                        model.config.pre_hook.len(),
+                        hook,
+                        model_name,
+                        global.verbose,
+                    )
+                })
+                .count();
 
-    count
+            let post_count: usize = model
+                .config
+                .post_hook
+                .iter()
+                .enumerate()
+                .filter(|(i, hook)| {
+                    write_hook_file(
+                        &hooks_dir,
+                        "post_hook",
+                        *i,
+                        model.config.post_hook.len(),
+                        hook,
+                        model_name,
+                        global.verbose,
+                    )
+                })
+                .count();
+
+            pre_count + post_count
+        })
+        .sum()
 }
 
 /// Compile schema tests to `target/compiled/tests/` directory.
@@ -1352,20 +1377,24 @@ fn compile_tests_to_target(project: &Project, output_dir: &Path, global: &Global
         return 0;
     }
 
-    let mut count = 0;
-    for test in &all_tests {
-        let sql = ff_test::generator::generate_test_sql(test);
-        let filename = format!("{}__{}__{}.sql", test.model, test.test_type, test.column);
-        let path = tests_dir.join(&filename);
-        if let Err(e) = std::fs::write(&path, &sql) {
-            eprintln!("[warn] Failed to write test SQL for {}: {}", filename, e);
-        } else {
-            count += 1;
-            if global.verbose {
-                eprintln!("[verbose] Wrote test {}", path.display());
+    all_tests
+        .iter()
+        .filter_map(|test| {
+            let sql = ff_test::generator::generate_test_sql(test);
+            let filename = format!("{}__{}__{}.sql", test.model, test.test_type, test.column);
+            let path = tests_dir.join(&filename);
+            match std::fs::write(&path, &sql) {
+                Err(e) => {
+                    eprintln!("[warn] Failed to write test SQL for {}: {}", filename, e);
+                    None
+                }
+                Ok(()) => {
+                    if global.verbose {
+                        eprintln!("[verbose] Wrote test {}", path.display());
+                    }
+                    Some(())
+                }
             }
-        }
-    }
-
-    count
+        })
+        .count()
 }

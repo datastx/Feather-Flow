@@ -95,27 +95,26 @@ pub(crate) async fn execute(args: &RunArgs, global: &GlobalArgs) -> Result<()> {
         group_mode.or(project.config.run.as_ref().map(|r| &r.default_mode)),
     );
 
-    let effective_args = if let Some(gcfg) = group_cfg {
-        let mut patched = args.clone();
-        if !args.full_refresh {
-            if let Some(true) = gcfg.full_refresh {
-                patched.full_refresh = true;
-            }
-        }
-        if !args.fail_fast {
-            if let Some(true) = gcfg.fail_fast {
-                patched.fail_fast = true;
-            }
-        }
-        patched
+    let full_refresh = args.full_refresh || group_cfg.and_then(|g| g.full_refresh).unwrap_or(false);
+    let fail_fast = args.fail_fast || group_cfg.and_then(|g| g.fail_fast).unwrap_or(false);
+
+    let needs_patch = full_refresh != args.full_refresh || fail_fast != args.fail_fast;
+    let patched;
+    let effective_args: &RunArgs = if needs_patch {
+        patched = RunArgs {
+            full_refresh,
+            fail_fast,
+            ..args.clone()
+        };
+        &patched
     } else {
-        args.clone()
+        args
     };
 
     match mode {
-        RunMode::Models => execute_models_mode(&effective_args, global, &project, start_time).await,
-        RunMode::Test => execute_test_mode(&effective_args, global, &project).await,
-        RunMode::Build => execute_build_mode(&effective_args, global, &project, start_time).await,
+        RunMode::Models => execute_models_mode(effective_args, global, &project, start_time).await,
+        RunMode::Test => execute_test_mode(effective_args, global, &project).await,
+        RunMode::Build => execute_build_mode(effective_args, global, &project, start_time).await,
     }
 }
 

@@ -548,9 +548,7 @@ impl Config {
         match conn_vars {
             Some(c) => {
                 let mut vars = self.vars.clone();
-                for (key, value) in &c.vars {
-                    vars.insert(key.clone(), value.clone());
-                }
+                vars.extend(c.vars.iter().map(|(k, v)| (k.clone(), v.clone())));
                 Cow::Owned(vars)
             }
             None => Cow::Borrowed(&self.vars),

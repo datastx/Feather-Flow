@@ -79,9 +79,10 @@ pub fn categorize_dependencies_with_unknown(
     known_models: &HashSet<&str>,
     external_tables: &HashSet<String>,
 ) -> (Vec<String>, Vec<String>, Vec<String>) {
-    let mut model_deps = Vec::new();
-    let mut external_deps = Vec::new();
-    let mut unknown_deps = Vec::new();
+    let cap = deps.len();
+    let mut model_deps = Vec::with_capacity(cap);
+    let mut external_deps = Vec::with_capacity(cap);
+    let mut unknown_deps = Vec::with_capacity(cap);
 
     let known_models_map: HashMap<String, &str> = known_models
         .iter()

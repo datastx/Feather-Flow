@@ -249,13 +249,6 @@ fn format_comment(value: &Value, style: CommentStyle) -> String {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn build_query_comment(metadata: &QueryCommentMetadata) -> String {
-    let include = CommentInclude::default();
-    let value = filter_metadata(metadata, &include);
-    format_comment(&value, CommentStyle::Compact)
-}
-
 /// Attach a query comment to SQL respecting the configured placement.
 pub fn attach_query_comment(sql: &str, comment: &str, placement: CommentPlacement) -> String {
     match placement {
@@ -265,8 +258,18 @@ pub fn attach_query_comment(sql: &str, comment: &str, placement: CommentPlacemen
 }
 
 #[cfg(test)]
-pub(crate) fn append_query_comment(sql: &str, comment: &str) -> String {
-    attach_query_comment(sql, comment, CommentPlacement::Append)
+pub(crate) mod test_helpers {
+    use super::*;
+
+    pub(crate) fn build_query_comment(metadata: &QueryCommentMetadata) -> String {
+        let include = CommentInclude::default();
+        let value = filter_metadata(metadata, &include);
+        format_comment(&value, CommentStyle::Compact)
+    }
+
+    pub(crate) fn append_query_comment(sql: &str, comment: &str) -> String {
+        attach_query_comment(sql, comment, CommentPlacement::Append)
+    }
 }
 
 /// Strip a query comment from SQL (for reading cached compiled files).

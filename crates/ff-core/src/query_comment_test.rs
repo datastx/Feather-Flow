@@ -1,3 +1,4 @@
+use super::test_helpers::{append_query_comment, build_query_comment};
 use super::*;
 use crate::config::{CommentInclude, CommentPlacement, CommentStyle, QueryCommentConfig};
 use std::collections::HashMap;

@@ -13,7 +13,6 @@ pub fn populate_seeds(conn: &Connection, project_id: i64, seeds: &[Seed]) -> Met
 }
 
 fn insert_seed(conn: &Connection, project_id: i64, seed: &Seed) -> MetaResult<()> {
-    let description = seed.description.clone();
     let schema_name = seed.target_schema().map(|s| s.to_string());
     let delimiter = seed.delimiter().to_string();
     let enabled = seed.is_enabled();
@@ -25,7 +24,7 @@ fn insert_seed(conn: &Connection, project_id: i64, seed: &Seed) -> MetaResult<()
             project_id,
             seed.name.as_str(),
             seed.path.display().to_string(),
-            description,
+            seed.description.as_deref(),
             schema_name,
             delimiter,
             enabled,

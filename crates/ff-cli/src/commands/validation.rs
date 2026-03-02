@@ -94,23 +94,26 @@ impl ValidationContext {
 pub(crate) fn validate_duplicates(project: &Project, ctx: &mut ValidationContext) {
     print!("Checking for duplicates... ");
     let model_names: Vec<&ModelName> = project.models.keys().collect();
+    let initial_errors = ctx.error_count();
 
     let mut seen: HashMap<String, &ModelName> = HashMap::new();
-    let mut found_dup = false;
     for name in &model_names {
         let lower = name.as_ref().to_lowercase();
-        if let Some(existing) = seen.get(&lower) {
-            ctx.error(
-                "E004",
-                format!(
-                    "Duplicate model names (case-insensitive): '{}' and '{}'",
-                    existing, name
-                ),
-                None,
-            );
-            found_dup = true;
-        } else {
-            seen.insert(lower, name);
+        match seen.entry(lower) {
+            std::collections::hash_map::Entry::Occupied(entry) => {
+                ctx.error(
+                    "E004",
+                    format!(
+                        "Duplicate model names (case-insensitive): '{}' and '{}'",
+                        entry.get(),
+                        name
+                    ),
+                    None,
+                );
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(name);
+            }
         }
     }
 
@@ -121,18 +124,21 @@ pub(crate) fn validate_duplicates(project: &Project, ctx: &mut ValidationContext
 
     for seed in &project.seeds {
         let lower = seed.name.as_str().to_lowercase();
-        if let Some((existing_kind, existing_name)) = seen_kinds.get(&lower) {
-            ctx.error(
-                "E012",
-                format!(
-                    "Name collision (case-insensitive): seed '{}' conflicts with {} '{}'",
-                    seed.name, existing_kind, existing_name
-                ),
-                None,
-            );
-            found_dup = true;
-        } else {
-            seen_kinds.insert(lower, ("seed", seed.name.to_string()));
+        match seen_kinds.entry(lower) {
+            std::collections::hash_map::Entry::Occupied(entry) => {
+                let (existing_kind, existing_name) = entry.get();
+                ctx.error(
+                    "E012",
+                    format!(
+                        "Name collision (case-insensitive): seed '{}' conflicts with {} '{}'",
+                        seed.name, existing_kind, existing_name
+                    ),
+                    None,
+                );
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(("seed", seed.name.to_string()));
+            }
         }
     }
 
@@ -142,22 +148,25 @@ pub(crate) fn validate_duplicates(project: &Project, ctx: &mut ValidationContext
 
     for func in &project.functions {
         let lower = func.name.as_str().to_lowercase();
-        if let Some((existing_kind, existing_name)) = seen_kinds.get(&lower) {
-            ctx.error(
-                "E012",
-                format!(
-                    "Name collision (case-insensitive): function '{}' conflicts with {} '{}'",
-                    func.name, existing_kind, existing_name
-                ),
-                None,
-            );
-            found_dup = true;
-        } else {
-            seen_kinds.insert(lower, ("function", func.name.to_string()));
+        match seen_kinds.entry(lower) {
+            std::collections::hash_map::Entry::Occupied(entry) => {
+                let (existing_kind, existing_name) = entry.get();
+                ctx.error(
+                    "E012",
+                    format!(
+                        "Name collision (case-insensitive): function '{}' conflicts with {} '{}'",
+                        func.name, existing_kind, existing_name
+                    ),
+                    None,
+                );
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(("function", func.name.to_string()));
+            }
         }
     }
 
-    if found_dup {
+    if ctx.error_count() > initial_errors {
         println!("✗");
     } else {
         println!("✓");
@@ -314,6 +323,35 @@ pub(crate) fn validate_sources(project: &Project) {
     }
 }
 
+/// Validate a single macro file, returning `true` if an error was found.
+fn validate_single_macro_file(
+    path: &std::path::Path,
+    vars: &HashMap<String, serde_yaml::Value>,
+    ctx: &mut ValidationContext,
+) -> bool {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        ctx.error(
+            "M001",
+            "Failed to read macro file",
+            Some(path.display().to_string()),
+        );
+        return true;
+    };
+    let test_env = JinjaEnvironment::new(vars);
+    if let Err(e) = test_env.render(&content) {
+        let err_str = e.to_string();
+        if !err_str.contains("undefined") {
+            ctx.error(
+                "M002",
+                format!("Macro parse error: {}", e),
+                Some(path.display().to_string()),
+            );
+            return true;
+        }
+    }
+    false
+}
+
 /// Validate macro files
 pub(crate) fn validate_macros(
     vars: &HashMap<String, serde_yaml::Value>,
@@ -337,26 +375,8 @@ pub(crate) fn validate_macros(
                 continue;
             }
             macro_count += 1;
-            let Ok(content) = std::fs::read_to_string(&path) else {
-                ctx.error(
-                    "M001",
-                    "Failed to read macro file",
-                    Some(path.display().to_string()),
-                );
+            if validate_single_macro_file(&path, vars, ctx) {
                 macro_errors += 1;
-                continue;
-            };
-            let test_env = JinjaEnvironment::new(vars);
-            if let Err(e) = test_env.render(&content) {
-                let err_str = e.to_string();
-                if !err_str.contains("undefined") {
-                    ctx.error(
-                        "M002",
-                        format!("Macro parse error: {}", e),
-                        Some(path.display().to_string()),
-                    );
-                    macro_errors += 1;
-                }
             }
         }
     }

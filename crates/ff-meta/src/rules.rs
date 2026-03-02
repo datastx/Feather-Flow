@@ -115,16 +115,15 @@ pub fn execute_all_rules(
     conn: &Connection,
     rules: &[RuleFile],
 ) -> MetaResult<(Vec<RuleResult>, Vec<RuleViolation>)> {
-    let mut all_results = Vec::with_capacity(rules.len());
-    let mut all_violations = Vec::new();
-
-    for rule in rules {
-        let (result, violations) = execute_rule(conn, rule)?;
-        all_results.push(result);
-        all_violations.extend(violations);
-    }
-
-    Ok((all_results, all_violations))
+    rules.iter().try_fold(
+        (Vec::with_capacity(rules.len()), Vec::new()),
+        |(mut results, mut violations), rule| {
+            let (result, rule_violations) = execute_rule(conn, rule)?;
+            results.push(result);
+            violations.extend(rule_violations);
+            Ok((results, violations))
+        },
+    )
 }
 
 /// Record rule violations in the meta database.
@@ -175,12 +174,11 @@ fn extract_message(values: &[(&str, String)], message_idx: Option<usize>) -> Str
     if let Some(idx) = message_idx {
         return values[idx].1.clone();
     }
-    for (_, val) in values {
-        if val != "null" {
-            return val.clone();
-        }
-    }
-    "Rule violation (no message column)".to_string()
+    values
+        .iter()
+        .find(|(_, val)| val != "null")
+        .map(|(_, val)| val.clone())
+        .unwrap_or_else(|| "Rule violation (no message column)".to_string())
 }
 
 fn build_context_json(
