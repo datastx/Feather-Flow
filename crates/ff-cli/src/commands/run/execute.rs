@@ -475,6 +475,37 @@ fn get_transitive_dependents(
     dependents
 }
 
+/// Handle a model execution error: emit telemetry, cascade WAP failures,
+/// and signal early stop when `--fail-fast` is set.
+///
+/// Returns `true` when execution should stop early.
+fn handle_model_error(
+    model_result: &ModelRunResult,
+    name: &str,
+    is_wap: bool,
+    ctx: &ExecutionContext<'_>,
+    reverse_deps: &HashMap<&str, Vec<&str>>,
+    failed_models: &mut HashSet<String>,
+) -> bool {
+    if ctx.args.telemetry {
+        emit_telemetry(model_result, None);
+    }
+
+    if is_wap {
+        let dependents = get_transitive_dependents(name, reverse_deps);
+        for dep in &dependents {
+            failed_models.insert(dep.clone());
+        }
+    }
+
+    if ctx.args.fail_fast {
+        println!("\n  Stopping due to --fail-fast");
+        return true;
+    }
+
+    false
+}
+
 /// Execute models sequentially (original behavior for --threads=1)
 async fn execute_models_sequential(
     ctx: &ExecutionContext<'_>,
@@ -574,22 +605,16 @@ async fn execute_models_sequential(
 
         if is_error {
             failure_count += 1;
-
-            if ctx.args.telemetry {
-                emit_telemetry(&model_result, None);
-            }
-
-            if is_wap {
-                let dependents = get_transitive_dependents(name, &reverse_deps);
-                for dep in &dependents {
-                    failed_models.insert(dep.clone());
-                }
-            }
-
+            stopped_early = handle_model_error(
+                &model_result,
+                name,
+                is_wap,
+                ctx,
+                &reverse_deps,
+                &mut failed_models,
+            );
             run_results.push(model_result);
-            if ctx.args.fail_fast {
-                stopped_early = true;
-                println!("\n  Stopping due to --fail-fast");
+            if stopped_early {
                 break;
             }
         } else {

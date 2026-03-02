@@ -872,18 +872,18 @@ pub(super) fn html_escape(s: &str) -> String {
 ///
 /// Encodes everything except unreserved characters (`A-Z`, `a-z`, `0-9`, `-`, `_`, `.`, `~`).
 fn url_encode_path(s: &str) -> String {
-    let mut encoded = String::with_capacity(s.len());
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                encoded.push(b as char);
+    s.bytes()
+        .fold(String::with_capacity(s.len()), |mut acc, b| {
+            match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                    acc.push(b as char);
+                }
+                _ => {
+                    acc.push_str(&format!("%{:02X}", b));
+                }
             }
-            _ => {
-                encoded.push_str(&format!("%{:02X}", b));
-            }
-        }
-    }
-    encoded
+            acc
+        })
 }
 
 /// Generate a DOT file for the model lineage graph
@@ -995,6 +995,32 @@ fn format_category_title(category: &str) -> String {
         .collect()
 }
 
+/// Render a single macro entry as markdown.
+fn render_macro_entry_markdown(md: &mut String, macro_info: &MacroMetadata) {
+    md.push_str(&format!("### `{}`\n\n", macro_info.name));
+    md.push_str(&format!("{}\n\n", macro_info.description));
+
+    if !macro_info.params.is_empty() {
+        md.push_str("**Parameters:**\n\n");
+        md.push_str("| Parameter | Type | Required | Description |\n");
+        md.push_str("|-----------|------|----------|-------------|\n");
+        for param in &macro_info.params {
+            let required = if param.required { "Yes" } else { "No" };
+            md.push_str(&format!(
+                "| `{}` | {} | {} | {} |\n",
+                param.name, param.param_type, required, param.description
+            ));
+        }
+        md.push('\n');
+    }
+
+    md.push_str("**Example:**\n\n");
+    md.push_str(&format!("```jinja\n{}\n```\n\n", macro_info.example));
+    md.push_str("**Output:**\n\n");
+    md.push_str(&format!("```sql\n{}\n```\n\n", macro_info.example_output));
+    md.push_str("---\n\n");
+}
+
 /// Generate markdown documentation for built-in macros
 fn generate_macros_markdown(builtin_macros: &[MacroMetadata]) -> String {
     let mut md = String::new();
@@ -1005,10 +1031,9 @@ fn generate_macros_markdown(builtin_macros: &[MacroMetadata]) -> String {
     );
 
     let categories = get_macro_categories();
-    let all_macros = builtin_macros;
 
     for category in &categories {
-        let category_macros: Vec<&MacroMetadata> = all_macros
+        let category_macros: Vec<&MacroMetadata> = builtin_macros
             .iter()
             .filter(|m| &m.category == category)
             .collect();
@@ -1018,36 +1043,57 @@ fn generate_macros_markdown(builtin_macros: &[MacroMetadata]) -> String {
         }
 
         let category_title = format_category_title(category);
-
         md.push_str(&format!("## {} Macros\n\n", category_title));
 
         for macro_info in category_macros {
-            md.push_str(&format!("### `{}`\n\n", macro_info.name));
-            md.push_str(&format!("{}\n\n", macro_info.description));
-
-            if !macro_info.params.is_empty() {
-                md.push_str("**Parameters:**\n\n");
-                md.push_str("| Parameter | Type | Required | Description |\n");
-                md.push_str("|-----------|------|----------|-------------|\n");
-                for param in &macro_info.params {
-                    let required = if param.required { "Yes" } else { "No" };
-                    md.push_str(&format!(
-                        "| `{}` | {} | {} | {} |\n",
-                        param.name, param.param_type, required, param.description
-                    ));
-                }
-                md.push('\n');
-            }
-
-            md.push_str("**Example:**\n\n");
-            md.push_str(&format!("```jinja\n{}\n```\n\n", macro_info.example));
-            md.push_str("**Output:**\n\n");
-            md.push_str(&format!("```sql\n{}\n```\n\n", macro_info.example_output));
-            md.push_str("---\n\n");
+            render_macro_entry_markdown(&mut md, macro_info);
         }
     }
 
     md
+}
+
+/// Render a single macro entry as HTML.
+fn render_macro_entry_html(html: &mut String, macro_info: &MacroMetadata) {
+    html.push_str("<div class=\"macro-card\">\n");
+    html.push_str(&format!(
+        "<div class=\"macro-name\"><code>{}</code></div>\n",
+        macro_info.name
+    ));
+    html.push_str(&format!("<p>{}</p>\n", html_escape(macro_info.description)));
+
+    if !macro_info.params.is_empty() {
+        html.push_str("<table class=\"param-table\">\n");
+        html.push_str("<thead><tr><th>Parameter</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>\n<tbody>\n");
+        for param in &macro_info.params {
+            let required = if param.required {
+                "<span class=\"badge badge-pass\">Yes</span>"
+            } else {
+                "No"
+            };
+            html.push_str(&format!(
+                "<tr><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+                param.name,
+                param.param_type,
+                required,
+                html_escape(param.description)
+            ));
+        }
+        html.push_str("</tbody></table>\n");
+    }
+
+    html.push_str("<span class=\"example-label\">Example:</span>\n");
+    html.push_str(&format!(
+        "<pre><code>{}</code></pre>\n",
+        html_escape(macro_info.example)
+    ));
+    html.push_str("<span class=\"example-label\">Output:</span>\n");
+    html.push_str(&format!(
+        "<pre><code>{}</code></pre>\n",
+        html_escape(macro_info.example_output)
+    ));
+
+    html.push_str("</div>\n");
 }
 
 /// Generate HTML documentation for built-in macros
@@ -1097,45 +1143,7 @@ fn generate_macros_html(builtin_macros: &[MacroMetadata]) -> String {
         ));
 
         for macro_info in category_macros {
-            html.push_str("<div class=\"macro-card\">\n");
-            html.push_str(&format!(
-                "<div class=\"macro-name\"><code>{}</code></div>\n",
-                macro_info.name
-            ));
-            html.push_str(&format!("<p>{}</p>\n", html_escape(macro_info.description)));
-
-            if !macro_info.params.is_empty() {
-                html.push_str("<table class=\"param-table\">\n");
-                html.push_str("<thead><tr><th>Parameter</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>\n<tbody>\n");
-                for param in &macro_info.params {
-                    let required = if param.required {
-                        "<span class=\"badge badge-pass\">Yes</span>"
-                    } else {
-                        "No"
-                    };
-                    html.push_str(&format!(
-                        "<tr><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
-                        param.name,
-                        param.param_type,
-                        required,
-                        html_escape(param.description)
-                    ));
-                }
-                html.push_str("</tbody></table>\n");
-            }
-
-            html.push_str("<span class=\"example-label\">Example:</span>\n");
-            html.push_str(&format!(
-                "<pre><code>{}</code></pre>\n",
-                html_escape(macro_info.example)
-            ));
-            html.push_str("<span class=\"example-label\">Output:</span>\n");
-            html.push_str(&format!(
-                "<pre><code>{}</code></pre>\n",
-                html_escape(macro_info.example_output)
-            ));
-
-            html.push_str("</div>\n");
+            render_macro_entry_html(&mut html, macro_info);
         }
 
         html.push_str("</div>\n");

@@ -150,19 +150,6 @@ impl Manifest {
         }
     }
 
-    /// Create a new manifest with pre-populated models (for testing)
-    #[cfg(test)]
-    pub fn new_with_models(project_name: &str, models: Vec<ManifestModel>) -> Self {
-        let models_map: HashMap<ModelName, ManifestModel> =
-            models.into_iter().map(|m| (m.name.clone(), m)).collect();
-        Self {
-            project_name: project_name.to_string(),
-            compiled_at: chrono_lite_now(),
-            models: models_map,
-            sources: HashMap::new(),
-        }
-    }
-
     /// Add a source to the manifest
     pub fn add_source(&mut self, source: &SourceFile) {
         for table in &source.tables {
@@ -400,6 +387,21 @@ impl ReferenceManifest for Manifest {
 /// Current UTC timestamp as ISO 8601 string
 fn chrono_lite_now() -> String {
     chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+#[cfg(test)]
+impl Manifest {
+    /// Create a new manifest with pre-populated models (for testing)
+    pub fn new_with_models(project_name: &str, models: Vec<ManifestModel>) -> Self {
+        let models_map: HashMap<ModelName, ManifestModel> =
+            models.into_iter().map(|m| (m.name.clone(), m)).collect();
+        Self {
+            project_name: project_name.to_string(),
+            compiled_at: chrono_lite_now(),
+            models: models_map,
+            sources: HashMap::new(),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -376,6 +376,21 @@ fn print_table(lineage: &ProjectLineage, args: &LineageArgs) {
     println!("\n{} lineage edge(s) found.", edges.len());
 }
 
+/// Extract column descriptions from a schema registry column map into a
+/// `HashMap<column_name_lowercase, description>`.
+fn extract_col_descriptions(
+    columns: &HashMap<String, ff_core::ColumnInfo>,
+) -> HashMap<String, String> {
+    columns
+        .iter()
+        .filter_map(|(col_key, info)| {
+            info.description
+                .as_ref()
+                .map(|d| (col_key.clone(), d.clone()))
+        })
+        .collect()
+}
+
 /// Build a lookup of node_name -> { column_name_lowercase -> description }
 /// from the schema registry for description status computation.
 fn build_description_lookup(
@@ -386,12 +401,7 @@ fn build_description_lookup(
 
     for name in project.models.keys() {
         if let Some(columns) = registry.get_columns(name.as_str()) {
-            let mut col_descs = HashMap::new();
-            for (col_key, info) in columns {
-                if let Some(ref desc) = info.description {
-                    col_descs.insert(col_key.clone(), desc.clone());
-                }
-            }
+            let col_descs = extract_col_descriptions(columns);
             if !col_descs.is_empty() {
                 lookup.insert(name.to_string(), col_descs);
             }
@@ -401,12 +411,7 @@ fn build_description_lookup(
     for source_file in &project.sources {
         for table in &source_file.tables {
             if let Some(columns) = registry.get_columns(&table.name) {
-                let mut col_descs = HashMap::new();
-                for (col_key, info) in columns {
-                    if let Some(ref desc) = info.description {
-                        col_descs.insert(col_key.clone(), desc.clone());
-                    }
-                }
+                let col_descs = extract_col_descriptions(columns);
                 if !col_descs.is_empty() {
                     lookup.insert(table.name.clone(), col_descs);
                 }

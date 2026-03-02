@@ -17,7 +17,7 @@ pub fn populate_schema_tests(
         let test_type = test_type_name(&test.test_type);
         let model_id = model_id_map.get(test.model.as_ref()).copied();
         let severity = test.config.severity.to_string();
-        let where_clause = test.config.where_clause.clone();
+        let where_clause = test.config.where_clause.as_deref();
         let config_json = test_config_json(&test.test_type);
 
         conn.execute(

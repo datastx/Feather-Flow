@@ -180,7 +180,7 @@ pub(crate) fn minijinja_value_to_json(val: &Value) -> serde_json::Value {
         ValueKind::Undefined | ValueKind::None => serde_json::Value::Null,
         ValueKind::Bool => serde_json::Value::Bool(val.is_true()),
         ValueKind::Number => {
-            if let Ok(i) = i64::try_from(val.clone()) {
+            if let Some(i) = val.as_i64() {
                 serde_json::Value::Number(i.into())
             } else if let Ok(f) = f64::try_from(val.clone()) {
                 // from_f64 returns None for NaN/Infinity, which map to JSON null
@@ -228,15 +228,18 @@ fn convert_yaml_number(n: &serde_yaml::Number) -> serde_json::Value {
 
 /// Convert a minijinja map value to a JSON object.
 fn build_json_map(val: &Value) -> serde_json::Value {
-    let mut map = serde_json::Map::new();
-    if let Ok(keys) = val.try_iter() {
-        for key in keys {
-            let key_str = key.as_str().unwrap_or_default().to_string();
-            if let Ok(v) = val.get_item(&key) {
-                map.insert(key_str, minijinja_value_to_json(&v));
-            }
-        }
-    }
+    let map: serde_json::Map<String, serde_json::Value> = val
+        .try_iter()
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|key| {
+            let k = key.as_str().unwrap_or_default().to_string();
+            val.get_item(&key)
+                .ok()
+                .map(|v| (k, minijinja_value_to_json(&v)))
+        })
+        .collect();
     serde_json::Value::Object(map)
 }
 

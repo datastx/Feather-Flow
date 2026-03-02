@@ -180,7 +180,7 @@ where
 {
     let mut ephemeral_sql: HashMap<String, String> = HashMap::new();
     let mut order: Vec<String> = Vec::new();
-    let mut visited: HashSet<String> = HashSet::new();
+    let mut visited: HashSet<&str> = HashSet::new();
 
     if let Some(deps) = model_deps.get(model_name) {
         collect_ephemeral_recursive(
@@ -198,20 +198,20 @@ where
 }
 
 /// Recursively collect ephemeral dependencies
-fn collect_ephemeral_recursive<F, G>(
-    deps: &[String],
-    model_deps: &HashMap<String, Vec<String>>,
+fn collect_ephemeral_recursive<'a, F, G>(
+    deps: &'a [String],
+    model_deps: &'a HashMap<String, Vec<String>>,
     is_ephemeral: &F,
     get_compiled_sql: &G,
     ephemeral_sql: &mut HashMap<String, String>,
     order: &mut Vec<String>,
-    visited: &mut HashSet<String>,
+    visited: &mut HashSet<&'a str>,
 ) where
     F: Fn(&str) -> bool,
     G: Fn(&str) -> Option<String>,
 {
     for dep in deps {
-        if !visited.insert(dep.clone()) {
+        if !visited.insert(dep.as_str()) {
             continue;
         }
         if !is_ephemeral(dep) {

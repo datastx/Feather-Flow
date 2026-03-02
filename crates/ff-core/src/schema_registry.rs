@@ -28,6 +28,61 @@ pub struct SchemaRegistry {
     nodes: HashMap<String, HashMap<String, ColumnInfo>>,
 }
 
+/// Shared column-info fields present on both `SchemaColumnDef` and `SourceColumn`.
+trait ColumnInfoSource {
+    fn col_name(&self) -> &str;
+    fn col_data_type(&self) -> &str;
+    fn col_description(&self) -> Option<&str>;
+    fn col_description_ai_generated(&self) -> Option<bool>;
+}
+
+impl ColumnInfoSource for crate::model::SchemaColumnDef {
+    fn col_name(&self) -> &str {
+        &self.name
+    }
+    fn col_data_type(&self) -> &str {
+        &self.data_type
+    }
+    fn col_description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+    fn col_description_ai_generated(&self) -> Option<bool> {
+        self.description_ai_generated
+    }
+}
+
+impl ColumnInfoSource for crate::source::SourceColumn {
+    fn col_name(&self) -> &str {
+        &self.name
+    }
+    fn col_data_type(&self) -> &str {
+        &self.data_type
+    }
+    fn col_description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+    fn col_description_ai_generated(&self) -> Option<bool> {
+        self.description_ai_generated
+    }
+}
+
+fn columns_to_map<'a, C: ColumnInfoSource + 'a>(
+    cols: impl Iterator<Item = &'a C>,
+) -> HashMap<String, ColumnInfo> {
+    cols.map(|col| {
+        (
+            col.col_name().to_lowercase(),
+            ColumnInfo {
+                name: col.col_name().to_string(),
+                data_type: col.col_data_type().to_string(),
+                description: col.col_description().map(String::from),
+                description_ai_generated: col.col_description_ai_generated(),
+            },
+        )
+    })
+    .collect()
+}
+
 impl SchemaRegistry {
     /// Build a registry from a loaded project.
     ///
@@ -39,18 +94,7 @@ impl SchemaRegistry {
 
         for (name, model) in &project.models {
             if let Some(schema) = &model.schema {
-                let mut cols = HashMap::new();
-                for col in &schema.columns {
-                    cols.insert(
-                        col.name.to_lowercase(),
-                        ColumnInfo {
-                            name: col.name.clone(),
-                            data_type: col.data_type.clone(),
-                            description: col.description.clone(),
-                            description_ai_generated: col.description_ai_generated,
-                        },
-                    );
-                }
+                let cols = columns_to_map(schema.columns.iter());
                 if !cols.is_empty() {
                     registry.nodes.insert(name.to_string(), cols);
                 }
@@ -59,18 +103,7 @@ impl SchemaRegistry {
 
         for source_file in &project.sources {
             for table in &source_file.tables {
-                let mut cols = HashMap::new();
-                for col in &table.columns {
-                    cols.insert(
-                        col.name.to_lowercase(),
-                        ColumnInfo {
-                            name: col.name.clone(),
-                            data_type: col.data_type.clone(),
-                            description: col.description.clone(),
-                            description_ai_generated: col.description_ai_generated,
-                        },
-                    );
-                }
+                let cols = columns_to_map(table.columns.iter());
                 if !cols.is_empty() {
                     registry.nodes.insert(table.name.clone(), cols);
                 }

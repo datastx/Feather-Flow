@@ -90,8 +90,7 @@ pub(crate) fn generate_accepted_values_test(
             .map(|v| format!("'{}'", escape_sql_string(v)))
             .collect()
     } else {
-        // When unquoted, values are intended to be numeric literals.
-        // Always quote them to prevent SQL injection from non-numeric values.
+        // Quote non-numeric values to prevent SQL injection.
         values
             .iter()
             .map(|v| {

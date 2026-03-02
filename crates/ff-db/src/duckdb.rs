@@ -386,13 +386,11 @@ impl DuckDbBackend {
         })
     }
 
-    /// Execute SQL synchronously
     fn execute_sync(&self, sql: &str) -> DbResult<usize> {
         let conn = self.lock_conn()?;
         run_sql(&conn, sql)
     }
 
-    /// Execute batch SQL synchronously
     fn execute_batch_sync(&self, sql: &str) -> DbResult<()> {
         let conn = self.lock_conn()?;
         conn.execute_batch(sql)
@@ -484,7 +482,6 @@ impl DatabaseCore for DuckDbBackend {
             return Ok(None);
         };
 
-        // Try extracting as String first, then numeric types.
         // DuckDB returns an error for NULL values, so we treat "all types fail"
         // as a SQL NULL and return None.
         if let Ok(s) = row.get::<_, String>(0) {
