@@ -49,26 +49,11 @@ impl Project {
     ///
     /// Returns the model with the highest version number, or the unversioned model if no versions exist.
     pub fn get_latest_version(&self, base_name: &str) -> Option<(&str, &Model)> {
-        let mut candidates: Vec<(&str, &Model, Option<u32>)> = Vec::new();
-
-        for (name, model) in &self.models {
-            let model_base = model.get_base_name();
-            if model_base == base_name || name == base_name {
-                candidates.push((name.as_str(), model, model.version));
-            }
-        }
-
-        if candidates.is_empty() {
-            return None;
-        }
-
-        candidates.sort_by(|a, b| {
-            let va = a.2.unwrap_or(0);
-            let vb = b.2.unwrap_or(0);
-            vb.cmp(&va)
-        });
-
-        candidates.first().map(|(name, model, _)| (*name, *model))
+        self.models
+            .iter()
+            .filter(|(name, model)| model.get_base_name() == base_name || *name == base_name)
+            .max_by_key(|(_, model)| model.version.unwrap_or(0))
+            .map(|(name, model)| (name.as_str(), model))
     }
 
     /// Get all versions of a model by base name

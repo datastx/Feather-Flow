@@ -86,22 +86,22 @@ fn process_macro_file(file_path: &std::path::Path) -> JinjaResult<Vec<CustomTest
 fn extract_test_macros_from_content(content: &str, source_file: &str) -> Vec<CustomTestMacro> {
     use std::sync::LazyLock;
 
-    let mut macros = Vec::new();
-
     static MACRO_PATTERN: LazyLock<regex::Regex> = LazyLock::new(|| {
         regex::Regex::new(r#"\{%-?\s*macro\s+(test_(\w+))\s*\("#).expect("valid regex literal")
     });
     let macro_pattern = &*MACRO_PATTERN;
 
-    for captures in macro_pattern.captures_iter(content) {
-        if let (Some(full_name), Some(test_name)) = (captures.get(1), captures.get(2)) {
-            macros.push(CustomTestMacro {
+    let macros = macro_pattern
+        .captures_iter(content)
+        .filter_map(|captures| match (captures.get(1), captures.get(2)) {
+            (Some(full_name), Some(test_name)) => Some(CustomTestMacro {
                 name: test_name.as_str().to_string(),
                 macro_name: full_name.as_str().to_string(),
                 source_file: source_file.to_string(),
-            });
-        }
-    }
+            }),
+            _ => None,
+        })
+        .collect();
 
     macros
 }

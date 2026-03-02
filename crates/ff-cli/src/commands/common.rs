@@ -447,19 +447,18 @@ pub(crate) fn run_pre_execution_analysis(
         .topological_order()
         .context("Failed to get topological order")?;
 
-    // Exclude Python models from static analysis (no SQL to analyze)
-    let sql_sources: HashMap<String, String> = compiled_models
+    let sql_only_sources: HashMap<String, String> = compiled_models
         .iter()
         .filter(|(_, model)| !model.is_python)
         .map(|(name, model)| (name.clone(), model.sql.clone()))
         .collect();
 
-    if sql_sources.is_empty() {
+    if sql_only_sources.is_empty() {
         return Ok(false);
     }
 
     let output =
-        run_static_analysis_pipeline(project, &sql_sources, &topo_order, &external_tables)?;
+        run_static_analysis_pipeline(project, &sql_only_sources, &topo_order, &external_tables)?;
     let result = &output.result;
 
     let (_, plan_count, failure_count) = report_static_analysis_results(

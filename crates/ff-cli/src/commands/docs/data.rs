@@ -187,33 +187,37 @@ pub(crate) fn build_model_doc(model: &Model) -> ModelDoc {
         description = schema.description.clone();
         tags = schema.tags.clone();
 
-        for col in &schema.columns {
-            let test_names: Vec<String> = col
-                .tests
-                .iter()
-                .map(|t| match t {
-                    ff_core::model::TestDefinition::Simple(name) => name.clone(),
-                    ff_core::model::TestDefinition::Parameterized(map) => {
-                        map.keys().next().cloned().unwrap_or_default()
-                    }
-                })
-                .collect();
-            let references = col.references.as_ref().map(|r| ColumnRefDoc {
-                model: r.model.to_string(),
-                column: r.column.clone(),
-            });
-            columns.push(ColumnDoc {
-                name: col.name.clone(),
-                data_type: col.data_type.clone(),
-                description: col.description.clone(),
-                primary_key: col.primary_key,
-                tests: test_names,
-                references,
-                classification: col
-                    .classification
-                    .map(|c| format!("{:?}", c).to_lowercase()),
-            });
-        }
+        columns = schema
+            .columns
+            .iter()
+            .map(|col| {
+                let test_names: Vec<String> = col
+                    .tests
+                    .iter()
+                    .map(|t| match t {
+                        ff_core::model::TestDefinition::Simple(name) => name.clone(),
+                        ff_core::model::TestDefinition::Parameterized(map) => {
+                            map.keys().next().cloned().unwrap_or_default()
+                        }
+                    })
+                    .collect();
+                let references = col.references.as_ref().map(|r| ColumnRefDoc {
+                    model: r.model.to_string(),
+                    column: r.column.clone(),
+                });
+                ColumnDoc {
+                    name: col.name.clone(),
+                    data_type: col.data_type.clone(),
+                    description: col.description.clone(),
+                    primary_key: col.primary_key,
+                    tests: test_names,
+                    references,
+                    classification: col
+                        .classification
+                        .map(|c| format!("{:?}", c).to_lowercase()),
+                }
+            })
+            .collect();
     }
 
     let materialized = model.config.materialized.map(|m| m.to_string());

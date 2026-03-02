@@ -91,14 +91,13 @@ impl std::fmt::Debug for TestRunContext<'_> {
 
 /// Generate tests from source files
 fn generate_source_tests(sources: &[SourceFile]) -> Vec<SchemaTest> {
-    let mut tests = Vec::new();
-
-    for source in sources {
-        for table in &source.tables {
-            for column in &table.columns {
-                for test_def in &column.tests {
-                    if let Some(test_type) = parse_test_definition(test_def) {
-                        tests.push(SchemaTest {
+    sources
+        .iter()
+        .flat_map(|source| {
+            source.tables.iter().flat_map(move |table| {
+                table.columns.iter().flat_map(move |column| {
+                    column.tests.iter().filter_map(move |test_def| {
+                        parse_test_definition(test_def).map(|test_type| SchemaTest {
                             model: ff_core::model_name::ModelName::new(format!(
                                 "{}.{}",
                                 source.schema, table.name
@@ -106,14 +105,12 @@ fn generate_source_tests(sources: &[SourceFile]) -> Vec<SchemaTest> {
                             column: column.name.clone(),
                             test_type,
                             config: ff_core::model::TestConfig::default(),
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    tests
+                        })
+                    })
+                })
+            })
+        })
+        .collect()
 }
 
 /// Execute the test command
